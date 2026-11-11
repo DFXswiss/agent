@@ -81,8 +81,9 @@ verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
 the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
 and records `assignment.created`; the client never prints the device token,
-and hub failure detail or recovery URLs are redacted after the exact bearer is
-removed. A response counts as a mandate only with a positive issue number and a
+and hub failure detail or recovery URLs redact the exact bearer even when each
+character is literal or percent-encoded in a mixed representation. A response
+counts as a mandate only with a positive issue number and a
 matching HTTPS GitHub issue URL.
 
 ## Record work
@@ -190,7 +191,9 @@ and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
-redacted, printed, or persisted in that evidence. Both configured and
+redacted, printed, or persisted in that evidence. Raw and resolved provider
+config paths are matched despite interleaved terminal controls before
+sanitization and are hidden again afterward. Both configured and
 provider-reported model strings are bounded and redacted. Neither activity
 stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,

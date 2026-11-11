@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -107,6 +107,7 @@ class LaneResult:
     stdout: str
     stderr: str
     tmux_session: str | None = None
+    config_dir: str | None = field(default=None, repr=False)
     usage: LaneUsage | None = None
     tools: tuple[dict, ...] = ()
     tools_truncated: bool = False
@@ -258,13 +259,15 @@ def openrouter_argv(
 
 
 def hide_config_dir(text: str, config_dir: str | None) -> str:
-    """Replace the account directory in provider diagnostics, wherever it lives."""
+    """Replace raw/resolved account paths despite interleaved terminal controls."""
     if not config_dir:
         return text
     raw = str(Path(config_dir).expanduser())
     resolved = str(Path(raw).resolve())
     for path in sorted({raw, resolved}, key=len, reverse=True):
-        text = text.replace(path, "<config_dir>")
+        text = redact_terminal_interleaved_secret(
+            text, path, replacement="<config_dir>"
+        )
     return text
 
 
@@ -437,17 +440,13 @@ def _tool_target(
 DIAGNOSTIC_LIMIT = 4000
 
 
-def _redact_lane_text(
+def redact_lane_text(
     text: str, *, config_dir: str | None = None, limit: int | None
 ) -> str:
-    """Apply raw redaction, terminal sanitization and config-path hiding."""
+    """Hide config paths and secrets before and after terminal sanitization."""
     from .coordinator_common import redact
 
-    safe = text or ""
-    if config_dir:
-        safe = redact_terminal_interleaved_secret(
-            safe, config_dir, replacement="<config_dir>"
-        )
+    safe = hide_config_dir(text or "", config_dir)
     safe = redact(safe, limit=None)
     safe = hide_config_dir(safe, config_dir)
     return redact(safe, limit=limit)
@@ -455,7 +454,7 @@ def _redact_lane_text(
 
 def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
     """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
-    return _redact_lane_text(
+    return redact_lane_text(
         text, config_dir=config_dir, limit=DIAGNOSTIC_LIMIT
     )
 
@@ -495,6 +494,7 @@ def unreadable_output_result(
         stdout="",
         stderr=diagnostic,
         tmux_session=tmux_session,
+        config_dir=config_dir,
     )
 
 
@@ -515,13 +515,13 @@ def finalize_lane_output(
     if usage is not None and usage.model is not None:
         usage = replace(
             usage,
-            model=_redact_lane_text(
+            model=redact_lane_text(
                 usage.model, config_dir=config_dir, limit=None
             ),
         )
     return replace(
         out,
-        text=_redact_lane_text(out.text, config_dir=config_dir, limit=None),
+        text=redact_lane_text(out.text, config_dir=config_dir, limit=None),
         usage=usage,
     )
 
@@ -652,8 +652,6 @@ def record_lane_run(
     round_num: int | None = None,
 ) -> str:
     """Write the script-owned, redacted lane audit activity."""
-    from .coordinator_common import redact
-
     usage = result.usage
     usage_payload = None
     if usage is not None:
@@ -671,11 +669,19 @@ def record_lane_run(
             continue
         safe_tools.append(
             {
-                "tool": redact(str(item.get("tool") or ""), limit=100),
+                "tool": redact_lane_text(
+                    str(item.get("tool") or ""),
+                    config_dir=result.config_dir,
+                    limit=100,
+                ),
                 "target": (
                     "[redacted]"
                     if _CONTROL_BYTE_RE.search(str(item.get("target") or ""))
-                    else redact(str(item.get("target") or ""), limit=300)
+                    else redact_lane_text(
+                        str(item.get("target") or ""),
+                        config_dir=result.config_dir,
+                        limit=300,
+                    )
                 ),
                 "error": item.get("error") is True,
             }
@@ -687,9 +693,15 @@ def record_lane_run(
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": redact(result.model, limit=LANE_MODEL_LIMIT),
+        "model": redact_lane_text(
+            result.model, config_dir=result.config_dir, limit=LANE_MODEL_LIMIT
+        ),
         "reported_model": (
-            redact(usage.model, limit=LANE_MODEL_LIMIT)
+            redact_lane_text(
+                usage.model,
+                config_dir=result.config_dir,
+                limit=LANE_MODEL_LIMIT,
+            )
             if usage is not None and usage.model is not None
             else None
         ),
@@ -701,7 +713,9 @@ def record_lane_run(
         "usage": usage_payload,
         "tools": safe_tools,
         "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact(final_text, limit=4000),
+        "final_text": redact_lane_text(
+            final_text, config_dir=result.config_dir, limit=4000
+        ),
     }
     store.write(  # type: ignore[attr-defined]
         "activity",
@@ -911,6 +925,7 @@ def launch(
             stdout="",
             stderr="",
             tmux_session=tmux_session,
+            config_dir=selected.account.config_dir,
         )
 
     stdin_text: str | None = spec_text if vendor in SPEC_VIA_STDIN else None
@@ -977,8 +992,11 @@ def launch(
             argv=argv,
             returncode=returncode,
             stdout=finalized.text,
-            stderr=hide_config_dir(stderr, selected.account.config_dir),
+            stderr=redact_lane_text(
+                stderr, config_dir=selected.account.config_dir, limit=None
+            ),
             tmux_session=tmux_session,
+            config_dir=selected.account.config_dir,
             usage=finalized.usage,
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,

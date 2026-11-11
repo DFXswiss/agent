@@ -475,7 +475,68 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
     assert hide_config_dir(text, str(link)) == (
         "error reading <config_dir>/settings.json and <config_dir>/key"
     )
+    split_link = f"{str(link)[:-4]}\x1b[31m{str(link)[-4:]}"
+    split_real = f"{str(real)[:-4]}\x1b[31m{str(real)[-4:]}"
+    assert hide_config_dir(
+        f"error reading {split_link}/settings.json and {split_real}/key",
+        str(link),
+    ) == "error reading <config_dir>/settings.json and <config_dir>/key"
     assert hide_config_dir("unchanged", None) == "unchanged"
+
+
+def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() -> None:
+    config_dir = "/opt/profiles/router"
+    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    raw = f"provider failed at {split_path}"
+
+    assert hide_config_dir(raw, config_dir) == (
+        "provider failed at <config_dir>/openrouter-api-key"
+    )
+    assert redact_diagnostic(raw, config_dir=config_dir) == (
+        "provider failed at <config_dir>/openrouter-api-key"
+    )
+
+    event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": raw,
+    }
+    finalized = finalize_lane_output(
+        "openrouter",
+        "",
+        json.dumps(event),
+        cwd="/work",
+        config_dir=config_dir,
+    )
+    assert finalized.text == "provider failed at <config_dir>/openrouter-api-key"
+
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="openrouter",
+            model="model",
+            status="unavailable",
+            argv=["claude"],
+            returncode=2,
+            stdout="",
+            stderr=raw,
+            config_dir=config_dir,
+        ),
+    )
+    assert store.row is not None
+    assert store.row["payload"]["final_text"] == (
+        "provider failed at <config_dir>/openrouter-api-key"
+    )
 
 
 def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:

@@ -42,9 +42,9 @@ from .lane import (
     SPEC_VIA_STDIN,
     LaneResult,
     finalize_lane_output,
-    hide_config_dir,
     openrouter_path_error,
     provider_argv,
+    redact_lane_text,
     record_lane_run,
     unreadable_output_result,
 )
@@ -270,8 +270,10 @@ def launch_lane(
                 )
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
-            stderr = hide_config_dir(
-                str(getattr(completed, "stderr") or ""), selected.account.config_dir
+            stderr = redact_lane_text(
+                str(getattr(completed, "stderr") or ""),
+                config_dir=selected.account.config_dir,
+                limit=None,
             )
             lane_output_read_error: BaseException | None = None
             output_file_text = ""
@@ -306,11 +308,14 @@ def launch_lane(
                     config_dir=selected.account.config_dir,
                 )
         except Exception as exc:
+            safe_exc = redact_lane_text(
+                str(exc), config_dir=selected.account.config_dir, limit=4000
+            )
             agent = store.row("agent", aid)
             if agent is not None and agent.get("status") == "working":
                 agent["status"] = "done"
                 agent["finished_at"] = utcnow()
-                agent["note"] = redact(f"interrupted: {exc}")
+                agent["note"] = f"interrupted: {safe_exc}"
                 store.write("agent", "update", aid, strip_row(agent))
             c["lane"] = {"agent_id": aid, "state": "uncertain"}
             c["phase"] = "blocked"
@@ -326,7 +331,7 @@ def launch_lane(
                 "Blocked: model lane interrupted; outcome uncertain.",
                 "uncertain-lane",
             )
-            raise CoordinatorError(f"lane interrupted: {redact(str(exc))}") from exc
+            raise CoordinatorError(f"lane interrupted: {safe_exc}") from exc
         if finalized is not None:
             result = LaneResult(
                 role=role,
@@ -337,6 +342,7 @@ def launch_lane(
                 returncode=returncode,
                 stdout=finalized.text,
                 stderr=stderr,
+                config_dir=selected.account.config_dir,
                 usage=finalized.usage,
                 tools=finalized.tools,
                 tools_truncated=finalized.tools_truncated,
@@ -356,7 +362,11 @@ def launch_lane(
     # its unavailable status even though there is no status line to parse.
     _, model_result = parse_model_result(result.stdout, result.returncode)
     status = result.status
-    note = redact(result.stdout or result.stderr or "")
+    note = redact_lane_text(
+        result.stdout or result.stderr or "",
+        config_dir=result.config_dir,
+        limit=4000,
+    )
     agent = store.row("agent", aid)
     assert agent is not None
     agent["status"] = "done"
@@ -374,7 +384,10 @@ def launch_lane(
         c['lane_outcome'] = {
             'role': role, 'vendor': vendor, 'round': round_num, 'agent_id': aid,
             'status': status, 'result': model_result, 'returncode': result.returncode,
-            'stdout': redact(result.stdout), 'applied': False,
+            'stdout': redact_lane_text(
+                result.stdout, config_dir=result.config_dir, limit=4000
+            ),
+            'applied': False,
         }
     # A finished agent without its durable outcome would permit a second launch.
     with store.conn.transaction():
@@ -1105,8 +1118,10 @@ def _run_prepared(
                 pass
         return prepared["agent_id"], exc
     stdout = str(getattr(completed, "stdout") or "")
-    stderr = hide_config_dir(
-        str(getattr(completed, "stderr") or ""), prepared.get("config_dir")
+    stderr = redact_lane_text(
+        str(getattr(completed, "stderr") or ""),
+        config_dir=prepared.get("config_dir"),
+        limit=None,
     )
     returncode = int(getattr(completed, "returncode"))
     output_file_text = ""
@@ -1149,6 +1164,7 @@ def _run_prepared(
         returncode=returncode,
         stdout=finalized.text,
         stderr=stderr,
+        config_dir=prepared.get("config_dir"),
         usage=finalized.usage,
         tools=finalized.tools,
         tools_truncated=finalized.tools_truncated,
@@ -1162,7 +1178,11 @@ def _abort_prepared_pr_reviews(
     exc: BaseException,
 ) -> None:
     """Close every persisted preparation and leave publication to advance_one."""
+    safe_exc = str(exc)
     for prepared in prepared_list:
+        safe_exc = redact_lane_text(
+            safe_exc, config_dir=prepared.get("config_dir"), limit=4000
+        )
         output_file = prepared.get("output_file")
         if output_file:
             try:
@@ -1178,7 +1198,7 @@ def _abort_prepared_pr_reviews(
             store.write("agent", "update", agent["id"], strip_row(agent))
     c = coord(task)
     c["phase"] = "blocked"
-    c["blocker"] = str(exc)
+    c["blocker"] = safe_exc
     save_task(store, task)
 
 

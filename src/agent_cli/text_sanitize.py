@@ -48,6 +48,32 @@ def redact_terminal_interleaved_secret(
     return pattern.sub(replacement, text)
 
 
+def redact_terminal_interleaved_urlencoded_secret(
+    text: str, secret: str, *, replacement: str = "[redacted]"
+) -> str:
+    """Redact a secret whose characters may independently be URL-encoded.
+
+    Literal characters remain case-sensitive. Percent-encoded UTF-8 bytes accept
+    either hex case, and removable terminal controls may occur anywhere inside
+    or between the literal/encoded character representations.
+    """
+    if not secret:
+        return text
+
+    character_patterns: list[str] = []
+    for character in secret:
+        encoded_bytes: list[str] = []
+        for byte in character.encode("utf-8"):
+            pair = f"{byte:02x}"
+            encoded_bytes.extend(
+                (re.escape("%"), rf"(?i:{pair[0]})", rf"(?i:{pair[1]})")
+            )
+        encoded = TERMINAL_INTERLEAVE_PATTERN.join(encoded_bytes)
+        character_patterns.append(rf"(?:{re.escape(character)}|{encoded})")
+    pattern = re.compile(TERMINAL_INTERLEAVE_PATTERN.join(character_patterns))
+    return pattern.sub(replacement, text)
+
+
 def sanitize_terminal_text(text: str) -> str:
     """Remove terminal escapes and controls, preserving only tab and newline."""
     without_escapes = _TERMINAL_ESCAPE_RE.sub("", text or "")

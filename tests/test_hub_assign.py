@@ -193,6 +193,57 @@ def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing
     ) == "retry [redacted]"
 
 
+def test_assignment_failure_redacts_fully_and_mixed_percent_encoded_path_bearers() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    token = "secret-device-token"
+    fully_encoded = "".join(f"%{byte:02X}" for byte in token.encode("utf-8"))
+    mixed_encoded = "s%65c%72et%2Ddevice%2dtoken"
+
+    assert sanitized_assignment_text(
+        f"/recover/{fully_encoded}", token, limit=200
+    ) == "/recover/[redacted]"
+    assert sanitized_assignment_text(
+        f"/recover/{mixed_encoded}", token, limit=200
+    ) == "/recover/[redacted]"
+
+
+def test_assign_failure_prints_fully_percent_encoded_recovery_path_without_bearer(
+    monkeypatch, capsys
+) -> None:
+    token = "secret-device-token"
+    encoded = "".join(f"%{byte:02x}" for byte in token.encode("utf-8"))
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502,
+            json={
+                "detail": "assignment recovery required",
+                "url": f"https://hub.example/recover/{encoded}",
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hub = Hub("https://hub.example", token, client=client)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
+
+    with pytest.raises(SystemExit):
+        main([
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "x/y",
+            "--title", "Fix", "--body", "Details",
+        ])
+
+    emitted = capsys.readouterr().err
+    assert emitted == (
+        "assignment recovery required\n"
+        "https://hub.example/recover/[redacted]\n"
+    )
+    assert token not in emitted
+    assert encoded not in emitted
+    client.close()
+
+
 def test_assignment_failure_redacts_generic_token_before_terminal_sanitizing() -> None:
     from agent_cli.hub_assign import sanitized_assignment_text
 
