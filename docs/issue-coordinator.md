@@ -287,6 +287,9 @@ for worker in workers.values():
    explicit GitHub account runner. Never push a protected branch, never
    force-push, never reuse an arbitrary dirty/wrong directory as a fresh
    checkout. Interrupted clones are refused without deleting unrelated content.
+   The checkout marker and `coordinator.base_sha` remain the immutable checkout
+   identity. In A38 mode, the current pull-request evidence base is stored
+   separately as `coordinator.a38.base_sha`.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
    and config home. No round cap. Rejection routes findings to a fresh
    implementer. Outcome distinction (review-loop preserved, not waived):
@@ -780,7 +783,10 @@ The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 The tests phase reads the authoritative pull-request base SHA and one
 fail-closed file inventory. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
-new comment. Independently confirmed markdown-only and guard-docs inventories
+new comment. The live value updates `coordinator.a38.base_sha`, while the
+checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,
+report validation, and review diffs use the live evidence value. Independently
+confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
 Coordinator A38 mode does not implement policy migrations; a changed
@@ -793,9 +799,15 @@ An open pull request can therefore be remeasured after a base move. A base move
 first observed after merge is different: the new base is never recorded as
 verified, the old/new pair is retained in `base_moved_after_evidence`, and the
 task stops at the non-recoverable completion boundary described above.
+An incomplete parallel PR review commits its `unavailable` gates, checklist
+values, blocked phase, exact resume phase, reply checkpoint, and deterministic
+issue-comment intent in one transaction. GitHub execution happens only after
+that commit, so a process restart remains blocked until the queued checkpoint
+is published and an authorized reply is observed; it cannot relaunch a reviewer
+from the persisted unavailable gate alone.
 The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
-`A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
+`A38 / report (<evidence base>)` selected by `a38_guard.status_context_enforce`;
 observe contexts never count. It advances after the guard has made the
 unchanged head Ready, then observes the human merge exactly like an ordinary
 worker. The guard may make the pull request Ready while the worker is still in

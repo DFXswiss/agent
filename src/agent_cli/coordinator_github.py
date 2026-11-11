@@ -39,6 +39,7 @@ from .coordinator_common import (
     as_int,
     coord,
     coordinator_env,
+    evidence_base_sha,
     gh_json,
     gh_list,
     is_sha,
@@ -142,6 +143,36 @@ def post_issue_comment(
     occurrence: str = "",
 ) -> str:
     """Publish a deterministic idempotent source-issue status/question comment."""
+    activity_id = queue_issue_comment(
+        store,
+        worker,
+        repo=repo,
+        number=number,
+        body=body,
+        kind=kind,
+        occurrence=occurrence,
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        err = ""
+        if row is not None:
+            err = redact(str(row.get("execution_error") or row.get("execution_status") or "pending"))
+        raise CoordinatorError(f"issue comment {kind} not verified published: {err}")
+    return activity_id
+
+
+def queue_issue_comment(
+    store: Store,
+    worker: WorkerConfig,
+    *,
+    repo: str,
+    number: int,
+    body: str,
+    kind: str,
+    occurrence: str = "",
+) -> str:
+    """Durably queue a deterministic issue comment without executing GitHub."""
     safe = redact(body, limit=2000)
     activity_id = str(
         uuid5(
@@ -159,13 +190,6 @@ def post_issue_comment(
         typ="comment.post",
         payload={"repo": repo, "number": number, "body": f"{safe}\n{marker}", "target": "issue"},
     )
-    execute_github(store, runner, activity_ids=(activity_id,))
-    row = store.row("activity", activity_id)
-    if row is None or row.get("execution_status") != "done":
-        err = ""
-        if row is not None:
-            err = redact(str(row.get("execution_error") or row.get("execution_status") or "pending"))
-        raise CoordinatorError(f"issue comment {kind} not verified published: {err}")
     return activity_id
 
 
@@ -891,7 +915,7 @@ def _a38_ci_evidence(
 ) -> frozenset[str]:
     """Return passing jobs from the verified exact-head author A38 report."""
     c = coord(task)
-    base = str(c.get("base_sha") or "")
+    base = evidence_base_sha(c, a38=True)
     a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
     report = a38.get("report") if isinstance(a38, dict) else None
     if not (
@@ -1596,7 +1620,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head changed before readiness"]
 
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     readiness = _readiness_for_head(
         worker,
         task,
@@ -1639,7 +1663,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         raise CoordinatorError("PR head does not match clean signed head")
     if worker.a38:
         observed_base = str(pr.get("baseRefOid") or "").lower()
-        saved_base = str(c.get("base_sha") or "").lower()
+        saved_base = evidence_base_sha(c, a38=True)
         if is_sha(saved_base) and observed_base != saved_base:
             from .coordinator_a38 import invalidate_base_evidence
 
@@ -2552,7 +2576,7 @@ def _close_readiness_after_merge(
     )
     if local_head != head:
         raise CoordinatorError("merged PR head does not match clean signed readiness head")
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     readiness = _readiness_for_head(
         worker,
         task,
@@ -2651,7 +2675,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "a merged PR cannot be remeasured"
                 )
             observed_base = str((info.get("base") or {}).get("sha") or "").lower()
-            saved_base = str(c.get("base_sha") or "").lower()
+            saved_base = evidence_base_sha(c, a38=True)
             if not is_sha(observed_base):
                 return ["merge observed but base SHA missing or invalid"]
             if not is_sha(saved_base) or observed_base != saved_base:
