@@ -170,6 +170,109 @@ def test_redact_and_fingerprint() -> None:
     assert fp.endswith("|prod")
 
 
+def test_redact_strips_otel_ids() -> None:
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    traceparent = f"00-{trace_id}-{span_id}-01"
+    cases = [
+        (
+            f"trace_id={trace_id} span_id={span_id}",
+            (trace_id, span_id),
+            ("trace_id=[redacted]", "span_id=[redacted]"),
+        ),
+        (
+            f"TRACE_ID={trace_id.upper()} SPAN_ID={span_id.upper()}",
+            (trace_id.upper(), span_id.upper()),
+            ("TRACE_ID=[redacted]", "SPAN_ID=[redacted]"),
+        ),
+        (
+            f"trace_id: {trace_id} span_id: {span_id}",
+            (trace_id, span_id),
+            ("trace_id: [redacted]", "span_id: [redacted]"),
+        ),
+        (
+            f'"trace_id":"{trace_id}","span_id":"{span_id}"',
+            (trace_id, span_id),
+            ('"trace_id":"[redacted]"', '"span_id":"[redacted]"'),
+        ),
+        (
+            f'"trace_id": "{trace_id}", "span_id": "{span_id}"',
+            (trace_id, span_id),
+            ('"trace_id": "[redacted]"', '"span_id": "[redacted]"'),
+        ),
+        (
+            f'trace_id="{trace_id}" span_id="{span_id}"',
+            (trace_id, span_id),
+            ('trace_id="[redacted]"', 'span_id="[redacted]"'),
+        ),
+        (
+            '{"log":"...{\\"trace_id\\":\\"'
+            + trace_id
+            + '\\",\\"span_id\\":\\"'
+            + span_id
+            + '\\"}..."}',
+            (trace_id, span_id),
+            ('\\"trace_id\\":\\"[redacted]\\"', '\\"span_id\\":\\"[redacted]\\"'),
+        ),
+        (
+            f"traceparent: {traceparent}",
+            (traceparent, trace_id, span_id),
+            ("traceparent: [redacted]",),
+        ),
+        (
+            f"traceparent={traceparent}",
+            (traceparent, trace_id, span_id),
+            ("traceparent=[redacted]",),
+        ),
+        (
+            f'"traceparent":"{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('"traceparent":"[redacted]"',),
+        ),
+        (
+            f'"traceparent": "{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('"traceparent": "[redacted]"',),
+        ),
+        (
+            f'traceparent="{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('traceparent="[redacted]"',),
+        ),
+        (
+            '{"log":"...{\\"traceparent\\":\\"'
+            + traceparent
+            + '\\"}..."}',
+            (traceparent, trace_id, span_id),
+            ('\\"traceparent\\":\\"[redacted]\\"',),
+        ),
+    ]
+    for shape, raw_ids, labelled in cases:
+        cleaned = redact(shape)
+        for raw_id in raw_ids:
+            assert raw_id not in cleaned
+        for fragment in labelled:
+            assert fragment in cleaned
+
+
+def test_redact_strips_otel_ids_of_non_standard_length() -> None:
+    trace_id = "c" * 10
+    span_id = "d" * 18
+    cleaned = redact(f"trace_id={trace_id} span_id={span_id}")
+    assert trace_id not in cleaned
+    assert span_id not in cleaned
+    assert "trace_id=[redacted]" in cleaned
+    assert "span_id=[redacted]" in cleaned
+
+
+def test_stack_sig_ignores_otel_ids() -> None:
+    first = "TimeoutError trace_id=" + "a" * 32 + " span_id=" + "b" * 16 + " boom"
+    second = "TimeoutError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+    other = "ValueError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+    assert stack_sig(first) == stack_sig(second)
+    assert stack_sig(first) != stack_sig(other)
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -206,6 +309,31 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert again["payload"]["count"] == 2
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
     assert "line_fingerprint" not in payload
+
+
+def test_scan_dedups_across_different_otel_ids(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    first = "TimeoutError trace_id=" + "a" * 32 + " span_id=" + "b" * 16 + " boom"
+    second = "TimeoutError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {"ts": "2026-08-23T16:00:00Z", "line": first},
+                {"ts": "2026-08-23T16:00:01Z", "line": second},
+            ],
+            None,
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert len(created) == 1
+    assert enriched == created
+    seen = [row for row in store.rows("activity") if row["type"] == "error.seen"]
+    assert len(seen) == 1
+    assert seen[0]["payload"]["count"] == 2
+    assert len({row["payload"]["fingerprint"] for row in seen}) == 1
 
 
 def test_line_fingerprint_is_sha256_of_server_container_line() -> None:
