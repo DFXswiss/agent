@@ -398,9 +398,9 @@ for worker in workers.values():
    nothing to the implementer. For A38 workers, a verified author A38 report
    on this head may treat a matching required check that concluded `skipped`
    or `neutral` as green. Report-covered rollup checks extend to workflow
-   inventory only through a unique Actions run identity (or an exact workflow
-   path), never a non-unique workflow display name. An unmapped rollup leaves
-   the inventory run uncovered. The report does not waive a missing check. Failed,
+   inventory only through a unique Actions run identity, never a workflow path
+   or a non-unique workflow display name. An unmapped rollup leaves the
+   inventory run uncovered. The report does not waive a missing check. Failed,
    `cancelled`, and pending checks still block. Hard
    protocol faults
    (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
@@ -664,6 +664,9 @@ Failure to read or decode the lane output file (`OSError`,
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
+Other parallel PR-review preparation or execution exceptions persist and
+publish only their fixed failure category; raw exception text, worktree paths,
+and account configuration paths do not enter task blockers or agent notes.
 Failure to write the audit row itself is an observation and does not rewrite the
 lane verdict. File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
