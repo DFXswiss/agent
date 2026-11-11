@@ -4362,6 +4362,21 @@ def _run(
                         continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
+                if budget_stop is None:
+                    budget = _sweep_budget_low(client)
+                    if budget is not None:
+                        remaining, limit = budget
+                        print(
+                            "a38-guard: all-open budget stop before held run "
+                            f"drain: remaining={remaining} limit={limit}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        budget_stop = {
+                            "remaining": remaining,
+                            "limit": limit,
+                            "skipped": [],
+                        }
                 if budget_stop is not None:
                     drain = {"skipped": "budget"}
                 else:

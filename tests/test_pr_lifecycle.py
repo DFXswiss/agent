@@ -574,6 +574,92 @@ def test_draft_waits_for_mergeable_then_marks_ready():
     assert delays == [2.0]
 
 
+def test_draft_mergeable_wait_rejects_changed_head():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = None
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    original_get_json = api.get_json
+    pull_reads = 0
+    delays: list[float] = []
+
+    def get_json(path: str):
+        nonlocal pull_reads
+        data = original_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            pull_reads += 1
+            if pull_reads >= 3:
+                data["mergeable"] = True
+                data["head"]["sha"] = BASE2
+        return data
+
+    api.get_json = get_json
+    api._sleep = delays.append
+    with pytest.raises(GuardError, match="changed before lifecycle assessment"):
+        pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert fake.transitions == []
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert not [w for w in fake.writes if w.startswith("comment:")]
+    assert delays == [2.0]
+
+
+def test_draft_mergeable_wait_closed_pull_is_read_only():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = None
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    original_get_json = api.get_json
+    pull_reads = 0
+    delays: list[float] = []
+
+    def get_json(path: str):
+        nonlocal pull_reads
+        data = original_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            pull_reads += 1
+            if pull_reads >= 3:
+                data["state"] = "closed"
+        return data
+
+    api.get_json = get_json
+    api._sleep = delays.append
+    assert pr_lifecycle.reconcile_lifecycle(api, assessment) == {}
+    assert fake.transitions == []
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert not [w for w in fake.writes if w.startswith("comment:")]
+    assert delays == [2.0]
+
+
+def test_final_mergeable_wait_rejects_changed_head(monkeypatch):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = True
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    delays: list[float] = []
+
+    def fresh_assessment(*args, **kwargs):
+        result = assess_pull(*args, **kwargs)
+        fake.pull["mergeable"] = None
+        return result
+
+    def change_head_during_wait(delay: float) -> None:
+        delays.append(delay)
+        fake.pull["head"]["sha"] = BASE2
+        fake.pull["mergeable"] = True
+
+    monkeypatch.setattr("agent_cli.a38_guard.assess_pull", fresh_assessment)
+    api._sleep = change_head_during_wait
+    with pytest.raises(GuardError, match="changed before lifecycle transition"):
+        pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert fake.transitions == []
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert not [w for w in fake.writes if w.startswith("comment:")]
+    assert delays == [2.0]
+
+
 def test_draft_still_unknown_after_mergeable_retries_stays_unchanged():
     baseline_fake = LifecycleAPI()
     baseline_fake.pull["draft"] = True

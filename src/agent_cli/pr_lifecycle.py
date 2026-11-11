@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import posixpath
 import re
-import time
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
@@ -18,6 +17,7 @@ from .workflow_approval import (
     _counts_for_ready_inventory,
     _field,
     _merge_listed_runs,
+    _retry_pause,
     _runs,
     _timestamp,
 )
@@ -37,14 +37,6 @@ _FINISHED_CONCLUSIONS = frozenset({
 
 _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MANUAL_EVENTS = frozenset({"pull_request", "workflow_dispatch", "repository_dispatch"})
-
-
-def _retry_pause(api: Any, seconds: float) -> None:
-    pause = getattr(api, "_sleep", None)
-    if callable(pause):
-        pause(seconds)
-    else:
-        time.sleep(seconds)
 
 
 def _await_mergeable(
@@ -1157,6 +1149,11 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             pull.get("node_id"), str
         ):
             raise GuardError("pull lifecycle state missing")
+        if (
+            _field(pull, "head", "sha") != snap.head_sha
+            or _field(pull, "base", "sha") != snap.base_sha
+        ):
+            raise GuardError("pull changed before lifecycle assessment")
     one_review = one_review_for(
         trusted.config if isinstance(trusted.config, Mapping) else None,
         snap.author_login,
@@ -1289,6 +1286,14 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     final_pull = api.get_json(path)
     if target == "ready" and final_pull.get("mergeable") is None:
         final_pull = _await_mergeable(api, path, final_pull)
+        if (
+            final_pull.get("state") != "open"
+            or _field(final_pull, "head", "sha") != snap.head_sha
+            or _field(final_pull, "base", "sha") != snap.base_sha
+        ):
+            raise GuardError(
+                "pull or configuration changed before lifecycle transition"
+            )
     if (final_snap != snap or final_config.fingerprint != trusted.fingerprint
             or final_config.config_revision != trusted.config_revision
             or final_pull.get("draft") != pull["draft"]):

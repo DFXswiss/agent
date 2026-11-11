@@ -3380,6 +3380,59 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             stderr,
         )
 
+    def test_all_open_budget_stop_after_last_pull_skips_drain(self) -> None:
+        api = FakeAPI().api()
+        api.pool_last = {
+            "x-ratelimit-remaining": "5000",
+            "x-ratelimit-limit": "5000",
+        }
+        calls: list[int] = []
+
+        def fake_reconcile(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            client.pool_last = {
+                "x-ratelimit-remaining": "4000" if number == 1 else "1499",
+                "x-ratelimit-limit": "5000",
+            }
+            return Assessment(
+                ok=number == 1,
+                status="pass" if number == 1 else "fail",
+                repo=repo,
+                pr=number,
+            )
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start"),
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [1, 2])
+        self.assertEqual(payload["held_run_drain"], {"skipped": "budget"})
+        self.assertEqual(payload["budget_stop"], {
+            "remaining": 1499,
+            "limit": 5000,
+            "skipped": [],
+        })
+        self.assertIn(
+            "all-open budget stop before held run drain: "
+            "remaining=1499 limit=5000",
+            stderr,
+        )
+
     def test_all_open_budget_stop_preserves_earlier_failure(self) -> None:
         api = FakeAPI().api()
         api.pool_last = {
