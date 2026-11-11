@@ -45,9 +45,11 @@ and each bounded A38 command; there is no separate A38 timeout setting.
 
 `repository_owners` is a distinct, case-insensitive list of valid 1–39 character
 GitHub organization or user logins (no leading, trailing, or consecutive
-hyphens). Each owner gets its own owner-qualified, paginated GitHub issue search
-per tick. An empty page set, `incomplete_results`, a missing or negative result
-count, changing `total_count` values across pages, a malformed or duplicate
+hyphens). Each owner is first resolved through `users/<owner>` to determine its
+GitHub account type, then gets its own owner-qualified, paginated issue search
+with `org:<owner>` or `user:<owner>` per tick. An empty page set,
+`incomplete_results`, a missing or negative result count, changing
+`total_count` values across pages, a malformed or duplicate
 issue identity, or a common `total_count` that differs from the unique fetched
 issue count fails that owner's discovery loudly instead of silently accepting
 an incomplete result set. An explicit `repositories` entry wins for the same
@@ -268,10 +270,13 @@ for worker in workers.values():
 ## Workflow (script-owned)
 
 1. **Discover** explicit repositories and approved owners for open issues assigned to the
-   configured GitHub login (`gh api --paginate --slurp`). Owner discovery uses
-   `search/issues?q=is:issue+is:open+assignee:<login>+archived:false&per_page=100`
-   once per tick and filters `repository_url` by owner. Initial scan includes
-   current assignments (no silent first-run ignore). Idempotent source key:
+   configured GitHub login (`gh api --paginate --slurp`). For every approved
+   owner, discovery first reads `users/<owner>` to distinguish an organization
+   from a user, then performs that owner's own
+   `search/issues?q=is:issue+is:open+assignee:<login>+archived:false+org:<owner>&per_page=100`
+   query or the corresponding query with `user:<owner>`. There is no global
+   issue result that is fetched once and then filtered by owner. Initial scan
+   includes current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
    terminal. Failed tasks are **not** auto-reopened merely because the issue is
    still assigned, and this coordinator does **not** implement automatic
@@ -634,12 +639,13 @@ evidence human spec input; the script never invents human grants.
 ## Evidence hygiene
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
-first replaces any whitespace-delimited raw token whose interior ESC or C1
-sequence has non-whitespace characters directly on both sides. It preserves the
-separating whitespace; ordinary SGR colour wrappers and sequences at token
-boundaries do not trigger this fail-closed rule. It then applies control-tolerant
-secret matching to raw text, removes terminal escapes and controls, redacts
-again, and finally applies its length bound.
+first replaces any whitespace-delimited raw token containing an ESC or C1
+sequence, including a sequence at either token boundary. It preserves the
+separating whitespace. The only exemption is a token whose sequences are
+exclusively one leading and/or one trailing `ESC [` SGR wrapper containing only
+digits and semicolons before `m`, around otherwise escape-free text. It then
+applies control-tolerant secret matching to raw text, removes terminal escapes
+and controls, redacts again, and finally applies its length bound.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is

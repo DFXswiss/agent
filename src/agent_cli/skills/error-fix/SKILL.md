@@ -41,8 +41,9 @@ Return the current result or blocker to the script. Event detection and any
 subsequent notification that provides useful model work belong to the script.
 
 1. A **script** on this device queries a configured log source, applies the
-   shared fail-closed interior ESC/C1 token rule and control-tolerant secret
-   redaction to the raw line, removes terminal controls, applies the ordinary
+   shared fail-closed ESC/C1 token rule (with only strict leading/trailing SGR
+   wrappers exempt) and control-tolerant secret redaction to the raw line,
+   removes terminal controls, applies the ordinary
    error redaction again, fingerprints, and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.
