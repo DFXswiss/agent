@@ -719,6 +719,143 @@ def _install_guard_workflow(fake: FakeAPI, *, changed: bool = True) -> None:
 
 
 class A38GuardUnitTests(unittest.TestCase):
+    def test_sweep_budget_uses_low_core_pool_after_graphql_response(self) -> None:
+        responses = [
+            (
+                200,
+                {},
+                {
+                    "x-ratelimit-resource": "core",
+                    "x-ratelimit-remaining": "1499",
+                    "x-ratelimit-limit": "5000",
+                },
+            ),
+            (
+                200,
+                {},
+                {
+                    "x-ratelimit-resource": "graphql",
+                    "x-ratelimit-remaining": "4999",
+                    "x-ratelimit-limit": "5000",
+                },
+            ),
+        ]
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: responses.pop(0),
+            sleep_fn=lambda _s: None,
+        )
+
+        api.request("GET", f"/repos/{REPO}/pulls/1")
+        api.request("POST", "/graphql", body={"query": "query { viewer { id } }"})
+
+        self.assertEqual(a38_guard._sweep_budget_low(api), (1499, 5000))
+
+    def test_list_open_pulls_requests_recently_updated_first(self) -> None:
+        urls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return 200, [{"number": 3}, {"number": 2}], {}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        self.assertEqual(a38_guard.list_open_pulls(api, REPO), [3, 2])
+        query = parse_qs(urlparse(urls[0]).query)
+        self.assertEqual(query["state"], ["open"])
+        self.assertEqual(query["sort"], ["updated"])
+        self.assertEqual(query["direction"], ["desc"])
+
+    def test_workflow_approval_race_reassesses_and_second_attempt_succeeds(self) -> None:
+        api = mock.Mock()
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        assessment = Assessment(
+            ok=True,
+            status="pass",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+        )
+        with mock.patch.object(
+            a38_guard, "fetch_pull", return_value=pull
+        ), mock.patch.object(
+            a38_guard, "assess_pull", return_value=assessment
+        ) as assess, mock.patch.object(
+            a38_guard, "publish_assessment", return_value=assessment
+        ), mock.patch.object(
+            a38_guard,
+            "_apply_guard_side_effects",
+            side_effect=[
+                GuardError(
+                    "A38 evidence or trusted configuration changed before workflow approval"
+                ),
+                None,
+            ],
+        ) as side_effects, mock.patch.object(
+            a38_guard, "_invalidate_after_failure"
+        ) as invalidate:
+            result = reconcile_pull(api, REPO, 1)
+
+        self.assertIs(result, assessment)
+        self.assertEqual(assess.call_count, 2)
+        self.assertEqual(side_effects.call_count, 2)
+        invalidate.assert_not_called()
+
+    def test_non_race_guard_error_is_not_retried(self) -> None:
+        api = mock.Mock()
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        assessment = Assessment(
+            ok=True,
+            status="pass",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+        )
+        with mock.patch.object(
+            a38_guard, "fetch_pull", return_value=pull
+        ), mock.patch.object(
+            a38_guard, "assess_pull", return_value=assessment
+        ) as assess, mock.patch.object(
+            a38_guard, "publish_assessment", return_value=assessment
+        ), mock.patch.object(
+            a38_guard,
+            "_apply_guard_side_effects",
+            side_effect=GuardError("workflow approval failed"),
+        ) as side_effects, mock.patch.object(
+            a38_guard, "_invalidate_after_failure"
+        ) as invalidate:
+            with self.assertRaisesRegex(GuardError, "workflow approval failed"):
+                reconcile_pull(api, REPO, 1)
+
+        self.assertEqual(assess.call_count, 1)
+        self.assertEqual(side_effects.call_count, 1)
+        invalidate.assert_called_once_with(api, pull)
+
     def test_looks_like_report_markers(self) -> None:
         self.assertTrue(looks_like_report(f"{LOCAL_CI_BEGIN} x {LOCAL_CI_END}"))
         self.assertTrue(looks_like_report("oops DFX-LOCAL-CI broken"))
@@ -3187,6 +3324,173 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(calls, [1, 2, "drain"])
         self.assertEqual(json.loads(buf.getvalue())["held_run_drain"], drain_result)
         self.assertEqual(code, 0)
+
+    def test_all_open_budget_stop_skips_later_pulls_and_drain(self) -> None:
+        api = FakeAPI().api()
+        api.pool_last = {
+            "x-ratelimit-remaining": "5000",
+            "x-ratelimit-limit": "5000",
+        }
+        calls: list[int] = []
+
+        def fake_reconcile(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            client.pool_last = {
+                "x-ratelimit-remaining": "1499",
+                "x-ratelimit-limit": "5000",
+            }
+            return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2, 3]
+        ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start"),
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1])
+        self.assertEqual(payload["held_run_drain"], {"skipped": "budget"})
+        self.assertEqual(payload["budget_stop"], {
+            "remaining": 1499,
+            "limit": 5000,
+            "skipped": [2, 3],
+        })
+        self.assertIn(
+            "all-open budget stop before 2/3 PR 2: remaining=1499 limit=5000",
+            stderr,
+        )
+
+    def test_all_open_budget_stop_after_last_pull_skips_drain(self) -> None:
+        api = FakeAPI().api()
+        api.pool_last = {
+            "x-ratelimit-remaining": "5000",
+            "x-ratelimit-limit": "5000",
+        }
+        calls: list[int] = []
+
+        def fake_reconcile(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            client.pool_last = {
+                "x-ratelimit-remaining": "4000" if number == 1 else "1499",
+                "x-ratelimit-limit": "5000",
+            }
+            return Assessment(
+                ok=number == 1,
+                status="pass" if number == 1 else "fail",
+                repo=repo,
+                pr=number,
+            )
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start"),
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [1, 2])
+        self.assertEqual(payload["held_run_drain"], {"skipped": "budget"})
+        self.assertEqual(payload["budget_stop"], {
+            "remaining": 1499,
+            "limit": 5000,
+            "skipped": [],
+        })
+        self.assertIn(
+            "all-open budget stop before held run drain: "
+            "remaining=1499 limit=5000",
+            stderr,
+        )
+
+    def test_all_open_budget_stop_preserves_earlier_failure(self) -> None:
+        api = FakeAPI().api()
+        api.pool_last = {
+            "x-ratelimit-remaining": "5000",
+            "x-ratelimit-limit": "5000",
+        }
+
+        def fail_first(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            client.pool_last = {
+                "x-ratelimit-remaining": "1",
+                "x-ratelimit-limit": "5000",
+            }
+            raise GuardError("first pull request failed")
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fail_first
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start"),
+        ):
+            code, stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual([item["pr"] for item in payload["results"]], [1])
+        self.assertEqual(payload["budget_stop"]["skipped"], [2])
+
+    def test_all_open_missing_pool_headers_never_stops_for_budget(self) -> None:
+        api = FakeAPI().api()
+        api.pool_last = {}
+        calls: list[int] = []
+
+        def fake_reconcile(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            return_value={"enabled": False, "deleted": [], "planned": []},
+        ):
+            code, stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1, 2])
+        self.assertNotIn("budget_stop", payload)
 
     def test_all_open_drain_error_is_reported_without_changing_exit_code(self) -> None:
         fake = FakeAPI()

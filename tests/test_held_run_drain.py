@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
-from agent_cli import a38_guard, held_run_drain
+from agent_cli import a38_guard, held_run_drain, workflow_approval
 from agent_cli.a38_guard import GuardError, RateLimitError
 from agent_cli.held_run_drain import (
     MAX_DELETIONS,
@@ -18,6 +18,7 @@ from agent_cli.held_run_drain import (
     ROTATION_PERIOD_S,
     drain_held_runs,
 )
+from agent_cli.workflow_approval import INVENTORY_ATTEMPTS
 from test_a38_guard import REPO, FakeAPI, _pr_guard_config
 
 pytestmark = pytest.mark.no_pg
@@ -250,11 +251,17 @@ def test_explicitly_disabled_does_not_list_or_delete() -> None:
     assert fake.deletes == []
 
 
-def test_empty_first_listing_page_with_positive_total_fails_closed() -> None:
+def test_empty_first_listing_page_with_positive_total_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake = FakeDrain(listing_total_override=1)
+    api = fake.api()
+    delays: list[float] = []
+    monkeypatch.setattr(workflow_approval.time, "sleep", delays.append)
     with pytest.raises(GuardError, match="incomplete"):
-        drain_held_runs(fake.api(), REPO)
-    assert len(fake.listing_calls) == 1
+        drain_held_runs(api, REPO)
+    assert len(fake.listing_calls) == INVENTORY_ATTEMPTS
+    assert delays == [1.0, 2.0]
     assert fake.deletes == []
 
 

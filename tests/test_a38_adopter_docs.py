@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.no_pg
 
@@ -37,3 +38,14 @@ def test_adopter_guide_is_the_checklist_not_a_second_engine() -> None:
     assert "a38.md#adopting-a38-in-a-repository" in guard_md
     assert "A38-POLICY-APPROVAL:v1" not in guard_md
     assert "if the default branch is `main`, list `main` in `a38.enforce`" in lowered
+
+
+def test_example_guard_skips_own_comments_before_job_concurrency() -> None:
+    path = Path(__file__).resolve().parents[1] / "examples" / "a38-guard.yml"
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert "concurrency" not in workflow
+    guard = workflow["jobs"]["guard"]
+    assert guard["concurrency"]["cancel-in-progress"] is False
+    condition = guard["if"]
+    assert "github.event.comment.user.type == 'Bot'" in condition
+    assert "<!-- PR-GUARD:" in condition

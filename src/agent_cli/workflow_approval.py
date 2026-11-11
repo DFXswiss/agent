@@ -4,12 +4,15 @@ Approval needs the accepted local report or an existing waiver and the review ru
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
 MAX_RUNS = 1000
 PAGE_SIZE = 100
+INVENTORY_ATTEMPTS = 3
+INVENTORY_RETRY_DELAY_S = 1.0
 # Approving an older held run can cancel one of these through cancel-in-progress.
 _IN_FLIGHT_STATUSES = frozenset({
     "queued", "in_progress", "waiting", "requested", "pending",
@@ -26,6 +29,14 @@ _BRANCH_LIST_STATUSES = (
     "requested",
     "pending",
 )
+
+
+def _retry_pause(api: Any, seconds: float) -> None:
+    pause = getattr(api, "_sleep", None)
+    if callable(pause):
+        pause(seconds)
+    else:
+        time.sleep(seconds)
 
 
 def _field(value: Any, *keys: str) -> Any:
@@ -99,9 +110,7 @@ def _list_runs(
                 raise fail("workflow run inventory invalid", total_count, len(items))
             if not batch:
                 if page == 1 and total_count > 0:
-                    raise fail(
-                        "workflow run inventory incomplete", total_count, len(items)
-                    )
+                    return items, "incomplete", total_count
                 return items, None, total_count
             batch_ids = [r.get("id") for r in batch]
             if any(type(ident) is not int or ident <= 0 for ident in batch_ids):
@@ -135,22 +144,31 @@ def _list_runs(
             "workflow run pagination bound exceeded", total_count, len(items)
         )
 
+    # A changed count, a duplicate id, and a nonzero count with an empty first
+    # page are detectable signs that the paged inventory shifted. A departing
+    # row replaced by an entering row is not detectable here. The in-flight
+    # listings that guard against cancellation enforce their one-page property
+    # with single_page; an undetectable shift in the remaining paged listings
+    # can only defer an action_required approval.
     listed, shift_cause, observed_total = once()
-    if shift_cause is not None:
-        # A changed count and a duplicate id are the detectable signs that the
-        # paged inventory shifted. A departing row replaced by an entering row
-        # is not detectable here. The in-flight listings that guard against
-        # cancellation enforce their one-page property with single_page; an
-        # undetectable shift in the remaining paged listings can only defer an
-        # action_required approval.
+    for attempt in range(1, INVENTORY_ATTEMPTS):
+        if shift_cause is None:
+            break
+        _retry_pause(api, INVENTORY_RETRY_DELAY_S * attempt)
         listed, shift_cause, observed_total = once()
     if shift_cause is not None:
-        if allow_truncated:
+        if allow_truncated and shift_cause in {"count", "duplicate"}:
             # A persistent shift may return the last attempt's prefix.
             return listed
         if shift_cause == "count":
             raise fail(
                 "workflow run inventory changed or exceeds bound",
+                observed_total,
+                len(listed),
+            )
+        if shift_cause == "incomplete":
+            raise fail(
+                "workflow run inventory incomplete",
                 observed_total,
                 len(listed),
             )

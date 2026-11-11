@@ -28,10 +28,6 @@ on:
     workflows: ["REPLACE_WITH_CI_WORKFLOW_NAME"]
     types: [completed]
 
-concurrency:
-  group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && format('a38-pr-guard-sweep-{0}', github.repository) || format('a38-pr-guard-event-{0}-{1}', github.repository, github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.event.issue.number || github.event.inputs.pr || github.run_id) }}
-  cancel-in-progress: false
-
 permissions:
   contents: write
   issues: write
@@ -42,6 +38,12 @@ permissions:
 
 jobs:
   guard:
+    # The guard's own comments all carry a <!-- PR-GUARD: marker and must not start a run.
+    # A skipped job never enters job-level concurrency; human User comments are never skipped.
+    if: ${{ !(github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '<!-- PR-GUARD:')) }}
+    concurrency:
+      group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && format('a38-pr-guard-sweep-{0}', github.repository) || format('a38-pr-guard-event-{0}-{1}', github.repository, github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.event.issue.number || github.event.inputs.pr || github.run_id) }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && 45 || 10 }}
     steps:

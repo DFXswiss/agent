@@ -5,6 +5,7 @@ from urllib.parse import urlparse, parse_qs
 
 import pytest
 
+from agent_cli import a38_guard
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from test_a38_guard import FakeAPI, HEAD, BASE, BASE2, DEFAULT_TIP, REPO, _report_comment, _pr_guard_config
@@ -197,19 +198,134 @@ def test_permission_denial_fails_and_is_not_retried():
 @pytest.mark.parametrize("what", ["head", "base", "config", "report"])
 def test_change_before_write_rejects_stale_authorization(what):
     fake = ApprovalAPI()
+    mutation_count = 0
+
     def mutate(f):
+        nonlocal mutation_count
+        mutation_count += 1
         if what == "head":
             f.pull["head"]["sha"] = BASE2
         elif what == "base":
             f.pull["base"]["sha"] = BASE2
         elif what == "config":
-            f.ref_commits["develop"] = BASE2
+            revision = f"{int(BASE2, 16) + mutation_count - 1:040x}"
+            f.set_pr_guard_config(f.config, revision=revision)
+            f.ref_commits["develop"] = revision
         else:
-            f.comments[0]["body"] += "\nChanged author evidence"
+            f.comments[0]["body"] += f"\nChanged author evidence {mutation_count}"
+        f.before_run_read = mutate
+
     fake.before_run_read = mutate
     with pytest.raises(GuardError):
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.posts
+
+
+def test_one_shot_change_before_write_is_reassessed():
+    fake = ApprovalAPI()
+    fake.before_run_read = lambda f: f.ref_commits.__setitem__("develop", BASE2)
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.config_revision == BASE2
+    assert result.workflow_approvals == []
+    assert not fake.posts
+
+
+def test_change_after_first_workflow_approval_is_not_retried(monkeypatch):
+    fake = ApprovalAPI()
+    other_path = ".github/workflows/other.yml"
+    fake.runs.append(
+        fake.run(
+            id=102,
+            path=other_path,
+            workflow_id=11,
+            created_at="2026-09-05T11:01:00Z",
+        )
+    )
+    assessment_runs = 0
+    original_assess_pull = a38_guard.assess_pull
+
+    def count_assessment_runs(*args, **kwargs):
+        nonlocal assessment_runs
+        if kwargs.get("pull") is not None:
+            assessment_runs += 1
+        return original_assess_pull(*args, **kwargs)
+
+    monkeypatch.setattr(a38_guard, "assess_pull", count_assessment_runs)
+
+    def arm_evidence_change(f):
+        f.before_run_read = lambda current: current.comments[0].__setitem__(
+            "body", current.comments[0]["body"] + "\nChanged author evidence"
+        )
+
+    fake.before_run_read = arm_evidence_change
+
+    with pytest.raises(GuardError, match="changed before workflow approval"):
+        reconcile_pull(fake.api(), REPO, 1)
+
+    auth_comments = [
+        comment for comment in fake.comments
+        if str(comment.get("body", "")).startswith("<!-- PR-GUARD:CI-AUTH:v1 -->\n")
+    ]
+    assert fake.posts == [101]
+    assert len(auth_comments) == 1
+    assert fake.runs[1]["conclusion"] == "action_required"
+    assert assessment_runs == 1
+
+
+def test_already_released_note_does_not_block_later_race_retry(monkeypatch):
+    fake = ApprovalAPI()
+    other_path = ".github/workflows/other.yml"
+    fake.runs.append(
+        fake.run(
+            id=102,
+            path=other_path,
+            workflow_id=11,
+            created_at="2026-09-05T11:01:00Z",
+        )
+    )
+    released: list[int] = []
+    original_request = fake.request_fn
+
+    def request_fn(method, url, body=None):
+        path = urlparse(url).path
+        if method == "POST" and path.endswith("/actions/runs/101/approve"):
+            released.append(101)
+            fake.posts.append(101)
+            fake.runs[0].update(status="queued", conclusion=None)
+            return 403, {}, {}
+        return original_request(method, url, body)
+
+    fake.request_fn = request_fn
+    assessment_runs = 0
+    original_assess_pull = a38_guard.assess_pull
+
+    def count_assessment_runs(*args, **kwargs):
+        nonlocal assessment_runs
+        if kwargs.get("pull") is not None:
+            assessment_runs += 1
+        return original_assess_pull(*args, **kwargs)
+
+    monkeypatch.setattr(a38_guard, "assess_pull", count_assessment_runs)
+
+    def arm_evidence_change(current):
+        current.before_run_read = lambda changed: changed.comments[0].__setitem__(
+            "body", changed.comments[0]["body"] + "\nChanged author evidence"
+        )
+
+    fake.before_run_read = arm_evidence_change
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.ok
+    assert released == [101]
+    assert fake.posts == [101, 102]
+    assert assessment_runs == 2
+    assert result.workflow_approvals == [
+        {"run_id": 102, "workflow": other_path, "head": HEAD, "status": "approved"}
+    ]
+    assert not any(status["state"] == "error" for status in fake.statuses)
 
 
 @pytest.mark.parametrize("what", ["ambiguous", "retargeted", "reopened", "older"])

@@ -17,6 +17,7 @@ from .workflow_approval import (
     _counts_for_ready_inventory,
     _field,
     _merge_listed_runs,
+    _retry_pause,
     _runs,
     _timestamp,
 )
@@ -26,6 +27,8 @@ STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
 CANCEL_MARKER = "<!-- PR-GUARD:CI-CANCEL:v1 -->"
 MANUAL_MARKER = "<!-- PR-GUARD:CI-MANUAL:v1 -->"
 RESULT_MARKER = "<!-- PR-GUARD:CI-RESULT:v1 -->"
+MERGEABLE_ATTEMPTS = 3
+MERGEABLE_RETRY_DELAY_S = 2.0
 
 _FINISHED_CONCLUSIONS = frozenset({
     "success", "failure", "cancelled", "skipped", "timed_out",
@@ -34,6 +37,17 @@ _FINISHED_CONCLUSIONS = frozenset({
 
 _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MANUAL_EVENTS = frozenset({"pull_request", "workflow_dispatch", "repository_dispatch"})
+
+
+def _await_mergeable(
+    api: Any, path: str, pull: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    for attempt in range(MERGEABLE_ATTEMPTS):
+        if pull.get("state") != "open" or pull.get("mergeable") is not None:
+            break
+        _retry_pause(api, MERGEABLE_RETRY_DELAY_S * (attempt + 1))
+        pull = api.get_json(path)
+    return pull
 
 
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
@@ -1127,6 +1141,19 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         return {}
     if type(pull.get("draft")) is not bool or not isinstance(pull.get("node_id"), str):
         raise GuardError("pull lifecycle state missing")
+    if pull["draft"] and config["auto_ready"] and pull.get("mergeable") is None:
+        pull = _await_mergeable(api, path, pull)
+        if pull.get("state") != "open":
+            return {}
+        if type(pull.get("draft")) is not bool or not isinstance(
+            pull.get("node_id"), str
+        ):
+            raise GuardError("pull lifecycle state missing")
+        if (
+            _field(pull, "head", "sha") != snap.head_sha
+            or _field(pull, "base", "sha") != snap.base_sha
+        ):
+            raise GuardError("pull changed before lifecycle assessment")
     one_review = one_review_for(
         trusted.config if isinstance(trusted.config, Mapping) else None,
         snap.author_login,
@@ -1254,9 +1281,21 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if target is None or dry_run:
         return result
     # Re-read state/config and CI immediately before changing readiness.
+    # The mergeable wait comes first, so the snapshot and configuration
+    # below are read after it.
+    final_pull = api.get_json(path)
+    if target == "ready" and final_pull.get("mergeable") is None:
+        final_pull = _await_mergeable(api, path, final_pull)
+        if (
+            final_pull.get("state") != "open"
+            or _field(final_pull, "head", "sha") != snap.head_sha
+            or _field(final_pull, "base", "sha") != snap.base_sha
+        ):
+            raise GuardError(
+                "pull or configuration changed before lifecycle transition"
+            )
     final_snap = fetch_pull(api, assessment.repo, assessment.pr)
     final_config = resolve_trusted_guard_config(api, final_snap)
-    final_pull = api.get_json(path)
     if (final_snap != snap or final_config.fingerprint != trusted.fingerprint
             or final_config.config_revision != trusted.config_revision
             or final_pull.get("draft") != pull["draft"]):
