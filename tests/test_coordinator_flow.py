@@ -224,6 +224,7 @@ def test_lane_run_write_failure_is_a_coordinator_observation(
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "implement"
+    real_record_lane_run = coordinator_lanes.record_lane_run
     monkeypatch.setattr(
         coordinator_lanes,
         "record_lane_run",
@@ -233,6 +234,12 @@ def test_lane_run_write_failure_is_a_coordinator_observation(
     lines = tick(store, worker, runner=fake, lane_runner=lane)
     assert any("lane.run write failed: audit down" in line for line in lines)
     assert "implementer" in fake.launched
+    task = store.rows("task")[0]
+    assert "lane_observations" not in task["payload"]["coordinator"]
+
+    monkeypatch.setattr(coordinator_lanes, "record_lane_run", real_record_lane_run)
+    later = tick(store, worker, runner=fake, lane_runner=lane)
+    assert not any("lane.run write failed: audit down" in line for line in later)
 
 
 def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -685,6 +692,119 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     assert "`[redacted]:40` existing [redacted] helper" in fake.pr["body"]
     assert "/Users/operator" not in fake.pr["body"]
     assert "/home/operator" not in fake.pr["body"]
+
+
+def test_real_implementer_launch_reuses_checkpoint_and_invalidates_head_same_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launch transaction replaces task contents; same-tick work uses that copy."""
+    from agent_cli import coordinator_lanes, coordinator_runtime
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "66666666-6666-6666-6666-666666666667"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    old_head = "a" * 40
+    new_head = "b" * 40
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "repo": "example/project",
+        "ref": "42",
+        "title": "Fix",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "worktree": str(worktree),
+                "pr_number": 42,
+                "head_sha": old_head,
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "title": "Fix",
+                },
+                "evidence": {
+                    "tests_pass": True,
+                    "tests_head": old_head,
+                    "gates": {"quality": "approved"},
+                    "gates_head": old_head,
+                    "ci_green": True,
+                    "ci_head": old_head,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        "round-same-tick",
+        {
+            "id": "round-same-tick",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    full = (
+        "STATUS: complete\nRESULT: done\n"
+        "SUMMARY_EN: Mask password=values.\n"
+        "SUMMARY_DE: Maskiere token=werte.\n"
+        "REUSED: `src/pay.py:10` existing password=value helper\n"
+        "ADDED: `src/mask.py:20` token=value route\n"
+    )
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "_implementer_instruction",
+        lambda *_a, **_k: "Implement.",
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "review_rules_bound", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "stage_sign_commit_if_changes",
+        lambda *_a, **_k: new_head,
+    )
+    monkeypatch.setattr(coordinator_runtime, "ensure_draft", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_draft_body", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "set_checklist", lambda *_a, **_k: None
+    )
+
+    lines = phase_implement(
+        store,
+        worker,
+        task,
+        lambda _argv: Completed(0, "", ""),
+        lambda _argv, _stdin: Completed(0, full, ""),
+    )
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    assert lines == ["implementer done round=1"]
+    assert saved["change_summary_en"] == "Mask [redacted]."
+    assert saved["change_summary_de"] == "Maskiere [redacted]."
+    assert saved["payload"]["coordinator"]["head_sha"] == new_head
+    assert saved["payload"]["coordinator"]["evidence"] == {}
+    assert saved["payload"]["coordinator"]["phase"] == "inner_review"
+    assert "lane_outcome" not in saved["payload"]["coordinator"]
 
 
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

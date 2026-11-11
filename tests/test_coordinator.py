@@ -10897,6 +10897,134 @@ def test_implementer_ask_replay_rollback_keeps_live_task_and_round_unmodified(
     assert store.row("task_round", task_round["id"]) == before_round
 
 
+def test_implementer_done_replay_rollback_keeps_checkpoint_round_and_checklist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f3"
+    agent_id = "aa000001-0000-4000-8000-0000000000f4"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "lane_outcome": {
+                    "role": "implementer",
+                    "vendor": "grok",
+                    "round": 1,
+                    "agent_id": agent_id,
+                    "status": "complete",
+                    "result": "done",
+                    "returncode": 0,
+                    "stdout": "STATUS: complete\nRESULT: done\n",
+                    "summary_en": "Apply the fix.",
+                    "summary_de": "Wende die Korrektur an.",
+                    "applied": False,
+                },
+            }
+        },
+    }
+    task_round = {
+        "id": "round-done-1",
+        "task_id": tid,
+        "round": 1,
+        "implementer_verdict": None,
+        "reviewer_verdict": None,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+    }
+    store.write("task", "insert", tid, task)
+    store.write("task_round", "insert", task_round["id"], task_round)
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "session_id": "worker-session",
+            "task_id": tid,
+            "round": 1,
+            "role": "implementer",
+            "vendor": "grok",
+            "provider": "grok",
+            "model": "grok-model",
+            "prompt": "Implement.",
+            "status": "done",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:01:00Z",
+            "note": "STATUS: complete\nRESULT: done\n",
+        },
+    )
+    for key, status in (
+        ("session_registered", "ja"),
+        ("spec_written", "ja"),
+        ("implementer_done", "pending"),
+    ):
+        item_id = f"implementer-done-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            item_id,
+            {
+                "id": item_id,
+                "task_id": tid,
+                "key": key,
+                "status": status,
+            },
+        )
+    live_task = store.row("task", tid)
+    live_round = store.row("task_round", task_round["id"])
+    assert live_task is not None
+    assert live_round is not None
+    before_task = copy.deepcopy(live_task)
+    before_round = copy.deepcopy(live_round)
+    monkeypatch.setattr(
+        coordinator_runtime, "review_rules_bound", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "save_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("save failed")),
+    )
+
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_runtime._apply_implementer_outcome(
+            store,
+            worker,
+            live_task,
+            lambda _argv: Completed(0, "", ""),
+            round_num=1,
+            tr=live_round,
+            status="complete",
+            model_result="done",
+            stdout="STATUS: complete\nRESULT: done\n",
+            replay=live_task["payload"]["coordinator"]["lane_outcome"],
+            sha=None,
+            draft_lines=[],
+        )
+
+    assert live_task == before_task
+    assert live_round == before_round
+    assert store.row("task", tid) == before_task
+    assert store.row("task_round", task_round["id"]) == before_round
+    checklist = [
+        item
+        for item in store.rows("checklist_item")
+        if item.get("task_id") == tid and item.get("key") == "implementer_done"
+    ]
+    assert len(checklist) == 1
+    assert checklist[0]["status"] == "pending"
+
+
 @pytest.mark.parametrize(
     ("status", "result"),
     [("complete", "approved"), ("complete", "rejected"), ("partial", "")],
