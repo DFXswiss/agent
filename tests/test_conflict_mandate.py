@@ -18,6 +18,7 @@ from agent_cli.conflict_mandate import (
 )
 from agent_cli.conflict_mandate_config import load_conflict_config
 from agent_cli.conflict_mandate_github import ConflictTransientError, read_remote_head
+from agent_cli.conflict_mandate_git import push_with_lease
 from agent_cli.conflict_mandate_state import (
     Request,
     comment_body,
@@ -27,7 +28,7 @@ from agent_cli.conflict_mandate_state import (
     save_state,
     unfinished_requests,
 )
-from agent_cli.coordinator_common import prompt_prohibitions
+from agent_cli.coordinator_common import CoordinatorError, prompt_prohibitions
 from agent_cli.github_accounts import GitHubHttpsRemoteError, _network_remote_targets
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
@@ -852,6 +853,12 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
         for capability in fake.runner_capabilities
     )
     assert any("--force-with-lease=refs/heads/feature:" + "a" * 40 in " ".join(call) for call in fake.calls)
+    assert any(
+        call[:2] == ["git", "push"]
+        and call[-1] == "a" * 40 + ":refs/heads/feature"
+        for call in fake.calls
+    )
+    assert not any("HEAD:" in argument for call in fake.calls for argument in call)
     assert len(fake.pr_comments) == 1
     assert len(fake.lanes) == 1
     assert "--no-subagents" in fake.lanes[0]
@@ -862,6 +869,56 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
     assert fake.check_calls[0]["cwd"] == str(fake.clone_path)
     assert fake.check_calls[0]["env"]["AGENT_CONFLICTS_HEAD"]
     assert fake.check_calls[0]["clear_ambient_github"] is True
+
+
+def test_push_uses_verified_sha_when_head_moves_after_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    moved_sha = "d" * 40
+    verified_sha = ""
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    original_call = fake.__call__
+
+    def moving_head(argv: list[str]) -> Completed:
+        nonlocal verified_sha
+        if "git" in argv and "push" in argv:
+            verified_sha = fake.rev_parse_head
+            fake.rev_parse_head = moved_sha
+        completed = original_call(argv)
+        return completed
+
+    lines = tick(store, worker_cfg, runner=moving_head, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert fake.rev_parse_head == moved_sha
+    push_calls = [call for call in fake.calls if call[:2] == ["git", "push"]]
+    assert len(push_calls) == 1
+    assert push_calls[0][-1] == verified_sha + ":refs/heads/feature"
+    assert verified_sha != moved_sha
+    assert not any(
+        moved_sha in argument or argument.startswith("HEAD:")
+        for argument in push_calls[0]
+    )
+
+
+@pytest.mark.parametrize("sha", ["HEAD", "c" * 39, "g" * 40])
+def test_push_with_lease_rejects_non_40_hex_source(sha: str) -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(argv)
+        return Completed(0, "", "")
+
+    with pytest.raises(CoordinatorError, match="40 hexadecimal"):
+        push_with_lease(
+            runner,
+            "/work",
+            ref="feature",
+            old_sha="a" * 40,
+            verified_sha=sha,
+        )
+    assert calls == []
 
 
 def test_network_git_argv_uses_account_runner_allowlist_and_sets_hooks_after_clone(
