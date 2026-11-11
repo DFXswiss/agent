@@ -79,18 +79,28 @@ no lane and performs no discovery, clone, GitHub read or write, or check run.
 
 Checkout and rebase honour the pull request's `.gitattributes`, so Git would run
 `filter.*` and `merge.*.driver` programs; the query below also refuses
-`diff.*` drivers because the worker runs Git commands that honour them. The
-preflight therefore reads the system and global Git configuration with the
-account Git runner (`git config --system --get-regexp` and `git config --global
---get-regexp` with the pattern
-`^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|diff\..*\.(textconv|command))$`).
+`diff.*` drivers because the worker runs Git commands that honour them; the key
+`diff.external` and the environment variable `GIT_EXTERNAL_DIFF` are refused as
+well. The preflight therefore reads the system and global Git configuration
+with the account Git runner (`git config --system --get-regexp` and `git config
+--global --get-regexp` with the pattern
+`^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|diff\..*\.(textconv|command)|diff\.external)$`).
 Any hit is `preflight blocked: the worker Git configuration defines filter,
 merge or diff drivers (<names>); the conflicts worker refuses to run
-with them`. Directly after the clone the same query runs with `--local`; a hit
+with them`. The preflight also refuses to run when the environment variable
+`GIT_EXTERNAL_DIFF` is set in the worker process, with `preflight blocked:
+GIT_EXTERNAL_DIFF is set; the conflicts worker refuses to run with an external
+diff program`. Directly after the clone, before any checkout or rebase, the
+driver query runs inside the worktree with `git -C <worktree> -c
+core.hooksPath=/dev/null -c core.fsmonitor=false config --get-regexp <pattern>`
+and no scope option. That effective query merges the system and global
+configuration, including global `includeIf "gitdir:..."` sections selected for
+this worktree's Git directory, with the cloned repository configuration. A hit
 there is the blocker `repository configuration defines Git drivers`, and the
-worktree and separate Git directory are removed directly. The operator
-must therefore keep those drivers out of the worker account's system, global,
-and repository configuration.
+worktree and separate Git directory are removed directly. The operator must
+therefore keep those drivers out of the worker account's system, global with
+its conditional includes, and repository configuration. Every `git diff`
+invocation of this feature passes `--no-ext-diff` and `--no-textconv`.
 
 Configure at most one conflicts worker per repository on a device and across
 devices; mandating two different worker accounts on the same pull request at
@@ -216,9 +226,10 @@ exists on GitHub, without Git, a lane, or a comment.
    `rebase failed` plus the masked, bounded tail of Git's output. That is a
    blocker, not a transient failure.
 7. For only `UU` and `AA` regular text conflicts, it writes a lane spec outside
-   the worktree, starts the configured implementer lane, and verifies the
-   change set, conflict markers, and `git diff --check`. A conflict marker is a
-   line that starts with seven or more identical `<`, `=`, `>`, or `|`
+   the worktree, starts the configured implementer lane, and, when the lane
+   status is `complete`, verifies the change set, conflict markers, and
+   `git diff --check`. A conflict marker is a line that starts with seven or
+   more identical `<`, `=`, `>`, or `|`
    characters followed by whitespace or the end of the line, so bare, labelled,
    and enlarged markers are detected. The allowed change set
    is measured against the index: the union of `git diff --name-only -z`,
@@ -267,9 +278,12 @@ exists on GitHub, without Git, a lane, or a comment.
    first result for another verification failure is retried once with the exact
    failure in the spec. Other unmerged states, a second failure, or too many
    stops abort the rebase and post one blocker. A lane answer of `RESULT:
-   blocked` is not itself a transition: the deterministic verification (index
-   fingerprint, `.git` file, change-set measurement, and conflict markers) runs
-   after every lane run. If verification passes, the request continues even
+   blocked` is not itself a transition. The deterministic verification runs in
+   this order after a lane attempt: the index fingerprint and the `.git` file
+   are always checked; the change-set measurement, conflict-marker detection,
+   and `git diff --check` run only when the lane status is `complete`. A
+   `partial` or `timeout` attempt is a failed verification by its status alone.
+   If verification passes, the request continues even
    when the lane said `blocked`. If it fails and the lane said `blocked`, there
    is no retry: the script aborts the rebase and posts the deterministic failure
    as the blocker reason, plus the text of its `SUMMARY_EN:` line bounded to
