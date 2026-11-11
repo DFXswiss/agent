@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -78,3 +79,50 @@ def test_composite_passes_immutable_action_revision_via_environment() -> None:
     guard_step = action["runs"]["steps"][2]
     assert guard_step["env"]["A38_RUNTIME_REVISION"] == "${{ github.action_ref }}"
     assert "github.sha" not in str(guard_step)
+
+
+def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/a38-guard.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["guard"]["steps"]
+
+    app_token_steps = [step for step in steps if step.get("id") == "app-token"]
+    assert len(app_token_steps) == 1
+    app_token = app_token_steps[0]
+    assert re.fullmatch(
+        r"actions/create-github-app-token@[0-9a-fA-F]{40}", app_token["uses"]
+    )
+    assert app_token["with"]["client-id"] == "${{ vars.A38_GUARD_APP_CLIENT_ID }}"
+    assert (
+        app_token["with"]["private-key"]
+        == "${{ secrets.A38_GUARD_APP_PRIVATE_KEY }}"
+    )
+
+    guard_steps = [
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith(
+            "DFXswiss/agent/.github/actions/a38-guard@"
+        )
+    ]
+    assert len(guard_steps) == 1
+    guard_step = guard_steps[0]
+    assert re.fullmatch(
+        r"DFXswiss/agent/\.github/actions/a38-guard@[0-9a-fA-F]{40}",
+        guard_step["uses"],
+    )
+    assert steps.index(app_token) < steps.index(guard_step)
+
+    guard_with = guard_step["with"]
+    assert guard_with["token"] == "${{ steps.app-token.outputs.token }}"
+    assert guard_with["actor_app_slug"] == "${{ steps.app-token.outputs.app-slug }}"
+    assert all(
+        (step.get("with") or {}).get("token") != "${{ secrets.GITHUB_TOKEN }}"
+        for step in steps
+    )
+
+    action = yaml.safe_load(
+        (ROOT / ".github/actions/a38-guard/action.yml").read_text(encoding="utf-8")
+    )
+    assert set(guard_with) <= set(action["inputs"])
