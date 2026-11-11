@@ -604,8 +604,10 @@ until that transaction commits. The checkpoint omits the account configuration
 directory; recovery reloads it from the agent's configured role. Every string,
 model, reported model, usage value, tool field, and collection is bounded and
 redacted through the same serializer as `lane.run`, and the complete JSON file
-has a hard size limit. Each parallel worker writes its checkpoint atomically as
-soon as its lane returns, before publishing the result to shared memory or
+has a hard size limit. After tool entries are removed to meet that limit,
+stdout and stderr are shortened against their JSON-escaped size while the
+already parsed protocol result remains intact. Each parallel worker writes its
+checkpoint atomically as soon as its lane returns, before publishing the result to shared memory or
 waiting for its sibling. Structurally valid incomplete, unavailable, and
 malformed-protocol results are recovered and then classified by the normal
 verdict path; they are
@@ -616,8 +618,9 @@ committed parallel sibling. A saved sibling or failed checkpoint defers that
 classification until a later tick. A reviewer execution failure is marked
 finished only in the same transaction that records the task's `uncertain_lane`;
 if that transaction fails, the agent remains a fresh working start. This
-transaction commits before a different sibling may return for a checkpoint
-retry. Before
+terminal transition waits until every successful sibling checkpoint commits;
+if such a checkpoint rolls back, the task remains recoverable so the next tick
+can commit that sibling before classifying the failed lane as uncertain. Before
 starting a reviewer, the coordinator replays a matching saved outcome; it
 removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
@@ -757,6 +760,9 @@ uncertain-lane stop: the agent note alone says `PR review lane execution failed`
 while the task blocker and issue comment publish only the fixed uncertain-outcome
 text. Raw exception text, worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
+For a sequential lane execution exception, the finished agent and the task's
+terminal uncertain-lane state commit in one transaction. A rollback leaves the
+agent working and the task in its prior runnable phase.
 Failure to write an implementer audit row itself is an observation and does not
 rewrite the lane verdict. A reviewer audit failure rolls back its finished agent
 and replicated outcome checkpoint because all three records share one
@@ -933,11 +939,14 @@ that merely occupies the deterministic id is measured again and is not test
 evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. The verified report intent and its pending comment row become
-visible in one transaction. That transaction changes every other still-pending
+visible in one transaction. Under the task-wide report lock, that checkpoint
+reloads the task, rejects a stale head/base/policy snapshot, and applies the
+intent to the fresh row. The same lock covers report invalidation. The
+transaction changes every other still-pending
 coordinator A38 report for the task, including legacy and superseded
-deterministic ids, to `error`. Publication and invalidation hold the same
-per-activity cross-process advisory lock; the executor re-reads both the pending
-activity and the task's current matching intent immediately before a GitHub
+deterministic ids, to `error`. Publication and invalidation additionally hold
+the affected per-activity cross-process advisory lock; the executor re-reads
+both the pending activity and the task's current matching intent immediately before a GitHub
 POST. It never moves a non-pending row to `done`. Rows bound to a coordinator
 task, including
 rows with either the current or legacy deterministic coordinator report id,

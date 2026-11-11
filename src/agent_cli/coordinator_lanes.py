@@ -567,6 +567,24 @@ def _write_reviewer_spool(
         payload["result"]["tools"].pop()
         payload["result"]["tools_truncated"] = True
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    while len(encoded.encode("utf-8")) > _REVIEWER_SPOOL_BYTES_LIMIT:
+        candidates = [
+            key for key in ("stdout", "stderr") if payload["result"][key]
+        ]
+        if not candidates:
+            break
+        key = max(
+            candidates,
+            key=lambda item: len(
+                json.dumps(payload["result"][item], ensure_ascii=False).encode(
+                    "utf-8"
+                )
+            ),
+        )
+        value = payload["result"][key]
+        keep = max(0, (len(value) - 1) // 2)
+        payload["result"][key] = value[:keep] + ("…" if keep else "")
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > _REVIEWER_SPOOL_BYTES_LIMIT:
         raise CoordinatorError("reviewer spool exceeds the serialized size limit")
     temporary = path.with_suffix(".tmp")
@@ -1070,17 +1088,28 @@ def launch_lane(
                 limit=4000,
             )
             agent = store.row("agent", aid)
+            committed_task = copy.deepcopy(task)
+            committed_c = coord(committed_task)
+            committed_c["lane"] = {"agent_id": aid, "state": "uncertain"}
+            committed_c["phase"] = "blocked"
+            committed_c["blocker"] = "lane interrupted; outcome uncertain"
+            committed_c["uncertain_lane"] = True
+            committed_c.pop("resume_phase", None)
+            committed_agent = None
             if agent is not None and agent.get("status") == "working":
-                agent["status"] = "done"
-                agent["finished_at"] = utcnow()
-                agent["note"] = f"interrupted: {safe_exc}"
-                store.write("agent", "update", aid, strip_row(agent))
-            c["lane"] = {"agent_id": aid, "state": "uncertain"}
-            c["phase"] = "blocked"
-            c["blocker"] = "lane interrupted; outcome uncertain"
-            c["uncertain_lane"] = True
-            c.pop("resume_phase", None)
-            save_task(store, task)
+                committed_agent = copy.deepcopy(agent)
+                committed_agent["status"] = "done"
+                committed_agent["finished_at"] = utcnow()
+                committed_agent["note"] = f"interrupted: {safe_exc}"
+            with store.conn.transaction():
+                if committed_agent is not None:
+                    store.write("agent", "update", aid, strip_row(committed_agent))
+                save_task(store, committed_task)
+            task.clear()
+            task.update(committed_task)
+            if agent is not None and committed_agent is not None:
+                agent.clear()
+                agent.update(committed_agent)
             _post_issue_status(
                 store,
                 worker,
@@ -2280,11 +2309,32 @@ def phase_pr_gates(
             "database checkpoint will be retried"
         ]
     if missing_spool:
-        c["phase"] = "blocked"
-        c["blocker"] = "uncertain prior lane outcome; refusing second model start"
-        c["uncertain_lane"] = True
-        c.pop("resume_phase", None)
-        save_task(store, task)
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        committed_c["phase"] = "blocked"
+        committed_c["blocker"] = (
+            "uncertain prior lane outcome; refusing second model start"
+        )
+        committed_c["uncertain_lane"] = True
+        committed_c.pop("resume_phase", None)
+        committed_agents = []
+        for pending_agent in missing_spool:
+            committed_agent = copy.deepcopy(pending_agent)
+            committed_agent["status"] = "done"
+            committed_agent["finished_at"] = utcnow()
+            committed_agent["note"] = PR_REVIEW_EXECUTION_ERROR
+            committed_agents.append(committed_agent)
+        with store.conn.transaction():
+            for committed_agent in committed_agents:
+                store.write(
+                    "agent",
+                    "update",
+                    str(committed_agent["id"]),
+                    strip_row(committed_agent),
+                )
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         _post_issue_status(
             store,
             worker,
@@ -2578,9 +2628,8 @@ def phase_pr_gates(
         )
         raise CoordinatorError(PR_REVIEW_PREPARATION_ERROR) from exc
 
-    # Persist an execution failure and its terminal task state atomically before
-    # any sibling checkpoint can return for a retry. If this transaction fails,
-    # the failed agent remains working and is treated as a fresh uncertain start.
+    # Collect execution failures, but keep the task recoverable until every
+    # successful sibling has a durable audit and outcome checkpoint.
     failed_agents: list[str] = []
     failed_rows: list[dict[str, Any]] = []
     for prep in prepared_list:
@@ -2594,22 +2643,6 @@ def phase_pr_gates(
             committed_agent["note"] = PR_REVIEW_EXECUTION_ERROR
             failed_rows.append(committed_agent)
             failed_agents.append(str(committed_agent["id"]))
-    if failed_rows:
-        committed_task = copy.deepcopy(task)
-        committed_coord = coord(committed_task)
-        committed_coord["phase"] = "blocked"
-        committed_coord["blocker"] = f"{stage} lane outcome uncertain"
-        committed_coord["uncertain_lane"] = True
-        committed_coord.pop("resume_phase", None)
-        with store.conn.transaction():
-            for failed in failed_rows:
-                store.write(
-                    "agent", "update", str(failed["id"]), strip_row(failed)
-                )
-            save_task(store, committed_task)
-        task.clear()
-        task.update(committed_task)
-
     # Persist successful sibling results on the main thread.
     for prep in prepared_list:
         outcome = results.get(prep["agent_id"])
@@ -2642,6 +2675,22 @@ def phase_pr_gates(
             str(agent["id"]),
             str(prep["output_file"]) if prep.get("output_file") else None,
         )
+
+    if failed_rows:
+        committed_task = copy.deepcopy(task)
+        committed_coord = coord(committed_task)
+        committed_coord["phase"] = "blocked"
+        committed_coord["blocker"] = f"{stage} lane outcome uncertain"
+        committed_coord["uncertain_lane"] = True
+        committed_coord.pop("resume_phase", None)
+        with store.conn.transaction():
+            for failed in failed_rows:
+                store.write(
+                    "agent", "update", str(failed["id"]), strip_row(failed)
+                )
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
 
     # Each reviewer checkpoint replaces ``task`` with its committed copy.
     # Refresh the coordinator reference before applying or persisting verdicts.

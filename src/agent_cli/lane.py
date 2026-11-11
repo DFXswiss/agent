@@ -71,12 +71,6 @@ LANE_STRIP_ENV = (
 )
 _CLAUDE_READ_TOOLS = ("Read", "Grep", "Glob")
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
-STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
-
-_STATUS_RE = re.compile(
-    r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -363,17 +357,6 @@ def lane_tmux_name(*, vendor: str, role: str, unique: str = "") -> str:
 
 def tmux_wrap_argv(inner: list[str], *, name: str, cwd: str) -> list[str]:
     return ["tmux", "new-session", "-d", "-s", name, "-c", cwd, "--", *inner]
-
-
-def parse_status(output: str, returncode: int) -> str:
-    matches = list(_STATUS_RE.finditer(output))
-    if matches:
-        return matches[-1].group(1).lower()
-    if returncode == 124:
-        return "timeout"
-    if returncode != 0:
-        return "unavailable"
-    return "partial"
 
 
 def _int_or_zero(value: object) -> int:

@@ -10482,7 +10482,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     def crash_before_task_save(store_arg, candidate):  # noqa: ANN001
         nonlocal save_count
         save_count += 1
-        if save_count == 2:
+        if save_count == 3:
             raise RuntimeError("simulated task save failure")
         real_save_task(store_arg, candidate)
 
@@ -10889,6 +10889,74 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     )
     assert launches["count"] == 2
     assert retried.status == "complete"
+
+
+def test_sequential_lane_failure_rollback_keeps_agent_working(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "sequential-failure-rollback"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-00000000022a"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {"phase": "implement", "worktree": str(worktree)}
+        },
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    real_save_task = coordinator_lanes.save_task
+    saves = 0
+
+    def fail_uncertain_task_save(
+        store_arg: Store, candidate: dict[str, Any]
+    ) -> None:
+        nonlocal saves
+        saves += 1
+        if saves == 2:
+            raise StoreError("uncertain checkpoint failed")
+        real_save_task(store_arg, candidate)
+
+    monkeypatch.setattr(coordinator_lanes, "save_task", fail_uncertain_task_save)
+    with pytest.raises(StoreError, match="uncertain checkpoint failed"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="grok",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=lambda *_args: (_ for _ in ()).throw(
+                RuntimeError("provider connection lost")
+            ),
+        )
+
+    saved_task = store.row("task", tid)
+    assert saved_task is not None
+    assert saved_task["payload"]["coordinator"]["phase"] == "implement"
+    assert saved_task["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert saved_task["payload"]["coordinator"].get("uncertain_lane") is not True
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "working"
 
 
 def test_sequential_inner_reviewer_output_failure_is_retryable(
@@ -12586,7 +12654,7 @@ def test_reviewer_audit_failure_recovers_every_finished_result(
     assert calls == 2
 
 
-def test_reviewer_spool_bounds_and_redacts_all_provider_metadata(tmp_path: Path) -> None:
+def test_reviewer_spool_bounds_serialized_stdout_and_stderr(tmp_path: Path) -> None:
     from agent_cli import coordinator_lanes
     from agent_cli.lane import LaneResult, LaneUsage
 
@@ -12602,8 +12670,8 @@ def test_reviewer_spool_bounds_and_redacts_all_provider_metadata(tmp_path: Path)
         status="partial",
         argv=[],
         returncode=0,
-        stdout="x" * 100_000,
-        stderr="y" * 100_000,
+        stdout=('"\\\n\t' * 25_000),
+        stderr=('\\"\n\t' * 25_000),
         config_dir="/opt/private/profile",
         usage=LaneUsage(
             model="password=reported-secret /opt/private/profile/" + "u" * 100_000,
@@ -12622,7 +12690,7 @@ def test_reviewer_spool_bounds_and_redacts_all_provider_metadata(tmp_path: Path)
             }
             for index in range(500)
         ),
-        protocol_result="",
+        protocol_result="approved",
     )
 
     path = coordinator_lanes._write_reviewer_spool(
@@ -12640,8 +12708,9 @@ def test_reviewer_spool_bounds_and_redacts_all_provider_metadata(tmp_path: Path)
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     saved = payload["result"]
-    assert len(saved["stdout"]) <= 4000
-    assert len(saved["stderr"]) <= 4000
+    assert len(saved["stdout"]) < 4000
+    assert len(saved["stderr"]) < 4000
+    assert saved["protocol_result"] == "approved"
     assert len(saved["model"]) <= 200
     assert len(saved["usage"]["model"]) <= 200
     assert len(saved["tools"]) <= 200
@@ -12882,7 +12951,7 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
         )
 
     assert store.row("agent", quality_id)["status"] == "done"
-    assert store.row("agent", logic_id)["status"] == "working"
+    assert store.row("agent", logic_id)["status"] == "done"
     saved = store.row("task", task["id"])["payload"]["coordinator"]
     assert saved["uncertain_lane"] is True
     assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "quality"
@@ -12988,16 +13057,16 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
             None,
             vendor="codex",
             stage="review-2",
-        )
+    )
     assert store.row("agent", quality_id)["status"] == "done"
-    assert store.row("agent", logic_id)["status"] == "working"
+    assert store.row("agent", logic_id)["status"] == "done"
     assert (
         store.row("task", task["id"])["payload"]["coordinator"]["uncertain_lane"]
         is True
     )
 
 
-def test_parallel_reviewer_failure_commits_uncertain_before_sibling_retry(
+def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
@@ -13018,12 +13087,18 @@ def test_parallel_reviewer_failure_commits_uncertain_before_sibling_retry(
         output.write_text("STATUS: complete\nRESULT: approved\n", encoding="utf-8")
         return Completed(0, "", "")
 
+    real_checkpoint = coordinator_lanes._checkpoint_reviewer_outcome
+    checkpoint_calls = 0
+
+    def fail_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal checkpoint_calls
+        checkpoint_calls += 1
+        if checkpoint_calls == 1:
+            raise StoreError("checkpoint unavailable")
+        return real_checkpoint(*args, **kwargs)
+
     monkeypatch.setattr(
-        coordinator_lanes,
-        "_checkpoint_reviewer_outcome",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            StoreError("checkpoint unavailable")
-        ),
+        coordinator_lanes, "_checkpoint_reviewer_outcome", fail_once
     )
     lines = coordinator_lanes.phase_pr_gates(
         store,
@@ -13041,12 +13116,41 @@ def test_parallel_reviewer_failure_commits_uncertain_before_sibling_retry(
         for row in store.rows("agent")
         if row.get("task_id") == task["id"]
     }
+    assert agents["quality"]["status"] == "working"
+    assert agents["logic"]["status"] == "working"
+    saved = store.row("task", task["id"])["payload"]["coordinator"]
+    assert saved.get("uncertain_lane") is not True
+
+    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+        coordinator_lanes.phase_pr_gates(
+            store,
+            worker,
+            store.row("task", task["id"]),
+            lambda _argv: Completed(0, "", ""),
+            lambda *_args: pytest.fail("reviewer was relaunched"),
+            vendor="codex",
+            stage="review-2",
+        )
+
+    agents = {
+        row["dimension"]: row
+        for row in store.rows("agent")
+        if row.get("task_id") == task["id"]
+    }
+    assert agents["logic"]["status"] == "done"
     assert agents["quality"]["status"] == "done"
     assert agents["quality"]["note"] == coordinator_lanes.PR_REVIEW_EXECUTION_ERROR
-    assert agents["logic"]["status"] == "working"
+    runs = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run"
+        and row.get("payload", {}).get("agent_id") == agents["logic"]["id"]
+    ]
+    assert len(runs) == 1
     saved = store.row("task", task["id"])["payload"]["coordinator"]
     assert saved["phase"] == "blocked"
     assert saved["uncertain_lane"] is True
+    assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "logic"
 
 
 def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
@@ -13265,7 +13369,8 @@ def test_a38_report_intent_retires_only_superseded_coordinator_reports(
             "coordinator": {
                 "source": {"repo": "example/project"},
                 "pr_number": 42,
-                "a38": {},
+                "head_sha": "a" * 40,
+                "a38": {"pending_base_sha": "c" * 40},
             }
         },
     }
@@ -13357,6 +13462,110 @@ def test_a38_report_intent_retires_only_superseded_coordinator_reports(
         "report_intent"
     ]
     assert saved_intent["activity_id"] == current_id
+
+
+def test_a38_stale_report_checkpoint_cannot_overwrite_newer_base_invalidation(
+    tmp_path: Path,
+) -> None:
+    import hashlib
+
+    from agent_cli import coordinator_a38
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    tid = "aa000001-0000-4000-8000-00000000022b"
+    old_activity_id = "aa000001-0000-4000-8000-00000000022c"
+    new_activity_id = "aa000001-0000-4000-8000-00000000022d"
+    head = "a" * 40
+    old_base = "b" * 40
+    new_base = "c" * 40
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "ref": "42",
+        "workflow": "implement",
+        "state": "local-check",
+        "payload": {
+            "coordinator": {
+                "source": {"repo": "example/project"},
+                "pr_number": 42,
+                "head_sha": head,
+                "a38": {"pending_base_sha": old_base},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    stale = store.row("task", tid)
+    stale_body = "stale report"
+    stale_digest = hashlib.sha256(stale_body.encode()).hexdigest()
+    stale["payload"]["coordinator"]["a38"]["report_intent"] = {
+        "head": head,
+        "base_sha": old_base,
+        "policy_revision": old_base,
+        "activity_id": old_activity_id,
+        "body_sha256": stale_digest,
+        "private": True,
+    }
+    stale_payload = coordinator_a38._report_activity_payload(
+        stale,
+        repo="example/project",
+        number=42,
+        body=stale_body,
+        head=head,
+        base_sha=old_base,
+        policy_revision=old_base,
+        body_sha256=stale_digest,
+        private=True,
+    )
+
+    coordinator_a38.invalidate_base_evidence(
+        store, store.row("task", tid), new_base
+    )
+    current = store.row("task", tid)
+    current_body = "current report"
+    current_digest = hashlib.sha256(current_body.encode()).hexdigest()
+    current["payload"]["coordinator"]["a38"]["report_intent"] = {
+        "head": head,
+        "base_sha": new_base,
+        "policy_revision": new_base,
+        "activity_id": new_activity_id,
+        "body_sha256": current_digest,
+        "private": True,
+    }
+    current_payload = coordinator_a38._report_activity_payload(
+        current,
+        repo="example/project",
+        number=42,
+        body=current_body,
+        head=head,
+        base_sha=new_base,
+        policy_revision=new_base,
+        body_sha256=current_digest,
+        private=True,
+    )
+    coordinator_a38._checkpoint_report_intent(
+        store,
+        current,
+        activity_id=new_activity_id,
+        session_id="worker-session",
+        payload=current_payload,
+    )
+
+    with pytest.raises(CoordinatorError, match="head, base, or policy changed"):
+        coordinator_a38._checkpoint_report_intent(
+            store,
+            stale,
+            activity_id=old_activity_id,
+            session_id="worker-session",
+            payload=stale_payload,
+        )
+
+    saved = store.row("task", tid)["payload"]["coordinator"]["a38"]
+    assert saved["pending_base_sha"] == new_base
+    assert saved["report_intent"]["activity_id"] == new_activity_id
+    assert store.row("activity", new_activity_id)["execution_status"] == "pending"
+    assert store.row("activity", old_activity_id) is None
 
 
 def test_unavailable_inner_reviewer_commits_provider_incomplete_checkpoint(
