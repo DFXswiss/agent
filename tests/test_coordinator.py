@@ -10642,78 +10642,259 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
     assert "hunter2" not in recovered_c["findings"]
 
 
-def test_reviewer_checkpoint_rollback_keeps_live_task_and_agent_unmodified(
+def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
-    from agent_cli.lane import LaneResult
     from agent_cli.store import StoreError
 
     store = Store(tmp_path)
+    write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "reviewer-checkpoint-rollback"
+    worktree.mkdir()
     tid = "aa000001-0000-4000-8000-0000000000eb"
-    aid = "aa000001-0000-4000-8000-0000000000ec"
     task = {
         "id": tid,
         "session_id": "worker-session",
         "workflow": "implement",
         "state": "reviewing",
-        "payload": {"coordinator": {"phase": "inner_review"}},
-    }
-    agent = {
-        "id": aid,
-        "session_id": "worker-session",
-        "task_id": tid,
-        "round": 1,
-        "role": "reviewer",
-        "vendor": "grok",
-        "status": "working",
-        "started_at": "2026-01-01T00:00:00Z",
-        "finished_at": None,
-        "note": None,
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "head_sha": "a" * 40,
+            }
+        },
     }
     store.write("task", "insert", tid, task)
-    store.write("agent", "insert", aid, agent)
-    live_task = store.row("task", tid)
-    live_agent = store.row("agent", aid)
-    assert live_task is not None
-    assert live_agent is not None
-    before_task = copy.deepcopy(live_task)
-    before_agent = copy.deepcopy(live_agent)
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    real_save_task = coordinator_lanes.save_task
+    saves = 0
+    before_live_task: dict[str, Any] | None = None
+    before_stored_task: dict[str, Any] | None = None
 
-    def fail_save(*_args: Any, **_kwargs: Any) -> None:
-        raise StoreError("save failed")
+    def fail_checkpoint_save(store_arg: Store, candidate: dict[str, Any]) -> None:
+        nonlocal saves, before_live_task, before_stored_task
+        saves += 1
+        if saves == 2:
+            before_live_task = copy.deepcopy(task)
+            before_stored_task = store.row("task", tid)
+            assert candidate is not task
+            raise StoreError("save failed")
+        real_save_task(store_arg, candidate)
 
     monkeypatch.setattr(
         coordinator_lanes,
         "save_task",
-        fail_save,
+        fail_checkpoint_save,
     )
     with pytest.raises(StoreError, match="save failed"):
-        coordinator_lanes._checkpoint_reviewer_outcome(
+        coordinator_lanes.launch_lane(
             store,
-            live_task,
-            live_agent,
-            LaneResult(
-                role="reviewer",
-                vendor="grok",
-                model="model",
-                status="complete",
-                argv=[],
-                returncode=0,
-                stdout="STATUS: complete\nRESULT: approved\n",
-                stderr="",
-            ),
+            worker,
+            task,
+            role="reviewer",
+            vendor="grok",
             round_num=1,
-            head="a" * 40,
-            dimension="inner",
-            stage="inner-review",
+            spec_body="Review.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=lambda _argv, _stdin: Completed(
+                0, "STATUS: complete\nRESULT: approved\n", ""
+            ),
+        )
+
+    assert before_live_task is not None
+    assert before_stored_task is not None
+    assert task == before_live_task
+    stored_task = store.row("task", tid)
+    assert stored_task is not None
+    assert stored_task == before_stored_task
+    assert task["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert stored_task["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert "lane_outcome" not in task["payload"]["coordinator"]
+    assert "lane_outcome" not in stored_task["payload"]["coordinator"]
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "working"
+
+
+@pytest.mark.parametrize("checkpoint_redaction_failure", [False, True])
+def test_implementer_checkpoint_rollback_keeps_running_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint_redaction_failure: bool,
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "implementer-checkpoint-rollback"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000ec"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "worktree": str(worktree),
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    if checkpoint_redaction_failure:
+        monkeypatch.setattr(
+            coordinator_lanes,
+            "implementer_replay_fields",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                CoordinatorError("checkpoint redaction failed")
+            ),
+        )
+    real_save_task = coordinator_lanes.save_task
+    saves = 0
+    before_live_task: dict[str, Any] | None = None
+    before_stored_task: dict[str, Any] | None = None
+
+    def fail_checkpoint_save(store_arg: Store, candidate: dict[str, Any]) -> None:
+        nonlocal saves, before_live_task, before_stored_task
+        saves += 1
+        if saves == 2:
+            before_live_task = copy.deepcopy(task)
+            before_stored_task = store.row("task", tid)
+            assert candidate is not task
+            raise StoreError("save failed")
+        real_save_task(store_arg, candidate)
+
+    monkeypatch.setattr(coordinator_lanes, "save_task", fail_checkpoint_save)
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="grok",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=lambda _argv, _stdin: Completed(
+                0, "STATUS: complete\nRESULT: done\n", ""
+            ),
+        )
+
+    assert before_live_task is not None
+    assert before_stored_task is not None
+    assert task == before_live_task
+    stored_task = store.row("task", tid)
+    assert stored_task is not None
+    assert stored_task == before_stored_task
+    assert task["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert stored_task["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert "lane_outcome" not in task["payload"]["coordinator"]
+    assert "lane_outcome" not in stored_task["payload"]["coordinator"]
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "working"
+
+
+def test_implementer_ask_replay_rollback_keeps_live_task_and_round_unmodified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f2"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "source": {"repo": "example/project", "number": 7},
+                "lane_outcome": {
+                    "role": "implementer",
+                    "round": 1,
+                    "status": "complete",
+                    "result": "ask",
+                    "stdout": "Need a decision.",
+                    "applied": False,
+                },
+            }
+        },
+    }
+    task_round = {
+        "id": "round-ask-1",
+        "task_id": tid,
+        "round": 1,
+        "implementer_verdict": None,
+        "reviewer_verdict": None,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+    }
+    store.write("task", "insert", tid, task)
+    store.write("task_round", "insert", task_round["id"], task_round)
+    live_task = store.row("task", tid)
+    live_round = store.row("task_round", task_round["id"])
+    assert live_task is not None
+    assert live_round is not None
+    before_task = copy.deepcopy(live_task)
+    before_round = copy.deepcopy(live_round)
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "post_issue_comment",
+        lambda *_args, **_kwargs: "question-activity",
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "save_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("save failed")),
+    )
+
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_runtime._apply_implementer_outcome(
+            store,
+            worker,
+            live_task,
+            lambda _argv: Completed(0, "", ""),
+            round_num=1,
+            tr=live_round,
+            status="complete",
+            model_result="ask",
+            stdout="Need a decision.",
+            replay=live_task["payload"]["coordinator"]["lane_outcome"],
+            sha=None,
+            draft_lines=[],
         )
 
     assert live_task == before_task
-    assert live_agent == before_agent
+    assert live_round == before_round
     assert store.row("task", tid) == before_task
-    assert store.row("agent", aid) == before_agent
+    assert store.row("task_round", task_round["id"]) == before_round
 
 
 @pytest.mark.parametrize(

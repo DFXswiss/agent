@@ -266,6 +266,7 @@ def _checkpoint_reviewer_outcome(
     head: str,
     dimension: str,
     stage: str,
+    lane_marker: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Atomically finish a reviewer agent and retain its replayable result."""
     committed_task = copy.deepcopy(task)
@@ -300,6 +301,8 @@ def _checkpoint_reviewer_outcome(
     outcomes.append(entry)
     saved["outcomes"] = outcomes
     c["lane_outcome"] = saved
+    if lane_marker is not None:
+        c["lane"] = copy.deepcopy(lane_marker)
     committed_agent["status"] = "done"
     committed_agent["finished_at"] = utcnow()
     committed_agent["note"] = entry["stdout"] or entry["stderr"]
@@ -676,21 +679,28 @@ def launch_lane(
         except CoordinatorError:
             # The process ended, but no finished-lane checkpoint is committed.
             # Closing the agent row makes the same script-owned step retryable.
-            agent["status"] = "done"
-            agent["finished_at"] = utcnow()
-            agent["note"] = "implementer checkpoint redaction failed"
-            c["lane"] = {
+            committed_task = copy.deepcopy(task)
+            committed_agent = copy.deepcopy(agent)
+            committed_c = coord(committed_task)
+            committed_agent["status"] = "done"
+            committed_agent["finished_at"] = utcnow()
+            committed_agent["note"] = "implementer checkpoint redaction failed"
+            committed_c["lane"] = {
                 "agent_id": aid,
                 "role": role,
                 "vendor": vendor,
                 "state": "checkpoint-failed",
             }
-            c.pop("lane_outcome", None)
+            committed_c.pop("lane_outcome", None)
             with store.conn.transaction():
-                store.write("agent", "update", aid, strip_row(agent))
-                save_task(store, task)
+                store.write("agent", "update", aid, strip_row(committed_agent))
+                save_task(store, committed_task)
+            task.clear()
+            task.update(committed_task)
+            agent.clear()
+            agent.update(committed_agent)
             raise
-    c["lane"] = {
+    finished_lane = {
         "agent_id": aid,
         "role": role,
         "vendor": vendor,
@@ -698,16 +708,37 @@ def launch_lane(
         "status": status,
         "result": model_result,
     }
-    if role == 'implementer':
-        c['lane_outcome'] = {
-            'role': role, 'vendor': vendor, 'round': round_num, 'agent_id': aid,
-            'status': status, 'result': model_result, 'returncode': result.returncode,
-            'stdout': redact_lane_text(
+    if role == "implementer":
+        committed_task = copy.deepcopy(task)
+        committed_agent = copy.deepcopy(agent)
+        committed_c = coord(committed_task)
+        committed_c["lane"] = finished_lane
+        committed_c["lane_outcome"] = {
+            "role": role,
+            "vendor": vendor,
+            "round": round_num,
+            "agent_id": aid,
+            "status": status,
+            "result": model_result,
+            "returncode": result.returncode,
+            "stdout": redact_lane_text(
                 result.stdout, config_dir=result.config_dir, limit=4000
             ),
             **replay_fields,
-            'applied': False,
+            "applied": False,
         }
+        committed_agent["status"] = "done"
+        committed_agent["finished_at"] = utcnow()
+        committed_agent["note"] = note
+        # A finished agent without its durable outcome would permit a second launch.
+        with store.conn.transaction():
+            store.write("agent", "update", aid, strip_row(committed_agent))
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        agent.clear()
+        agent.update(committed_agent)
+        return agent, result
     elif role == "reviewer":
         _checkpoint_reviewer_outcome(
             store,
@@ -718,15 +749,22 @@ def launch_lane(
             head=str(c.get("head_sha") or ""),
             dimension="inner",
             stage="inner-review",
+            lane_marker=finished_lane,
         )
         return agent, result
-    agent["status"] = "done"
-    agent["finished_at"] = utcnow()
-    agent["note"] = note
-    # A finished agent without its durable outcome would permit a second launch.
+    committed_task = copy.deepcopy(task)
+    committed_agent = copy.deepcopy(agent)
+    coord(committed_task)["lane"] = finished_lane
+    committed_agent["status"] = "done"
+    committed_agent["finished_at"] = utcnow()
+    committed_agent["note"] = note
     with store.conn.transaction():
-        store.write('agent', 'update', aid, strip_row(agent))
-        save_task(store, task)
+        store.write("agent", "update", aid, strip_row(committed_agent))
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    agent.clear()
+    agent.update(committed_agent)
     return agent, result
 
 
