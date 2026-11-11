@@ -1056,7 +1056,7 @@ def _dry_run_request(
             f"would rebase {safe(worker, head_sha)} onto {safe(worker, base_ref)}"
         )
         lines.append(
-            f"would push HEAD to {safe(worker, head_repo)}:{safe(worker, head_ref)} "
+            f"would push the verified rebased commit to {safe(worker, head_repo)}:{safe(worker, head_ref)} "
             f"with --force-with-lease {safe(worker, head_sha)}"
         )
     return lines
@@ -1729,6 +1729,7 @@ def _run_request(
             str(ctx.worktree),
             ref=head_ref,
             old_sha=head_sha,
+            verified_sha=head,
         )
         if pushed.returncode != 0:
             if pushed.returncode == BOUNDED_TIMEOUT_RETURNCODE:

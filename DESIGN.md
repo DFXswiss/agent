@@ -447,6 +447,7 @@ agent watch assigned [--follow]                # allowlisted GitHub assignments 
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
+agent conflicts --session ID [--once|--follow] [--dry-run]
 agent status
 agent dashboard [--port 7845]
 agent cli-bridge [--port 7846]

@@ -260,7 +260,8 @@ serialized by the source lock.
    unreadable response, is transient:
    nothing is pushed and the next tick starts again from the pull-request read.
    A closed pull request, changed refs or repository, or newly protected branch
-   is a blocker without a push. It then pushes only with
+   is a blocker without a push. It then pushes only
+   `<verified-head>:refs/heads/<head-ref>` with
    `--force-with-lease=refs/heads/<head-ref>:<old-head>`. The account runner
    accepts exactly that lease form: the value is split at the last colon, the
    ref part must start with `refs/heads/` and contain no whitespace or colon,

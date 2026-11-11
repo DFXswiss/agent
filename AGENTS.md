@@ -3,7 +3,7 @@
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [DESIGN.md](DESIGN.md), and
 [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md) before
 changing this repository. Skill contracts live next to the client:
-`agent skills path` (spine, review-loop, pr-review, error-fix).
+`agent skills path` (spine, review-loop, pr-review, error-fix, conflicts).
 
 Static scripts own assignment acceptance, its issue confirmation before the
 implementation lane starts, every lane/subagent start, test execution, and all
