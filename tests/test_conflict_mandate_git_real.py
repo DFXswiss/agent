@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.coordinator_common import CoordinatorError
+from agent_cli.conflict_mandate import _restore_outside_paths
 from agent_cli.conflict_mandate_git import (
     base_is_ancestor,
     branch_ref_valid,
@@ -141,6 +142,95 @@ def _start_conflicted_rebase(tmp_path: Path) -> tuple[Path, Path, str]:
     completed = rebase(_runner, str(worktree), base="main")
     assert completed.returncode != 0
     return upstream, worktree, original
+
+
+def _start_named_conflicted_rebase(
+    tmp_path: Path,
+    *,
+    path: str,
+    other: str,
+) -> Path:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    _init_repo(upstream)
+    (upstream / path).write_text("base\n", encoding="utf-8")
+    (upstream / other).write_text("other base\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(["git", "clone", str(upstream), str(worktree)]).returncode == 0
+    _git(worktree, "config", "user.name", "Conflict Test")
+    _git(worktree, "config", "user.email", "conflict@example.com")
+    _git(worktree, "config", "commit.gpgsign", "false")
+    _git(worktree, "config", "core.hooksPath", "/dev/null")
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / path).write_text("feature\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature")
+    (upstream / path).write_text("base change\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base change")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    (worktree / other).write_text("other edit\n", encoding="utf-8")
+    return worktree
+
+
+def _assert_literal_conflict_path(
+    tmp_path: Path,
+    *,
+    path: str,
+    other: str,
+) -> None:
+    worktree = _start_named_conflicted_rebase(
+        tmp_path,
+        path=path,
+        other=other,
+    )
+    numstat: list[str] = []
+
+    def recording_runner(argv: list[str]) -> Completed:
+        completed = _run(argv)
+        if "diff" in argv and "--numstat" in argv:
+            numstat.append(completed.stdout)
+        return completed
+
+    paths = unmerged_paths(recording_runner, str(worktree))
+    assert [(item.path, item.state, item.supported) for item in paths] == [
+        (path, "UU", True)
+    ]
+    assert len(numstat) == 1
+    numstat_entries = [line.split("\t", 2) for line in numstat[0].splitlines()]
+    assert numstat_entries
+    assert len(numstat_entries[0]) == 3
+    assert {entry[-1] for entry in numstat_entries} == {path}
+
+    (worktree / path).write_text("resolved\n", encoding="utf-8")
+    stage_paths(_runner, str(worktree), [path])
+    assert set(_git(worktree, "diff", "--cached", "--name-only").splitlines()) == {
+        path
+    }
+    assert set(_git(worktree, "diff", "--name-only").splitlines()) == {other}
+
+    (worktree / path).write_text("edit after staging\n", encoding="utf-8")
+    _restore_outside_paths(_runner, worktree, {path})
+    assert (worktree / path).read_text(encoding="utf-8") == "resolved\n"
+    assert (worktree / other).read_text(encoding="utf-8") == "other edit\n"
+
+
+def test_literal_exclude_path_is_confined_to_named_file(tmp_path: Path) -> None:
+    _assert_literal_conflict_path(
+        tmp_path,
+        path=":(exclude)foo",
+        other="foo",
+    )
+
+
+def test_literal_glob_path_is_confined_to_named_file(tmp_path: Path) -> None:
+    _assert_literal_conflict_path(
+        tmp_path,
+        path="*.txt",
+        other="a.txt",
+    )
 
 
 def test_rebase_conflict_reports_real_uu_and_incomplete(tmp_path: Path) -> None:

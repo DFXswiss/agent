@@ -223,6 +223,7 @@ exists on GitHub, without Git, a lane, or a comment.
    failed Git-directory comparison: the worktree and Git directory are removed
    directly and the abort is skipped. Local Git commands of this worker pass
    `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false`.
+   Every Git command runs with `--literal-pathspecs`, so a file name is never interpreted as pathspec magic or as a glob.
    Network `clone`, `fetch`, and `push` commands pass no global `-c` override.
    Directly after the clone writes `core.hooksPath=/dev/null`
    into the repository configuration with a local command, so later transfers

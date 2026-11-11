@@ -48,6 +48,18 @@ def test_network_remote_targets_accepts_clone_separate_git_dir_and_rejects_globa
 
 
 @pytest.mark.no_pg
+@pytest.mark.parametrize(('verb', 'operands'), [
+    ('fetch', []),
+    ('push', ['HEAD:refs/heads/feature']),
+])
+def test_literal_pathspecs_does_not_hide_network_subcommand(verb, operands):
+    prefix = ['-C', '/work', '--literal-pathspecs', verb]
+    assert _network_remote_targets([*prefix, 'origin', *operands]) == ['origin']
+    with pytest.raises(GitHubHttpsRemoteError, match='requires an explicit remote'):
+        _network_remote_targets([*prefix, *operands])
+
+
+@pytest.mark.no_pg
 def test_network_remote_targets_accepts_lease_for_branch_name_with_equals():
     sha = 'a' * 40
     argv = [
