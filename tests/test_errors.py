@@ -393,6 +393,33 @@ def test_scan_redacts_error_tokens_split_by_csi_final_byte(
     assert "[redacted]" in excerpt
 
 
+@pytest.mark.parametrize(
+    "boundary_secret",
+    (
+        "\x1b[31A123456789012345678F",
+        "A123456789012345678\x1b[31F",
+    ),
+    ids=("start-boundary", "end-boundary"),
+)
+def test_scan_redacts_20_hex_secret_with_boundary_csi(
+    tmp_path: Path, boundary_secret: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"line": f"ERROR RuntimeError key {boundary_secret}"}], None)
+
+    created, enriched = scan_errors(store, fetch)
+
+    assert enriched == []
+    assert len(created) == 1
+    excerpt = store.row("activity", created[0])["payload"]["excerpt"]
+    assert "123456789012345678" not in excerpt
+    assert "[redacted]" in excerpt
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)

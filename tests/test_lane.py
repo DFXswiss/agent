@@ -1115,10 +1115,26 @@ def test_lane_diagnostic_redacts_any_token_split_by_an_interior_csi() -> None:
     )
 
 
-def test_lane_diagnostic_keeps_ordinary_colour_and_boundary_escapes() -> None:
-    raw = "\x1b[31mERROR\x1b[0m: visible\n\x1b[2KSTART END\x1b[2K"
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "\x1b[31A123456789012345678F",
+        "A123456789012345678\x1b[31F",
+    ),
+    ids=("start-boundary", "end-boundary"),
+)
+def test_lane_diagnostic_redacts_20_hex_token_with_boundary_csi(raw: str) -> None:
+    assert redact_diagnostic(raw) == "[redacted]"
 
-    assert redact_diagnostic(raw) == "ERROR: visible\nSTART END"
+
+def test_lane_diagnostic_keeps_strict_sgr_wrapper_around_whole_word() -> None:
+    raw = "\x1b[31mERROR\x1b[0m visible"
+
+    assert redact_diagnostic(raw) == "ERROR visible"
+
+
+def test_lane_diagnostic_redacts_sgr_wrapper_with_glued_suffix() -> None:
+    assert redact_diagnostic("\x1b[31mERROR\x1b[0m:") == "[redacted]"
 
 
 @pytest.mark.parametrize("config_inside_worktree", [False, True])

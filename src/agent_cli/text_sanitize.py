@@ -22,8 +22,7 @@ _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _ESC_OR_C1_SEQUENCE_RE = re.compile(
     rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|[\x80-\x9f])"
 )
-_SGR_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*m")
-_SGR_RESET_RE = re.compile(r"(?:\x1b\[|\x9b)(?:0)?m")
+_SGR_WRAPPER_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # Before ordinary terminal sanitization, a known secret needs a stricter path:
 # a CSI final byte may itself be the next secret character. The first two
@@ -41,44 +40,49 @@ TERMINAL_INTERLEAVE_PATTERN = (
 )
 
 
-def _ordinary_coloured_token_sequence(
-    token: str, matches: list[re.Match[str]], index: int
+def _is_exempt_sgr_wrapped_token(
+    token: str, matches: list[re.Match[str]]
 ) -> bool:
-    """Keep a normal SGR-wrapped token, including punctuation after reset."""
-    match = matches[index]
-    if _SGR_RE.fullmatch(match.group()) is None:
+    """Keep only strict leading/trailing SGR wrappers around visible text."""
+    if not matches or len(matches) > 2:
         return False
-    if match.start() == 0:
-        return True
+
+    index = 0
+    content_start = 0
+    content_end = len(token)
     first = matches[0]
-    if first.start() != 0 or _SGR_RE.fullmatch(first.group()) is None:
-        return False
-    # A reset following a colour introduced at the token boundary is ordinary
-    # presentation, even when punctuation immediately follows it (``ERROR:``).
-    return _SGR_RESET_RE.fullmatch(match.group()) is not None
+    if (
+        first.start() == 0
+        and _SGR_WRAPPER_RE.fullmatch(first.group()) is not None
+    ):
+        content_start = first.end()
+        index = 1
+
+    if index < len(matches):
+        last = matches[index]
+        if (
+            last.end() == len(token)
+            and _SGR_WRAPPER_RE.fullmatch(last.group()) is not None
+        ):
+            content_end = last.start()
+            index += 1
+
+    return index == len(matches) and content_start < content_end
 
 
-def _token_has_interior_terminal_sequence(token: str) -> bool:
+def _token_has_redactable_terminal_sequence(token: str) -> bool:
     matches = list(_ESC_OR_C1_SEQUENCE_RE.finditer(token))
-    for index, match in enumerate(matches):
-        if match.start() == 0 or match.end() == len(token):
-            continue
-        if token[match.start() - 1].isspace() or token[match.end()].isspace():
-            continue
-        if _ordinary_coloured_token_sequence(token, matches, index):
-            continue
-        return True
-    return False
+    return bool(matches) and not _is_exempt_sgr_wrapped_token(token, matches)
 
 
 def redact_terminal_interleaved_tokens(
     text: str, *, replacement: str = "[redacted]"
 ) -> str:
-    """Fail closed on a raw token split by an interior ESC/C1 sequence.
+    """Fail closed on a raw token containing an ESC/C1 sequence.
 
     Replacement happens before terminal sanitization and preserves every token
-    separator verbatim.  Sequences at a token boundary and ordinary SGR colour
-    wrappers are presentation rather than evidence of an interleaved token.
+    separator verbatim.  The only presentation exemption is one strict SGR
+    sequence at the leading and/or trailing token boundary around visible text.
     """
     if not text:
         return text
@@ -93,7 +97,7 @@ def redact_terminal_interleaved_tokens(
                 token = text[start:index]
                 pieces.append(
                     replacement
-                    if _token_has_interior_terminal_sequence(token)
+                    if _token_has_redactable_terminal_sequence(token)
                     else token
                 )
             pieces.append(text[index])
@@ -104,7 +108,7 @@ def redact_terminal_interleaved_tokens(
     if start < len(text):
         token = text[start:]
         pieces.append(
-            replacement if _token_has_interior_terminal_sequence(token) else token
+            replacement if _token_has_redactable_terminal_sequence(token) else token
         )
     return "".join(pieces)
 

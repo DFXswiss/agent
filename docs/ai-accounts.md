@@ -232,13 +232,13 @@ terminal sanitization or path classification.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
-before terminal sanitization, a whitespace-delimited raw token is redacted in
-place when an interior ESC or C1 sequence has a non-whitespace character on
-both sides. Token separators, including tabs and newlines, stay unchanged;
-ordinary SGR-coloured tokens and sequences at a token boundary remain visible.
-An escape sequence inside a token redacts that whole token, so coloured text
-glued to other text in the same token can appear as `[redacted]` in terminal
-frames.
+before terminal sanitization, a whitespace-delimited raw token containing any
+ESC or C1 sequence is redacted in place, including when the sequence is at a
+token boundary. Token separators, including tabs and newlines, stay unchanged.
+The only exemption is a token whose sequences are exclusively one leading
+and/or one trailing `ESC [` SGR wrapper containing only digits and semicolons
+before `m`, around otherwise escape-free text. SGR styling with bytes glued
+outside that wrapper and every other escape sequence redact the whole token.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. The known-secret raw pass

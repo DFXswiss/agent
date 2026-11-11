@@ -816,7 +816,7 @@ def test_publish_terminals_redacts_raw_csi_overlap_before_sanitizing(
         store.close()
 
 
-def test_publish_terminals_redacts_error_only_tokens_split_by_csi(
+def test_publish_terminals_redacts_tokens_with_interior_or_boundary_csi(
     tmp_path: Path,
 ) -> None:
     _init_paired_store(tmp_path)
@@ -833,6 +833,8 @@ def test_publish_terminals_redacts_error_only_tokens_split_by_csi(
             "use\x1b[31Jr@example.com\n"
             "0123456789\x1b[31abcdefABCD "
             "AKI\x9b31AIOSFODNN7EXAMPLE\n"
+            "\x1b[31A123456789012345678F "
+            "A123456789012345678\x1b[31F\n"
         )
 
         class _RawRuntime(Runtime):
@@ -859,6 +861,7 @@ def test_publish_terminals_redacts_error_only_tokens_split_by_csi(
         published = base64.b64decode(frame["data"]).decode("utf-8")
         assert published == (
             "[redacted]\t[redacted]\n[redacted] [redacted]\n"
+            "[redacted] [redacted]\n"
         )
     finally:
         store.close()
