@@ -585,18 +585,21 @@ def push_with_lease(
     *,
     ref: str,
     old_sha: str,
+    verified_sha: str,
 ) -> Completed:
     if (
         not branch_ref_valid(ref)
         or ref in {"develop", "main", "master"}
     ):
         raise CoordinatorError(f"refusing push to protected or invalid head ref {ref}")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", verified_sha) is None:
+        raise CoordinatorError("verified sha must be 40 hexadecimal characters")
     return runner(_transfer_argv(
         worktree,
         "push",
         f"--force-with-lease=refs/heads/{ref}:{old_sha}",
         "publication",
-        f"HEAD:refs/heads/{ref}",
+        f"{verified_sha}:refs/heads/{ref}",
     ))
 
 
