@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,76 @@ def _pending(
             "execution_status": "pending",
         },
     )
+
+
+def test_scan_rejects_stale_a38_report_activity_before_github(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    task_id = "aa000001-0000-4000-8000-000000000301"
+    activity_id = "aa000001-0000-4000-8000-000000000302"
+    body = "verified report for the old base"
+    body_sha256 = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "s1",
+            "repo": "example/project",
+            "ref": 42,
+            "payload": {
+                "coordinator": {
+                    "pr_number": 42,
+                    "source": {"repo": "example/project"},
+                    "a38": {
+                        "report_intent": {
+                            "head": "a" * 40,
+                            "base_sha": "c" * 40,
+                            "policy_revision": "c" * 40,
+                            "activity_id": "replacement-activity",
+                            "body_sha256": "d" * 64,
+                            "private": True,
+                        }
+                    },
+                }
+            },
+        },
+    )
+    _pending(
+        store,
+        activity_id,
+        "comment.post",
+        {
+            "repo": "example/project",
+            "number": 42,
+            "body": body,
+            "target": "pr",
+            "exact_body": True,
+            "_coordinator_a38_report": {
+                "task_id": task_id,
+                "head": "a" * 40,
+                "base_sha": "b" * 40,
+                "policy_revision": "b" * 40,
+                "body_sha256": body_sha256,
+                "private": True,
+            },
+        },
+    )
+    calls: list[list[str]] = []
+
+    lines = scan_github(
+        store,
+        lambda argv: calls.append(list(argv)) or Completed(1, "", "must not run"),
+    )
+
+    assert lines == [f"comment.post {activity_id} error"]
+    row = store.row("activity", activity_id)
+    assert row["execution_status"] == "error"
+    assert "no matching current report intent" in row["execution_error"]
+    assert calls == []
 
 
 def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
