@@ -640,6 +640,10 @@ commit. A successful implementer replay writes its round verdict, the
 `implementer_done` checklist item, and the task without its consumed lane
 checkpoint in one transaction, so a database rollback cannot leave live state
 pointing at rolled-back agents, verdicts, gates, or publication intents.
+Replay blockers consume their checkpoint only in that committed task copy.
+Likewise, a completed parallel gate stage commits its next phase, or its
+retryable checklist-denial state, with the gates and checklist reconciliation
+before the live task adopts the transition.
 Reviewer replay routes by the separately checkpointed validated result; bounded
 stdout and stderr remain diagnostic evidence and are not reparsed as the
 protocol record. `STATUS` and `RESULT` are counted and validated exactly once
@@ -940,8 +944,16 @@ evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. The verified report intent and its pending comment row become
 visible in one transaction. Under the task-wide report lock, that checkpoint
-reloads the task, rejects a stale head/base/policy snapshot, and applies the
-intent to the fresh row. The same lock covers report invalidation. The
+reloads the task and rejects it only when another writer changed the head,
+pending or promoted base, policy revision, or report intent from the snapshot
+read at the start of the tick. It then records the newly verified head on the
+fresh row and, when it differs from the promoted evidence base, records the
+observed base as pending. While a base remeasurement is pending,
+`pending_base_sha` is the active checkpoint binding and the previously promoted
+`base_sha` remains historical evidence until replacement evidence and the local
+gate promote the pending base. A checkpoint conflict reloads the task and
+retries the coordinator tick without saving the stale caller snapshot or
+publishing a blocker. The same lock covers report invalidation. The
 transaction changes every other still-pending
 coordinator A38 report for the task, including legacy and superseded
 deterministic ids, to `error`. Publication and invalidation additionally hold

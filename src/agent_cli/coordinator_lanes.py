@@ -923,11 +923,18 @@ def launch_lane(
                 raise
             if recovered is not None:
                 return existing, recovered
-        c["phase"] = "blocked"
-        c["blocker"] = "uncertain prior lane outcome; refusing second model start"
-        c["uncertain_lane"] = True
-        c.pop("resume_phase", None)
-        save_task(store, task)
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        committed_c["phase"] = "blocked"
+        committed_c["blocker"] = (
+            "uncertain prior lane outcome; refusing second model start"
+        )
+        committed_c["uncertain_lane"] = True
+        committed_c.pop("resume_phase", None)
+        with store.conn.transaction():
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         _post_issue_status(
             store,
             worker,
@@ -2088,17 +2095,30 @@ def _abort_prepared_pr_reviews(
                 os.unlink(str(output_file))
             except OSError:
                 pass
+    committed_agents: list[dict[str, Any]] = []
     for prepared in prepared_list:
         agent = store.row("agent", prepared["agent_id"])
         if agent is not None and agent.get("status") == "working":
-            agent["status"] = "done"
-            agent["finished_at"] = utcnow()
-            agent["note"] = safe_message
-            store.write("agent", "update", agent["id"], strip_row(agent))
-    c = coord(task)
-    c["phase"] = "blocked"
-    c["blocker"] = safe_message
-    save_task(store, task)
+            committed_agent = copy.deepcopy(agent)
+            committed_agent["status"] = "done"
+            committed_agent["finished_at"] = utcnow()
+            committed_agent["note"] = safe_message
+            committed_agents.append(committed_agent)
+    committed_task = copy.deepcopy(task)
+    committed_c = coord(committed_task)
+    committed_c["phase"] = "blocked"
+    committed_c["blocker"] = safe_message
+    with store.conn.transaction():
+        for committed_agent in committed_agents:
+            store.write(
+                "agent",
+                "update",
+                str(committed_agent["id"]),
+                strip_row(committed_agent),
+            )
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
 
 
 def _pr_review_scope(dimension: str) -> str:
@@ -2348,11 +2368,18 @@ def phase_pr_gates(
     # Recheck prior working agents for the whole vendor stage BEFORE any inserts.
     prior = vendor_stage_has_working_agents(store, task["id"], vendor=vendor)
     if prior is not None:
-        c["phase"] = "blocked"
-        c["blocker"] = "uncertain prior lane outcome; refusing second model start"
-        c["uncertain_lane"] = True
-        c.pop("resume_phase", None)
-        save_task(store, task)
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        committed_c["phase"] = "blocked"
+        committed_c["blocker"] = (
+            "uncertain prior lane outcome; refusing second model start"
+        )
+        committed_c["uncertain_lane"] = True
+        committed_c.pop("resume_phase", None)
+        with store.conn.transaction():
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         _post_issue_status(
             store,
             worker,
@@ -2477,20 +2504,25 @@ def phase_pr_gates(
         raise CoordinatorError("PR reviewer outcome already has a durable gate")
     reconciliation_blockers: dict[str, str] = {}
     if all(_approved(latest.get((stage, dim)), vendor) for dim in ("quality", "logic")):
-        for dim in ("quality", "logic"):
-            blocker = _reconcile_approved_gate_checklist(
-                store, task, stage=stage, head=head, dimension=dim
-            )
-            if blocker is not None:
-                reconciliation_blockers[blocker[0]] = blocker[1]
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        with store.conn.transaction():
+            for dim in ("quality", "logic"):
+                blocker = _reconcile_approved_gate_checklist(
+                    store, committed_task, stage=stage, head=head, dimension=dim
+                )
+                if blocker is not None:
+                    reconciliation_blockers[blocker[0]] = blocker[1]
+            if not reconciliation_blockers:
+                committed_c["phase"] = next_phase
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         if reconciliation_blockers:
-            save_task(store, task)
             return [
                 f"{stage} recoverable checklist blocker for {key}: {reason}"
                 for key, reason in reconciliation_blockers.items()
             ]
-        c["phase"] = next_phase
-        save_task(store, task)
         return [f"{stage} already complete on {head[:7]}"]
 
     needed: list[tuple[str, str]] = []
@@ -2513,8 +2545,12 @@ def phase_pr_gates(
             needed.append((dimension, role))
 
     if not review_dimensions:
-        c["phase"] = next_phase
-        save_task(store, task)
+        committed_task = copy.deepcopy(task)
+        coord(committed_task)["phase"] = next_phase
+        with store.conn.transaction():
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         return lines
 
     if c.get("pr_number") and head:
@@ -2931,19 +2967,36 @@ def phase_pr_gates(
             committed_c["question_activity_id"] = qid
             if prior != qid:
                 committed_c["replies_consumed_through"] = None
-        elif (
-            worker.a38
-            and not second_stage
-            and not incomplete_outcomes
-            and isinstance(committed_c.get("a38"), dict)
-        ):
-            pending_pass = committed_c["a38"].get("first_review_pass_pending")
+        else:
             if (
-                isinstance(pending_pass, dict)
-                and pending_pass.get("head") == head
-                and pending_pass.get("stage") == stage
+                worker.a38
+                and not second_stage
+                and isinstance(committed_c.get("a38"), dict)
             ):
-                committed_c["a38"].pop("first_review_pass_pending", None)
+                pending_pass = committed_c["a38"].get("first_review_pass_pending")
+                if (
+                    isinstance(pending_pass, dict)
+                    and pending_pass.get("head") == head
+                    and pending_pass.get("stage") == stage
+                ):
+                    committed_c["a38"].pop("first_review_pass_pending", None)
+            if reconciliation_blockers:
+                # Keep this gate phase retryable. The completed gates, any checklist
+                # closes, and the decision not to advance are one task transition.
+                committed_c["phase"] = str(c.get("phase") or "")
+            else:
+                evidence_map = committed_c.setdefault("evidence", {})
+                if not isinstance(evidence_map, dict):
+                    evidence_map = {}
+                    committed_c["evidence"] = evidence_map
+                gates = evidence_map.setdefault("gates", {})
+                gates[stage] = {
+                    "quality": "approved",
+                    "logic": "approved",
+                    "head": head,
+                }
+                evidence_map["gates_head"] = head
+                committed_c["phase"] = next_phase
         save_task(store, committed_task)
 
     task.clear()
@@ -2977,22 +3030,11 @@ def phase_pr_gates(
         return [*lines, *blocker_lines]
 
     if reconciliation_blockers:
-        save_task(store, task)
         lines.extend(
             f"{stage} recoverable checklist blocker for {key}: {reason}"
             for key, reason in reconciliation_blockers.items()
         )
         return lines
-
-    evidence_map = c.setdefault("evidence", {})
-    if not isinstance(evidence_map, dict):
-        evidence_map = {}
-        c["evidence"] = evidence_map
-    gates = evidence_map.setdefault("gates", {})
-    gates[stage] = {"quality": "approved", "logic": "approved", "head": head}
-    evidence_map["gates_head"] = head
-    c["phase"] = next_phase
-    save_task(store, task)
     return lines
 
 

@@ -117,6 +117,10 @@ class _PullRequestBaseUnavailable(CoordinatorError):
     """Transient missing or malformed base revision from a pull-request read."""
 
 
+class A38ReportCheckpointConflict(CoordinatorError):
+    """Transient conflict with a fresher A38 report task checkpoint."""
+
+
 def _bounded_text(value: Any, label: str, *, maximum: int = 20000) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise CoordinatorError(f"{label} requires nonempty text of at most {maximum} characters")
@@ -575,34 +579,28 @@ def _report_checkpoint_state(task: Mapping[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _active_report_base(a38: Mapping[str, Any]) -> str:
+    """Return the pending measurement base, or the promoted base when stable."""
+    return str(a38.get("pending_base_sha") or a38.get("base_sha") or "")
+
+
 def _checkpoint_report_context(
     store: Store,
     task: dict[str, Any],
     *,
+    expected_state: tuple[Any, ...],
     head: str,
     base_sha: str,
-    policy_revision: str,
 ) -> None:
-    """Persist the live report binding before measurement under its task lock."""
+    """Persist the live binding when the locked row still matches tick start."""
     with store.exclusive(_report_task_lock(task["id"])):
         fresh = store.row("task", str(task["id"]))
         if fresh is None:
             raise CoordinatorError("A38 report task no longer exists")
-        fresh_c = coord(fresh)
-        fresh_a38 = _a38_state(fresh_c)
-        current_head = str(fresh_c.get("head_sha") or "")
-        if current_head and current_head != head:
-            raise CoordinatorError("A38 report task head changed during measurement")
-        for key, expected in (
-            ("pending_base_sha", base_sha),
-            ("base_sha", base_sha),
-            ("policy_revision", policy_revision),
-        ):
-            current = str(fresh_a38.get(key) or "")
-            if current and current != expected:
-                raise CoordinatorError(
-                    "A38 report task base or policy changed during measurement"
-                )
+        if _report_checkpoint_state(fresh) != expected_state:
+            raise A38ReportCheckpointConflict(
+                "A38 report task context changed during measurement"
+            )
         committed_task = copy.deepcopy(fresh)
         committed_c = coord(committed_task)
         committed_a38 = _a38_state(committed_c)
@@ -636,18 +634,14 @@ def _checkpoint_report_intent(
             raise CoordinatorError("A38 report task no longer exists")
         fresh_c = coord(fresh)
         fresh_a38 = _a38_state(fresh_c)
-        current_bases = {
-            str(fresh_a38.get(key) or "")
-            for key in ("pending_base_sha", "base_sha")
-            if fresh_a38.get(key)
-        }
+        active_base = _active_report_base(fresh_a38)
         current_policy = str(fresh_a38.get("policy_revision") or "")
         if (
             str(fresh_c.get("head_sha") or "") != expected_head
-            or current_bases != {expected_base}
+            or active_base != expected_base
             or (current_policy and current_policy != expected_policy)
         ):
-            raise CoordinatorError(
+            raise A38ReportCheckpointConflict(
                 "A38 report task head, base, or policy changed before checkpoint"
             )
         committed_task = copy.deepcopy(fresh)
@@ -719,6 +713,7 @@ def phase_tests(
     """Run the optional trusted precheck, complete A38 suite, and publish its report."""
     if not worker.a38:
         raise CoordinatorError("A38 tests phase called for a non-A38 worker")
+    checkpoint_state = copy.deepcopy(_report_checkpoint_state(task))
     c = coord(task)
     source = c["source"]
     cfg = repo_cfg(worker, str(source["repo"]), task)
@@ -739,17 +734,6 @@ def phase_tests(
         )
     except _PullRequestBaseUnavailable:
         return ["PR state temporarily unavailable; retrying"]
-    c["head_sha"] = head
-    _reconcile_pending_base(store, task, base_sha)
-    c = coord(task)
-    a38 = _a38_state(c)
-    saved_base = evidence_base_sha(c, a38=True)
-    if is_sha(saved_base) and saved_base != base_sha:
-        invalidate_base_evidence(store, task, base_sha)
-        c = coord(task)
-        a38 = _a38_state(c)
-    elif saved_base != base_sha:
-        a38["pending_base_sha"] = base_sha
     # Policy migration is intentionally not implemented by this coordinator.
     # Never publish evidence against obsolete base policy or workflow controls.
     # Guard-docs alone has the one standard exception for its integration file.
@@ -771,12 +755,22 @@ def phase_tests(
     _checkpoint_report_context(
         store,
         task,
+        expected_state=checkpoint_state,
         head=head,
         base_sha=base_sha,
-        policy_revision=policy_revision,
     )
     c = coord(task)
     a38 = _a38_state(c)
+    _reconcile_pending_base(store, task, base_sha)
+    c = coord(task)
+    a38 = _a38_state(c)
+    saved_base = evidence_base_sha(c, a38=True)
+    if is_sha(saved_base) and saved_base != base_sha:
+        invalidate_base_evidence(store, task, base_sha)
+        c = coord(task)
+        a38 = _a38_state(c)
+    elif saved_base != base_sha:
+        a38["pending_base_sha"] = base_sha
     fetched = git(
         store,
         worker,
