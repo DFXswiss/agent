@@ -128,3 +128,15 @@ def test_agents_md_and_readme_point_at_contributing() -> None:
     assert NOT_DONE in packaged
     assert "for this repository" in packaged
     assert "store encoding when that skill is" in packaged
+
+
+def test_readme_documents_fail_closed_terminal_redaction() -> None:
+    readme = _ws((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert (
+        "whether that sequence is inside the token or at either boundary" in readme
+    )
+    assert (
+        "at most one strict leading and/or trailing `ESC [` SGR sequence" in readme
+    )
+    assert "parameter bytes and visible text must not match" in readme
+    assert "ordinary colour wrappers and boundary sequences remain visible" not in readme

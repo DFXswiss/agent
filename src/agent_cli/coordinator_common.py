@@ -228,8 +228,24 @@ def _redact_standard_patterns(text: str) -> str:
     return _URL_AUTH.sub(r'\1[redacted]@', cleaned)
 
 
-def redact(text: str, *, limit: int | None = OUTPUT_BOUND) -> str:
-    cleaned = redact_terminal_interleaved_tokens(text or "")
+def redact(
+    text: str,
+    *,
+    limit: int | None = OUTPUT_BOUND,
+    token_secret_matcher: Callable[[str], bool] | None = None,
+) -> str:
+    def matches_applicable_secret(candidate: str) -> bool:
+        if _redact_standard_patterns(candidate) != candidate:
+            return True
+        return (
+            token_secret_matcher(candidate)
+            if token_secret_matcher is not None
+            else False
+        )
+
+    cleaned = redact_terminal_interleaved_tokens(
+        text or "", secret_matcher=matches_applicable_secret
+    )
     cleaned = _redact_standard_patterns(cleaned)
     # Redact on raw bytes first.  The tolerant expressions accept complete
     # controls between token characters and CSI/ESC prefixes whose final byte

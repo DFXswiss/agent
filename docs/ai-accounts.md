@@ -237,15 +237,19 @@ ESC or C1 sequence is redacted in place, including when the sequence is at a
 token boundary. Token separators, including tabs and newlines, stay unchanged.
 The only exemption is a token whose sequences are exclusively one leading
 and/or one trailing `ESC [` SGR wrapper containing only digits and semicolons
-before `m`, around otherwise escape-free text. SGR styling with bytes glued
-outside that wrapper and every other escape sequence redact the whole token.
+before `m`, around otherwise escape-free text, and whose SGR parameter bytes
+joined to that text do not match any applicable secret pattern. SGR styling
+with bytes glued outside that wrapper and every other escape sequence redact
+the whole token. Complete and unterminated OSC, DCS, PM, APC, and SOS spans are
+redacted on the full raw text before whitespace tokenization, including their
+payload.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. The known-secret raw pass
 allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the
 matcher. Seven-bit DCS, PM, APC, and SOS strings accept
-both the 8-bit ST byte and `ESC \`; an unterminated string control is removed
+both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
 through the end of the text.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`

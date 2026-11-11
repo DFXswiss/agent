@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 
-# String controls must be matched before the shorter generic ESC form. Both
-# 7-bit and 8-bit string controls accept either ST spelling; an unterminated
-# string consumes the remaining text rather than exposing its payload.
-_TERMINAL_ESCAPE_RE = re.compile(
+# String controls must be matched on the complete raw text before whitespace
+# tokenization. Both 7-bit and 8-bit forms accept either ST spelling; an
+# unterminated string consumes the remaining text rather than exposing its
+# payload.
+_TERMINAL_STRING_RE = re.compile(
     r"(?:"
     r"\x1b\][\s\S]*?(?:\x07|\x9c|\x1b\\|\Z)"  # OSC, 7-bit
     r"|\x9d[\s\S]*?(?:\x07|\x9c|\x1b\\|\Z)"  # OSC, 8-bit
     r"|\x1b[P^_X][\s\S]*?(?:\x9c|\x1b\\|\Z)"  # DCS/PM/APC/SOS, 7-bit
     r"|[\x90\x98\x9e\x9f][\s\S]*?(?:\x9c|\x1b\\|\Z)"  # 8-bit strings
+    r")"
+)
+_TERMINAL_ESCAPE_RE = re.compile(
+    r"(?:"
+    rf"{_TERMINAL_STRING_RE.pattern}"
     r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI
     r"|\x1b[ -/]*[0-~]"  # other complete ESC sequences
     r")"
@@ -22,7 +29,7 @@ _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _ESC_OR_C1_SEQUENCE_RE = re.compile(
     rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|[\x80-\x9f])"
 )
-_SGR_WRAPPER_RE = re.compile(r"\x1b\[[0-9;]*m")
+_SGR_WRAPPER_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
 # Before ordinary terminal sanitization, a known secret needs a stricter path:
 # a CSI final byte may itself be the next secret character. The first two
@@ -41,7 +48,9 @@ TERMINAL_INTERLEAVE_PATTERN = (
 
 
 def _is_exempt_sgr_wrapped_token(
-    token: str, matches: list[re.Match[str]]
+    token: str,
+    matches: list[re.Match[str]],
+    secret_matcher: Callable[[str], bool] | None,
 ) -> bool:
     """Keep only strict leading/trailing SGR wrappers around visible text."""
     if not matches or len(matches) > 2:
@@ -67,25 +76,55 @@ def _is_exempt_sgr_wrapped_token(
             content_end = last.start()
             index += 1
 
-    return index == len(matches) and content_start < content_end
+    if index != len(matches) or content_start >= content_end:
+        return False
+
+    if secret_matcher is not None:
+        reconstructed = token[content_start:content_end]
+        if content_start:
+            leading = _SGR_WRAPPER_RE.fullmatch(first.group())
+            if leading is None:
+                return False
+            reconstructed = leading.group(1) + reconstructed
+        if content_end < len(token):
+            trailing = _SGR_WRAPPER_RE.fullmatch(matches[-1].group())
+            if trailing is None:
+                return False
+            reconstructed += trailing.group(1)
+        if secret_matcher(reconstructed):
+            return False
+
+    return True
 
 
-def _token_has_redactable_terminal_sequence(token: str) -> bool:
+def _token_has_redactable_terminal_sequence(
+    token: str, secret_matcher: Callable[[str], bool] | None
+) -> bool:
     matches = list(_ESC_OR_C1_SEQUENCE_RE.finditer(token))
-    return bool(matches) and not _is_exempt_sgr_wrapped_token(token, matches)
+    return bool(matches) and not _is_exempt_sgr_wrapped_token(
+        token, matches, secret_matcher
+    )
 
 
 def redact_terminal_interleaved_tokens(
-    text: str, *, replacement: str = "[redacted]"
+    text: str,
+    *,
+    replacement: str = "[redacted]",
+    secret_matcher: Callable[[str], bool] | None = None,
 ) -> str:
     """Fail closed on a raw token containing an ESC/C1 sequence.
 
     Replacement happens before terminal sanitization and preserves every token
-    separator verbatim.  The only presentation exemption is one strict SGR
-    sequence at the leading and/or trailing token boundary around visible text.
+    separator verbatim. String controls are replaced on the complete raw text
+    first, so whitespace in their payload cannot split them into visible
+    tokens. The only presentation exemption is one strict SGR sequence at the
+    leading and/or trailing token boundary around visible text. Before that
+    exemption is granted, SGR parameter bytes are joined to the visible text
+    and checked by ``secret_matcher`` when supplied.
     """
     if not text:
         return text
+    text = _TERMINAL_STRING_RE.sub(replacement, text)
     pieces: list[str] = []
     start = 0
     index = 0
@@ -97,7 +136,9 @@ def redact_terminal_interleaved_tokens(
                 token = text[start:index]
                 pieces.append(
                     replacement
-                    if _token_has_redactable_terminal_sequence(token)
+                    if _token_has_redactable_terminal_sequence(
+                        token, secret_matcher
+                    )
                     else token
                 )
             pieces.append(text[index])
@@ -108,7 +149,9 @@ def redact_terminal_interleaved_tokens(
     if start < len(text):
         token = text[start:]
         pieces.append(
-            replacement if _token_has_redactable_terminal_sequence(token) else token
+            replacement
+            if _token_has_redactable_terminal_sequence(token, secret_matcher)
+            else token
         )
     return "".join(pieces)
 
