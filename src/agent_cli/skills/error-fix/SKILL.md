@@ -42,7 +42,9 @@ subsequent notification that provides useful model work belong to the script.
 
 1. A **script** on this device queries a configured log source, applies the
    shared fail-closed ESC/C1 token rule (with only strict leading/trailing SGR
-   wrappers exempt) and control-tolerant secret redaction to the raw line,
+   wrappers exempt after their parameter bytes are checked with the visible
+   text), redacts complete or unterminated string-control spans before token
+   splitting, and applies control-tolerant secret redaction to the raw line,
    removes terminal controls, applies the ordinary
    error redaction again, fingerprints, and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs

@@ -198,9 +198,19 @@ def _redact_error_patterns(text: str) -> str:
     return out
 
 
+def _matches_error_secret(text: str) -> bool:
+    return _redact_error_patterns(text) != text
+
+
 def redact(text: str) -> str:
     """Redact raw log text before and after terminal sanitization."""
-    return _redact_error_patterns(redact_shared(text, limit=None))
+    return _redact_error_patterns(
+        redact_shared(
+            text,
+            limit=None,
+            token_secret_matcher=_matches_error_secret,
+        )
+    )
 
 
 def fingerprint(*, service: str, error_class: str, stack_sig: str, environment: str) -> str:

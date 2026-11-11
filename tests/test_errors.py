@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.coordinator_common import redact as redact_shared
 from agent_cli.errors import (
     config_path,
     cursor_path,
@@ -362,6 +363,69 @@ def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
     assert "trace_id=[redacted]" in redact(first_hyphen)
     assert "trace_id=[redacted]" in redact(second_hyphen)
     assert stack_sig(first_hyphen) == stack_sig(second_hyphen)
+
+
+def test_redact_checks_sgr_parameter_bytes_with_shared_and_error_matchers() -> None:
+    assert redact("\x1b[31mabcdef0123456789AB") == "[redacted]"
+    assert redact("abcdef0123456789AB\x1b[31m") == "[redacted]"
+    assert redact_shared("sk-abcdefghijklmn\x1b[31m") == "[redacted]"
+    assert redact("\x1b[31mordinary\x1b[0m") == "ordinary"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_redact_replaces_complete_string_control_before_tokenization(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"before {introducer}title opaque-credential-123{terminator} after"
+    assert redact_shared(raw) == "before [redacted] after"
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+)
+def test_redact_replaces_unterminated_string_control_before_tokenization(
+    introducer: str,
+) -> None:
+    raw = f"before {introducer}title opaque-credential-123"
+    assert redact_shared(raw) == "before [redacted]"
 
 
 @pytest.mark.parametrize(
