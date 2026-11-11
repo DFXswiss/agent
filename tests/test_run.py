@@ -450,11 +450,15 @@ def test_cli_lane_run_records_usage_and_tools(
     assert payload["final_text"] != "secret=hidden\nSTATUS: complete\n"
 
 
-@pytest.mark.parametrize("error_type", [RuntimeError, StoreError])
+@pytest.mark.parametrize(
+    ("failure_point", "error_type"),
+    [("open_store", RuntimeError), ("record_lane_run", StoreError)],
+)
 def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
     error_type: type[BaseException],
 ) -> None:
     run(tmp_path, ["init"])
@@ -469,10 +473,16 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
             "STATUS: complete\n", "",
         ),
     )
-    monkeypatch.setattr(
-        "agent_cli.main.record_lane_run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(error_type("store unavailable")),
+    config_dir = tmp_path / "private-config"
+    split_credential = "github_\x1b[31mpat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    audit_error = error_type(
+        f"store unavailable at {config_dir}: credential={split_credential}"
     )
+
+    def fail_audit(*_args, **_kwargs):  # noqa: ANN001
+        raise audit_error
+
+    monkeypatch.setattr(f"agent_cli.main.{failure_point}", fail_audit)
     run(
         tmp_path,
         [
@@ -483,7 +493,11 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     )
     captured = capsys.readouterr()
     assert "STATUS=complete" in captured.out
-    assert "lane.run write failed: store unavailable" in captured.err
+    assert "lane.run audit write failed" in captured.err.splitlines()
+    assert str(config_dir) not in captured.err
+    assert "github_" not in captured.err
+    assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" not in captured.err
+    assert "\x1b" not in captured.err
 
 
 def test_run_store_error_on_lane_audit_keeps_the_verdict(

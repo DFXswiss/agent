@@ -9230,7 +9230,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
 
 
 @pytest.mark.parametrize("failing", ["precheck", "policy", "run", "verify"])
-def test_a38_tests_failure_routes_to_implementer_without_a_report(
+def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
     from dataclasses import replace
@@ -9248,6 +9248,8 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
     )
     patch_execute_github(monkeypatch)
     head = "a" * 40
+    promoted_base = "c" * 40
+    observed_base = "b" * 40
     tid = "33333333-3333-4333-8333-33333333333f"
     worktree = worker.workspace_root / tid
     worktree.mkdir()
@@ -9255,22 +9257,33 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
         "models": {"first": "grok", "second": None},
-        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True, "base_sha": promoted_base, "policy_revision": promoted_base}}},
     }
     store.write("task", "insert", tid, task)
     store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: ("b" * 40, ["src/app.py"], False, False),
+        lambda *a, **k: (observed_base, ["src/app.py"], False, False),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
     monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
-    monkeypatch.setattr(
-        "agent_cli.coordinator_a38.run_bounded",
-        lambda argv, **_k: Completed(1 if failing == "precheck" else 0, "precheck output", ""),
-    )
+    phase_task = store.row("task", tid)
+    precheck_context: list[tuple[str, str, str]] = []
+
+    def fake_precheck(argv, **kwargs):  # noqa: ANN001
+        a38 = phase_task["payload"]["coordinator"]["a38"]
+        precheck_context.append(
+            (
+                kwargs["env"]["AGENT_COORDINATOR_BASE"],
+                a38["base_sha"],
+                a38["pending_base_sha"],
+            )
+        )
+        return Completed(1 if failing == "precheck" else 0, "precheck output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_precheck)
 
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
         if parts[0] == "fetch":
@@ -9294,7 +9307,7 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
 
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
 
-    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+    lines = phase_a38_tests(store, worker, phase_task, lambda argv: Completed(0, "", ""))
 
     saved = store.row("task", tid)
     c = saved["payload"]["coordinator"]
@@ -9303,6 +9316,9 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
     assert c["phase"] == "implement"
     assert saved["state"] == "implementing"
     assert c["findings"].startswith(f"{prefix} on {head[:7]}")
+    assert precheck_context == [(observed_base, promoted_base, observed_base)]
+    assert c["a38"]["base_sha"] == promoted_base
+    assert c["a38"]["pending_base_sha"] == observed_base
     if failing != "precheck":
         assert c["evidence"]["tests_pass"] is False
     assert "report" not in c.get("a38", {})

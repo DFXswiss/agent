@@ -242,7 +242,9 @@ for worker in workers.values():
   `AGENT_COORDINATOR_HEAD`, `AGENT_COORDINATOR_BASE`, `AGENT_COORDINATOR_REPO`,
   `AGENT_COORDINATOR_PR`, `AGENT_COORDINATOR_SESSION`,
   `AGENT_COORDINATOR_WORKTREE`. Those argv arrays never come from model or repo
-  content.
+  content. In A38 mode, the trusted precheck receives the base revision from
+  the stable live pull-request snapshot, including a newly observed base that
+  has not yet been promoted to evidence.
 - The default process runner removes ambient GitHub tokens and uses an empty
   temporary `GH_CONFIG_DIR`. Script operations that need GitHub select their
   configured account through `Account.runner`; trusted check/readiness scripts
