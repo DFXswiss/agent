@@ -46,11 +46,12 @@ and each bounded A38 command; there is no separate A38 timeout setting.
 `repository_owners` is a distinct, case-insensitive list of valid 1–39 character
 GitHub organization or user logins (no leading, trailing, or consecutive
 hyphens). Each owner gets its own owner-qualified, paginated GitHub issue search
-per tick. An empty page set, `incomplete_results`, a missing result count, a
-malformed or duplicate issue identity, or a `total_count` that differs from the
-unique fetched issue count fails that owner's discovery loudly instead of
-silently accepting an incomplete result set. An explicit `repositories` entry
-wins for the same repository. At acceptance, an owner-scoped task pins the
+per tick. An empty page set, `incomplete_results`, a missing or negative result
+count, changing `total_count` values across pages, a malformed or duplicate
+issue identity, or a common `total_count` that differs from the unique fetched
+issue count fails that owner's discovery loudly instead of silently accepting
+an incomplete result set. An explicit `repositories` entry wins for the same
+repository. At acceptance, an owner-scoped task pins the
 repository's current default branch and its publication route: direct push when
 the worker has push permission, otherwise `<worker-login>/<repository-name>`.
 A missing fork is requested once per persisted request (a crash before the
@@ -297,7 +298,12 @@ for worker in workers.values():
    its local gate are recorded against that base.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
    and config home. No round cap. Rejection routes findings to a fresh
-   implementer. Outcome distinction (review-loop preserved, not waived):
+   implementer. The transaction that first marks an implementer agent finished
+   also stores its bounded output prefix and the validated English/German
+   summaries plus reused/added lines extracted from the full output. Recovery
+   consumes those structured fields without relaunching the implementer, even
+   when they occurred after the persisted prefix. Outcome distinction
+   (review-loop preserved, not waived):
    - `RESULT: ask` → publish a question checkpoint, keep the task non-failed,
      wait for an authorized reply, then resume `implement`.
    - `RESULT: blocked` → publish a blocker, set `task.state=failed`, clear

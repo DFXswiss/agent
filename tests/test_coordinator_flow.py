@@ -9,7 +9,6 @@ Fake GitHub/model/check transports only. No real network/models/tests.
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -552,11 +551,12 @@ def test_surface_list_without_a_draft_is_not_applied(
     assert saved["state"] != "reviewing"
 
 
-def test_truncated_outcome_keeps_the_surface_list(
+def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A list past the redacted prefix is held until the draft number exists."""
+    """Recovery uses full-output fields saved with the finished agent."""
     from agent_cli.coordinator_common import save_task
+    from agent_cli.coordinator_lanes import launch_lane as real_launch_lane
     from agent_cli.coordinator_runtime import phase_implement
 
     store = Store(tmp_path)
@@ -566,46 +566,44 @@ def test_truncated_outcome_keeps_the_surface_list(
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     tid = "66666666-6666-6666-6666-666666666666"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
     reused = "`src/pay.ts:40` existing gift invoice"
     added = "`src/habit.ts:12` member habit route"
     full = (
         "STATUS: complete\nRESULT: done\n"
-        "SUMMARY_EN: Hold the reused list on the task.\n"
-        "SUMMARY_DE: Die Wiederverwendungsliste bleibt auf dem Task.\n"
         + ("note " * 1200)
+        + "\nSUMMARY_EN: Hold the reused list on the task.\n"
+        + "SUMMARY_DE: Die Wiederverwendungsliste bleibt auf dem Task.\n"
         + f"\nREUSED: {reused}\nADDED: {added}\n"
     )
     calls = {"n": 0}
-    outcome_saves: list[dict] = []
 
-    def recording_save(store, task):
-        snapshot = copy.deepcopy(task)
-        outcome = (snapshot.get("payload") or {}).get("coordinator", {}).get("lane_outcome")
-        if isinstance(outcome, dict):
-            outcome_saves.append(snapshot)
-        return save_task(store, task)
-
-    def fake_launch(*_args, **_kwargs):
+    def crash_after_first_checkpoint(*args, **kwargs):
         calls["n"] += 1
-        return {"id": "agent-1"}, type("Result", (), {"stdout": full, "returncode": 0})()
-
-    opened = {"yes": False}
+        real_launch_lane(*args, **kwargs)
+        raise RuntimeError("simulated crash after durable lane checkpoint")
 
     def ensure(_store, _worker, task, _runner):
         c = task["payload"]["coordinator"]
-        if not opened["yes"]:
-            c["phase"] = "publish_draft"
-            save_task(store, task)
-            return ["draft pending after push"]
         c["pr_number"] = 42
         task["ref"] = "42"
         save_task(store, task)
         return ["draft opened example/project#42"]
 
-    monkeypatch.setattr("agent_cli.coordinator_runtime.save_task", recording_save)
-    monkeypatch.setattr("agent_cli.coordinator_runtime.launch_lane", fake_launch)
-    monkeypatch.setattr("agent_cli.coordinator_runtime.review_rules_bound", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.coordinator_runtime.set_checklist", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.launch_lane", crash_after_first_checkpoint
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.review_rules_bound", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.set_checklist", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_runtime.stage_sign_commit_if_changes",
         lambda *_a, **_k: "a" * 40,
@@ -624,7 +622,7 @@ def test_truncated_outcome_keeps_the_surface_list(
         "payload": {
             "coordinator": {
                 "phase": "implement",
-                "worktree": "/tmp/unused-worktree",
+                "worktree": str(worktree),
                 "source": {"repo": "example/project", "number": 7, "title": "Fix"},
             }
         },
@@ -644,31 +642,43 @@ def test_truncated_outcome_keeps_the_surface_list(
             "finished_at": None,
         },
     )
-    lines = phase_implement(store, worker, task, fake, None)
+
+    with pytest.raises(
+        RuntimeError, match="simulated crash after durable lane checkpoint"
+    ):
+        phase_implement(
+            store,
+            worker,
+            task,
+            fake,
+            lambda _argv, _stdin: Completed(0, full, ""),
+        )
+
     saved = store.row("task", tid)
     outcome = saved["payload"]["coordinator"]["lane_outcome"]
-    assert any("draft pending" in line for line in lines)
     assert outcome.get("applied") is not True
+    assert "SUMMARY_EN" not in str(outcome.get("stdout") or "")
     assert "habit.ts" not in str(outcome.get("stdout") or "")
-    assert saved["reused_lines"] == [reused]
-    assert saved["added_lines"] == [added]
-    assert saved["payload"]["coordinator"].get("surface_list_held") is True
-    assert outcome_saves
-    first = outcome_saves[0]
-    assert first["reused_lines"] == [reused]
-    assert first["added_lines"] == [added]
-    assert first["payload"]["coordinator"].get("surface_list_held") is True
+    assert outcome["summary_en"] == "Hold the reused list on the task."
+    assert outcome["summary_de"] == "Die Wiederverwendungsliste bleibt auf dem Task."
+    assert outcome["reused_lines"] == [reused]
+    assert outcome["added_lines"] == [added]
+    assert "reused_lines" not in saved
     assert saved["state"] != "reviewing"
     assert calls["n"] == 1
 
-    opened["yes"] = True
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.launch_lane",
+        lambda *_a, **_k: pytest.fail("recovery relaunched the implementer"),
+    )
     resumed = store.row("task", tid)
     lines = phase_implement(store, worker, resumed, fake, None)
     saved = store.row("task", tid)
     assert calls["n"] == 1, lines
     assert "lane_outcome" not in saved["payload"]["coordinator"]
     assert saved["payload"]["coordinator"]["phase"] == "inner_review", lines
-    assert saved["payload"]["coordinator"].get("surface_list_held") in (None, False)
+    assert saved["change_summary_en"] == "Hold the reused list on the task."
+    assert saved["change_summary_de"] == "Die Wiederverwendungsliste bleibt auf dem Task."
     assert added in fake.pr["body"]
     assert reused in fake.pr["body"]
 

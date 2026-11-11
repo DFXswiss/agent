@@ -67,6 +67,7 @@ SECRETISH = re.compile(
 _AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*')
 _BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']+')
 _KNOWN_TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b')
+_AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _PRIVATE_KEY = re.compile(r'-----BEGIN ((?:[A-Z]+ )*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----.*?(?:-----END \1-----|\Z)', re.S)
 _PRIVATE_PATH = re.compile(r'(?:/Users/|/home/)[^\s"\']+')
 _URL_AUTH = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@')
@@ -137,6 +138,12 @@ _RAW_KNOWN_TOKEN = re.compile(
     )
     + ")"
 )
+_RAW_AKIA = re.compile(
+    _interleaved_atoms(
+        *[re.escape(char) for char in "AKIA"],
+        _interleaved_units(r"[0-9A-Z]", "{16}"),
+    )
+)
 _RAW_PRIVATE_PATH = re.compile(
     rf"(?:{_interleaved_literal('/Users/')}|{_interleaved_literal('/home/')})"
     r"[^\s\"']+"
@@ -161,6 +168,7 @@ _RAW_SECRET_PATTERNS = (
     _RAW_BEARER,
     _RAW_SECRETISH,
     _RAW_KNOWN_TOKEN,
+    _RAW_AKIA,
     _RAW_PRIVATE_PATH,
     _RAW_URL_AUTH,
 )
@@ -211,6 +219,7 @@ def _redact_standard_patterns(text: str) -> str:
     cleaned = _BEARER.sub('[redacted]', cleaned)
     cleaned = SECRETISH.sub('[redacted]', cleaned)
     cleaned = _KNOWN_TOKEN.sub('[redacted]', cleaned)
+    cleaned = _AKIA.sub('[redacted]', cleaned)
     cleaned = _PRIVATE_PATH.sub('[redacted]', cleaned)
     return _URL_AUTH.sub(r'\1[redacted]@', cleaned)
 
@@ -479,6 +488,21 @@ def _surface_section_ok(lines: list[str]) -> bool:
     if none_count == 1 and file_count == 0:
         return True
     return none_count == 0 and file_count >= 1
+
+
+def parse_change_summaries(stdout: str) -> tuple[str, str] | None:
+    """Validated English and German implementer summaries, when both exist."""
+    summaries: list[str] = []
+    for language in ("EN", "DE"):
+        values = re.findall(rf"(?m)^SUMMARY_{language}: ([^\r\n]+)$", stdout)
+        if (
+            len(values) != 1
+            or not values[0].strip().endswith(".")
+            or len(values[0]) > 800
+        ):
+            return None
+        summaries.append(values[0].strip())
+    return (summaries[0], summaries[1])
 
 
 def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:

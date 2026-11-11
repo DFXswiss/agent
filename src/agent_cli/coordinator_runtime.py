@@ -46,6 +46,7 @@ from .coordinator_common import (
     gh_list,
     harden_grok_write_argv,
     owned_session,
+    parse_change_summaries,
     parse_model_result,
     parse_surface_list,
     redact,
@@ -93,6 +94,7 @@ from .coordinator_github import (
 from .coordinator_lanes import (
     _IMPLEMENTER_RESULTS,
     _REVIEWER_RESULTS,
+    implementer_replay_fields,
     invalidate_head_evidence,
     launch_lane,
     phase_pr_gates_codex,
@@ -631,14 +633,23 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                 )
             found: list[tuple[dict[str, Any], str]] = []
             identities: set[str] = set()
-            total_count = 0
+            total_count: int | None = None
             for page in pages:
                 if page.get("incomplete_results") is True:
                     raise CoordinatorError("owner issue search returned incomplete results")
                 page_total = page.get("total_count")
                 if isinstance(page_total, bool) or not isinstance(page_total, int):
                     raise CoordinatorError("owner issue search page has no total_count")
-                total_count = max(total_count, page_total)
+                if page_total < 0:
+                    raise CoordinatorError(
+                        "owner issue search page has negative total_count"
+                    )
+                if total_count is None:
+                    total_count = page_total
+                elif page_total != total_count:
+                    raise CoordinatorError(
+                        "owner issue search returned inconsistent total_count across pages"
+                    )
                 items = page.get("items")
                 if not isinstance(items, list):
                     raise CoordinatorError("owner issue search page has no items array")
@@ -668,6 +679,10 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                         )
                     identities.add(identity)
                     found.append((issue, repo))
+            if total_count is None:
+                raise CoordinatorError(
+                    "owner issue search returned incomplete results (no pages)"
+                )
             if total_count > len(identities):
                 raise CoordinatorError(
                     "owner issue search was truncated "
@@ -884,6 +899,26 @@ def _held_surface_list(task: dict[str, Any]) -> tuple[list[str], list[str]] | No
     return (reused, added)
 
 
+def _replayed_surface_list(
+    outcome: dict[str, Any] | None,
+) -> tuple[list[str], list[str]] | None:
+    """Validate structured surface lines from a durable lane checkpoint."""
+    if not isinstance(outcome, dict):
+        return None
+    reused = outcome.get("reused_lines")
+    added = outcome.get("added_lines")
+    if not isinstance(reused, list) or not isinstance(added, list):
+        return None
+    if not all(isinstance(line, str) for line in [*reused, *added]):
+        return None
+    replay_lines = [
+        *(f"REUSED: {line}" for line in reused),
+        *(f"ADDED: {line}" for line in added),
+    ]
+    replay_text = "\n".join(replay_lines)
+    return parse_surface_list(replay_text)
+
+
 def _hold_surface_list(
     store: Store,
     worker: WorkerConfig,
@@ -893,10 +928,9 @@ def _hold_surface_list(
 ) -> None:
     """Remember a reused and added list from the full implementer stdout.
 
-    The persisted lane outcome keeps only a redacted prefix. Parsing that
-    prefix once a draft number exists can miss a list that was present, mark
-    the outcome applied, and start another implementer. Holding the lines
-    does not post them.
+    The lane outcome carries the same structured lines for crash recovery.
+    Holding them on the task also makes them available to draft publication;
+    this function does not post them.
     """
     if not review_rules_bound(store, worker, runner, task):
         return
@@ -921,6 +955,7 @@ def _apply_implementer_outcome(
     status: str,
     model_result: str,
     stdout: str,
+    replay: dict[str, Any] | None,
     sha: str | None,
     draft_lines: list[str],
 ) -> list[str]:
@@ -1067,31 +1102,39 @@ def _apply_implementer_outcome(
                 reply_checkpoint=True,
             ) + draft_lines
 
-    summaries = {}
-    for language in ("en", "de"):
-        values = re.findall(rf"(?m)^SUMMARY_{language.upper()}: ([^\r\n]+)$", stdout)
-        if len(values) != 1 or not values[0].strip().endswith(".") or len(values[0]) > 800:
-            c.update(phase="blocked", resume_phase="implement",
-                     blocker="completed patch lacks concrete English/German change summaries")
-            _mark_applied()
-            task["state"] = "open"
-            save_task(store, task)
-            return publish_blocker(
-                store,
-                worker,
-                task,
-                runner,
-                c["blocker"],
-                kind="change-summary",
-                reply_checkpoint=True,
+    structured_summaries = None
+    if isinstance(replay, dict):
+        replay_en = replay.get("summary_en")
+        replay_de = replay.get("summary_de")
+        if isinstance(replay_en, str) and isinstance(replay_de, str):
+            structured_summaries = parse_change_summaries(
+                f"SUMMARY_EN: {replay_en}\nSUMMARY_DE: {replay_de}\n"
             )
-        summaries[language] = redact(values[0].strip(), limit=800)
-    task["change_summary_en"] = summaries["en"]
-    task["change_summary_de"] = summaries["de"]
+    summaries = structured_summaries or parse_change_summaries(stdout)
+    if summaries is None:
+        c.update(
+            phase="blocked",
+            resume_phase="implement",
+            blocker="completed patch lacks concrete English/German change summaries",
+        )
+        _mark_applied()
+        task["state"] = "open"
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            c["blocker"],
+            kind="change-summary",
+            reply_checkpoint=True,
+        )
+    task["change_summary_en"] = redact(summaries[0], limit=800)
+    task["change_summary_de"] = redact(summaries[1], limit=800)
     if review_rules_bound(store, worker, runner, task):
-        # A list held from the full stdout wins over the redacted prefix.
+        # Structured checkpoint data and a held list both outlive the prefix.
         if _held_surface_list(task) is None:
-            listed = parse_surface_list(stdout)
+            listed = _replayed_surface_list(replay) or parse_surface_list(stdout)
             if listed is None:
                 c.update(
                     phase="blocked",
@@ -1211,6 +1254,7 @@ def phase_implement(
             status=status,
             model_result=model_result,
             stdout=stdout,
+            replay=pending_outcome,
             sha=sha,
             draft_lines=draft_lines,
         )
@@ -1228,6 +1272,7 @@ def phase_implement(
             status="complete",
             model_result="ask",
             stdout=str(c.get("pending_question")),
+            replay=None,
             sha=None,
             draft_lines=[],
         )
@@ -1245,20 +1290,28 @@ def phase_implement(
         lane_runner=lane_runner,
     )
     status, model_result = parse_model_result(result.stdout, result.returncode)
-    # Hold the full-text list, then persist it with this outcome in one save.
-    # The stored stdout is only a redacted prefix, so a crash after an earlier
-    # save could not recover the list and could leave an older list active.
-    # A crash before this save resumes by launching the implementer again.
-    c["lane_outcome"] = {
-        "role": "implementer",
-        "vendor": first_vendor,
-        "round": round_num,
-        "agent_id": agent["id"],
-        "status": status,
-        "result": model_result,
-        "stdout": redact(result.stdout or ""),
-        "applied": False,
-    }
+    # Keep the launch checkpoint intact while supporting mocked/external launch
+    # implementations that return without writing it themselves.
+    checkpoint = c.get("lane_outcome")
+    if not isinstance(checkpoint, dict) or checkpoint.get("agent_id") != agent["id"]:
+        checkpoint = {}
+    checkpoint.update(
+        {
+            "role": "implementer",
+            "vendor": first_vendor,
+            "round": round_num,
+            "agent_id": agent["id"],
+            "status": status,
+            "result": model_result,
+            "returncode": result.returncode,
+            "stdout": redact(result.stdout or ""),
+            **implementer_replay_fields(
+                result.stdout or "", config_dir=getattr(result, "config_dir", None)
+            ),
+            "applied": False,
+        }
+    )
+    c["lane_outcome"] = checkpoint
     _hold_surface_list(store, worker, task, runner, result.stdout or "")
     save_task(store, task)
 
@@ -1310,6 +1363,11 @@ def phase_implement(
         status=status,
         model_result=model_result,
         stdout=result.stdout or "",
+        replay=(
+            c.get("lane_outcome")
+            if isinstance(c.get("lane_outcome"), dict)
+            else None
+        ),
         sha=sha,
         draft_lines=draft_lines,
     )
