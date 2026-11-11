@@ -568,13 +568,13 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     tid = "66666666-6666-6666-6666-666666666666"
     worktree = worker.workspace_root / tid
     worktree.mkdir()
-    reused = "`src/pay.ts:40` existing gift invoice"
-    added = "`src/habit.ts:12` member habit route"
+    reused = "`/Users/operator/private/pay.ts:40` existing password=value helper"
+    added = "`/home/operator/private/habit.ts:12` token=value route"
     full = (
         "STATUS: complete\nRESULT: done\n"
         + ("note " * 1200)
-        + "\nSUMMARY_EN: Hold the reused list on the task.\n"
-        + "SUMMARY_DE: Die Wiederverwendungsliste bleibt auf dem Task.\n"
+        + "\nSUMMARY_EN: Mask password=values.\n"
+        + "SUMMARY_DE: Maskiere token=werte.\n"
         + f"\nREUSED: {reused}\nADDED: {added}\n"
     )
     calls = {"n": 0}
@@ -659,10 +659,12 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     assert outcome.get("applied") is not True
     assert "SUMMARY_EN" not in str(outcome.get("stdout") or "")
     assert "habit.ts" not in str(outcome.get("stdout") or "")
-    assert outcome["summary_en"] == "Hold the reused list on the task."
-    assert outcome["summary_de"] == "Die Wiederverwendungsliste bleibt auf dem Task."
-    assert outcome["reused_lines"] == [reused]
-    assert outcome["added_lines"] == [added]
+    assert outcome["summary_en"] == "Mask [redacted]."
+    assert outcome["summary_de"] == "Maskiere [redacted]."
+    assert outcome["reused_lines"] == [
+        "`[redacted]:40` existing [redacted] helper"
+    ]
+    assert outcome["added_lines"] == ["`[redacted]:12` [redacted] route"]
     assert "reused_lines" not in saved
     assert saved["state"] != "reviewing"
     assert calls["n"] == 1
@@ -677,10 +679,12 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     assert calls["n"] == 1, lines
     assert "lane_outcome" not in saved["payload"]["coordinator"]
     assert saved["payload"]["coordinator"]["phase"] == "inner_review", lines
-    assert saved["change_summary_en"] == "Hold the reused list on the task."
-    assert saved["change_summary_de"] == "Die Wiederverwendungsliste bleibt auf dem Task."
-    assert added in fake.pr["body"]
-    assert reused in fake.pr["body"]
+    assert saved["change_summary_en"] == "Mask [redacted]."
+    assert saved["change_summary_de"] == "Maskiere [redacted]."
+    assert "`[redacted]:12` [redacted] route" in fake.pr["body"]
+    assert "`[redacted]:40` existing [redacted] helper" in fake.pr["body"]
+    assert "/Users/operator" not in fake.pr["body"]
+    assert "/home/operator" not in fake.pr["body"]
 
 
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

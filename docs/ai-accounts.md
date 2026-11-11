@@ -232,8 +232,16 @@ terminal sanitization or path classification.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
-control-tolerant secret and raw/resolved config-path redaction on raw text,
-terminal sanitization, a second redaction pass, then bounding. The raw pass
+before terminal sanitization, a whitespace-delimited raw token is redacted in
+place when an interior ESC or C1 sequence has a non-whitespace character on
+both sides. Token separators, including tabs and newlines, stay unchanged;
+ordinary SGR-coloured tokens and sequences at a token boundary remain visible.
+An escape sequence inside a token redacts that whole token, so coloured text
+glued to other text in the same token can appear as `[redacted]` in terminal
+frames.
+The pipeline then applies control-tolerant secret and raw/resolved config-path
+redaction on raw text, terminal sanitization, a second redaction pass, then
+bounding. The known-secret raw pass
 allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the
 matcher. Seven-bit DCS, PM, APC, and SOS strings accept

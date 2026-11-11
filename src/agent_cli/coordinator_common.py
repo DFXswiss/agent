@@ -18,7 +18,11 @@ from .model_slots import (
 )
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
-from .text_sanitize import TERMINAL_INTERLEAVE_PATTERN, sanitize_terminal_text
+from .text_sanitize import (
+    TERMINAL_INTERLEAVE_PATTERN,
+    redact_terminal_interleaved_tokens,
+    sanitize_terminal_text,
+)
 
 Runner = Callable[[list[str]], Completed]
 LaneRunner = Callable[[list[str], str | None], Any]
@@ -225,7 +229,8 @@ def _redact_standard_patterns(text: str) -> str:
 
 
 def redact(text: str, *, limit: int | None = OUTPUT_BOUND) -> str:
-    cleaned = _redact_standard_patterns(text or "")
+    cleaned = redact_terminal_interleaved_tokens(text or "")
+    cleaned = _redact_standard_patterns(cleaned)
     # Redact on raw bytes first.  The tolerant expressions accept complete
     # controls between token characters and CSI/ESC prefixes whose final byte
     # is itself the next token character.

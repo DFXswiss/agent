@@ -94,6 +94,7 @@ class LaneOutput:
     usage: LaneUsage | None
     tools: tuple[dict, ...]
     tools_truncated: bool
+    source_text: str = field(default="", repr=False, compare=False)
 
 
 @dataclass
@@ -521,6 +522,10 @@ def finalize_lane_output(
         out,
         text=redact_lane_text(out.text, config_dir=config_dir, limit=None),
         usage=usage,
+        # Callers that persist output use ``text``.  The coordinator needs the
+        # validated source briefly so schema punctuation consumed by secret
+        # redaction can still be restored around already-redacted fields.
+        source_text=out.text,
     )
 
 

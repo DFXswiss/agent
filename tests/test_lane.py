@@ -1102,6 +1102,25 @@ def test_raw_redaction_precedes_terminal_sanitization_for_diagnostics_and_lane_e
         assert "[redacted]" in value
 
 
+def test_lane_diagnostic_redacts_any_token_split_by_an_interior_csi() -> None:
+    split_tokens = (
+        "ey\x1b[31JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi",
+        "use\x1b[31Jr@example.com",
+        "0123456789\x1b[31abcdefABCD",
+        "AKI\x9b31AIOSFODNN7EXAMPLE",
+    )
+
+    assert redact_diagnostic("\t".join(split_tokens)) == "\t".join(
+        ["[redacted]"] * 4
+    )
+
+
+def test_lane_diagnostic_keeps_ordinary_colour_and_boundary_escapes() -> None:
+    raw = "\x1b[31mERROR\x1b[0m: visible\n\x1b[2KSTART END\x1b[2K"
+
+    assert redact_diagnostic(raw) == "ERROR: visible\nSTART END"
+
+
 @pytest.mark.parametrize("config_inside_worktree", [False, True])
 def test_launch_refuses_openrouter_config_and_worktree_overlap(
     tmp_path: Path, config_inside_worktree: bool

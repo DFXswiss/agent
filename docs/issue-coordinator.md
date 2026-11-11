@@ -580,9 +580,15 @@ aborts the row and leaves the same round retryable. Reviewer `RESULT` must be
 `approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
-starting another model. Gate transactions stage task-checkpoint mutations on a
-copy and adopt them only after commit, so a database rollback cannot leave the
-task pointing at rolled-back gates or publication intents. Authorized replies
+starting another model. Parsed implementer summaries and reused/added surface
+lines are redacted structurally: summary sentence terminators and
+surface-reference backticks plus line numbers are retained. The sanitized
+checkpoint is parsed by the same summary and surface validators before it is
+committed. If that cannot produce a safe valid checkpoint, the lane is not
+checkpointed as finished and the implementation step remains retryable. Gate
+transactions stage task-checkpoint mutations on a copy and adopt them only
+after commit, so a database rollback cannot leave the task pointing at
+rolled-back gates or publication intents. Authorized replies
 (`reply_logins` only), listed with
 `gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
 `question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
@@ -628,8 +634,12 @@ evidence human spec input; the script never invents human grants.
 ## Evidence hygiene
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
-first applies control-tolerant secret matching to raw text, then removes terminal
-escapes and controls, redacts again, and finally applies its length bound.
+first replaces any whitespace-delimited raw token whose interior ESC or C1
+sequence has non-whitespace characters directly on both sides. It preserves the
+separating whitespace; ordinary SGR colour wrappers and sequences at token
+boundaries do not trigger this fail-closed rule. It then applies control-tolerant
+secret matching to raw text, removes terminal escapes and controls, redacts
+again, and finally applies its length bound.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is

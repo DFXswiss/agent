@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -71,41 +72,88 @@ PR_REVIEW_PROMPT_LIMIT = 20_000
 A38_REVIEW_PROMPT_LIMIT = 14_000
 PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
+_CHECKPOINT_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
+
+
+def _redact_checkpoint_summary(summary: str, *, config_dir: str | None) -> str:
+    """Redact summary content while retaining its validated terminator."""
+    body = redact_lane_text(summary[:-1], config_dir=config_dir, limit=None)
+    return f"{body}."
+
+
+def _redact_checkpoint_surface_line(
+    line: str, *, config_dir: str | None
+) -> str:
+    """Redact a surface line without allowing redaction to eat ref delimiters."""
+    matches = list(_CHECKPOINT_SURFACE_REF.finditer(line))
+    if not matches:
+        return redact_lane_text(line, config_dir=config_dir, limit=None)
+    parts: list[str] = []
+    start = 0
+    for match in matches:
+        parts.append(
+            redact_lane_text(
+                line[start : match.start()], config_dir=config_dir, limit=None
+            )
+        )
+        safe_path = redact_lane_text(
+            match.group(1), config_dir=config_dir, limit=None
+        )
+        if (
+            not safe_path
+            or "`" in safe_path
+            or "\n" in safe_path
+            or "\r" in safe_path
+        ):
+            raise CoordinatorError("implementer checkpoint redaction is not schema-safe")
+        parts.append(f"`{safe_path}:{match.group(2)}`")
+        start = match.end()
+    parts.append(redact_lane_text(line[start:], config_dir=config_dir, limit=None))
+    return "".join(parts)
 
 
 def implementer_replay_fields(
     stdout: str, *, config_dir: str | None
 ) -> dict[str, Any]:
-    """Bounded structured fields needed to replay a finished implementer."""
+    """Schema-preserving structured fields needed to replay an implementer."""
     summaries = parse_change_summaries(stdout)
     surfaces = parse_surface_list(stdout)
+    safe_summaries: tuple[str, str] | None = None
+    if summaries is not None:
+        candidate = (
+            _redact_checkpoint_summary(summaries[0], config_dir=config_dir),
+            _redact_checkpoint_summary(summaries[1], config_dir=config_dir),
+        )
+        safe_summaries = parse_change_summaries(
+            f"SUMMARY_EN: {candidate[0]}\nSUMMARY_DE: {candidate[1]}\n"
+        )
+        if safe_summaries is None:
+            raise CoordinatorError("implementer checkpoint redaction is not schema-safe")
+    safe_surfaces: tuple[list[str], list[str]] | None = None
+    if surfaces is not None:
+        candidate_reused = [
+            _redact_checkpoint_surface_line(line, config_dir=config_dir)
+            for line in surfaces[0]
+        ]
+        candidate_added = [
+            _redact_checkpoint_surface_line(line, config_dir=config_dir)
+            for line in surfaces[1]
+        ]
+        safe_surfaces = parse_surface_list(
+            "\n".join(
+                [
+                    *(f"REUSED: {line}" for line in candidate_reused),
+                    *(f"ADDED: {line}" for line in candidate_added),
+                ]
+            )
+        )
+        if safe_surfaces is None:
+            raise CoordinatorError("implementer checkpoint redaction is not schema-safe")
     return {
-        "summary_en": (
-            redact_lane_text(summaries[0], config_dir=config_dir, limit=800)
-            if summaries is not None
-            else None
-        ),
-        "summary_de": (
-            redact_lane_text(summaries[1], config_dir=config_dir, limit=800)
-            if summaries is not None
-            else None
-        ),
-        "reused_lines": (
-            [
-                redact_lane_text(line, config_dir=config_dir, limit=400)
-                for line in surfaces[0]
-            ]
-            if surfaces is not None
-            else None
-        ),
-        "added_lines": (
-            [
-                redact_lane_text(line, config_dir=config_dir, limit=400)
-                for line in surfaces[1]
-            ]
-            if surfaces is not None
-            else None
-        ),
+        "summary_en": safe_summaries[0] if safe_summaries is not None else None,
+        "summary_de": safe_summaries[1] if safe_summaries is not None else None,
+        "reused_lines": safe_surfaces[0] if safe_surfaces is not None else None,
+        "added_lines": safe_surfaces[1] if safe_surfaces is not None else None,
     }
 
 
@@ -245,6 +293,7 @@ def launch_lane(
     aid = str(uuid.uuid4())
     lane_output: str | None = None
     try:
+        replay_source: str | None = None
         try:
             ai.require_lane_execution()
         except AIAccountError as exc:
@@ -347,6 +396,7 @@ def launch_lane(
                     stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
                     config_dir=selected.account.config_dir,
                 )
+                replay_source = finalized.source_text
         except Exception as exc:
             safe_exc = redact_lane_text(
                 str(exc), config_dir=selected.account.config_dir, limit=4000
@@ -409,6 +459,30 @@ def launch_lane(
     )
     agent = store.row("agent", aid)
     assert agent is not None
+    replay_fields: dict[str, Any] = {}
+    if role == "implementer":
+        try:
+            replay_fields = implementer_replay_fields(
+                replay_source if replay_source is not None else result.stdout,
+                config_dir=result.config_dir,
+            )
+        except CoordinatorError:
+            # The process ended, but no finished-lane checkpoint is committed.
+            # Closing the agent row makes the same script-owned step retryable.
+            agent["status"] = "done"
+            agent["finished_at"] = utcnow()
+            agent["note"] = "implementer checkpoint redaction failed"
+            c["lane"] = {
+                "agent_id": aid,
+                "role": role,
+                "vendor": vendor,
+                "state": "checkpoint-failed",
+            }
+            c.pop("lane_outcome", None)
+            with store.conn.transaction():
+                store.write("agent", "update", aid, strip_row(agent))
+                save_task(store, task)
+            raise
     agent["status"] = "done"
     agent["finished_at"] = utcnow()
     agent["note"] = note
@@ -427,9 +501,7 @@ def launch_lane(
             'stdout': redact_lane_text(
                 result.stdout, config_dir=result.config_dir, limit=4000
             ),
-            **implementer_replay_fields(
-                result.stdout, config_dir=result.config_dir
-            ),
+            **replay_fields,
             'applied': False,
         }
     # A finished agent without its durable outcome would permit a second launch.
