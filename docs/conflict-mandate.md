@@ -127,8 +127,12 @@ serialized by the source lock.
    null. Comment listings require a list of objects with integer `id`, string
    `body`, string `user.login`, string `user.type`, GitHub-parsable string
    `created_at` and `updated_at`, and at least one string `html_url` or
-   `issue_url` that contains a parsable pull or issue number. A timestamp that
-   does not parse makes the listing transient for that tick.
+   `issue_url` that contains a parsable positive pull or issue number. When a
+   comment carries both `issue_url` and `html_url`, both numbers must be the
+   same, and `html_url` decides whether it is a pull request (`/pull/`) or an
+   issue (`/issues/`). A mismatch or an unparsable supplied URL makes the
+   listing unreadable for that tick. A timestamp that does not parse makes the
+   listing transient for that tick.
    Reaction listings require objects with string `user.login` and string
    `content`.
    Branch protection requires a boolean `protected`, and the publication ref
@@ -173,9 +177,9 @@ serialized by the source lock.
 7. For only `UU` and `AA` regular text conflicts, it writes a lane spec outside
    the worktree, starts the configured implementer lane, and verifies the
    change set, conflict markers, and `git diff --check`. A conflict marker is a
-   line that starts with exactly seven `<`, `=`, `>`, or `|` characters
-   followed by whitespace or the end of the line, so bare and labelled forms
-   are detected and eight or more of the character are not a marker. The allowed change set
+   line that starts with seven or more identical `<`, `=`, `>`, or `|`
+   characters followed by whitespace or the end of the line, so bare, labelled,
+   and enlarged markers are detected. The allowed change set
    is measured against the index: the union of `git diff --name-only -z`,
    `git ls-files --others -z` including ignored files, and the unmerged paths
    must stay within the conflicted paths. Files that Git staged cleanly while
@@ -207,7 +211,10 @@ serialized by the source lock.
    worker-aware masking before they reach the lane log in the control
    directory, the lane-run record,
    or any returned line. The base branch and commit subject are redacted before
-   they enter the spec. Unsupported head or base
+   they enter the spec. The lane's fixed rules use the shared answer shape:
+   `STATUS:`, `RESULT:`, `SUMMARY_EN:`, and `SUMMARY_DE:` as the shared rules
+   require. When the result is `blocked`, `SUMMARY_EN:` is the one factual
+   sentence that says why. Unsupported head or base
    branch names finish the request with a blocker before any clone. A failed
    first result for another verification failure is retried once with the exact
    failure in the spec. Other unmerged states, a second failure, or too many
@@ -217,8 +224,11 @@ serialized by the source lock.
    after every lane run. If verification passes, the request continues even
    when the lane said `blocked`. If it fails and the lane said `blocked`, there
    is no retry: the script aborts the rebase and posts the deterministic failure
-   as the blocker reason, plus the lane's first sentence as the separate bounded
-   `Lane note` fact. If it fails and the lane did not say `blocked`, the single
+   as the blocker reason, plus the text of its `SUMMARY_EN:` line bounded to
+   500 characters as the separate bounded `Lane note` fact. When there is no
+   `SUMMARY_EN:` text, the note is the first non-empty line after `RESULT:` that
+   is not a `SUMMARY_` line; otherwise the blocker has no lane note. If it fails
+   and the lane did not say `blocked`, the single
    retry applies. The commit subject shown to the lane is read from
    `REBASE_HEAD`; when that read fails, the spec says `Commit being replayed:
    unavailable` and never substitutes the subject of `HEAD`.
@@ -234,7 +244,11 @@ serialized by the source lock.
    running Git in them, and nothing is pushed. Those two direct verifications
    run after every check return, including a non-zero exit, a timeout, and a
    raised error; a metadata difference keeps this blocker ahead of the check
-   result. The same direct cleanup and
+   result. An exception that is not a termination (`SystemExit` that is not a
+   `StoreError`, or `KeyboardInterrupt`) finishes after metadata verification as
+   the blocker `check command could not be evaluated`, with the masked exception
+   type name, and nothing is pushed; it is neither a generic tick error nor
+   transient. The same direct cleanup and
    no-Git rule applies when the pre-push `.git` file verification fails. The
    hook comparison records the
    entry names and their sizes and does not hash a hook's content. After the
@@ -412,6 +426,10 @@ override. The rebase commands pass `-c core.editor=true` and
 `VISUAL`, and `EDITOR` take precedence over Git configuration. The account Git
 runner is therefore responsible for removing those four variables from the
 child environment.
+
+A resolved file that legitimately contains a line of seven or more identical
+`<`, `=`, `>`, or `|` characters is reported as still conflicted and ends in a
+blocker. This includes a reStructuredText or Markdown underline of `=`.
 
 ## Not in this revision
 

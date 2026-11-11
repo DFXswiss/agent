@@ -44,10 +44,6 @@ class Context:
     git_runner: Any = None
 
 
-def now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def parse_time(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -354,7 +350,6 @@ __all__ = [
     "comment_body",
     "context",
     "iso",
-    "now",
     "parse_time",
     "read_checkpoint",
     "read_json",

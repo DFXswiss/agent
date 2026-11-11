@@ -18,7 +18,7 @@ from .coordinator_common import (
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_SLEEP_SECONDS = 1.0
-_COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/(\d+)(?:$|[?#])"
+_COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/([1-9]\d*)(?:$|[?#])"
 
 
 class ConflictTransientError(CoordinatorError):
@@ -52,16 +52,21 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
     updated_at = comment.get("updated_at")
     if not isinstance(updated_at, str) or parse_time(updated_at) is None:
         raise ConflictTransientError(f"{label} returned an unreadable comment update time")
-    urls: list[str] = []
+    numbers: dict[str, int] = {}
     for key in ("html_url", "issue_url"):
         if key not in comment:
             continue
         value = comment[key]
         if not isinstance(value, str):
             raise ConflictTransientError(f"{label} returned an unreadable comment URL")
-        urls.append(value)
-    if not any(re.search(_COMMENT_NUMBER_PATTERN, value) for value in urls):
+        match = re.search(_COMMENT_NUMBER_PATTERN, value)
+        if match is None:
+            raise ConflictTransientError(f"{label} returned an unreadable comment URL")
+        numbers[key] = int(match.group(1))
+    if not numbers:
         raise ConflictTransientError(f"{label} returned an unreadable comment URL")
+    if len(set(numbers.values())) > 1:
+        raise ConflictTransientError(f"{label} returned inconsistent comment URLs")
     return comment
 
 
@@ -144,14 +149,20 @@ def result_marker(comment_id: int) -> str:
 
 def pull_number_from_comment(comment: dict[str, Any]) -> int | None:
     """Return the pull/issue number encoded in a GitHub comment URL."""
+    numbers: list[int] = []
     for key in ("issue_url", "html_url"):
-        value = comment.get(key)
-        if not isinstance(value, str):
+        if key not in comment:
             continue
+        value = comment[key]
+        if not isinstance(value, str):
+            return None
         match = re.search(_COMMENT_NUMBER_PATTERN, value)
-        if match is not None:
-            return int(match.group(1))
-    return None
+        if match is None:
+            return None
+        numbers.append(int(match.group(1)))
+    if not numbers or len(set(numbers)) > 1:
+        return None
+    return numbers[0]
 
 
 def list_repository_comments(runner: Runner, repo: str, *, since: str) -> list[dict[str, Any]]:
