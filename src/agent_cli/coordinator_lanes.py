@@ -268,7 +268,9 @@ def _checkpoint_reviewer_outcome(
     stage: str,
 ) -> dict[str, Any]:
     """Atomically finish a reviewer agent and retain its replayable result."""
-    c = coord(task)
+    committed_task = copy.deepcopy(task)
+    committed_agent = copy.deepcopy(agent)
+    c = coord(committed_task)
     saved = c.get("lane_outcome")
     if saved is None:
         saved = {"role": "reviewer-results", "outcomes": []}
@@ -279,7 +281,7 @@ def _checkpoint_reviewer_outcome(
         raise CoordinatorError("reviewer lane outcome checkpoint is invalid")
     entry = _reviewer_replay_fields(
         result,
-        agent_id=str(agent["id"]),
+        agent_id=str(committed_agent["id"]),
         round_num=round_num,
         head=head,
         dimension=dimension,
@@ -288,7 +290,7 @@ def _checkpoint_reviewer_outcome(
     for existing in outcomes:
         if not isinstance(existing, dict):
             raise CoordinatorError("reviewer lane outcome checkpoint is invalid")
-        if existing.get("agent_id") == agent["id"]:
+        if existing.get("agent_id") == committed_agent["id"]:
             return existing
         if all(
             existing.get(key) == entry[key]
@@ -298,12 +300,18 @@ def _checkpoint_reviewer_outcome(
     outcomes.append(entry)
     saved["outcomes"] = outcomes
     c["lane_outcome"] = saved
-    agent["status"] = "done"
-    agent["finished_at"] = utcnow()
-    agent["note"] = entry["stdout"] or entry["stderr"]
+    committed_agent["status"] = "done"
+    committed_agent["finished_at"] = utcnow()
+    committed_agent["note"] = entry["stdout"] or entry["stderr"]
     with store.conn.transaction():
-        store.write("agent", "update", str(agent["id"]), strip_row(agent))
-        save_task(store, task)
+        store.write(
+            "agent", "update", str(committed_agent["id"]), strip_row(committed_agent)
+        )
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    agent.clear()
+    agent.update(committed_agent)
     return entry
 
 
@@ -1950,6 +1958,7 @@ def phase_pr_gates(
                 dimension=str(prep["dimension"]),
                 stage=canonical_stage(stage),
             )
+            c = coord(task)
             _record_lane_audit(
                 store,
                 worker,
@@ -2000,6 +2009,7 @@ def phase_pr_gates(
                     "agent_id": replay["agent_id"],
                     "dimension": dimension,
                     "role": role,
+                    "result": replay["result"],
                 },
                 _lane_result_from_reviewer_replay(replay),
             )
@@ -2010,7 +2020,7 @@ def phase_pr_gates(
         tuple[dict[str, Any], LaneResult, str, str | None, str]
     ] = []
     for prep, outcome in outcomes:
-        _, model_result = parse_model_result(outcome.stdout, outcome.returncode)
+        model_result = str(prep["result"])
         status = outcome.status
         dimension = str(prep["dimension"])
         if (

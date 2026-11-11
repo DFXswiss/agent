@@ -8,11 +8,12 @@ transition. This module does not claim universal sandbox enforcement.
 
 from __future__ import annotations
 
-import uuid
+import copy
 import hashlib
 import json
-from dataclasses import asdict
 import re
+import uuid
+from dataclasses import asdict
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -1387,24 +1388,28 @@ def _reject_inner_and_reopen(
     *,
     agent_id: str,
 ) -> list[str]:
-    c = coord(task)
-    tr["reviewer_verdict"] = "rejected"
-    tr["finished_at"] = utcnow()
+    committed_task = copy.deepcopy(task)
+    committed_tr = copy.deepcopy(tr)
+    c = coord(committed_task)
+    committed_tr["reviewer_verdict"] = "rejected"
+    committed_tr["finished_at"] = utcnow()
     c["findings"] = redact(findings)
-    n = int(task.get("current_round") or 0) + 1
+    n = int(committed_task.get("current_round") or 0) + 1
     rid = str(uuid.uuid4())
-    task["current_round"] = n
-    task["state"] = "implementing"
+    committed_task["current_round"] = n
+    committed_task["state"] = "implementing"
     c["phase"] = "implement"
     with store.conn.transaction():
-        store.write("task_round", "update", tr["id"], strip_row(tr))
+        store.write(
+            "task_round", "update", committed_tr["id"], strip_row(committed_tr)
+        )
         store.write(
             "task_round",
             "insert",
             rid,
             {
                 "id": rid,
-                "task_id": task["id"],
+                "task_id": committed_task["id"],
                 "round": n,
                 "implementer_verdict": None,
                 "reviewer_verdict": None,
@@ -1412,8 +1417,12 @@ def _reject_inner_and_reopen(
                 "finished_at": None,
             },
         )
-        clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
-        save_task(store, task)
+        clear_reviewer_replay_outcomes(committed_task, agent_ids={agent_id})
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    tr.clear()
+    tr.update(committed_tr)
     return [f"inner reviewer rejected; new round={n}"]
 
 
@@ -1426,7 +1435,6 @@ def _apply_inner_reviewer_replay(
     outcome: dict[str, Any],
 ) -> list[str]:
     """Apply one durable inner-review result without launching another model."""
-    c = coord(task)
     status = str(outcome.get("status") or "")
     model_result = str(outcome.get("result") or "")
     stdout = str(outcome.get("stdout") or "")
@@ -1437,15 +1445,19 @@ def _apply_inner_reviewer_replay(
         status in ("timeout", "partial", "unavailable")
         or model_result not in _REVIEWER_RESULTS
     ):
-        c["phase"] = "blocked"
-        c["resume_phase"] = "inner_review"
-        c["blocker"] = (
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        committed_c["phase"] = "blocked"
+        committed_c["resume_phase"] = "inner_review"
+        committed_c["blocker"] = (
             f"inner reviewer incomplete (status={status} "
             f"result={model_result or 'empty'})"
         )
         with store.conn.transaction():
-            clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
-            save_task(store, task)
+            clear_reviewer_replay_outcomes(committed_task, agent_ids={agent_id})
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
         return publish_blocker(
             store,
             worker,
@@ -1466,22 +1478,31 @@ def _apply_inner_reviewer_replay(
             agent_id=agent_id,
         )
 
-    tr["reviewer_verdict"] = "approved"
-    tr["finished_at"] = utcnow()
-    task["state"] = "local-check"
-    c["phase"] = "tests"
+    committed_task = copy.deepcopy(task)
+    committed_tr = copy.deepcopy(tr)
+    committed_c = coord(committed_task)
+    committed_tr["reviewer_verdict"] = "approved"
+    committed_tr["finished_at"] = utcnow()
+    committed_task["state"] = "local-check"
+    committed_c["phase"] = "tests"
     with store.conn.transaction():
-        store.write("task_round", "update", tr["id"], strip_row(tr))
+        store.write(
+            "task_round", "update", committed_tr["id"], strip_row(committed_tr)
+        )
         set_checklist(
             store,
-            task,
+            committed_task,
             "reviewer_approved",
             "ja",
             f"round {round_num} approved",
             source="script",
         )
-        clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
-        save_task(store, task)
+        clear_reviewer_replay_outcomes(committed_task, agent_ids={agent_id})
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    tr.clear()
+    tr.update(committed_tr)
     return [f"inner reviewer approved round={round_num}"]
 
 
