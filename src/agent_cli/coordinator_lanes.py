@@ -468,8 +468,12 @@ def _write_reviewer_spool(
             ),
             "status": result.status,
             "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stdout": redact_lane_text(
+                result.stdout, config_dir=result.config_dir, limit=4000
+            ),
+            "stderr": redact_lane_text(
+                result.stderr, config_dir=result.config_dir, limit=4000
+            ),
             "config_dir": result.config_dir,
             "usage": (
                 {
@@ -526,18 +530,33 @@ def _read_reviewer_spool(
     saved = payload.get("result")
     if not isinstance(saved, dict):
         return None
+    if any(
+        not isinstance(saved.get(key), str)
+        for key in (
+            "role",
+            "vendor",
+            "model",
+            "status",
+            "stdout",
+            "stderr",
+            "protocol_result",
+        )
+    ) or isinstance(saved.get("returncode"), bool) or not isinstance(
+        saved.get("returncode"), int
+    ):
+        return None
     usage_payload = saved.get("usage")
     try:
         usage = LaneUsage(**usage_payload) if isinstance(usage_payload, dict) else None
         result = LaneResult(
-            role=str(saved["role"]),
-            vendor=str(saved["vendor"]),
-            model=str(saved["model"]),
-            status=str(saved["status"]),
+            role=saved["role"],
+            vendor=saved["vendor"],
+            model=saved["model"],
+            status=saved["status"],
             argv=[],
-            returncode=int(saved["returncode"]),
-            stdout=str(saved["stdout"]),
-            stderr=str(saved["stderr"]),
+            returncode=saved["returncode"],
+            stdout=saved["stdout"],
+            stderr=saved["stderr"],
             config_dir=(
                 str(saved["config_dir"])
                 if isinstance(saved.get("config_dir"), str)
@@ -546,15 +565,13 @@ def _read_reviewer_spool(
             usage=usage,
             tools=tuple(saved.get("tools") or ()),
             tools_truncated=saved.get("tools_truncated") is True,
-            protocol_result=str(saved["protocol_result"]),
+            protocol_result=saved["protocol_result"],
         )
     except (KeyError, TypeError, ValueError):
         return None
     if (
         result.role != agent.get("role")
         or result.vendor != agent.get("vendor")
-        or result.status != "complete"
-        or result.protocol_result not in _REVIEWER_RESULTS
     ):
         return None
     output_file = payload.get("output_file")
@@ -2107,9 +2124,10 @@ def phase_pr_gates(
     verify_checkout_identity(store, worker, runner, worktree)
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
-    # A prior tick may have a fully parsed result whose atomic database
-    # checkpoint alone rolled back. Retry only that checkpoint before treating
-    # any working row as an uncertain process outcome.
+    # A prior tick may have parsed results whose atomic database checkpoints
+    # rolled back. Visit every sibling before deciding that any working row is
+    # uncertain, so row ordering cannot strand a valid saved outcome.
+    checkpoint_retries: list[str] = []
     for pending_agent in store.rows("agent"):
         role = str(pending_agent.get("role") or "")
         if (
@@ -2124,7 +2142,7 @@ def phase_pr_gates(
             continue
         dimension = str(pending_agent.get("dimension") or "")
         try:
-            recovered = _retry_reviewer_checkpoint(
+            _retry_reviewer_checkpoint(
                 store,
                 worker,
                 task,
@@ -2135,10 +2153,60 @@ def phase_pr_gates(
                 stage=canonical_stage(stage),
             )
         except StoreError:
-            return [f"{stage}/{dimension} database checkpoint will be retried"]
-        if recovered is None:
-            break
+            checkpoint_retries.append(
+                f"{stage}/{dimension} database checkpoint will be retried"
+            )
+            continue
+
+    missing_spool: list[dict[str, Any]] = []
+    saved_spool: list[dict[str, Any]] = []
+    for pending_agent in store.rows("agent"):
+        role = str(pending_agent.get("role") or "")
+        if (
+            pending_agent.get("task_id") != task["id"]
+            or pending_agent.get("status") != "working"
+            or pending_agent.get("vendor") != vendor
+            or role not in ("pr-reviewer-quality", "pr-reviewer-logic")
+            or pending_agent.get("head_sha") != head
+            or canonical_stage(str(pending_agent.get("stage") or ""))
+            != canonical_stage(stage)
+        ):
+            continue
+        dimension = str(pending_agent.get("dimension") or "")
+        recovered = _read_reviewer_spool(
+            worker,
+            task,
+            pending_agent,
+            round_num=None,
+            head=head,
+            dimension=dimension,
+            stage=canonical_stage(stage),
+        )
+        (saved_spool if recovered is not None else missing_spool).append(
+            pending_agent
+        )
     c = coord(task)
+    if missing_spool:
+        c["phase"] = "blocked"
+        c["blocker"] = "uncertain prior lane outcome; refusing second model start"
+        c["uncertain_lane"] = True
+        c.pop("resume_phase", None)
+        save_task(store, task)
+        _post_issue_status(
+            store,
+            worker,
+            runner,
+            task,
+            "Blocked: previous model lane outcome is uncertain; refusing new parallel stage.",
+            "uncertain-lane",
+        )
+        raise CoordinatorError("uncertain prior lane outcome for vendor stage")
+    if saved_spool:
+        return checkpoint_retries or [
+            f"{stage}/{str(saved_spool[0].get('dimension') or '')} "
+            "database checkpoint will be retried"
+        ]
+
     # Recheck prior working agents for the whole vendor stage BEFORE any inserts.
     prior = vendor_stage_has_working_agents(store, task["id"], vendor=vendor)
     if prior is not None:
@@ -2375,6 +2443,25 @@ def phase_pr_gates(
             agent_id, outcome = _run_prepared(
                 prep, timeout=worker.lane_timeout, lane_runner=lane_runner
             )
+            if isinstance(outcome, LaneResult):
+                try:
+                    _write_reviewer_spool(
+                        worker,
+                        task,
+                        {"id": agent_id},
+                        outcome,
+                        round_num=None,
+                        head=head,
+                        dimension=str(prep["dimension"]),
+                        stage=canonical_stage(stage),
+                        output_file=(
+                            str(prep["output_file"])
+                            if prep.get("output_file")
+                            else None
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    outcome = exc
             with lock:
                 results[agent_id] = outcome
 
@@ -2401,29 +2488,6 @@ def phase_pr_gates(
             store, task, prepared_list, PR_REVIEW_PREPARATION_ERROR
         )
         raise CoordinatorError(PR_REVIEW_PREPARATION_ERROR) from exc
-
-    # Persist every completed result locally before attempting any database
-    # checkpoint. If one audit transaction rolls back, its sibling result is
-    # still available on the next tick and an already committed sibling stays
-    # in the task checkpoint.
-    for prep in prepared_list:
-        outcome = results.get(prep["agent_id"])
-        agent = store.row("agent", prep["agent_id"])
-        assert agent is not None
-        if isinstance(outcome, LaneResult):
-            _write_reviewer_spool(
-                worker,
-                task,
-                agent,
-                outcome,
-                round_num=None,
-                head=head,
-                dimension=str(prep["dimension"]),
-                stage=canonical_stage(stage),
-                output_file=(
-                    str(prep["output_file"]) if prep.get("output_file") else None
-                ),
-            )
 
     # Persist actual results on the main thread.
     failed_agents: list[str] = []

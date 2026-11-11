@@ -1370,13 +1370,25 @@ def phase_implement(
     # Keep the launch checkpoint intact while supporting mocked/external launch
     # implementations that return without writing it themselves.
     checkpoint = c.get("lane_outcome")
-    if not isinstance(checkpoint, dict) or checkpoint.get("agent_id") != agent["id"]:
+    if not isinstance(checkpoint, dict) or any(
+        checkpoint.get(key) != expected
+        for key, expected in (
+            ("role", "implementer"),
+            ("vendor", first_vendor),
+            ("round", round_num),
+            ("agent_id", agent["id"]),
+        )
+    ):
         checkpoint = {}
-    replay_fields = implementer_replay_fields(
-        result.stdout or "",
-        config_dir=getattr(result, "config_dir", None),
-        path_replacements=_coordinator_path_replacements(store, worker, task),
-    )
+    replay_keys = ("summary_en", "summary_de", "reused_lines", "added_lines")
+    if all(key in checkpoint for key in replay_keys):
+        replay_fields = {key: checkpoint[key] for key in replay_keys}
+    else:
+        replay_fields = implementer_replay_fields(
+            result.stdout or "",
+            config_dir=getattr(result, "config_dir", None),
+            path_replacements=_coordinator_path_replacements(store, worker, task),
+        )
     for key, value in replay_fields.items():
         if key not in checkpoint:
             checkpoint[key] = value
@@ -1394,7 +1406,14 @@ def phase_implement(
         }
     )
     c["lane_outcome"] = checkpoint
-    _hold_surface_list(store, worker, task, runner, result.stdout or "")
+    if review_rules_bound(store, worker, runner, task):
+        replayed_surfaces = _replayed_surface_list(checkpoint)
+        if replayed_surfaces is not None:
+            task["reused_lines"] = replayed_surfaces[0]
+            task["added_lines"] = replayed_surfaces[1]
+            c["surface_list_held"] = True
+        else:
+            _hold_surface_list(store, worker, task, runner, result.stdout or "")
     save_task(store, task)
 
     worktree = str(c["worktree"])
@@ -1529,6 +1548,11 @@ def _apply_inner_reviewer_replay(
             f"inner reviewer incomplete (status={status} "
             f"result={model_result or 'empty'})"
         )
+        provider_unavailable = status == "unavailable"
+        if provider_unavailable:
+            committed_c["blocker_publish_once"] = True
+            committed_c["blocker_publish_kind"] = "provider-incomplete"
+            committed_c.pop("uncertain_lane", None)
         with store.conn.transaction():
             clear_reviewer_replay_outcomes(committed_task, agent_ids={agent_id})
             save_task(store, committed_task)
@@ -1541,7 +1565,11 @@ def _apply_inner_reviewer_replay(
             runner,
             f"Inner reviewer incomplete (status={status}, "
             f"result={model_result or 'empty'}); not a code rejection.",
-            kind="reviewer-incomplete",
+            kind=(
+                "provider-incomplete"
+                if provider_unavailable
+                else "reviewer-incomplete"
+            ),
             reply_checkpoint=True,
         )
     if not review_is_approved(status, model_result):

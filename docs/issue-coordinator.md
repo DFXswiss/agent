@@ -599,9 +599,15 @@ starting another model. The inner reviewer and each dimension of a parallel PR
 review atomically persist a bounded, redacted, structured outcome, its
 deterministically identified `lane.run` audit, and the finished agent, bound to
 the task, round, head, stage, and dimension. A finished reviewer result remains
-in a local checkpoint with its provider output until that transaction commits.
-An audit-only rollback retries only this checkpoint on the next tick and never
-discards an already committed parallel sibling. Before
+in a local checkpoint with bounded stdout and stderr until that transaction
+commits. Each parallel worker writes its checkpoint atomically as soon as its
+lane returns, before publishing the result to shared memory or waiting for its
+sibling. Structurally valid incomplete, unavailable, and malformed-protocol
+results are recovered and then classified by the normal verdict path; they are
+not converted into uncertain outcomes. An audit-only rollback retries only this
+checkpoint on the next tick, visits every saved sibling before classifying a
+working row without a checkpoint as uncertain, and never discards an already
+committed parallel sibling. Before
 starting a reviewer, the coordinator replays a matching saved outcome; it
 removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
@@ -744,7 +750,9 @@ rewrite the lane verdict. A reviewer audit failure rolls back its finished agent
 and replicated outcome checkpoint because all three records share one
 transaction; the local finished-result checkpoint and provider output remain
 for the next tick's transaction retry, without a model relaunch or an
-`uncertain_lane` stop.
+`uncertain_lane` stop. An unavailable sequential inner reviewer uses the same
+published-once `provider-incomplete` reply checkpoint as unavailable
+implementers and parallel gates, so an early merge cannot bypass the blocker.
 File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
@@ -912,7 +920,11 @@ schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
 evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
-new comment. A moved live value first updates
+new comment. The verified report intent and its pending comment row become
+visible in one transaction. Invalidating or replacing that intent changes any
+still-pending row to `error` in the same transaction, so the generic GitHub
+executor cannot publish evidence for a discarded base or payload. A moved live
+value first updates
 `coordinator.a38.pending_base_sha`; only bound report-or-waiver evidence plus
 the recorded local gate promotes it to `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,

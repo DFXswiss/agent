@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from .text_sanitize import redact_terminal_interleaved_secret
 Runner = Callable[[list[str]], Completed]
 
 ACTIVITY_MARKER = "<!-- agent-activity:{id} -->"
+_A38_REPORT_BINDING_KEY = "_coordinator_a38_report"
 
 # Typed executor facts for APPROVE discover-before-POST fail-closed outcomes.
 # Coordinator recovery must match these exactly — never infer dismissal from
@@ -40,6 +42,78 @@ class _GhError(Exception):
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
+
+
+def _a38_report_intent_error(store: Store, row: dict[str, Any]) -> str | None:
+    """Fail closed when a pending A38 report no longer has its task intent."""
+    payload = row.get("payload")
+    if not isinstance(payload, dict) or _A38_REPORT_BINDING_KEY not in payload:
+        return None
+    binding = payload.get(_A38_REPORT_BINDING_KEY)
+    expected_keys = {
+        "task_id",
+        "head",
+        "base_sha",
+        "policy_revision",
+        "body_sha256",
+        "private",
+    }
+    if not isinstance(binding, dict) or set(binding) != expected_keys:
+        return "A38 report activity binding is invalid"
+    task_id = binding.get("task_id")
+    body = payload.get("body")
+    digest = binding.get("body_sha256")
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or not isinstance(binding.get("head"), str)
+        or _FULL_SHA_RE.fullmatch(binding["head"]) is None
+        or not isinstance(binding.get("base_sha"), str)
+        or _FULL_SHA_RE.fullmatch(binding["base_sha"]) is None
+        or not isinstance(binding.get("policy_revision"), str)
+        or _FULL_SHA_RE.fullmatch(binding["policy_revision"]) is None
+        or not isinstance(binding.get("private"), bool)
+        or not isinstance(body, str)
+        or not isinstance(digest, str)
+        or hashlib.sha256(body.encode("utf-8")).hexdigest() != digest
+        or payload.get("target") != "pr"
+        or payload.get("exact_body") is not True
+    ):
+        return "A38 report activity payload does not match its binding"
+    task = store.row("task", task_id)
+    task_payload = task.get("payload") if isinstance(task, dict) else None
+    coordinator = (
+        task_payload.get("coordinator") if isinstance(task_payload, dict) else None
+    )
+    a38 = coordinator.get("a38") if isinstance(coordinator, dict) else None
+    intent = a38.get("report_intent") if isinstance(a38, dict) else None
+    expected_intent = {
+        "head": binding.get("head"),
+        "base_sha": binding.get("base_sha"),
+        "policy_revision": binding.get("policy_revision"),
+        "activity_id": str(row.get("id") or ""),
+        "body_sha256": digest,
+        "private": binding.get("private"),
+    }
+    if not isinstance(intent, dict) or any(
+        intent.get(key) != value for key, value in expected_intent.items()
+    ):
+        return "A38 report activity has no matching current report intent"
+    source = coordinator.get("source") if isinstance(coordinator, dict) else None
+    expected_repo = (
+        source.get("repo")
+        if isinstance(source, dict) and isinstance(source.get("repo"), str)
+        else task.get("repo") if isinstance(task, dict) else None
+    )
+    expected_number_raw = (
+        coordinator.get("pr_number")
+        if isinstance(coordinator, dict) and coordinator.get("pr_number") is not None
+        else task.get("ref") if isinstance(task, dict) else None
+    )
+    expected_number = _as_int(expected_number_raw)
+    if payload.get("repo") != expected_repo or payload.get("number") != expected_number:
+        return "A38 report activity target does not match its task"
+    return None
 
 
 def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> str:
@@ -680,6 +754,12 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
         if typ not in {"pr.open", "pr.body", "issue.write", "comment.post", "review.post"}:
             continue
         try:
+            if typ == "comment.post":
+                report_error = _a38_report_intent_error(store, row)
+                if report_error is not None:
+                    _mark(store, row, status="error", error=report_error)
+                    lines.append(f"comment.post {row.get('id')} error")
+                    continue
             account = load_accounts(store.home).for_session(str(row.get("session_id") or ""))
             binding = {"account": account.name, "login": account.login.casefold()}
             if row.get("execution_account") is not None and row["execution_account"] != binding:

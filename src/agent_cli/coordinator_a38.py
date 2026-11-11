@@ -92,6 +92,7 @@ SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
 A38_CONTEXT_READ_ATTEMPTS = 3
+_A38_REPORT_BINDING_KEY = "_coordinator_a38_report"
 # The executor appends "\n" plus the activity marker with a 36-character activity id.
 ACTIVITY_MARKER_LENGTH = len("\n" + ACTIVITY_MARKER.format(id="0" * 36))
 # Both prompts appear twice in the comment (record and machine block) and the findings once;
@@ -472,6 +473,72 @@ def _report_intent_matches(
     )
 
 
+def _report_activity_payload(
+    task: dict[str, Any],
+    *,
+    repo: str,
+    number: int,
+    body: str,
+    head: str,
+    base_sha: str,
+    policy_revision: str,
+    body_sha256: str,
+    private: bool,
+) -> dict[str, Any]:
+    """Bind a pending report row to the task intent the executor must verify."""
+    return {
+        "repo": repo,
+        "number": number,
+        "body": body,
+        "target": "pr",
+        "exact_body": True,
+        _A38_REPORT_BINDING_KEY: {
+            "task_id": str(task["id"]),
+            "head": head,
+            "base_sha": base_sha,
+            "policy_revision": policy_revision,
+            "body_sha256": body_sha256,
+            "private": private,
+        },
+    }
+
+
+def _retire_pending_report_activity(
+    store: Store, intent: Any, *, reason: str
+) -> None:
+    """Make a discarded report intent ineligible for the generic executor."""
+    if not isinstance(intent, dict):
+        return
+    activity_id = intent.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id:
+        return
+    row = store.row("activity", activity_id)
+    if (
+        not isinstance(row, dict)
+        or row.get("_origin_device_id") != store.device_id()
+        or row.get("execution_status") != "pending"
+    ):
+        return
+    updated = {key: value for key, value in row.items() if not key.startswith("_")}
+    updated["execution_status"] = "error"
+    updated["execution_error"] = reason
+    store.write("activity", "update", activity_id, updated)
+
+
+def _discard_report_intent(
+    store: Store, task: dict[str, Any], *, reason: str
+) -> None:
+    """Retire a pending report row and its task intent in one transaction."""
+    a38 = _a38_state(coord(task))
+    intent = a38.get("report_intent")
+    if intent is None:
+        return
+    with store.conn.transaction():
+        _retire_pending_report_activity(store, intent, reason=reason)
+        a38.pop("report_intent", None)
+        save_task(store, task)
+
+
 def phase_tests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -552,6 +619,13 @@ def phase_tests(
         else "guard-docs change set" if guard_docs_only else ""
     )
     if waiver_reason:
+        _discard_report_intent(
+            store,
+            task,
+            reason="A38 report intent replaced by an inventory waiver",
+        )
+        c = coord(task)
+        a38 = _a38_state(c)
         a38.pop("report", None)
         a38["report_waiver"] = {
             "head": head,
@@ -636,6 +710,15 @@ def phase_tests(
         base_sha=base_sha,
         policy_revision=policy_revision,
     )
+    if intent is not None and not intent_matches:
+        _discard_report_intent(
+            store,
+            task,
+            reason="A38 report intent no longer matches the current head and base",
+        )
+        c = coord(task)
+        a38 = _a38_state(c)
+        intent = None
     activity_id = str(intent["activity_id"]) if intent_matches else default_activity_id
     activity = store.row("activity", activity_id)
     if isinstance(activity, dict) and not _own_report_activity(store, worker, task, activity, head):
@@ -643,6 +726,7 @@ def phase_tests(
     policy_result = None
     policy = None
     visibility = None
+    invalid_recovery_intent = False
     if isinstance(activity, dict):
         payload = activity.get("payload")
         body = payload.get("body") if isinstance(payload, dict) else None
@@ -651,13 +735,23 @@ def phase_tests(
                 store, worker, runner, worktree, base_sha
             )
             visibility = _repository_visibility(api, cfg.repo)
-        expected_recovery_payload = {
-            "repo": target_repo(task),
-            "number": number,
-            "body": body,
-            "target": "pr",
-            "exact_body": True,
-        }
+        expected_recovery_payload = (
+            _report_activity_payload(
+                task,
+                repo=target_repo(task),
+                number=number,
+                body=body,
+                head=head,
+                base_sha=base_sha,
+                policy_revision=policy_revision,
+                body_sha256=str(intent.get("body_sha256") or ""),
+                private=visibility,
+            )
+            if isinstance(body, str)
+            and isinstance(visibility, bool)
+            and isinstance(intent, dict)
+            else None
+        )
         if (
             not intent_matches
             or not isinstance(body, str)
@@ -669,6 +763,7 @@ def phase_tests(
             # measure again; the verified body will use a digest-bound fallback
             # id if this id remains occupied by different content.
             activity = None
+            invalid_recovery_intent = intent_matches
         else:
             assert policy is not None
             assert visibility is not None
@@ -684,6 +779,18 @@ def phase_tests(
                 )
             except CoordinatorError:
                 activity = None
+                invalid_recovery_intent = True
+    if invalid_recovery_intent:
+        _discard_report_intent(
+            store,
+            task,
+            reason="A38 report intent payload failed current validation",
+        )
+        c = coord(task)
+        a38 = _a38_state(c)
+        intent = None
+        intent_matches = False
+        activity_id = default_activity_id
     if isinstance(activity, dict):
         payload = activity.get("payload")
         if activity.get("execution_status") != "done":
@@ -924,13 +1031,17 @@ def phase_tests(
     body_sha256 = _report_body_digest(report_body)
     activity_id = default_activity_id
     occupied = store.row("activity", activity_id)
-    expected_payload = {
-        "repo": target_repo(task),
-        "number": number,
-        "body": report_body,
-        "target": "pr",
-        "exact_body": True,
-    }
+    expected_payload = _report_activity_payload(
+        task,
+        repo=target_repo(task),
+        number=number,
+        body=report_body,
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
+        body_sha256=body_sha256,
+        private=visibility,
+    )
     if isinstance(occupied, dict):
         if not _own_report_activity(store, worker, task, occupied, head):
             raise CoordinatorError(
@@ -958,15 +1069,18 @@ def phase_tests(
         "body_sha256": body_sha256,
         "private": visibility,
     }
-    # The exact verified body digest is durable before publication is queued.
-    save_task(store, task)
-    queue_activity(
-        store,
-        activity_id=activity_id,
-        session_id=worker.session_id,
-        typ="comment.post",
-        payload=expected_payload,
-    )
+    # The exact verified body digest and its pending publication become visible
+    # together. The generic GitHub executor must never observe the row without
+    # the matching current task intent.
+    with store.conn.transaction():
+        save_task(store, task)
+        queue_activity(
+            store,
+            activity_id=activity_id,
+            session_id=worker.session_id,
+            typ="comment.post",
+            payload=expected_payload,
+        )
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
@@ -2435,9 +2549,17 @@ def invalidate_base_evidence(
     if not is_sha(base_sha):
         raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
     c = coord(task)
-    _drop_base_evidence(c)
-    _a38_state(c)["pending_base_sha"] = base_sha
-    reopen_base_bound_checklist(store, task)
+    intent = _a38_state(c).get("report_intent")
+    with store.conn.transaction():
+        _retire_pending_report_activity(
+            store,
+            intent,
+            reason="A38 report intent invalidated by a pull request base change",
+        )
+        _drop_base_evidence(c)
+        _a38_state(c)["pending_base_sha"] = base_sha
+        reopen_base_bound_checklist(store, task)
+        save_task(store, task)
 
 
 def _reconcile_pending_base(
