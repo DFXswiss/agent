@@ -98,6 +98,12 @@ HTTP_TIMEOUT_S = 30.0
 GET_RETRIES = 3
 RETRY_BACKOFF_S = 0.4
 ASSESS_RETRIES = 3
+_RETRYABLE_RACES = (
+    "changed before publish",
+    "changed before workflow approval",
+    "changed before lifecycle",
+)
+SWEEP_RESERVE_FRACTION = 0.3
 USER_AGENT = "dfx-pr-guard/1"
 
 PR_TARGET_ACTIONS = frozenset(
@@ -114,6 +120,12 @@ class PullCommitsTruncatedError(GuardError):
 
 def _is_guard_error(exc: BaseException) -> bool:
     return is_guard_error(exc)
+
+
+def _is_retryable_race(exc: BaseException) -> bool:
+    return _is_guard_error(exc) and any(
+        marker in str(exc) for marker in _RETRYABLE_RACES
+    )
 
 
 def _reraise_rate_limit(exc: BaseException) -> None:
@@ -880,6 +892,22 @@ def _whole_nonneg_seconds(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _sweep_budget_low(api: Any) -> tuple[int, int] | None:
+    sample = getattr(api, "pool_last", None)
+    if not isinstance(sample, Mapping):
+        return None
+    remaining = _whole_nonneg_seconds(sample.get("x-ratelimit-remaining"))
+    limit = _whole_nonneg_seconds(sample.get("x-ratelimit-limit"))
+    if (
+        remaining is None
+        or limit is None
+        or limit == 0
+        or remaining >= limit * SWEEP_RESERVE_FRACTION
+    ):
+        return None
+    return remaining, limit
 
 
 def _epoch_seconds(value: Any) -> float | None:
@@ -3657,7 +3685,7 @@ def reconcile_pull(
                     if _assessment_exit_code(assessment) != 0:
                         setattr(exc, "failed_before", True)
                 raise
-            if _is_guard_error(exc) and "changed before publish" in str(exc):
+            if _is_retryable_race(exc):
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
@@ -3706,7 +3734,9 @@ def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
 
 
 def list_open_pulls(api: GitHubApi, repo: str) -> list[int]:
-    items = api.paginate(f"/repos/{repo}/pulls?state=open")
+    items = api.paginate(
+        f"/repos/{repo}/pulls?state=open&sort=updated&direction=desc"
+    )
     numbers: list[int] = []
     for item in items:
         if isinstance(item, dict) and isinstance(item.get("number"), int):
@@ -4277,7 +4307,24 @@ def _run(
                     setattr(exc, "results", results)
                     raise
                 n = len(numbers)
+                budget_stop = None
                 for i, number in enumerate(numbers, start=1):
+                    budget = _sweep_budget_low(client)
+                    if budget is not None:
+                        remaining, limit = budget
+                        skipped = numbers[i - 1 :]
+                        print(
+                            "a38-guard: all-open budget stop before "
+                            f"{i}/{n} PR {number}: remaining={remaining} limit={limit}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        budget_stop = {
+                            "remaining": remaining,
+                            "limit": limit,
+                            "skipped": skipped,
+                        }
+                        break
                     print(
                         f"a38-guard: all-open {i}/{n} PR {number}",
                         file=sys.stderr,
@@ -4315,31 +4362,37 @@ def _run(
                         continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
-                from .held_run_drain import drain_held_runs
-                # A maintenance pass that cannot delete must not turn the guard
-                # red for every pull request in the sweep.
-                try:
-                    drain = drain_held_runs(
-                        client, _validate_repo(args.repo), dry_run=dry
-                    )
-                except RuntimeError as exc:
-                    if is_rate_limit_error(exc):
-                        setattr(exc, "results", results)
-                        setattr(
-                            exc,
-                            "failed_before",
-                            getattr(exc, "failed_before", False) or any(exit_codes),
+                if budget_stop is not None:
+                    drain = {"skipped": "budget"}
+                else:
+                    from .held_run_drain import drain_held_runs
+                    # A maintenance pass that cannot delete must not turn the guard
+                    # red for every pull request in the sweep.
+                    try:
+                        drain = drain_held_runs(
+                            client, _validate_repo(args.repo), dry_run=dry
                         )
-                        raise
-                    if not _is_guard_error(exc):
-                        raise
-                    print(
-                        f"a38-guard: held run drain: {exc}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    drain = {"error": str(exc)}
-                print(json.dumps({"results": results, "held_run_drain": drain}, indent=2, sort_keys=True))
+                    except RuntimeError as exc:
+                        if is_rate_limit_error(exc):
+                            setattr(exc, "results", results)
+                            setattr(
+                                exc,
+                                "failed_before",
+                                getattr(exc, "failed_before", False) or any(exit_codes),
+                            )
+                            raise
+                        if not _is_guard_error(exc):
+                            raise
+                        print(
+                            f"a38-guard: held run drain: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        drain = {"error": str(exc)}
+                output = {"results": results, "held_run_drain": drain}
+                if budget_stop is not None:
+                    output["budget_stop"] = budget_stop
+                print(json.dumps(output, indent=2, sort_keys=True))
                 # Fail the process if any enforce assessment failed.
                 return 1 if any(exit_codes) else 0
 

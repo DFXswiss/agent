@@ -6,7 +6,12 @@ from urllib.parse import urlparse
 import pytest
 
 from agent_cli import pr_lifecycle
-from agent_cli.a38_guard import GuardError, reconcile_pull, status_context_enforce
+from agent_cli.a38_guard import (
+    GuardError,
+    assess_pull,
+    reconcile_pull,
+    status_context_enforce,
+)
 from agent_cli.a38_review import (
     BLOCKING_REVIEW_REASON,
     LIFECYCLE_REASON,
@@ -540,6 +545,130 @@ def test_unknown_mergeability_never_promotes_or_invents_conflicts():
     fake.pull["draft"] = True
     reconcile_pull(fake.api(), REPO, 1)
     assert fake.transitions == []
+
+
+def test_draft_waits_for_mergeable_then_marks_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = None
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    original_get_json = api.get_json
+    pull_reads = 0
+    delays: list[float] = []
+
+    def get_json(path: str):
+        nonlocal pull_reads
+        data = original_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            pull_reads += 1
+            data = dict(data)
+            data["mergeable"] = True if pull_reads >= 3 else None
+        return data
+
+    api.get_json = get_json
+    api._sleep = delays.append
+    result = pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert result["action"] == "ready"
+    assert fake.transitions == [False]
+    assert delays == [2.0]
+
+
+def test_draft_still_unknown_after_mergeable_retries_stays_unchanged():
+    baseline_fake = LifecycleAPI()
+    baseline_fake.pull["draft"] = True
+    baseline_fake.pull["mergeable"] = True
+    baseline_fake.runs[0].update(status="in_progress", conclusion=None)
+    baseline_api = baseline_fake.api()
+    baseline_assessment = assess_pull(baseline_api, REPO, 1)
+    baseline_get_json = baseline_api.get_json
+    baseline_pull_reads = 0
+
+    def baseline_counting_get_json(path: str):
+        nonlocal baseline_pull_reads
+        data = baseline_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            baseline_pull_reads += 1
+        return data
+
+    baseline_api.get_json = baseline_counting_get_json
+    baseline_result = pr_lifecycle.reconcile_lifecycle(
+        baseline_api, baseline_assessment
+    )
+    assert baseline_result["action"] == "unchanged"
+    assert baseline_fake.transitions == []
+
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = None
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    original_get_json = api.get_json
+    pull_reads = 0
+    delays: list[float] = []
+
+    def get_json(path: str):
+        nonlocal pull_reads
+        data = original_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            pull_reads += 1
+            data = dict(data)
+            data["mergeable"] = None
+        return data
+
+    api.get_json = get_json
+    api._sleep = delays.append
+    result = pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert result["action"] == "unchanged"
+    assert fake.transitions == []
+    assert pull_reads == baseline_pull_reads + 3
+    assert delays == [2.0, 4.0, 6.0]
+
+
+def test_ready_pull_with_unknown_mergeable_does_not_wait():
+    baseline_fake = LifecycleAPI()
+    baseline_fake.pull["draft"] = False
+    baseline_fake.pull["mergeable"] = True
+    baseline_api = baseline_fake.api()
+    baseline_assessment = assess_pull(baseline_api, REPO, 1)
+    baseline_get_json = baseline_api.get_json
+    baseline_pull_reads = 0
+
+    def baseline_counting_get_json(path: str):
+        nonlocal baseline_pull_reads
+        data = baseline_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            baseline_pull_reads += 1
+        return data
+
+    baseline_api.get_json = baseline_counting_get_json
+    pr_lifecycle.reconcile_lifecycle(baseline_api, baseline_assessment)
+
+    fake = LifecycleAPI()
+    fake.pull["draft"] = False
+    fake.pull["mergeable"] = None
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    original_get_json = api.get_json
+    pull_reads = 0
+    delays: list[float] = []
+
+    def get_json(path: str):
+        nonlocal pull_reads
+        data = original_get_json(path)
+        if path == f"/repos/{REPO}/pulls/1":
+            pull_reads += 1
+            data = dict(data)
+            data["mergeable"] = None
+        return data
+
+    api.get_json = get_json
+    api._sleep = delays.append
+    result = pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert result["action"] == "unchanged"
+    assert pull_reads == baseline_pull_reads
+    assert delays == []
 
 
 def test_approval_then_pending_then_green_promotes_once_without_rerunning():

@@ -1306,7 +1306,7 @@ def test_pagination_count_changes_on_both_attempts_fails_closed() -> None:
     with pytest.raises(GuardError, match="changed or exceeds"):
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
-    assert fake.actions_pages == [1, 2, 1, 2]
+    assert fake.actions_pages == [1, 2, 1, 2, 1, 2]
 
 
 def test_pagination_duplicate_id_across_pages_fails_closed() -> None:
@@ -1324,7 +1324,7 @@ def test_pagination_duplicate_id_across_pages_fails_closed() -> None:
     with pytest.raises(GuardError, match="duplicate"):
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
-    assert fake.actions_pages == [1, 2, 1, 2]
+    assert fake.actions_pages == [1, 2, 1, 2, 1, 2]
 
 
 def test_duplicate_id_retry_returns_the_clean_list_when_the_shift_is_transient() -> None:
@@ -1410,7 +1410,48 @@ def test_empty_first_page_with_nonzero_total_count_is_incomplete() -> None:
     with pytest.raises(GuardError, match="incomplete"):
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
-    assert fake.actions_pages == [1]
+    assert fake.actions_pages == [1, 1, 1]
+
+
+def test_empty_first_page_retries_and_returns_complete_inventory() -> None:
+    class Scripted:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.delays: list[float] = []
+            self._sleep = self.delays.append
+
+        def get_json(self, path: str) -> dict:
+            self.calls += 1
+            if self.calls == 1:
+                return {"total_count": 1, "workflow_runs": []}
+            return {
+                "total_count": 1,
+                "workflow_runs": [FakeApproval.run(id=101)],
+            }
+
+    scripted = Scripted()
+    runs = wa._runs(scripted, REPO, HEAD)
+    assert [run["id"] for run in runs] == [101]
+    assert scripted.calls == 2
+    assert scripted.delays == [1.0]
+
+
+def test_persistent_empty_first_page_retries_three_times_then_fails() -> None:
+    class Scripted:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.delays: list[float] = []
+            self._sleep = self.delays.append
+
+        def get_json(self, path: str) -> dict:
+            self.calls += 1
+            return {"total_count": 1, "workflow_runs": []}
+
+    scripted = Scripted()
+    with pytest.raises(GuardError, match="workflow run inventory incomplete"):
+        wa._runs(scripted, REPO, HEAD)
+    assert scripted.calls == 3
+    assert scripted.delays == [1.0, 2.0]
 
 
 def test_total_count_above_the_cap_with_a_short_page_approves() -> None:
@@ -1450,6 +1491,8 @@ def test_ten_full_pages_exceed_the_pagination_bound() -> None:
 
 def test_runs_helper_rejects_count_change_and_duplicates() -> None:
     class Scripted:
+        _sleep = staticmethod(lambda _seconds: None)
+
         def get_json(self, path: str) -> dict:
             page = int((parse_qs(urlparse(path).query).get("page") or ["1"])[0])
             if page == 1:
@@ -1463,6 +1506,8 @@ def test_runs_helper_rejects_count_change_and_duplicates() -> None:
         wa._runs(Scripted(), REPO, HEAD)
 
     class Dupes:
+        _sleep = staticmethod(lambda _seconds: None)
+
         def get_json(self, path: str) -> dict:
             return {"total_count": 2, "workflow_runs": [FakeApproval.run(), FakeApproval.run()]}
 
@@ -1472,6 +1517,8 @@ def test_runs_helper_rejects_count_change_and_duplicates() -> None:
 
 def test_runs_error_includes_bounded_inventory_diagnostics() -> None:
     class Scripted:
+        _sleep = staticmethod(lambda _seconds: None)
+
         def get_json(self, path: str) -> dict:
             return {"total_count": 7, "workflow_runs": []}
 
@@ -1487,6 +1534,7 @@ def test_truncated_listing_returns_last_attempt_rows_on_persistent_shift() -> No
     class Scripted:
         def __init__(self) -> None:
             self.page_one_reads = 0
+            self._sleep = lambda _seconds: None
 
         def get_json(self, path: str) -> dict:
             page = int((parse_qs(urlparse(path).query).get("page") or ["1"])[0])
@@ -1512,11 +1560,13 @@ def test_truncated_listing_returns_last_attempt_rows_on_persistent_shift() -> No
         allow_truncated=True,
     )
     assert [run["id"] for run in runs] == list(range(1, 101))
-    assert scripted.page_one_reads == 2
+    assert scripted.page_one_reads == 3
 
 
 def test_truncated_listing_still_rejects_empty_first_page_with_nonzero_total() -> None:
     class Scripted:
+        _sleep = staticmethod(lambda _seconds: None)
+
         def get_json(self, path: str) -> dict:
             return {"total_count": 7, "workflow_runs": []}
 

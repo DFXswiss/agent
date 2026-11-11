@@ -197,18 +197,37 @@ def test_permission_denial_fails_and_is_not_retried():
 @pytest.mark.parametrize("what", ["head", "base", "config", "report"])
 def test_change_before_write_rejects_stale_authorization(what):
     fake = ApprovalAPI()
+    mutation_count = 0
+
     def mutate(f):
+        nonlocal mutation_count
+        mutation_count += 1
         if what == "head":
             f.pull["head"]["sha"] = BASE2
         elif what == "base":
             f.pull["base"]["sha"] = BASE2
         elif what == "config":
-            f.ref_commits["develop"] = BASE2
+            revision = f"{int(BASE2, 16) + mutation_count - 1:040x}"
+            f.set_pr_guard_config(f.config, revision=revision)
+            f.ref_commits["develop"] = revision
         else:
-            f.comments[0]["body"] += "\nChanged author evidence"
+            f.comments[0]["body"] += f"\nChanged author evidence {mutation_count}"
+        f.before_run_read = mutate
+
     fake.before_run_read = mutate
     with pytest.raises(GuardError):
         reconcile_pull(fake.api(), REPO, 1)
+    assert not fake.posts
+
+
+def test_one_shot_change_before_write_is_reassessed():
+    fake = ApprovalAPI()
+    fake.before_run_read = lambda f: f.ref_commits.__setitem__("develop", BASE2)
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.config_revision == BASE2
+    assert result.workflow_approvals == []
     assert not fake.posts
 
 
