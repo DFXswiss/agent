@@ -614,9 +614,12 @@ are hidden before the diagnostic length bound is applied, and an unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
 Live terminal frames join tmux soft-wrapped lines before using the same
 sanitizer and secret redaction without the diagnostic length bound, so frame
-deduplication compares the complete sanitized capture. Hub assignment failures
-are terminal-sanitized before every exact raw, header, or URL-encoded device
-bearer form is removed, followed by generic redaction and bounding.
+deduplication compares the complete sanitized capture. Tmux-backed lane
+diagnostics likewise join soft-wrapped lines before redaction and before their
+bounded text may be printed or stored as `lane.run` evidence. Hub assignment
+failures first remove every exact raw, header, or URL-encoded device bearer with
+an escape- and control-tolerant matcher, then apply terminal sanitization,
+repeat exact bearer removal, and finish with generic redaction and bounding.
 Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. User-facing blockers and questions are
@@ -797,8 +800,10 @@ fail-closed file inventory. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. The live value updates `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,
-report validation, and review diffs use the live evidence value. Independently
-confirmed markdown-only and guard-docs inventories
+report validation, and review diffs use the live evidence value. The script
+fetches the configured base ref and verifies that this exact observed base
+commit exists locally before either running the suite or taking an inventory
+waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
 Coordinator A38 mode does not implement policy migrations; a changed
@@ -817,6 +822,9 @@ issue-comment intent in one transaction. GitHub execution happens only after
 that commit, so a process restart remains blocked until the queued checkpoint
 is published and an authorized reply is observed; it cannot relaunch a reviewer
 from the persisted unavailable gate alone.
+Each rejected gate's comment identity includes that durable gate row id. A
+crash retry therefore reuses the same publication intent, while a later gate
+attempt with identical findings creates and publishes a distinct comment.
 The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<evidence base>)` selected by `a38_guard.status_context_enforce`;

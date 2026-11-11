@@ -7,30 +7,45 @@ from urllib.parse import quote
 
 from .coordinator_common import redact
 from .hub import Hub
-from .text_sanitize import sanitize_terminal_text
+from .text_sanitize import (
+    redact_terminal_interleaved_secret,
+    sanitize_terminal_text,
+)
 
 _ASSIGNMENT_TEXT_LIMIT = 2000
 
 
+def _bearer_forms(token: str | None) -> tuple[str, ...]:
+    if not token:
+        return ()
+    header = f"Bearer {token}"
+    return tuple(
+        sorted(
+            {token, header, quote(token, safe=""), quote(header, safe="")},
+            key=len,
+            reverse=True,
+        )
+    )
+
+
 def _without_bearer(text: str, token: str | None) -> str:
     """Remove the device bearer (raw, header form and URL-encoded) from hub text."""
-    if token:
-        header = f"Bearer {token}"
-        forms = {
-            token,
-            header,
-            quote(token, safe=""),
-            quote(header, safe=""),
-        }
-        for form in sorted(forms, key=len, reverse=True):
-            if form:
-                text = text.replace(form, "[redacted]")
+    for form in _bearer_forms(token):
+        text = text.replace(form, "[redacted]")
+    return text
+
+
+def _without_interleaved_bearer(text: str, token: str | None) -> str:
+    """Remove bearer forms even when terminal controls split their characters."""
+    for form in _bearer_forms(token):
+        text = redact_terminal_interleaved_secret(text, form)
     return text
 
 
 def sanitized_assignment_text(text: str, token: str | None, *, limit: int) -> str:
     """Bounded, redacted, control-character-free hub text without the bearer."""
-    cleaned = sanitize_terminal_text(str(text or ""))
+    cleaned = _without_interleaved_bearer(str(text or ""), token)
+    cleaned = sanitize_terminal_text(cleaned)
     cleaned = _without_bearer(cleaned, token)
     return redact(cleaned, limit=limit)
 

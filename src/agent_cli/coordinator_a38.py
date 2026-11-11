@@ -388,6 +388,27 @@ def phase_tests(
     policy_revision = base_sha
     a38["base_sha"] = base_sha
     a38["policy_revision"] = policy_revision
+    fetched = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "fetch",
+        "--no-tags",
+        "origin",
+        f"+refs/heads/{cfg.base}:refs/remotes/origin/{cfg.base}",
+    )
+    require_git_ok(fetched, "fetch A38 base")
+    exact_base = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "cat-file",
+        "-e",
+        f"{base_sha}^{{commit}}",
+    )
+    require_git_ok(exact_base, "verify observed A38 base")
     markdown_only, guard_docs_only = markdown_and_guard_docs_only(changed_paths)
     waiver_reason = (
         "markdown-only change set"
@@ -544,17 +565,6 @@ def phase_tests(
             head=head,
         )
 
-    fetched = git(
-        store,
-        worker,
-        runner,
-        worktree,
-        "fetch",
-        "--no-tags",
-        "origin",
-        f"+refs/heads/{cfg.base}:refs/remotes/origin/{cfg.base}",
-    )
-    require_git_ok(fetched, "fetch A38 base")
     policy_result = git(store, worker, runner, worktree, "show", f"{base_sha}:.github/a38.json")
     require_git_ok(policy_result, "load A38 policy from base")
 
