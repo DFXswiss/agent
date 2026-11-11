@@ -176,6 +176,41 @@ def test_conflict_markers_report_leftover_markers(tmp_path: Path) -> None:
     assert conflict_markers(str(worktree), ["file.txt"])
 
 
+@pytest.mark.parametrize(
+    "line",
+    ["<<<<<<<", "=======", ">>>>>>>", "|||||||"],
+)
+def test_bare_conflict_markers_are_detected(tmp_path: Path, line: str) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(f"{line}\n", encoding="utf-8")
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["<<<<<<< HEAD", "=======", ">>>>>>> base", "||||||| merged common ancestors"],
+)
+def test_labelled_conflict_markers_are_detected(tmp_path: Path, line: str) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(f"before\n{line}\nafter\n", encoding="utf-8")
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+def test_eight_character_marker_prefix_is_not_a_marker(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(
+        "<<<<<<<<\n========\n>>>>>>>>\n||||||||\n", encoding="utf-8"
+    )
+    assert conflict_markers(str(worktree), ["file.txt"]) == []
+
+
 def test_non_ascii_path_with_space_is_returned_exactly(tmp_path: Path) -> None:
     upstream, worktree = _repo_pair(tmp_path)
     path = "space ä.txt"

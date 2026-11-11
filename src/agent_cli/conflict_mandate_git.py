@@ -11,7 +11,7 @@ from .coordinator_common import CoordinatorError, Runner, redact
 from .runtime import Completed
 
 
-_CONFLICT_MARKER = re.compile(r"^(?:<<<<<<< |=======$|>>>>>>> |\|\|\|\|\|\|\| )")
+_CONFLICT_MARKER = re.compile(r"^(?:<{7}|={7}|>{7}|\|{7})(?=\s|$)")
 _UNMERGED_STATES = frozenset({"UU", "AA"})
 _FORBIDDEN_REF_CHARS = frozenset(
     " ~^:?*[\\\x7f" + "".join(chr(code) for code in range(0x20))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -504,7 +505,7 @@ def test_result_facts_include_and_store_mergeable(
     monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
-    assert "Mergeable: false" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `false`" in fake.pr_comments[0]["body"]
     state_path = (
         tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
     )
@@ -520,11 +521,17 @@ def test_checks_and_result_use_the_verified_base_sha(
     fake.pull["base"]["sha"] = "c" * 40
     fake.remote_base_sha = "b" * 40
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        completed = fake.check(argv, **kwargs)
+        fake.pull["base"]["sha"] = "b" * 40
+        return completed
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
     assert fake.check_calls[0]["env"]["AGENT_CONFLICTS_BASE"] == "b" * 40
-    assert "Base: develop " + "b" * 40 in fake.pr_comments[0]["body"]
+    assert "- Base: `develop " + "b" * 40 + "`" in fake.pr_comments[0]["body"]
     state_path = (
         tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
     )
@@ -568,7 +575,7 @@ def test_result_comment_reports_mergeable_read_after_push(
     lines = tick(store, worker_cfg, runner=runner, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: true" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `true`" in fake.pr_comments[0]["body"]
 
 
 def test_result_comment_reports_unknown_when_post_push_read_stays_null(
@@ -580,7 +587,7 @@ def test_result_comment_reports_unknown_when_post_push_read_stays_null(
     lines = tick(store, worker_cfg, runner=runner, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `unknown`" in fake.pr_comments[0]["body"]
 
 
 def test_result_comment_reports_unknown_when_post_push_read_fails(
@@ -592,7 +599,7 @@ def test_result_comment_reports_unknown_when_post_push_read_fails(
     lines = tick(store, worker_cfg, runner=runner, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `unknown`" in fake.pr_comments[0]["body"]
 
 
 def test_result_comment_reports_unknown_when_head_repository_disappears_after_push(
@@ -616,7 +623,7 @@ def test_result_comment_reports_unknown_when_head_repository_disappears_after_pu
     assert state["pushed"] is True
     assert any("pushed" in line for line in lines)
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `unknown`" in fake.pr_comments[0]["body"]
     assert "head repository is gone" not in fake.pr_comments[0]["body"]
     assert "blocked" not in fake.pr_comments[0]["body"]
 
@@ -646,7 +653,7 @@ def test_result_pending_resume_reads_mergeable_before_posting(
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert lines == ["result comment posted"]
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: true" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `true`" in fake.pr_comments[0]["body"]
 
 
 def test_result_pending_resume_reports_unknown_when_head_repository_is_gone(
@@ -674,7 +681,7 @@ def test_result_pending_resume_reports_unknown_when_head_repository_is_gone(
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert lines == ["result comment posted"]
     assert len(fake.pr_comments) == 1
-    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "- Mergeable: `unknown`" in fake.pr_comments[0]["body"]
     assert "head repository is gone" not in fake.pr_comments[0]["body"]
 
 
@@ -756,6 +763,46 @@ def _mandate_comment_at(created: str, *, comment_id: int = 7, body: str = "@work
     comment = _mandate_comment()
     comment.update({"id": comment_id, "body": body, "created_at": created, "updated_at": created})
     return comment
+
+
+def _comment_code(body: str) -> str:
+    values: list[str] = []
+    lines = body.splitlines()
+    index = 0
+    while index < len(lines):
+        opening = re.fullmatch(r"`{3,}", lines[index])
+        if opening is None:
+            index += 1
+            continue
+        fence = opening.group(0)
+        end = index + 1
+        while end < len(lines) and lines[end] != fence:
+            end += 1
+        if end < len(lines):
+            values.append("\n".join(lines[index + 1 : end]))
+            index = end + 1
+            continue
+        index += 1
+    inline = re.findall(r"`([^`\n]*)`", body)
+    return "\n".join(values + inline)
+
+
+def _comment_outside_code(body: str) -> str:
+    without_fences: list[str] = []
+    lines = body.splitlines()
+    index = 0
+    while index < len(lines):
+        opening = re.fullmatch(r"`{3,}", lines[index])
+        if opening is None:
+            without_fences.append(lines[index])
+            index += 1
+            continue
+        fence = opening.group(0)
+        end = index + 1
+        while end < len(lines) and lines[end] != fence:
+            end += 1
+        index = end + 1 if end < len(lines) else index + 1
+    return re.sub(r"`[^`\n]*`", "", "\n".join(without_fences))
 
 
 def _ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: FakeConflictTransport) -> tuple[Store, Any]:
@@ -1045,7 +1092,7 @@ def test_resume_after_push_posts_full_result_not_no_conflicts(
     assert any("pushed" in line for line in lines)
     body = fake.pr_comments[0]["body"]
     assert "Old head" in body and "New head" in body
-    assert "Replayed commits: 2" in body
+    assert "- Replayed commits: `2`" in body
     assert "src/app.py" in body
     assert "no conflicts" not in body.casefold()
     assert not any(call[:1] == ["clone"] for call in fake.calls)
@@ -1236,7 +1283,10 @@ def test_older_comment_does_not_hide_a_newer_request(
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
     old = _mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7)
-    new = _mandate_comment_at("2026-09-01T06:00:00Z", comment_id=8)
+    new = {
+        **_mandate_comment_at("2026-09-01T06:00:00Z", comment_id=8),
+        "html_url": "https://github.com/example/project/pull/43#issuecomment-8",
+    }
     fake.comments = [old, new]
     fake.pr_comments = [
         {
@@ -1248,7 +1298,19 @@ def test_older_comment_does_not_hide_a_newer_request(
             "html_url": "https://github.com/example/project/pull/42#issuecomment-900",
         }
     ]
-    lines = tick(store, worker_cfg, runner=fake, dry_run=True)
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/43" in joined:
+            return Completed(0, json.dumps(fake.pull), "")
+        if (
+            argv[:1] == ["gh"]
+            and "repos/example/project/issues/43/comments" in joined
+        ):
+            return Completed(0, json.dumps([]), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=runner, dry_run=True)
     assert any("comment 8" in line for line in lines)
     assert fake.reactions == []
 
@@ -1343,8 +1405,8 @@ def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
     assert any("blocker" in line for line in lines)
     assert len(fake.lanes) == 1
     body = fake.pr_comments[0]["body"]
-    assert "src/app.py: conflict marker remains" in body
-    assert "Lane note: A product decision is required." in body
+    assert "`src/app.py: conflict marker remains`" in body
+    assert "Lane note:\n```\nA product decision is required." in body
     assert len(body) < 4000
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
@@ -1379,9 +1441,142 @@ def test_check_failure_posts_redacted_tail_and_does_not_push(
     assert any("blocker" in line for line in lines)
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
     body = fake.pr_comments[0]["body"]
+    assert "configured check failed" in body
+    assert "checks changed the repository state" not in body
     assert "failure" in body
     assert secret not in body
     assert str(tmp_path) not in body
+
+
+def test_failed_check_that_rewrites_git_file_blocks_as_changed_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def rewrite_check(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        assert fake.clone_path is not None
+        (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
+        fake.calls.clear()
+        fake.raw_calls.clear()
+        return Completed(1, "", "check failed")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", rewrite_check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "checks changed the repository state" in fake.pr_comments[0]["body"]
+    assert "check failed" not in fake.pr_comments[0]["body"]
+    assert not any("git" in call for call in fake.raw_calls)
+
+
+def test_timed_out_check_that_adds_a_hook_blocks_as_changed_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def timed_out(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        (_control_git_dir(tmp_path) / "hooks" / "pre-push").write_text(
+            "#!/bin/sh\nexit 0\n", encoding="utf-8"
+        )
+        fake.calls.clear()
+        fake.raw_calls.clear()
+        return Completed(124, "", "timeout")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", timed_out)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "checks changed the repository state" in fake.pr_comments[0]["body"]
+    assert "check command failed" not in fake.pr_comments[0]["body"]
+    assert "`timeout`" not in fake.pr_comments[0]["body"]
+    assert not any("git" in call for call in fake.raw_calls)
+    assert not _control_git_dir(tmp_path).exists()
+
+
+def test_check_output_is_rendered_in_code_without_shaping_the_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    output = (
+        "check failed: @someone <img src=x>\n"
+        "# heading\n"
+        "```\n"
+        "</details>\n"
+        "closing fence: ```"
+    )
+
+    def failed_check(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        return Completed(1, "", output)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", failed_check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    body = fake.pr_comments[0]["body"]
+    outside = _comment_outside_code(body)
+    assert outside.count("<details>") == 1
+    assert outside.count("</details>") == 1
+    fence = re.search(r"^(`{3,})\n", body, re.MULTILINE)
+    assert fence is not None and len(fence.group(1)) == 4
+    assert "<img src=x>" in _comment_code(body)
+    assert "@someone" in _comment_code(body)
+    assert "# heading" in _comment_code(body)
+    assert "</details>" in _comment_code(body)
+    assert "@someone" not in _comment_outside_code(body)
+    assert "<img src=x>" not in _comment_outside_code(body)
+    assert "# heading" not in _comment_outside_code(body)
+
+
+def test_check_output_removes_unicode_controls_and_keeps_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def failed_check(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        return Completed(1, "", "failure \x85\x9b\u202e\u200b ä 日本")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", failed_check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    body = fake.pr_comments[0]["body"]
+    assert not any(character in body for character in "\x85\x9b\u202e\u200b")
+    assert "ä" in body
+    assert "日本" in body
+
+
+def test_conflicted_file_name_is_rendered_in_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.conflict_file = "src/`odd`@team.py"
+    fake.changed = {fake.conflict_file}
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def blocked_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        fake.lane(argv, stdin)
+        if fake.clone_path is not None:
+            path = fake.clone_path / fake.conflict_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
+                encoding="utf-8",
+            )
+        return Completed(0, "STATUS: complete\nRESULT: blocked\nNo decision.\n", "")
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=blocked_lane)
+    assert any("blocker" in line for line in lines)
+    body = fake.pr_comments[0]["body"]
+    outside = _comment_outside_code(body)
+    assert outside.count("<details>") == 1
+    assert outside.count("</details>") == 1
+    assert "src/'odd'@team.py" in _comment_code(body)
+    assert "src/`odd`@team.py" not in body
+    assert "@team" not in _comment_outside_code(body)
 
 
 def test_check_timeout_is_a_blocker(
@@ -1864,10 +2059,15 @@ def _failed_push(
     *,
     remote_head_sha: str,
     remote_read_fails: bool = False,
+    push_stderr: str | None = None,
 ):
     fake = FakeConflictTransport(tmp_path)
     fake.push_rc = 1
-    fake.push_stderr = "x" * 2000 + " remote: policy refused the update"
+    fake.push_stderr = (
+        push_stderr
+        if push_stderr is not None
+        else "x" * 2000 + "\nremote: policy refused the update"
+    )
     fake.remote_head_sha = remote_head_sha
     fake.remote_read_fails = remote_read_fails
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
@@ -1910,6 +2110,46 @@ def test_push_failure_unchanged_remote_head_blocks_with_bounded_tail(
         and "repos/worker-bot/project/git/ref/heads/feature" in call[-1]
         for call in fake.calls
     )
+
+
+def test_push_failure_unchanged_remote_head_with_gh006_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, lines = _failed_push(
+        tmp_path,
+        monkeypatch,
+        remote_head_sha="a" * 40,
+        push_stderr="remote: error: GH006: Protected branch update failed",
+    )
+    assert any("blocker" in line for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert "push was refused by the remote" in fake.pr_comments[0]["body"]
+
+
+def test_push_failure_unchanged_remote_head_with_transport_error_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, lines = _failed_push(
+        tmp_path,
+        monkeypatch,
+        remote_head_sha="a" * 40,
+        push_stderr="fatal: unable to access 'https://github.com/worker-bot/project.git/': Could not resolve host: github.com",
+    )
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+
+
+def test_push_failure_unchanged_remote_head_with_empty_output_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, lines = _failed_push(
+        tmp_path,
+        monkeypatch,
+        remote_head_sha="a" * 40,
+        push_stderr="",
+    )
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
 
 
 def test_read_remote_head_uses_url_encoded_api_ref(tmp_path: Path) -> None:
@@ -2733,6 +2973,55 @@ def test_well_formed_plain_issue_comment_is_skipped_and_advances_checkpoint(
     assert checkpoint["example/project"] == "2026-09-01T03:00:00Z"
 
 
+def test_404_for_exact_mandate_pull_request_is_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        _mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7),
+        _mandate_comment_at("2026-09-01T01:00:00Z", comment_id=8),
+    ]
+
+    def missing_pull(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            return Completed(1, "", "gh: Not Found (HTTP 404)")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=missing_pull)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "transient"
+    assert state["transient_start"] is not None
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+def test_malformed_comment_timestamp_before_later_comment_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {**_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7), "created_at": "not-a-time"},
+        _mandate_comment_at("2026-09-01T01:00:00Z", comment_id=8),
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "creation time" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
 def test_malformed_pull_comment_entry_is_transient_without_marker_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2848,6 +3137,46 @@ def test_pull_request_head_moved_during_pre_push_checks_is_transient(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_pull_request_base_moved_during_pre_push_checks_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def moved_base(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/pulls/42" in item for item in argv
+        ):
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        **fake.pull,
+                        "base": {**fake.pull["base"], "sha": "e" * 40},
+                    }
+                ),
+                "",
+            )
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(store, worker_cfg, runner=moved_base, lane_runner=fake.lane)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "pushing"
+    assert state["transient_start"] is not None
+
+
 def test_pull_request_ref_change_during_pre_push_checks_blocks_without_push(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2931,7 +3260,7 @@ def test_blocked_lane_that_changes_the_index_reports_the_index_blocker(
     assert len(fake.lanes) == 1
     assert len(fake.pr_comments) == 1
     assert "lane changed the index" in fake.pr_comments[0]["body"]
-    assert "Lane note: A product decision is required." in fake.pr_comments[0]["body"]
+    assert "- Lane note: `A product decision is required.`" in fake.pr_comments[0]["body"]
     assert not any(call[:1] == ["git"] and "push" in call for call in fake.calls)
 
 
@@ -2979,7 +3308,7 @@ def test_lane_timeout_twice_blocks_with_two_starts_and_no_push(
     assert len(fake.lanes) == 2
     assert len(fake.pr_comments) == 1
     assert "lane did not complete" in fake.pr_comments[0]["body"]
-    assert "Failed verification: lane status was timeout" in fake.pr_comments[0]["body"]
+    assert "- Failed verification: `lane status was timeout`" in fake.pr_comments[0]["body"]
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
@@ -3007,7 +3336,7 @@ def test_lane_partial_twice_blocks_with_two_starts_and_no_push(
     assert len(fake.lanes) == 2
     assert len(fake.pr_comments) == 1
     assert "lane did not complete" in fake.pr_comments[0]["body"]
-    assert "Failed verification: lane status was partial" in fake.pr_comments[0]["body"]
+    assert "- Failed verification: `lane status was partial`" in fake.pr_comments[0]["body"]
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 

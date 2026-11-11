@@ -34,7 +34,6 @@ from .conflict_mandate_github import (
 from .conflict_mandate_state import (
     CHECKPOINT_OVERLAP,
     COMMENT_LIMIT,
-    CONTROL_DIR,
     FAILURE_TAIL_LIMIT,
     INITIAL_LOOKBACK,
     NO_CONFLICTS,
@@ -111,6 +110,18 @@ MERGE_COMMIT_BLOCKER = "branch contains merge commits"
 CHECKS_CHANGED_STATE = "checks changed the repository state"
 LOCK_REFUSED = "cannot push to the head branch"
 BOUNDED_TIMEOUT_RETURNCODE = 124
+# Unknown push failures are deliberately transient; like every transient
+# failure they become a blocker after 24 hours.
+PUSH_REFUSAL_SIGNS = (
+    "remote:",
+    "! [remote rejected]",
+    "! [rejected]",
+    "pre-receive hook declined",
+    "protected branch",
+    "GH0",
+    "Permission to",
+    "403",
+)
 
 
 class ConflictsError(StoreError):
@@ -370,7 +381,7 @@ def _discover(
                     transient_error = exc
                 continue
             if pull is None:
-                continue
+                raise ConflictTransientError("pull request was not found")
             if pull.get("state") != "open":
                 continue
             repo_candidates.append((created, request))
@@ -511,6 +522,7 @@ def _verify_push_target(
     repo: str,
     number: int,
     observed_head_sha: str,
+    verified_base_sha: str,
     head_repo: str,
     head_ref: str,
     base_ref: str,
@@ -526,7 +538,7 @@ def _verify_push_target(
         current_head_sha,
         current_head_repo,
         current_base_ref,
-        _current_base_sha,
+        current_base_sha,
         _mergeable,
     ) = _pull_fields(pull)
     if (
@@ -538,6 +550,10 @@ def _verify_push_target(
     if current_head_sha != observed_head_sha:
         raise ConflictTransientError(
             "pull request head moved; restarting from the pull request read"
+        )
+    if current_base_sha != verified_base_sha:
+        raise ConflictTransientError(
+            "pull request base moved; restarting from the pull request read"
         )
     if read_branch_protection(request_runtime.github, head_repo, head_ref):
         raise _Blocker(f"refusing to push protected head ref {head_ref}")
@@ -632,6 +648,20 @@ def _rebase_failed(completed: Any) -> str:
         limit=detail_limit,
     )
     return f"{label}\n{detail}"
+
+
+def _push_was_refused(output: str) -> bool:
+    for line in output.splitlines():
+        for sign in PUSH_REFUSAL_SIGNS:
+            if sign == "remote:":
+                if line.startswith(sign):
+                    return True
+            elif sign == "Permission to":
+                if sign in line and "denied" in line:
+                    return True
+            elif sign in line:
+                return True
+    return False
 
 
 def _verify_lane(
@@ -813,6 +843,7 @@ def _finish_marker(
 
 
 def _result_body(
+    worker: ConflictWorker,
     *,
     repo: str,
     number: int,
@@ -844,7 +875,7 @@ def _result_body(
         ("Checks", check_result),
         ("Mergeable", _mergeable_fact(mergeable)),
     ])
-    return comment_body("result", check_fact, facts)
+    return comment_body(worker, "result", check_fact, facts)
 
 
 def _mergeable_fact(value: object) -> str:
@@ -919,7 +950,7 @@ def _finish_blocker(
             remove_repository(ctx.control / "git")
         else:
             rebase_abort(request_runtime.git, str(ctx.worktree))
-        body = comment_body("blocker", safe_reason, safe_facts)
+        body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
         save_state(
             ctx,
             "blocker-pending",
@@ -1162,6 +1193,20 @@ def _run_checks(
         "AGENT_CONFLICTS_SESSION": ctx.worker.session_id,
         "AGENT_CONFLICTS_WORKTREE": str(ctx.worktree),
     }
+    def metadata_failure() -> str | None:
+        reason: str | None = None
+        try:
+            verify_git_file(ctx.worktree, expected_git_file)
+        except CoordinatorError as exc:
+            reason = str(exc)
+        if repository_state_changed(expected_state, repository_state(ctx.control / "git")):
+            reason = reason or "repository configuration or hooks changed"
+        if reason is not None:
+            remove_repository(ctx.worktree)
+            remove_repository(ctx.control / "git")
+            return f"{CHECKS_CHANGED_STATE}: {reason}"
+        return None
+
     try:
         completed = run_bounded(
             argv,
@@ -1171,13 +1216,25 @@ def _run_checks(
             clear_ambient_github=True,
         )
     except OSError as exc:
-        return False, redact(f"check command unavailable: {exc}", limit=FAILURE_TAIL_LIMIT), False
-    # Compare the Git directory directly, before any Git command of this
-    # process runs again in the worktree.
-    if repository_state_changed(expected_state, repository_state(ctx.control / "git")):
-        remove_repository(ctx.worktree)
-        remove_repository(ctx.control / "git")
-        return False, CHECKS_CHANGED_STATE, True
+        completed = None
+        unavailable = redact(
+            f"check command unavailable: {exc}", limit=FAILURE_TAIL_LIMIT
+        )
+    except Exception:
+        reason = metadata_failure()
+        if reason is not None:
+            return False, reason, True
+        raise
+    else:
+        unavailable = None
+    # Verify both metadata locations directly, before any Git command of this
+    # process runs again in the worktree and regardless of the check result.
+    reason = metadata_failure()
+    if reason is not None:
+        return False, reason, True
+    if completed is None:
+        assert unavailable is not None
+        return False, unavailable, False
     if completed.returncode != 0:
         tail = bounded_tail(
             completed.stderr or completed.stdout or "check command failed",
@@ -1223,6 +1280,7 @@ def _stored_result_body(ctx: _Context, *, mergeable: object) -> str | None:
         else []
     )
     return _result_body(
+        ctx.worker,
         repo=ctx.request.repo,
         number=ctx.request.number,
         old_head=old_head,
@@ -1293,7 +1351,8 @@ def _run_request(
                 pull = _read_pull_or_blocker(
                     request_runtime.github, ctx.request.repo, ctx.request.number
                 )
-                if pull.get("head", {}).get("sha") == new_head:
+                head = pull.get("head")
+                if isinstance(head, dict) and head.get("sha") == new_head:
                     return _post_stored_result(
                         ctx,
                         request_runtime,
@@ -1453,6 +1512,7 @@ def _run_request(
             )
         if mergeable is True:
             body = comment_body(
+                ctx.worker,
                 "no-conflicts",
                 NO_CONFLICTS,
                 [
@@ -1621,6 +1681,7 @@ def _run_request(
             repo=ctx.request.repo,
             number=ctx.request.number,
             observed_head_sha=head_sha,
+            verified_base_sha=verified_base_sha,
             head_repo=head_repo,
             head_ref=head_ref,
             base_ref=base_ref,
@@ -1653,6 +1714,10 @@ def _run_request(
             if current_remote_head != head_sha:
                 raise ConflictTransientError(
                     "publication branch moved; restarting from the pull request read"
+                )
+            if not _push_was_refused(pushed.stderr or pushed.stdout or ""):
+                raise ConflictTransientError(
+                    "push failed without a remote refusal; restarting from the pull request read"
                 )
             raise _Blocker(f"{refusal}\n{pushed_detail}")
         save_state(ctx, "result-pending")

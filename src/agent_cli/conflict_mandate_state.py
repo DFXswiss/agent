@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -91,6 +92,47 @@ def bounded_tail(value: str, *, limit: int = FAILURE_TAIL_LIMIT) -> str:
     candidate = raw[-(limit * 2):] if len(raw) > limit * 2 else raw
     cleaned = redact(candidate, limit=limit * 4)
     return cleaned if len(cleaned) <= limit else "…" + cleaned[-(limit - 1):]
+
+
+_FORMATTING_CHARACTERS = re.compile(
+    "[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]"
+)
+
+
+def _comment_text(value: str) -> str:
+    characters: list[str] = []
+    for character in value:
+        if character == "\n":
+            characters.append(character)
+        elif character == "\t":
+            characters.append(" ")
+        elif unicodedata.category(character) == "Cc":
+            continue
+        elif _FORMATTING_CHARACTERS.fullmatch(character):
+            continue
+        else:
+            characters.append(character)
+    return "".join(characters)
+
+
+def _comment_value(worker: ConflictWorker, value: object, *, limit: int) -> str:
+    """Render one dynamic value as inert Markdown code after redaction."""
+    cleaned = _comment_text(redact(safe(worker, value), limit=limit))
+    if "\n" not in cleaned:
+        single_line = cleaned.replace("`", "'")
+        return f"`{single_line}`"
+    longest = max((len(run) for run in re.findall(r"`+", cleaned)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{cleaned}\n{fence}"
+
+
+def _comment_line(
+    worker: ConflictWorker, prefix: str, value: object, *, limit: int
+) -> str:
+    rendered = _comment_value(worker, value, limit=limit)
+    if rendered.startswith("```"):
+        return f"{prefix}\n{rendered}"
+    return f"{prefix} {rendered}"
 
 
 def atomic_write(path: Path, text: str) -> None:
@@ -260,7 +302,12 @@ def unfinished_requests(
     return [(request, data) for _, request, data in candidates]
 
 
-def comment_body(kind: str, reason: str, facts: list[tuple[str, str]]) -> str:
+def comment_body(
+    worker: ConflictWorker,
+    kind: str,
+    reason: str,
+    facts: list[tuple[str, str]],
+) -> str:
     if kind == "blocker":
         en = "Conflict resolution is blocked. A new comment is required to try again."
         de = "Die Konfliktlösung ist blockiert. Ein neuer Kommentar ist erforderlich."
@@ -279,11 +326,13 @@ def comment_body(kind: str, reason: str, facts: list[tuple[str, str]]) -> str:
         )
     lines = [f"EN: {en}", f"DE: {de}", "", "<details>", "<summary>Facts</summary>", ""]
     if kind == "blocker":
-        lines.append(f"- Result: blocked. Reason: {redact(reason, limit=1500)}")
+        lines.append(
+            _comment_line(worker, "- Result: blocked. Reason:", reason, limit=1500)
+        )
     else:
-        lines.append(f"- Result: {redact(reason, limit=500)}")
+        lines.append(_comment_line(worker, "- Result:", reason, limit=500))
     for label, value in facts:
-        lines.append(f"- {label}: {redact(value, limit=1000)}")
+        lines.append(_comment_line(worker, f"- {label}:", value, limit=1000))
     lines.extend(["", "</details>"])
     return "\n".join(lines)
 
