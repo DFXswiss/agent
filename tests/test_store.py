@@ -65,6 +65,31 @@ def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None
     assert all(row["_updated_at"] for row in rows)
 
 
+def test_row_insert_sequences_uses_only_ledger_inserts_for_materialized_rows(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    inserted = store.write(
+        "review_gate", "insert", "gate-ledger", {"id": "gate-ledger", "verdict": "approved"}
+    )
+    store.write(
+        "review_gate", "update", "gate-ledger", {"id": "gate-ledger", "verdict": "rejected"}
+    )
+    store.apply_replica_row(
+        {
+            "table": "review_gate",
+            "row_id": "gate-snapshot",
+            "origin_device_id": "replica-device",
+            "payload": {"id": "gate-snapshot", "verdict": "approved"},
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    assert store.row_insert_sequences("review_gate") == {
+        "gate-ledger": (store.device_id(), inserted["origin_seq"])
+    }
+
+
 def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
     tmp_path: Path,
 ) -> None:

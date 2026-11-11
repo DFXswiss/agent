@@ -76,8 +76,7 @@ from .readme_only import (
     GITHUB_PR_FILES_CAP,
     GUARD_WORKFLOW_PATH,
     github_file_paths,
-    github_is_guard_docs_only,
-    github_is_markdown_only,
+    markdown_and_guard_docs_only,
 )
 from .store import Store, utcnow
 
@@ -351,13 +350,12 @@ def _pull_a38_context(
         # GitHub caps this endpoint without an explicit truncation marker.
         if len(entries) >= GITHUB_PR_FILES_CAP:
             raise CoordinatorError("A38 pull request file inventory is incomplete")
-        # Waiver helpers apply MAX_FILES to GitHub entries before rename/copy
-        # expansion. The expanded paths remain necessary for policy detection.
-        markdown_only = github_is_markdown_only(entries, truncated=False)
-        guard_docs_only = github_is_guard_docs_only(entries, truncated=False)
         paths = github_file_paths(entries)
         if paths is None:
             raise CoordinatorError("A38 pull request file inventory is invalid")
+        # Match the guard exactly: GitHub rename/copy entries expand to both
+        # paths before the shared 500-path waiver ceiling is applied.
+        markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
         after = metadata()
         if after == before:
             return before[1], paths, markdown_only, guard_docs_only
@@ -487,6 +485,16 @@ def phase_tests(
             output=waiver_reason,
             head=head,
         )
+        if cfg.check_argv:
+            _record_local_check(
+                store,
+                task,
+                name="coordinator-check",
+                command=check_label(c, cfg),
+                passed=None,
+                output=f"skipped by A38 inventory waiver: {waiver_reason}",
+                head=head,
+            )
         evidence = c.setdefault("evidence", {})
         if isinstance(evidence, dict):
             evidence.pop("tests_pass", None)
