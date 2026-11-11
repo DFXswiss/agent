@@ -90,8 +90,16 @@ merge or diff drivers (<names>); the conflicts worker refuses to run
 with them`. The preflight also refuses to run when the environment variable
 `GIT_EXTERNAL_DIFF` is set in the worker process, with `preflight blocked:
 GIT_EXTERNAL_DIFF is set; the conflicts worker refuses to run with an external
-diff program`. Directly after the clone, before any checkout or rebase, the
-driver query runs inside the worktree with `git -C <worktree> -c
+diff program`. It likewise refuses to run when any repository-selecting Git
+environment variable is set in the worker process: `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
+`GIT_CEILING_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_COUNT`,
+`GIT_CONFIG_PARAMETERS`, `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR`, `GIT_SSH`, and
+`GIT_ASKPASS`. The line is `preflight blocked: the environment variable <NAME>
+is set; the conflicts worker refuses to run with it`, naming the first set
+variable in that order. Directly after the clone, before any checkout or
+rebase, the driver query runs inside the worktree with `git -C <worktree> -c
 core.hooksPath=/dev/null -c core.fsmonitor=false config --get-regexp <pattern>`
 and no scope option. That effective query merges the system and global
 configuration, including global `includeIf "gitdir:..."` sections selected for
@@ -173,15 +181,15 @@ exists on GitHub, without Git, a lane, or a comment.
    the string `open` or `closed`; string `head.sha`, `head.ref`, `base.ref`,
    and `base.sha`; a string `head.repo.full_name`, except that `head.repo: null`
    is the blocker `head repository is gone`; and `mergeable` true, false, or
-   null. Comment listings require a list of objects with integer `id`, string
-   `body`, string `user.login`, string `user.type`, GitHub-parsable string
-   `created_at` and `updated_at`, and at least one string `html_url` or
-   `issue_url` that contains a parsable positive pull or issue number. When a
-   comment carries both `issue_url` and `html_url`, both numbers must be the
-   same, and `html_url` decides whether it is a pull request (`/pull/`) or an
-   issue (`/issues/`). A mismatch or an unparsable supplied URL makes the
-   listing unreadable for that tick. A timestamp that does not parse makes the
-   listing transient for that tick.
+   null. Comment listings require a list of objects with an integer `id`
+   greater than zero, string `body`, string `user.login`, string `user.type`,
+   GitHub-parsable string `created_at` and `updated_at`, and at least one
+   string `html_url` or `issue_url` that contains a parsable pull-request or
+   issue number greater than zero. When a comment carries both `issue_url` and
+   `html_url`, both numbers must be the same, and `html_url` decides whether it
+   is a pull request (`/pull/`) or an issue (`/issues/`). A mismatch or an
+   unparsable supplied URL makes the listing unreadable for that tick. A
+   timestamp that does not parse makes the listing transient for that tick.
    Reaction listings require objects with string `user.login` and string
    `content`.
    Branch protection requires a boolean `protected`, and the publication ref
@@ -359,9 +367,14 @@ exists on GitHub, without Git, a lane, or a comment.
    `result-pending` request, do the same read before posting rather than
    posting a body rendered before the push. On the resume path of a request in
    phase `pushing`, an unreadable pull request is a transient failure like any
-   other of a known request: `transient_start` is recorded once, the tick
-   returns a transient line, and after 24 hours the request finishes with a
-   blocker instead of posting the stored result.
+   other of a known request: `transient_start` is recorded once and the tick
+   returns a transient line. While the push has not happened, the request is
+   still before the outcome and finishes with a blocker after 24 hours. Once
+   the push has updated the branch, including a resumed `pushing` request whose
+   pull-request head equals the stored new head, the same stored result is
+   retried on every tick without a time limit and is never replaced by a
+   blocker; each such tick returns `result comment not posted yet: <masked
+   reason>`. A result comment that cannot be posted stays in `result-pending`.
 
 `--dry-run` performs discovery and pull-request reads and prints
 `would accept ...`, `would rebase <head> onto <base>`, and the push route. A
@@ -428,28 +441,37 @@ transient and the next tick starts from the pull-request read. A push that
 returned on its own with a non-zero exit code, followed by a successful
 remote-head read that still shows the observed old head, becomes the blocker
 `push was refused by the remote` only when the push output carries a remote
-refusal: a `remote:` line, `! [remote rejected]`, `! [rejected]`,
-`pre-receive hook declined`, `protected branch`, `GH0`, `Permission to ...
-denied`, or `403`; it includes the masked, bounded tail of the push output. An
+refusal: `! [remote rejected]`, `! [rejected]`, `pre-receive hook declined`,
+`protected branch`, `remote: error:`, `GH0` followed by two digits (for
+example `GH006`), `Permission to ... denied` on one line, or `error: 403` /
+`HTTP 403`; it includes the masked, bounded tail of the push output. A line
+that merely starts with `remote:` is not a refusal, because GitHub also prints
+progress such as `remote: Resolving deltas` on a successful transfer. An
 unchanged head without such a sign, including a transport failure or empty
-output, is transient. After 24 hours of transient failures in any other phase,
-including `result-pending` and a failing marker lookup before resumption,
-they finish with a blocker. A blocker comment that cannot be posted remains in
-`blocker-pending` and is retried on every tick without a time limit; the
-24-hour limit applies to every other transient failure. Aborting a rebase is a
-local Git operation and uses the request's already-created Git runner; it does
-not authenticate to GitHub again. A stored request is resumed only when both
-its recorded worker session id and worker login equal the current worker's;
-anything else is ignored. The checkpoint advances when a request finishes; an
-accepted unfinished request resumes from its control state rather than
-replaying an older mandate. A comment whose result marker already exists is
-not a candidate. When every matching mandate in a scan is marker-finished
-and no request is unfinished for that repository, the checkpoint advances
-to the creation time of the newest scanned comment. An exact mandate whose
-marker lookup fails transiently records `transient_start` in request state
-before the tick returns, so later ticks resume it under the same 24-hour
-limit. The source lock key lower-cases the repository name, so differently
-cased configuration for one GitHub repository still shares the same lock.
+output, is transient. After 24 hours of transient failures in any phase before
+the outcome is decided, including a failing marker lookup before resumption
+while the outcome is not yet decided, they finish with a blocker. A blocker
+comment that cannot be posted is retried on every tick without a time limit.
+A result comment that cannot be posted is retried on every tick without a time
+limit and is never replaced by a blocker. The 24-hour limit applies to every
+transient failure before the outcome of a request is decided. A request in
+`pushing` is not turned into a blocker while GitHub cannot be read for its
+marker lookup, because the branch head cannot be used to decide whether the
+push already happened. Aborting a
+rebase is a local Git operation and uses the request's already-created Git
+runner; it does not authenticate to GitHub again. A stored request is resumed
+only when both its recorded worker session id and worker login equal the
+current worker's; anything else is ignored. The checkpoint advances when a
+request finishes; an accepted unfinished request resumes from its control
+state rather than replaying an older mandate. A comment whose result marker
+already exists is not a candidate. When every matching mandate in a scan is
+marker-finished and no request is unfinished for that repository, the
+checkpoint advances to the creation time of the newest scanned comment. An
+exact mandate whose marker lookup fails transiently records `transient_start`
+in request state before the tick returns, so later ticks resume it under the
+same 24-hour limit. The source lock key lower-cases the repository name, so
+differently cased configuration for one GitHub repository still shares the
+same lock.
 An unreadable pull-request response for a mandate is recorded as transient
 request state and never lets the checkpoint advance past that comment, even
 when a later readable mandate is processed in the same tick. When a comment's
