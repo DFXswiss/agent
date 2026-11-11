@@ -16,6 +16,7 @@ from agent_cli.conflict_mandate_git import (
     conflict_markers,
     git_file_snapshot,
     index_fingerprint,
+    local_driver_names,
     repository_state,
     repository_state_changed,
     require_ok,
@@ -357,6 +358,18 @@ def test_repository_state_sees_config_and_hook_changes_without_git(tmp_path: Pat
     after_config = repository_state(git_dir)
     (git_dir / "hooks" / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     assert repository_state_changed(after_config, repository_state(git_dir)) is True
+
+
+def test_local_driver_names_reads_the_repository_configuration(tmp_path: Path) -> None:
+    worktree, git_dir = _separate_git_worktree(tmp_path)
+    assert local_driver_names(_runner, str(worktree)) == ()
+    _git(worktree, "config", "--local", "filter.lfs.smudge", "cat")
+    assert local_driver_names(_runner, str(worktree)) == ("filter.lfs.smudge",)
+    _git(worktree, "config", "--local", "merge.custom.driver", "true")
+    assert local_driver_names(_runner, str(worktree)) == (
+        "filter.lfs.smudge",
+        "merge.custom.driver",
+    )
 
 
 def test_snapshot_detects_rewritten_git_file(tmp_path: Path) -> None:

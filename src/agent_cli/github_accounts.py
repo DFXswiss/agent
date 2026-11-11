@@ -286,7 +286,11 @@ def _git_c_path(git_args: list[str]) -> str | None:
     return git_args[index]
 
 
-def _network_remote_targets(git_args: list[str]) -> list[str] | None:
+def _network_remote_targets(
+    git_args: list[str],
+    *,
+    allow_force_with_lease: bool = False,
+) -> list[str] | None:
     """Accept only explicitly supported single-remote transfers.
 
     Unknown options fail closed rather than guessing whether the next token is
@@ -314,7 +318,11 @@ def _network_remote_targets(git_args: list[str]) -> list[str] | None:
         if arg in _TRANSFER_FLAGS[verb]:
             index += 1
             continue
-        if verb == "push" and arg.startswith("--force-with-lease="):
+        if (
+            allow_force_with_lease
+            and verb == "push"
+            and arg.startswith("--force-with-lease=")
+        ):
             # The worker owns this exact lease form; the value is a ref and SHA,
             # never a command or credentials.
             value = arg[len("--force-with-lease="):]
@@ -371,7 +379,13 @@ class Account:
     command_prefix: tuple[str, ...] = ()
     worktree_paths: tuple[tuple[str, str], ...] = ()
 
-    def runner(self, base: Runner, *, require_git: bool = False) -> Runner:
+    def runner(
+        self,
+        base: Runner,
+        *,
+        require_git: bool = False,
+        allow_force_with_lease: bool = False,
+    ) -> Runner:
         if require_git and self.git_identity is None:
             raise AccountError(f"Git identity is not configured for account {self.name}")
 
@@ -398,7 +412,10 @@ class Account:
                     f"GIT_COMMITTER_EMAIL={identity['email']}",
                 ])
                 git_args = list(argv[1:])
-                targets = _network_remote_targets(git_args)
+                targets = _network_remote_targets(
+                    git_args,
+                    allow_force_with_lease=allow_force_with_lease,
+                )
                 header_config: list[str] = []
                 if targets is not None:
                     # Keep host cwd until each nested call maps it exactly once.

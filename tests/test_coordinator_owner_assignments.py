@@ -133,8 +133,8 @@ def test_owner_repository_route_uses_direct_push_permission(tmp_path):
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main\n", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "true\n", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": True}}), "")
         raise AssertionError(argv)
 
     cfg = _owner_repository_config(worker, runner, repo="Example/project", login="worker-bot")
@@ -156,8 +156,8 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
         nonlocal lookups, posts
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             lookups += 1
             if lookups == 1:
@@ -672,8 +672,8 @@ def test_phase_accept_reposts_when_request_completion_was_not_persisted(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -731,8 +731,8 @@ def test_phase_accept_crash_after_intent_save_retries_fork_post(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -787,8 +787,8 @@ def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:

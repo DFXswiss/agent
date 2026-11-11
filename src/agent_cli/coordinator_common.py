@@ -188,6 +188,33 @@ def gh_list(runner: Runner, argv: list[str]) -> list[Any]:
     raise CoordinatorError("expected JSON array")
 
 
+def repository_push_permission(runner: Runner, repo: str) -> bool | None:
+    """True or False as GitHub reports it for the calling account; None when the
+    response is unreadable or carries no boolean."""
+    completed = runner(["gh", "api", f"repos/{repo}"])
+    if completed.returncode != 0:
+        detail = redact(
+            (completed.stderr or completed.stdout or "push permission lookup failed").strip()
+        )
+        raise CoordinatorError(detail or "push permission lookup failed")
+    raw = (completed.stdout or "").strip()
+    if raw == "":
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    permissions = data.get("permissions")
+    if not isinstance(permissions, dict):
+        return None
+    push = permissions.get("push")
+    if not isinstance(push, bool):
+        return None
+    return push
+
+
 def account_for(store: Store, session_id: str) -> Account:
     try:
         return load_accounts(store.home).for_session(session_id)
