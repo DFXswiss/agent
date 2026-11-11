@@ -4613,6 +4613,66 @@ def cmd_coordinate(args: list[str]) -> None:
         time.sleep(worker.poll_seconds)
 
 
+def cmd_conflicts(args: list[str]) -> None:
+    """Run the script-owned comment-mandate conflict worker."""
+    from .conflict_mandate_config import load_conflict_config
+
+    sid = None
+    follow = False
+    once = False
+    dry_run = False
+    i = 0
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args) and sid is None:
+            sid = args[i + 1]
+            i += 2
+        elif args[i] == "--follow" and not follow and not once:
+            follow = True
+            i += 1
+        elif args[i] == "--once" and not follow and not once:
+            once = True
+            i += 1
+        elif args[i] == "--dry-run" and not dry_run:
+            dry_run = True
+            i += 1
+        else:
+            die("Usage: agent conflicts --session ID [--once|--follow] [--dry-run]")
+    config = load_conflict_config(home())
+    if sid is None:
+        if not config and not follow:
+            print("conflicts unconfigured")
+            return
+        die("conflicts requires an explicitly selected --session")
+    if sid not in config:
+        die("conflicts session is not configured")
+    from .conflict_mandate import tick
+
+    while True:
+        config = load_conflict_config(home())
+        worker = config.get(sid)
+        if worker is None:
+            print("conflicts disabled by configuration")
+            return
+        store = open_store()
+        try:
+            session = _need(store, "session", sid)
+            _require_owned(store, session, "session")
+            if session.get("status") != "active":
+                die(f"session {sid} is not active")
+            _require_skill(session, "conflicts")
+            for line in tick(store, worker, dry_run=dry_run):
+                print(line, flush=True)
+        except StoreError as exc:
+            if not follow:
+                raise
+            print(f"conflicts error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            store.close()
+        if not follow:
+            return
+        time.sleep(worker.poll_seconds)
+
+
 def cmd_a38(args: list[str]) -> None:
     from .a38 import main as a38_main
 
@@ -4659,6 +4719,7 @@ COMMANDS = {
     "watch": cmd_watch,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
+    "conflicts": cmd_conflicts,
     "github": cmd_github,
     "query": cmd_query,
     "assign": cmd_assign,
@@ -4673,7 +4734,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|assign|subscribe|mail|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate|conflicts> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

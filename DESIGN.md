@@ -807,6 +807,24 @@ Trusted script APIs and raw terminal commands are not a sandbox. The optional
 issue coordinator and its deployment boundaries are documented in §19.7;
 technical enforcement of every model tool restriction remains separate work.
 
+### 19.9 Comment mandate: conflicts
+
+**Required.** An operator may explicitly configure a `conflicts` worker. A
+human pull-request comment that normalizes to exactly
+`@<worker-login> conflicts`, authored by a configured GitHub user, unedited,
+and on an open pull request, is a mandate for that static worker. Comment text
+remains data; a longer message that merely contains the phrase is not a
+mandate. With no configured worker, no comment starts work.
+
+The script owns discovery, reaction, pull-request reads, the isolated worktree,
+the rebase, lane starts, verification, configured checks, the
+`--force-with-lease` push, and the one idempotent result or blocker comment. It
+starts a confined implementer lane only when Git reports a content conflict,
+and no model output is a transition. Non-content conflicts, branches with merge
+commits, and repositories without checks are refused in this revision. The
+config and deployment boundaries are documented in
+[docs/conflict-mandate.md](docs/conflict-mandate.md).
+
 ## 20. Refused: hub as a coding control plane
 
 An external architecture draft proposed turning the hub into an authoritative Error-to-PR control plane: hub-owned Task objects, leases, a worker scheduler, production-error ingestion as the first workflow, and `READY_FOR_PR` then deterministic pull-request creation.
@@ -964,3 +982,5 @@ Recorded from the design thread that specified realtime team visibility, rejecte
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 
 Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; it is the opt-in **error-fix** skill on this device (§21). The static supervise loop (§22) is a script with locked questions; a second model does not orchestrate the first.
+
+This revision adds the opt-in comment mandate `conflicts` (§19.9): one exact human pull-request comment authorizes a static script to rebase, run the configured checks, and push with `--force-with-lease`, while a confined model lane edits only conflicted files. Installation still enables no worker.

@@ -71,6 +71,7 @@ requiring an existing local repository or contacting the remote. Before each
 supported transfer, all configured `http.*extraHeader` keys, including
 repository-specific URL matches, are reset for that invocation so ambient
 Authorization headers cannot override the selected account.
+Accepted `clone` value forms include `--separate-git-dir <path>`.
 Only transfer forms with one explicit repository argument are accepted
 (for example `git fetch -- origin`, `git push -- origin HEAD:refs/heads/feature`,
 and `git push --set-upstream origin feature`); implicit default-remote forms,
