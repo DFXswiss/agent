@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -355,9 +356,12 @@ def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
     )
     assert stack_sig(first) == stack_sig(second)
 
-    first_uuid = "TimeoutError trace_id=550e8400-e29b-41d4-a716-446655440000 boom"
-    second_uuid = "TimeoutError trace_id=550e8400-e29b-41d4-a716-44665544000a boom"
-    assert stack_sig(first_uuid) == stack_sig(second_uuid)
+    first_hyphen = "TimeoutError trace_id=aabb-ccdd-eeff-abcd-bcde-cdef boom"
+    second_hyphen = "TimeoutError trace_id=bbcc-ddee-ffaa-bcde-cdef-defa boom"
+    assert re.sub(r"\d+", "", first_hyphen) != re.sub(r"\d+", "", second_hyphen)
+    assert "trace_id=[redacted]" in redact(first_hyphen)
+    assert "trace_id=[redacted]" in redact(second_hyphen)
+    assert stack_sig(first_hyphen) == stack_sig(second_hyphen)
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
