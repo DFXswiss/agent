@@ -46,6 +46,28 @@ def test_network_remote_targets_accepts_clone_separate_git_dir_and_rejects_globa
         ])
 
 
+@pytest.mark.no_pg
+def test_network_remote_targets_accepts_lease_for_branch_name_with_equals():
+    sha = 'a' * 40
+    argv = [
+        'push', f'--force-with-lease=refs/heads/feature=x:{sha}',
+        'origin', 'HEAD:refs/heads/feature=x',
+    ]
+    assert _network_remote_targets(argv) == ['origin']
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('lease', [
+    '--force-with-lease=refs/tags/v1:' + 'a' * 40,
+    '--force-with-lease=refs/heads/a b:' + 'a' * 40,
+    '--force-with-lease=refs/heads/feature:' + 'a' * 39,
+])
+def test_network_remote_targets_rejects_other_lease_forms(lease):
+    argv = ['push', lease, 'origin', 'HEAD:refs/heads/feature']
+    with pytest.raises(GitHubHttpsRemoteError, match='force-with-lease'):
+        _network_remote_targets(argv)
+
+
 def _git_payload(argv: list[str]) -> list[str]:
     """Strip account runner env/prefix wrappers down to the git argv."""
     if 'git' not in argv:

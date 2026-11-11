@@ -317,9 +317,15 @@ def _network_remote_targets(git_args: list[str]) -> list[str] | None:
         if verb == "push" and arg.startswith("--force-with-lease="):
             # The worker owns this exact lease form; the value is a ref and SHA,
             # never a command or credentials.
-            if not re.fullmatch(
-                r'--force-with-lease=refs/[^:=\s]+:[0-9a-fA-F]{40}',
-                arg,
+            value = arg[len("--force-with-lease="):]
+            ref, separator, expected = value.rpartition(":")
+            if (
+                not separator
+                or not ref.startswith("refs/heads/")
+                or len(ref) == len("refs/heads/")
+                or any(character.isspace() for character in ref)
+                or ":" in ref
+                or re.fullmatch(r"[0-9a-fA-F]{40}", expected) is None
             ):
                 raise GitHubHttpsRemoteError("invalid force-with-lease argument")
             index += 1

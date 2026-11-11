@@ -32,8 +32,9 @@ agent skills path
 `agent skills path` prints the packaged skill contracts
 (`spine/SKILL.md`, `review-loop/SKILL.md`, `pr-review/SKILL.md`), or
 `AGENT_SKILLS_DIR` when that is set. Those three files **are** required.
-`error-fix/SKILL.md` ships in the packaged tree; an override need not copy
-it. A draft plus local tests is not done. CONTRIBUTING.md is the contract
+`error-fix/SKILL.md` and `conflicts/SKILL.md` ship in the packaged tree; an
+override need not copy them. `conflicts` is optional like `error-fix`.
+A draft plus local tests is not done. CONTRIBUTING.md is the contract
 for this repository; pr-review is the store encoding when that skill is
 on. Unset `AGENT_SKILLS_DIR` and run
 `agent skills path` again to print the packaged directory. For
