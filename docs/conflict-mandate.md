@@ -108,9 +108,10 @@ serialized by the source lock.
    and `base.sha`; a string `head.repo.full_name`, except that `head.repo: null`
    is the blocker `head repository is gone`; and `mergeable` true, false, or
    null. Comment listings require a list of objects with integer `id`, string
-   `body`, string `user.login`, string `user.type`, string `created_at` and
-   `updated_at`, and at least one string `html_url` or `issue_url` that
-   contains a parsable pull or issue number.
+   `body`, string `user.login`, string `user.type`, GitHub-parsable string
+   `created_at` and `updated_at`, and at least one string `html_url` or
+   `issue_url` that contains a parsable pull or issue number. A timestamp that
+   does not parse makes the listing transient for that tick.
    Reaction listings require objects with string `user.login` and string
    `content`.
    Branch protection requires a boolean `protected`, and the publication ref
@@ -154,7 +155,10 @@ serialized by the source lock.
    blocker, not a transient failure.
 7. For only `UU` and `AA` regular text conflicts, it writes a lane spec outside
    the worktree, starts the configured implementer lane, and verifies the
-   change set, conflict markers, and `git diff --check`. The allowed change set
+   change set, conflict markers, and `git diff --check`. A conflict marker is a
+   line that starts with exactly seven `<`, `=`, `>`, or `|` characters
+   followed by whitespace or the end of the line, so bare and labelled forms
+   are detected and eight or more of the character are not a marker. The allowed change set
    is measured against the index: the union of `git diff --name-only -z`,
    `git ls-files --others -z` including ignored files, and the unmerged paths
    must stay within the conflicted paths. Files that Git staged cleanly while
@@ -210,7 +214,10 @@ serialized by the source lock.
    worktree again, it compares both by reading those files directly, without a
    Git invocation. A difference finishes with the blocker `checks changed the
    repository state`; the worktree and Git directory are removed without
-   running Git in them, and nothing is pushed. The same direct cleanup and
+   running Git in them, and nothing is pushed. Those two direct verifications
+   run after every check return, including a non-zero exit, a timeout, and a
+   raised error; a metadata difference keeps this blocker ahead of the check
+   result. The same direct cleanup and
    no-Git rule applies when the pre-push `.git` file verification fails. The
    hook comparison records the
    entry names and their sizes and does not hash a hook's content. After the
@@ -230,8 +237,10 @@ serialized by the source lock.
 9. Immediately before the push, it re-reads the pull request and the head-branch
    protection with the worker account. The pull request must still be open, its
    head sha must still equal the head sha observed at the start of the request,
-   its head repository, head ref, and base ref must be unchanged, and the branch
-   must not be protected. A moved head or an unreadable response is transient:
+   its head repository, head ref, and base ref must be unchanged, its
+   `base.sha` must equal the sha of `origin/<base>` fetched and verified in this
+   worktree, and the branch must not be protected. A moved head or base, or an
+   unreadable response, is transient:
    nothing is pushed and the next tick starts again from the pull-request read.
    A closed pull request, changed refs or repository, or newly protected branch
    is a blocker without a push. It then pushes only with
@@ -277,8 +286,16 @@ lists pull-request comments by the worker login and reuses an existing marker.
 A request whose marker exists is finished whatever the local state says.
 
 Comments use a short `EN:` block, a short `DE:` block, and a facts
-`<details>` block. All dynamic text passes through `redact`; local paths never
-appear.
+`<details>` block. The fixed EN and DE sentences stay plain text. Every dynamic
+value passes through `safe` and `redact`. Unicode control characters and
+bidirectional or invisible formatting characters are removed, a tab becomes
+one space, and the value is placed in Markdown code formatting: single-line
+values in a code span with any backtick replaced by `'`, and multi-line values
+in a fenced code block whose fence is longer than any backtick run in the
+value.
+GitHub therefore renders no mention, link, HTML, or heading from a reason,
+check-output tail, lane note, file name, branch name, sha, or count. Local
+paths never appear.
 
 ## Local state and failure classes
 
@@ -301,11 +318,15 @@ Unreadable GitHub or network state, unknown `mergeable`, and a rejected push
 transient; it does not become a blocker even when the remote head is unchanged.
 If that read fails, the failure is transient. If the remote head differs from
 the observed old head for this request, the lease was rejected, so it is
-transient and the next tick starts from the pull-request read. Only a push that
+transient and the next tick starts from the pull-request read. A push that
 returned on its own with a non-zero exit code, followed by a successful
-remote-head read that still shows the observed old head, is the blocker
-`push was refused by the remote`; it includes the masked, bounded tail of the
-push output. After 24 hours of transient failures in any other phase,
+remote-head read that still shows the observed old head, becomes the blocker
+`push was refused by the remote` only when the push output carries a remote
+refusal: a `remote:` line, `! [remote rejected]`, `! [rejected]`,
+`pre-receive hook declined`, `protected branch`, `GH0`, `Permission to ...
+denied`, or `403`; it includes the masked, bounded tail of the push output. An
+unchanged head without such a sign, including a transport failure or empty
+output, is transient. After 24 hours of transient failures in any other phase,
 including `result-pending` and a failing marker lookup before resumption,
 they finish with a blocker. A blocker comment that cannot be posted remains in
 `blocker-pending` and is retried on every tick without a time limit; the
@@ -325,7 +346,10 @@ limit. The source lock key lower-cases the repository name, so differently
 cased configuration for one GitHub repository still shares the same lock.
 An unreadable pull-request response for a mandate is recorded as transient
 request state and never lets the checkpoint advance past that comment, even
-when a later readable mandate is processed in the same tick. A malformed
+when a later readable mandate is processed in the same tick. When a comment's
+URL identifies a pull request, a 404 for that pull request is such an
+unreadable response; only a comment whose URL identifies a plain issue is
+skipped. A malformed
 comment listing is unreadable for the whole tick and likewise advances no
 checkpoint.
 

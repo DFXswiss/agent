@@ -6,6 +6,7 @@ import time
 from typing import Any
 from urllib.parse import quote
 
+from .conflict_mandate_state import parse_time
 from .coordinator_common import CoordinatorError, Runner, gh_json, redact
 
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
@@ -39,9 +40,11 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
         raise ConflictTransientError(f"{label} returned an unreadable comment author")
     if not isinstance(user.get("type"), str):
         raise ConflictTransientError(f"{label} returned an unreadable comment author")
-    if not isinstance(comment.get("created_at"), str):
+    created_at = comment.get("created_at")
+    if not isinstance(created_at, str) or parse_time(created_at) is None:
         raise ConflictTransientError(f"{label} returned an unreadable comment creation time")
-    if not isinstance(comment.get("updated_at"), str):
+    updated_at = comment.get("updated_at")
+    if not isinstance(updated_at, str) or parse_time(updated_at) is None:
         raise ConflictTransientError(f"{label} returned an unreadable comment update time")
     urls: list[str] = []
     for key in ("html_url", "issue_url"):
@@ -183,9 +186,6 @@ def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any]
     try:
         data = gh_json(runner, ["gh", "api", f"repos/{repo}/pulls/{number}"])
     except CoordinatorError as exc:
-        text = str(exc).casefold()
-        if "404" in text or "not found" in text:
-            return None
         raise ConflictTransientError(redact(str(exc))) from exc
     return _validate_pull(data, "pull request")
 
