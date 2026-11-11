@@ -1015,11 +1015,13 @@ class GitHubApi:
         self.request_count += 1
         self.requests_by_family[family] = self.requests_by_family.get(family, 0) + 1
 
-    def _note_pool(self, headers: Mapping[str, Any]) -> None:
+    def _note_pool(self, url: str, headers: Mapping[str, Any]) -> None:
         resource_present, resource = _header_ci(headers, "x-ratelimit-resource")
         if resource_present and not (
             isinstance(resource, str) and resource.strip().lower() == "core"
         ):
+            return
+        if not resource_present and urllib.parse.urlparse(url).path == "/graphql":
             return
         sample = _pool_sample(headers)
         if self.pool_first is None:
@@ -1083,10 +1085,18 @@ class GitHubApi:
                     raise GuardError(f"GitHub API {method_u} failed: {exc}") from exc
                 self._sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
-            self._note_pool(headers)
+            self._note_pool(url, headers)
             if _is_primary_rate_limit(status, data, headers):
-                self._rate_limit = _rate_limit_error(status, url, headers)
-                raise self._rate_limit
+                error = _rate_limit_error(status, url, headers)
+                resource_present, resource = _header_ci(
+                    headers, "x-ratelimit-resource"
+                )
+                if not resource_present or (
+                    isinstance(resource, str)
+                    and resource.strip().lower() == "core"
+                ):
+                    self._rate_limit = error
+                raise error
             if status in {502, 503, 504} and do_retry and attempt + 1 < attempts:
                 self._sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
@@ -1698,7 +1708,8 @@ def _prefetch_git_blobs(api: GitHubApi, repo: str, shas: set[str]) -> None:
                 retry=False,
             )
         except Exception as exc:
-            _reraise_rate_limit(exc)
+            if is_rate_limit_error(exc) and api._rate_limit is not None:
+                raise
             return
         if status != 200 or not isinstance(data, Mapping):
             return

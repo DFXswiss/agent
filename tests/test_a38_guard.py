@@ -4342,33 +4342,98 @@ class A38WorkflowInventoryTests(unittest.TestCase):
                     [f"/repos/{REPO}/git/blobs/{sha}"],
                 )
 
-    def test_graphql_prefetch_primary_rate_limit_stops_rest_fallback(self) -> None:
-        raw = b"jobs:\n  limited: {}\n"
-        sha = _git_blob_sha(raw)
+    def test_graphql_pool_primary_limit_falls_back_to_rest(self) -> None:
+        head_raw = b"jobs:\n  head: {}\n"
+        base_raw = b"jobs:\n  base: {}\n"
+        head_sha = _git_blob_sha(head_raw)
+        base_sha = _git_blob_sha(base_raw)
+        head = {".github/workflows/head.yml": head_sha}
+        base = {".github/workflows/base.yml": base_sha}
+        raw_by_sha = {head_sha: head_raw, base_sha: base_raw}
+        rest_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        rest_api = self._blob_fixture(
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
+            graphql=(404, {"message": "not found"}, {}),
+            calls=rest_calls,
+        )
+        expected = check_workflows_against_policy(
+            rest_api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={"jobs": [], "exclusions": []},
+        )
         calls: list[tuple[str, str, dict[str, Any] | None]] = []
         api = self._blob_fixture(
-            head={".github/workflows/limited.yml": sha},
-            base={},
-            raw_by_sha={sha: raw},
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
             graphql=(
                 403,
                 {"message": "API rate limit exceeded"},
                 {
                     "x-ratelimit-remaining": "0",
                     "x-ratelimit-reset": str(_RESET),
+                    "x-ratelimit-resource": "graphql",
                 },
             ),
             calls=calls,
         )
-        with self.assertRaises(RateLimitError):
-            check_workflows_against_policy(
-                api,
-                REPO,
-                head_sha=HEAD,
-                base_sha=BASE,
-                policy={"jobs": [], "exclusions": []},
-            )
-        self.assertFalse(any("/git/blobs/" in call[1] for call in calls))
+        result = check_workflows_against_policy(
+            api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={"jobs": [], "exclusions": []},
+        )
+        self.assertEqual(result, expected)
+        self.assertEqual(
+            sorted(call[1] for call in calls if "/git/blobs/" in call[1]),
+            sorted(
+                (
+                    f"/repos/{REPO}/git/blobs/{head_sha}",
+                    f"/repos/{REPO}/git/blobs/{base_sha}",
+                )
+            ),
+        )
+        later = f"/repos/{REPO}/issues/1"
+        self.assertEqual(api.get_optional(later)[0], 404)
+        self.assertEqual(calls[-1][:2], ("GET", later))
+
+    def test_graphql_primary_limit_without_noncore_resource_stops_run(self) -> None:
+        raw = b"jobs:\n  limited: {}\n"
+        sha = _git_blob_sha(raw)
+        for resource in (None, " core "):
+            with self.subTest(resource=resource):
+                headers = {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                }
+                if resource is not None:
+                    headers["x-ratelimit-resource"] = resource
+                calls: list[tuple[str, str, dict[str, Any] | None]] = []
+                api = self._blob_fixture(
+                    head={".github/workflows/limited.yml": sha},
+                    base={},
+                    raw_by_sha={sha: raw},
+                    graphql=(
+                        403,
+                        {"message": "API rate limit exceeded"},
+                        headers,
+                    ),
+                    calls=calls,
+                )
+                with self.assertRaises(RateLimitError):
+                    check_workflows_against_policy(
+                        api,
+                        REPO,
+                        head_sha=HEAD,
+                        base_sha=BASE,
+                        policy={"jobs": [], "exclusions": []},
+                    )
+                self.assertFalse(any("/git/blobs/" in call[1] for call in calls))
 
     def test_graphql_prefetch_chunks_and_passes_oids_as_variables(self) -> None:
         raw_by_sha = {
@@ -5884,48 +5949,54 @@ class A38GuardRateLimitTests(unittest.TestCase):
         for path in unanchored:
             self.assertEqual(calls.count(path), 2)
 
-    def test_cost_pool_samples_only_rest_core_responses(self) -> None:
-        responses = iter(
-            (
-                {
-                    "X-RateLimit-Resource": "core",
-                    "x-ratelimit-used": "1",
-                    "x-ratelimit-remaining": "4999",
-                },
-                {
-                    "X-RateLimit-Resource": "graphql",
-                    "x-ratelimit-used": "99",
-                    "x-ratelimit-remaining": "4901",
-                },
-                {
-                    "x-ratelimit-used": "2",
-                    "x-ratelimit-remaining": "4998",
-                },
-            )
-        )
+    def test_cost_pool_ignores_tagged_and_untagged_graphql_at_edges(self) -> None:
+        core = {
+            "X-RateLimit-Resource": "core",
+            "x-ratelimit-used": "1",
+            "x-ratelimit-remaining": "4999",
+        }
+        for resource in ("graphql", None):
+            for graphql_first in (True, False):
+                with self.subTest(
+                    resource=resource, graphql_first=graphql_first
+                ):
+                    graphql = {
+                        "x-ratelimit-used": "99",
+                        "x-ratelimit-remaining": "4901",
+                    }
+                    if resource is not None:
+                        graphql["X-RateLimit-Resource"] = resource
 
-        def request_fn(
-            method: str, url: str, body: bytes | None = None
-        ) -> tuple[int, Any, dict[str, str]]:
-            return 200, {}, next(responses)
+                    def request_fn(
+                        method: str, url: str, body: bytes | None = None
+                    ) -> tuple[int, Any, dict[str, str]]:
+                        headers = graphql if _api_path(url) == "/graphql" else core
+                        return 200, {}, headers
 
-        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
-        api.request("GET", "/repos/o/r/pulls/1")
-        api.request("POST", "/graphql", body={"query": "query { viewer { login } }"})
-        api.request("GET", "/repos/o/r/issues/1")
-        cost = a38_guard._format_api_cost(api)
-        self.assertEqual(
-            api.pool_first,
-            {"x-ratelimit-used": "1", "x-ratelimit-remaining": "4999"},
-        )
-        self.assertEqual(
-            api.pool_last,
-            {"x-ratelimit-used": "2", "x-ratelimit-remaining": "4998"},
-        )
-        self.assertIn("requests=3", cost)
-        self.assertIn("families=graphql:1,issues:1,pulls:1", cost)
-        self.assertNotIn("x-ratelimit-used=99", cost)
-        self.assertNotIn("x-ratelimit-remaining=4901", cost)
+                    api = GitHubApi(
+                        "t", request_fn=request_fn, sleep_fn=lambda _s: None
+                    )
+                    if graphql_first:
+                        api.request(
+                            "POST",
+                            "/graphql",
+                            body={"query": "query { viewer { login } }"},
+                        )
+                    api.request("GET", "/repos/o/r/pulls/1")
+                    if not graphql_first:
+                        api.request(
+                            "POST",
+                            "/graphql",
+                            body={"query": "query { viewer { login } }"},
+                        )
+
+                    self.assertEqual(api.pool_first, a38_guard._pool_sample(core))
+                    self.assertEqual(api.pool_last, a38_guard._pool_sample(core))
+                    cost = a38_guard._format_api_cost(api)
+                    self.assertIn("requests=2", cost)
+                    self.assertIn("families=graphql:1,pulls:1", cost)
+                    self.assertNotIn("x-ratelimit-used=99", cost)
+                    self.assertNotIn("x-ratelimit-remaining=4901", cost)
 
     def test_cost_line_on_success(self) -> None:
         fake = FakeAPI()
