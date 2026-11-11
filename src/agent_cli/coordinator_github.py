@@ -73,8 +73,8 @@ from .github_accounts import AccountError
 from .hub import Hub, HubError
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .pr_lifecycle import (
-    a38_accepts_skipped_or_neutral,
     a38_passed_job_names_from_comment,
+    required_check_matches,
 )
 from .store import Store, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
@@ -954,6 +954,23 @@ def _rollup_workflow_run_id(check: dict[str, Any]) -> int | None:
     return None
 
 
+def _a38_accepts_actual_check(
+    actual_check_name: object,
+    conclusion: object,
+    *,
+    passed_names: frozenset[str],
+) -> bool:
+    """Match a skipped/neutral GitHub check to a passing reported A38 job."""
+    return (
+        isinstance(actual_check_name, str)
+        and conclusion in {"skipped", "neutral"}
+        and any(
+            required_check_matches(actual_check_name, report_name)
+            for report_name in passed_names
+        )
+    )
+
+
 def _classify_rollup_and_inventory(
     rollup: list[Any],
     latest: dict[str, dict[str, Any]],
@@ -983,7 +1000,7 @@ def _classify_rollup_and_inventory(
             action_required.append(name)
         elif state in CI_SUCCESS:
             successes += 1
-        elif a38_accepts_skipped_or_neutral(
+        elif _a38_accepts_actual_check(
             name,
             state,
             passed_names=passed_a38,
@@ -1008,11 +1025,9 @@ def _classify_rollup_and_inventory(
             action_required.append(path)
         elif conclusion in CI_SUCCESS:
             successes += 1
-        elif conclusion in {"skipped", "neutral"} and (
-            key in report_covered_inventory_keys
-            or a38_accepts_skipped_or_neutral(
-                path, conclusion, passed_names=passed_a38
-            )
+        elif (
+            conclusion in {"skipped", "neutral"}
+            and key in report_covered_inventory_keys
         ):
             successes += 1
         else:
@@ -1042,7 +1057,7 @@ def _classify_rollup_and_inventory(
         isinstance(check, dict)
         and (
             _rollup_state(check) in CI_SUCCESS
-            or a38_accepts_skipped_or_neutral(
+            or _a38_accepts_actual_check(
                 str(check.get("name") or check.get("context") or "check"),
                 _rollup_state(check),
                 passed_names=passed_a38,
@@ -1057,11 +1072,6 @@ def _classify_rollup_and_inventory(
             or (
                 str(run.get("conclusion") or "") in {"skipped", "neutral"}
                 and key in report_covered_inventory_keys
-            )
-            or a38_accepts_skipped_or_neutral(
-                str(run.get("path") or ""),
-                str(run.get("conclusion") or ""),
-                passed_names=passed_a38,
             )
         )
         for key, run in latest.items()

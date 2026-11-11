@@ -32,8 +32,9 @@ from agent_cli.lane import (
     record_lane_run,
     tmux_wrap_argv,
 )
-from agent_cli.main import _sanitize_lane_output, main
+from agent_cli.main import main
 from agent_cli.model_slots import MODELS_NOT_CONFIGURED
+from agent_cli.text_sanitize import sanitize_terminal_text
 
 pytestmark = pytest.mark.no_pg
 
@@ -2515,9 +2516,15 @@ def test_cli_lane_run_invalid_openrouter_output_is_a_controlled_failure(
     assert output_paths and not output_paths[0].exists()
 
 
-def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:
+def test_main_has_no_dead_lane_sanitizer_wrapper() -> None:
+    import agent_cli.main as main_module
+
+    assert not hasattr(main_module, "_sanitize_lane_output")
+
+
+def test_sanitize_terminal_text_strips_escape_sequences_keeps_text() -> None:
     raw = "before\x1b[31mred\x1b[0m after\x07\ttab\nline2"
-    cleaned = _sanitize_lane_output(raw)
+    cleaned = sanitize_terminal_text(raw)
     assert "\x1b" not in cleaned
     assert "[31m" not in cleaned and "[0m" not in cleaned
     assert "\x07" not in cleaned
@@ -2525,43 +2532,43 @@ def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:
     assert "\ttab\nline2" in cleaned
 
 
-def test_sanitize_lane_output_strips_c1_control_bytes() -> None:
+def test_sanitize_terminal_text_strips_c1_control_bytes() -> None:
     raw = "before\x9b2Jafter"
-    cleaned = _sanitize_lane_output(raw)
+    cleaned = sanitize_terminal_text(raw)
     assert "\x9b" not in cleaned
     assert "2J" not in cleaned
     assert "before" in cleaned and "after" in cleaned
 
 
-def test_sanitize_lane_output_strips_exact_range_boundaries() -> None:
+def test_sanitize_terminal_text_strips_exact_range_boundaries() -> None:
     stripped = "\x00\x08\x0b\x0c\x0e\x1f\x7f\x80\x9f"
-    cleaned = _sanitize_lane_output(stripped)
+    cleaned = sanitize_terminal_text(stripped)
     assert cleaned == ""
 
     kept = "\t\n"
-    assert _sanitize_lane_output(kept) == kept
-    assert _sanitize_lane_output("\r") == ""
+    assert sanitize_terminal_text(kept) == kept
+    assert sanitize_terminal_text("\r") == ""
 
 
-def test_sanitize_lane_output_removes_complete_osc_and_string_sequences() -> None:
+def test_sanitize_terminal_text_removes_complete_osc_and_string_sequences() -> None:
     raw = "a\x1b]0;private title\x07b\x1bPprivate payload\x1b\\c"
-    assert _sanitize_lane_output(raw) == "abc"
+    assert sanitize_terminal_text(raw) == "abc"
 
 
 @pytest.mark.parametrize("introducer", ["\x1bP", "\x1b^", "\x1b_", "\x1bX"])
 @pytest.mark.parametrize("terminator", ["\x9c", "\x1b\\"])
-def test_sanitize_lane_output_removes_7_bit_string_controls_with_either_st(
+def test_sanitize_terminal_text_removes_7_bit_string_controls_with_either_st(
     introducer: str, terminator: str
 ) -> None:
     raw = f"before{introducer}private payload{terminator}after"
-    assert _sanitize_lane_output(raw) == "beforeafter"
+    assert sanitize_terminal_text(raw) == "beforeafter"
 
 
 @pytest.mark.parametrize("introducer", ["\x1bP", "\x1b^", "\x1b_", "\x1bX"])
-def test_sanitize_lane_output_removes_unterminated_string_control_to_end(
+def test_sanitize_terminal_text_removes_unterminated_string_control_to_end(
     introducer: str,
 ) -> None:
-    assert _sanitize_lane_output(f"before{introducer}private payload") == "before"
+    assert sanitize_terminal_text(f"before{introducer}private payload") == "before"
 
 
 def test_cli_dry_run_implementer_grok(

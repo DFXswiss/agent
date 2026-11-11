@@ -67,6 +67,8 @@ _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
 PR_REVIEW_PROMPT_LIMIT = 20_000
 # Two prompts, each written twice (record and JSON block), must fit one GitHub comment.
 A38_REVIEW_PROMPT_LIMIT = 14_000
+PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
+PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
 
 
 def write_spec(path: Path, role: str, body: str) -> None:
@@ -1175,14 +1177,10 @@ def _abort_prepared_pr_reviews(
     store: Store,
     task: dict[str, Any],
     prepared_list: list[dict[str, Any]],
-    exc: BaseException,
+    safe_message: str,
 ) -> None:
     """Close every persisted preparation and leave publication to advance_one."""
-    safe_exc = str(exc)
     for prepared in prepared_list:
-        safe_exc = redact_lane_text(
-            safe_exc, config_dir=prepared.get("config_dir"), limit=4000
-        )
         output_file = prepared.get("output_file")
         if output_file:
             try:
@@ -1194,11 +1192,11 @@ def _abort_prepared_pr_reviews(
         if agent is not None and agent.get("status") == "working":
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = "prelaunch aborted"
+            agent["note"] = safe_message
             store.write("agent", "update", agent["id"], strip_row(agent))
     c = coord(task)
     c["phase"] = "blocked"
-    c["blocker"] = safe_exc
+    c["blocker"] = safe_message
     save_task(store, task)
 
 
@@ -1534,8 +1532,10 @@ def phase_pr_gates(
                 )
             )
     except (StoreError, Exception) as exc:
-        _abort_prepared_pr_reviews(store, task, prepared_list, exc)
-        raise
+        _abort_prepared_pr_reviews(
+            store, task, prepared_list, PR_REVIEW_PREPARATION_ERROR
+        )
+        raise CoordinatorError(PR_REVIEW_PREPARATION_ERROR) from exc
 
     try:
         save_task(store, task)
@@ -1573,8 +1573,10 @@ def phase_pr_gates(
         for thread in started_threads:
             thread.join()
     except (StoreError, Exception) as exc:
-        _abort_prepared_pr_reviews(store, task, prepared_list, exc)
-        raise
+        _abort_prepared_pr_reviews(
+            store, task, prepared_list, PR_REVIEW_PREPARATION_ERROR
+        )
+        raise CoordinatorError(PR_REVIEW_PREPARATION_ERROR) from exc
 
     # Persist actual results on the main thread.
     outcomes: list[tuple[dict[str, Any], LaneResult]] = []
@@ -1586,7 +1588,7 @@ def phase_pr_gates(
         if isinstance(outcome, Exception) or outcome is None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = redact(f"uncertain: {outcome}")
+            agent["note"] = PR_REVIEW_EXECUTION_ERROR
             store.write("agent", "update", agent["id"], strip_row(agent))
             failed_agents.append(str(agent["id"]))
         else:

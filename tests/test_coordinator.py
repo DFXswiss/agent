@@ -1547,6 +1547,61 @@ def test_a38_report_coverage_does_not_cross_duplicate_workflow_names() -> None:
     assert observation.failures == (".github/workflows/ci-two.yml:skipped",)
 
 
+def test_a38_report_workflow_path_name_does_not_cover_inventory_without_run_id() -> None:
+    from agent_cli.coordinator_github import _classify_rollup_and_inventory
+
+    workflow_path = ".github/workflows/deploy.yml"
+    rollup = [
+        {
+            "name": "another rollup check",
+            "status": "completed",
+            "conclusion": "success",
+        }
+    ]
+    latest = {
+        f"{workflow_path}|pull_request": {
+            "id": 14,
+            "path": workflow_path,
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    }
+
+    observation = _classify_rollup_and_inventory(
+        rollup, latest, passed_a38=frozenset({workflow_path})
+    )
+
+    assert observation.kind == "failed"
+    assert observation.failures == (f"{workflow_path}:skipped",)
+
+
+def test_a38_report_matches_expanded_reusable_check_and_unique_inventory_run() -> None:
+    from agent_cli.coordinator_github import _classify_rollup_and_inventory
+
+    rollup = [
+        {
+            "name": "Full-stack E2E / Full-stack E2E",
+            "detailsUrl": "https://github.com/example/project/actions/runs/13/job/130",
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    latest = {
+        ".github/workflows/ci.yml|pull_request": {
+            "id": 13,
+            "path": ".github/workflows/ci.yml",
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    }
+
+    observation = _classify_rollup_and_inventory(
+        rollup, latest, passed_a38=frozenset({"Full-stack E2E"})
+    )
+
+    assert observation.kind == "green"
+
+
 def test_ci_action_required_authorized_reply_resumes_ci_not_implementer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3472,19 +3527,25 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     from agent_cli.coordinator_runtime import advance_one
 
     tid = "aa000001-0000-4000-8000-000000000062"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     published = _record_blocker_publications(monkeypatch)
     real_mkstemp = coordinator_lanes.tempfile.mkstemp
     mkstemp_calls = 0
     output_paths: list[Path] = []
+    private_worktree = task["payload"]["coordinator"]["worktree"]
+    private_config = "/test/codex"
+    raw_failure = (
+        f"cannot prepare {private_worktree}/review-spec.md via "
+        f"{private_config}/settings.json"
+    )
 
     def fail_second_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
         nonlocal mkstemp_calls
         mkstemp_calls += 1
         if mkstemp_calls == 2:
-            raise OSError("cannot prepare output")
+            raise OSError(raw_failure)
         fd, path = real_mkstemp(dir=tmp_path)
         output_paths.append(Path(path))
         return fd, path
@@ -3502,7 +3563,7 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
     assert len(agents) == 1
     assert agents[0]["status"] == "done"
-    assert agents[0]["note"] == "prelaunch aborted"
+    assert agents[0]["note"] == "PR review lane preparation failed"
     assert output_paths and all(not path.exists() for path in output_paths)
     comments = [
         row
@@ -3511,7 +3572,7 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     ]
     assert len(comments) == 1
     assert published == [comments[0]["id"]]
-    assert "cannot prepare output" in str(comments[0].get("payload"))
+    assert "PR review lane preparation failed" in str(comments[0].get("payload"))
     assert "phase-error" in str(comments[0].get("payload"))
     assert "gate-prelaunch" not in str(comments[0].get("payload"))
     saved = store.row("task", tid)
@@ -3520,8 +3581,19 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     assert checkpoint["phase"] == "blocked"
     assert checkpoint["resume_phase"] == "pr_gates_codex"
     assert checkpoint["question_activity_id"] == comments[0]["id"]
+    exposed = "\n".join(
+        (
+            str(agents[0]["note"]),
+            str(comments[0].get("payload")),
+            str(checkpoint["blocker"]),
+            *lines,
+        )
+    )
+    assert raw_failure not in exposed
+    assert private_worktree not in exposed
+    assert private_config not in exposed
     assert lines == [
-        "blocked: cannot prepare output",
+        "blocked: PR review lane preparation failed",
         "blocker published on example/project#7",
     ]
 
@@ -3648,7 +3720,9 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
     assert len(agents) == 2
     assert all(row.get("status") == "done" for row in agents)
-    assert all(row.get("note") == "prelaunch aborted" for row in agents)
+    assert all(
+        row.get("note") == "PR review lane preparation failed" for row in agents
+    )
     assert provider_calls == []
     assert len(joined) == 1
     comments = [
@@ -3658,7 +3732,8 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     ]
     assert len(comments) == 1
     assert published == [comments[0]["id"]]
-    assert "thread start failed" in str(comments[0].get("payload"))
+    assert "PR review lane preparation failed" in str(comments[0].get("payload"))
+    assert "thread start failed" not in str(comments[0].get("payload"))
     assert "phase-error" in str(comments[0].get("payload"))
     assert "gate-prelaunch" not in str(comments[0].get("payload"))
     saved = store.row("task", tid)
@@ -3668,9 +3743,58 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     assert checkpoint["resume_phase"] == "pr_gates_codex"
     assert checkpoint["question_activity_id"] == comments[0]["id"]
     assert lines == [
-        "blocked: thread start failed",
+        "blocked: PR review lane preparation failed",
         "blocker published on example/project#7",
     ]
+
+
+def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    tid = "aa000001-0000-4000-8000-000000000067"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    patch_execute_github(monkeypatch)
+    private_worktree = task["payload"]["coordinator"]["worktree"]
+    private_config = "/test/codex"
+    raw_failure = (
+        f"provider failed in {private_worktree} while reading "
+        f"{private_config}/settings.json"
+    )
+
+    def fail_lane(_argv: list[str], _stdin: str | None = None) -> Completed:
+        raise RuntimeError(raw_failure)
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        fail_lane,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 2
+    assert all(row["note"] == "PR review lane execution failed" for row in agents)
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    comments = [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ]
+    exposed = "\n".join(
+        (
+            *(str(row["note"]) for row in agents),
+            str(checkpoint["blocker"]),
+            *(str(row.get("payload")) for row in comments),
+            *lines,
+        )
+    )
+    assert raw_failure not in exposed
+    assert private_worktree not in exposed
+    assert private_config not in exposed
+    assert lines == ["review-2 uncertain; blocked"]
 
 
 def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
@@ -10607,6 +10731,6 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
         coordinator_lanes, "_prepare_pr_review_agent",
         lambda *a, **k: launched.append(k["role"]) or (_ for _ in ()).throw(CoordinatorError("stop")),
     )
-    with pytest.raises(CoordinatorError, match="stop"):
+    with pytest.raises(CoordinatorError, match="PR review lane preparation failed"):
         coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="claude", stage="review-1")
     assert launched  # grok gates on a claude-pinned task are not taken as cached

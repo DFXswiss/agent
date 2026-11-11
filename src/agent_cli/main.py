@@ -4398,11 +4398,6 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
-def _sanitize_lane_output(text: str) -> str:
-    """Compatibility wrapper for the shared persisted/displayed-text sanitizer."""
-    return redact_secrets(text, limit=None)
-
-
 def _print_lane_result(result: LaneResult) -> None:
     # The vendor's actual review/implementation text lives only in result.stdout —
     # by the time launch() returns, the tmux pane it was captured from is already
