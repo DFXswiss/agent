@@ -5885,40 +5885,46 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertEqual(completed["workflow_approvals"], [])
         self.assertEqual(completed["environment_approvals"], [])
 
-    def test_full_sha_commits_and_compares_are_cached_on_200_only(self) -> None:
+    def test_full_sha_commit_cache_requires_matching_response_sha(self) -> None:
         commit = "1234567890abcdef1234567890abcdef12345678"
-        other = "abcdef1234567890abcdef1234567890abcdef12"
+        branch_named_like_sha = "abcdef1234567890abcdef1234567890abcdef12"
         missing = "0123456789abcdef0123456789abcdef01234567"
+        other = "fedcba0987654321fedcba0987654321fedcba09"
         calls: list[str] = []
 
         def request_fn(
             method: str, url: str, body: bytes | None = None
         ) -> tuple[int, Any, dict[str, str]]:
-            calls.append(_api_path(url))
-            if _api_path(url) == f"/repos/o/r/commits/{missing}":
+            path = _api_path(url)
+            calls.append(path)
+            if path == f"/repos/o/r/commits/{commit}":
+                return 200, {"sha": commit.upper(), "answer": "commit"}, {}
+            if path == f"/repos/o/r/commits/{branch_named_like_sha}":
+                answer = "first" if calls.count(path) == 1 else "second"
+                return 200, {"sha": other, "answer": answer}, {}
+            if path == f"/repos/o/r/commits/{missing}":
                 return 404, {"message": "not found"}, {}
-            return 200, {"ok": True}, {}
+            return 200, {"status": "ahead"}, {}
 
         api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
-        paths = (
-            (f"/repos/o/r/commits/{commit}", 2),
-            ("/repos/o/r/commits/develop", 2),
-            (f"/repos/o/r/commits/{commit}/check-runs", 2),
-            (f"/repos/o/r/compare/{commit}...{other}", 2),
-            (f"/repos/o/r/commits/{missing}", 2),
-        )
-        for path, repeats in paths:
-            for _ in range(repeats):
-                api.request("GET", path)
+        commit_path = f"/repos/o/r/commits/{commit}"
+        branch_path = f"/repos/o/r/commits/{branch_named_like_sha}"
+        missing_path = f"/repos/o/r/commits/{missing}"
+        compare_path = f"/repos/o/r/compare/{commit}...{other}"
+        for path in (commit_path, branch_path, missing_path, compare_path):
+            first = api.request("GET", path)
+            second = api.request("GET", path)
+            if path == branch_path:
+                self.assertEqual(first[1]["answer"], "first")
+                self.assertEqual(second[1]["answer"], "second")
         self.assertEqual(calls.count(f"/repos/o/r/commits/{commit}"), 1)
-        self.assertEqual(calls.count("/repos/o/r/commits/develop"), 2)
-        self.assertEqual(calls.count(f"/repos/o/r/commits/{commit}/check-runs"), 2)
-        self.assertEqual(calls.count(f"/repos/o/r/compare/{commit}...{other}"), 1)
+        self.assertEqual(calls.count(branch_path), 2)
         self.assertEqual(calls.count(f"/repos/o/r/commits/{missing}"), 2)
-        self.assertEqual(api.request_count, 8)
-        self.assertIn("requests=8", a38_guard._format_api_cost(api))
+        self.assertEqual(calls.count(compare_path), 2)
+        self.assertEqual(api.request_count, 7)
+        self.assertIn("requests=7", a38_guard._format_api_cost(api))
 
-    def test_compare_404_old_404_cache_and_new_patterns_are_anchored(self) -> None:
+    def test_compare_404_old_404_cache_and_commit_pattern_is_anchored(self) -> None:
         left = "234567890abcdef1234567890abcdef123456789"
         right = "bcdef1234567890abcdef1234567890abcdef123"
         calls: list[str] = []

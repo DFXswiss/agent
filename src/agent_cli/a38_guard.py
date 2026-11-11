@@ -1054,17 +1054,14 @@ class GitHubApi:
             or re.search(r"/git/trees/[0-9a-f]{40}$", parsed.path) is not None
             or re.search(r"/git/blobs/[0-9a-f]{40}$", parsed.path) is not None
         )
-        sha_immutable = method_u == "GET" and (
+        commit_match = (
             re.search(
-                r"^/repos/[^/]+/[^/]+/commits/[0-9a-f]{40}$", parsed.path
+                r"^/repos/[^/]+/[^/]+/commits/([0-9a-f]{40})$", parsed.path
             )
-            is not None
-            or re.search(
-                r"^/repos/[^/]+/[^/]+/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$",
-                parsed.path,
-            )
-            is not None
+            if method_u == "GET"
+            else None
         )
+        sha_immutable = commit_match is not None
         immutable = existing_immutable or sha_immutable
         if immutable and url in self._immutable_cache:
             return self._immutable_cache[url]
@@ -1111,9 +1108,19 @@ class GitHubApi:
                 self._rate_limit = _rate_limit_error(status, url, headers)
                 raise self._rate_limit
             result = (status, data, headers)
+            matching_commit = (
+                commit_match is not None
+                and status == 200
+                and isinstance(data, Mapping)
+                and isinstance(data.get("sha"), str)
+                and data["sha"].lower() == commit_match.group(1).lower()
+            )
             if (
                 immutable
-                and (status == 200 or (existing_immutable and status == 404))
+                and (
+                    (existing_immutable and status in {200, 404})
+                    or matching_commit
+                )
                 and len(self._immutable_cache) < 256
             ):
                 self._immutable_cache[url] = result
