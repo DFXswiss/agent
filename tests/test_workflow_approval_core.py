@@ -274,6 +274,60 @@ def test_change_after_first_workflow_approval_is_not_retried(monkeypatch):
     assert assessment_runs == 1
 
 
+def test_already_released_note_does_not_block_later_race_retry(monkeypatch):
+    fake = ApprovalAPI()
+    other_path = ".github/workflows/other.yml"
+    fake.runs.append(
+        fake.run(
+            id=102,
+            path=other_path,
+            workflow_id=11,
+            created_at="2026-09-05T11:01:00Z",
+        )
+    )
+    released: list[int] = []
+    original_request = fake.request_fn
+
+    def request_fn(method, url, body=None):
+        path = urlparse(url).path
+        if method == "POST" and path.endswith("/actions/runs/101/approve"):
+            released.append(101)
+            fake.posts.append(101)
+            fake.runs[0].update(status="queued", conclusion=None)
+            return 403, {}, {}
+        return original_request(method, url, body)
+
+    fake.request_fn = request_fn
+    assessment_runs = 0
+    original_assess_pull = a38_guard.assess_pull
+
+    def count_assessment_runs(*args, **kwargs):
+        nonlocal assessment_runs
+        if kwargs.get("pull") is not None:
+            assessment_runs += 1
+        return original_assess_pull(*args, **kwargs)
+
+    monkeypatch.setattr(a38_guard, "assess_pull", count_assessment_runs)
+
+    def arm_evidence_change(current):
+        current.before_run_read = lambda changed: changed.comments[0].__setitem__(
+            "body", changed.comments[0]["body"] + "\nChanged author evidence"
+        )
+
+    fake.before_run_read = arm_evidence_change
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.ok
+    assert released == [101]
+    assert fake.posts == [101, 102]
+    assert assessment_runs == 2
+    assert result.workflow_approvals == [
+        {"run_id": 102, "workflow": other_path, "head": HEAD, "status": "approved"}
+    ]
+    assert not any(status["state"] == "error" for status in fake.statuses)
+
+
 @pytest.mark.parametrize("what", ["ambiguous", "retargeted", "reopened", "older"])
 def test_private_fork_association_must_be_proven(what):
     fake = ApprovalAPI()

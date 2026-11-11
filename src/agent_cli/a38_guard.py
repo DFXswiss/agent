@@ -3637,6 +3637,11 @@ def _apply_guard_side_effects(api: GitHubApi, assessment: Assessment, *, dry_run
     assessment.lifecycle = reconcile_lifecycle(api, assessment, dry_run=dry_run)
 
 
+def _mutating_writes(writes: Sequence[str]) -> int:
+    """Count side-effect records that prove this invocation mutated GitHub."""
+    return sum(not write.endswith(":already-released") for write in writes)
+
+
 def reconcile_pull(
     api: GitHubApi,
     repo: str,
@@ -3676,7 +3681,7 @@ def reconcile_pull(
                 return assessment
             published = publish_assessment(api, assessment)
             effects_on = published
-            effects_from = len(published.writes)
+            effects_from = _mutating_writes(published.writes)
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
         except Exception as exc:  # noqa: BLE001 — invalidate after any publish-path failure
@@ -3689,10 +3694,11 @@ def reconcile_pull(
                     if _assessment_exit_code(assessment) != 0:
                         setattr(exc, "failed_before", True)
                 raise
-            # Retrying after a write would drop it from the new report and can
+            # Retrying after a mutation would drop it from the new report and can
             # duplicate the CI authorization record created by this invocation.
             if _is_retryable_race(exc) and (
-                effects_on is None or len(effects_on.writes) == effects_from
+                effects_on is None
+                or _mutating_writes(effects_on.writes) == effects_from
             ):
                 last_err = exc
                 continue

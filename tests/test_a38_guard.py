@@ -719,6 +719,38 @@ def _install_guard_workflow(fake: FakeAPI, *, changed: bool = True) -> None:
 
 
 class A38GuardUnitTests(unittest.TestCase):
+    def test_sweep_budget_uses_low_core_pool_after_graphql_response(self) -> None:
+        responses = [
+            (
+                200,
+                {},
+                {
+                    "x-ratelimit-resource": "core",
+                    "x-ratelimit-remaining": "1499",
+                    "x-ratelimit-limit": "5000",
+                },
+            ),
+            (
+                200,
+                {},
+                {
+                    "x-ratelimit-resource": "graphql",
+                    "x-ratelimit-remaining": "4999",
+                    "x-ratelimit-limit": "5000",
+                },
+            ),
+        ]
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: responses.pop(0),
+            sleep_fn=lambda _s: None,
+        )
+
+        api.request("GET", f"/repos/{REPO}/pulls/1")
+        api.request("POST", "/graphql", body={"query": "query { viewer { id } }"})
+
+        self.assertEqual(a38_guard._sweep_budget_low(api), (1499, 5000))
+
     def test_list_open_pulls_requests_recently_updated_first(self) -> None:
         urls: list[str] = []
 
