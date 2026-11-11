@@ -460,7 +460,7 @@ def record_gate(
     head: str,
     agent_id: str,
     evidence: str | None,
-) -> None:
+) -> str:
     stage = canonical_stage(stage)
     try:
         # Gate-row write path: validate the pin at the lowest write boundary.
@@ -495,6 +495,7 @@ def record_gate(
     )
     if verdict == "rejected" and task.get("workflow") == "implement":
         task["state"] = "implementing"
+    return gid
 
 
 def gate_prompt_evidence(
@@ -1267,11 +1268,22 @@ def _reconcile_approved_gate_checklist(
     return (key, reason) if reason is not None else None
 
 
+def _handled_rejected_gate_ids(task: dict[str, Any]) -> set[str]:
+    """Return rejection rows that already routed this task through implementation."""
+    raw = coord(task).get("handled_rejected_gate_ids")
+    if not isinstance(raw, list):
+        return set()
+    return {value for value in raw if isinstance(value, str) and value}
+
+
 def _apply_rejected_gate_transition(
-    task: dict[str, Any], *, head: str, evidence: list[str]
+    task: dict[str, Any], *, head: str, evidence: list[str], gate_ids: list[str]
 ) -> None:
     """Route a durable current-head rejection without starting another lane."""
     c = coord(task)
+    handled = _handled_rejected_gate_ids(task)
+    handled.update(gate_ids)
+    c["handled_rejected_gate_ids"] = sorted(handled)
     c["findings"] = "\n\n".join(evidence)
     evidence_map = c.setdefault("evidence", {})
     if isinstance(evidence_map, dict):
@@ -1356,8 +1368,11 @@ def phase_pr_gates(
 
     # A gate row is the durable verdict. A crash may happen after recording a
     # rejection (and its comment) but before the task transition is saved. Read
-    # every current-head gate before preparing agents so that such a rejection
-    # can never be superseded by a newly launched dimension.
+    # every current-head gate before preparing agents so that such an unhandled
+    # rejection can never be superseded by a newly launched dimension. Rejections
+    # that already caused a complete implement/inner-review cycle remain durable
+    # history but must not prevent a fresh gate attempt on an unchanged head.
+    handled_rejections = _handled_rejected_gate_ids(task)
     persisted_rejections: list[dict[str, Any]] = []
     for dimension in ("quality", "logic"):
         gate = latest.get((canonical_stage(stage), dimension))
@@ -1367,6 +1382,7 @@ def phase_pr_gates(
             and gate.get("head_sha") == head
             and gate.get("vendor") == vendor
             and gate.get("verdict") == "rejected"
+            and gate.get("id") not in handled_rejections
         ):
             persisted_rejections.append(gate)
     if persisted_rejections:
@@ -1391,7 +1407,10 @@ def phase_pr_gates(
                 activity_ids.append(activity_id)
                 _remember_rejection_review(task, activity_id)
             _apply_rejected_gate_transition(
-                task, head=head, evidence=recovered_evidence
+                task,
+                head=head,
+                evidence=recovered_evidence,
+                gate_ids=[str(gate["id"]) for gate in persisted_rejections],
             )
             save_task(store, task)
         if activity_ids:
@@ -1645,6 +1664,7 @@ def phase_pr_gates(
         redact(outcome.stdout or f"{status}/{model_result}")
         for _prep, outcome, status, model_result in rejected_outcomes
     ]
+    rejection_gate_ids: list[str] = []
     rejection_activity_ids: list[str] = []
     incomplete_resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
     incomplete_affected = ", ".join(
@@ -1674,7 +1694,7 @@ def phase_pr_gates(
             if not approved:
                 evidence = rejection_evidence[rejection_index]
                 rejection_index += 1
-            record_gate(
+            gate_id = record_gate(
                 store,
                 task,
                 stage=stage,
@@ -1704,6 +1724,7 @@ def phase_pr_gates(
                 ),
             )
             rejection_activity_ids.append(activity_id)
+            rejection_gate_ids.append(gate_id)
             _remember_rejection_review(task, activity_id)
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
 
@@ -1735,7 +1756,10 @@ def phase_pr_gates(
 
         if rejection_evidence:
             _apply_rejected_gate_transition(
-                task, head=head, evidence=rejection_evidence
+                task,
+                head=head,
+                evidence=rejection_evidence,
+                gate_ids=rejection_gate_ids,
             )
             save_task(store, task)
         elif incomplete_outcomes:

@@ -15,7 +15,13 @@ _ASSIGNMENT_TEXT_LIMIT = 2000
 def _without_bearer(text: str, token: str | None) -> str:
     """Remove the device bearer (raw, header form and URL-encoded) from hub text."""
     if token:
-        forms = {token, f"Bearer {token}", quote(token, safe="")}
+        header = f"Bearer {token}"
+        forms = {
+            token,
+            header,
+            quote(token, safe=""),
+            quote(header, safe=""),
+        }
         for form in sorted(forms, key=len, reverse=True):
             if form:
                 text = text.replace(form, "[redacted]")
@@ -24,8 +30,9 @@ def _without_bearer(text: str, token: str | None) -> str:
 
 def sanitized_assignment_text(text: str, token: str | None, *, limit: int) -> str:
     """Bounded, redacted, control-character-free hub text without the bearer."""
-    cleaned = _without_bearer(str(text or ""), token)
-    return redact(sanitize_terminal_text(cleaned), limit=limit)
+    cleaned = sanitize_terminal_text(str(text or ""))
+    cleaned = _without_bearer(cleaned, token)
+    return redact(cleaned, limit=limit)
 
 
 class AssignmentFailure(Exception):

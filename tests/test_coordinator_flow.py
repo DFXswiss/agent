@@ -858,11 +858,14 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
     assert "implementer" not in fake.launched[len(launched_before) :]
 
 
-def test_incomplete_pr_review_crash_keeps_atomic_reply_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("live_state", ["MERGED", "CLOSED"])
+def test_incomplete_pr_review_crash_checkpoint_precedes_a38_pr_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_state: str
 ) -> None:
-    """A crash before GitHub publication cannot make an unavailable gate retryable."""
-    from agent_cli import coordinator_github, github_act
+    """A crash before blocker publication stays blocked after merge or close."""
+    from dataclasses import replace
+
+    from agent_cli import coordinator_github, coordinator_runtime, github_act
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     store = Store(tmp_path)
@@ -1033,14 +1036,64 @@ def test_incomplete_pr_review_crash_keeps_atomic_reply_checkpoint(
     assert set(crash_launches) == {"pr-reviewer-quality", "pr-reviewer-logic"}
 
     launched_after_crash = list(fake.launched)
-    retry_lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_execution_binding", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "_verify_source_assigned", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "reconcile_a38_publication_intents", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *_a, **_k: live_state
+    )
+    retry_lines = coordinator_runtime.advance_one(
+        store,
+        replace(worker, a38=True),
+        runner=fake,
+        lane_runner=lane_runner(fake),
+    )
 
     recovered = store.row("task", tid)["payload"]["coordinator"]
     assert recovered["phase"] == "blocked"
+    assert recovered["blocker_publish_once"] is True
+    assert recovered["blocker_publish_kind"] == "provider-incomplete"
     assert recovered["question_activity_id"] == qid
     assert store.row("activity", qid)["execution_status"] == "done"
     assert fake.launched == launched_after_crash
     assert any("blocker published" in line for line in retry_lines)
+
+    body = str(store.row("activity", qid)["payload"]["body"])
+    fake.comments = [
+        {"id": 1, "body": body, "user": {"login": "worker-bot"}},
+        {
+            "id": 2,
+            "body": "provider restored; resume the saved gate phase",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    reply_lines = coordinator_runtime.advance_one(
+        store,
+        replace(worker, a38=True),
+        runner=fake,
+        lane_runner=lane_runner(fake),
+    )
+    resumed = store.row("task", tid)["payload"]["coordinator"]
+    assert resumed["phase"] == "pr_gates_grok"
+    assert "blocker_publish_once" not in resumed
+    assert "blocker_publish_kind" not in resumed
+    assert any("consumed 1 authorized reply" in line for line in reply_lines)
+
+    transition_lines = coordinator_runtime.advance_one(
+        store,
+        replace(worker, a38=True),
+        runner=fake,
+        lane_runner=lane_runner(fake),
+    )
+    transitioned = store.row("task", tid)["payload"]["coordinator"]
+    assert transitioned["phase"] == "await_merge"
+    assert any(live_state.lower() in line for line in transition_lines)
 
 
 def test_parallel_pr_review_rejection_wins_over_other_incomplete_dimension(
@@ -1275,6 +1328,9 @@ def test_parallel_pr_review_persists_both_rejections_before_github_crash(
         if gate.get("task_id") == tid and gate.get("verdict") == "rejected"
     ]
     assert {gate["dimension"] for gate in gates} == {"quality", "logic"}
+    assert set(checkpoint["handled_rejected_gate_ids"]) == {
+        gate["id"] for gate in gates
+    }
     activity_ids = checkpoint["rejection_review_activity_ids"]
     assert len(activity_ids) == 2
 

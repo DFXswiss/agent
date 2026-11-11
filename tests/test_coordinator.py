@@ -3856,12 +3856,113 @@ def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     assert saved["state"] == "implementing"
     assert saved["payload"]["coordinator"]["phase"] == "implement"
     assert saved["payload"]["coordinator"]["findings"] == "Logic found a durable defect."
+    assert saved["payload"]["coordinator"]["handled_rejected_gate_ids"] == [
+        "aa000001-0000-4000-8000-0000000000f2"
+    ]
     reviews = [
         row for row in store.rows("activity") if row.get("type") == "review.post"
     ]
     assert len(reviews) == 1
     assert published == [reviews[0]["id"]]
     assert f"{vendor} logic — rejected" in reviews[0]["payload"]["body"]
+
+
+def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A completed no-change/inner-review cycle may retry gates on the same head."""
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000d8"
+    gate_id = "aa000001-0000-4000-8000-0000000000d7"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["pr_number"] = 42
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    head = checkpoint["head_sha"]
+    store.write(
+        "review_gate",
+        "insert",
+        gate_id,
+        {
+            "id": gate_id,
+            "task_id": tid,
+            "stage": "review-2",
+            "dimension": "logic",
+            "vendor": "codex",
+            "verdict": "rejected",
+            "evidence": "Already handled without a head change.",
+            "head_sha": head,
+            "agent_id": "aa000001-0000-4000-8000-0000000000d6",
+            "recorded_at": "2026-01-01T00:00:00.000000Z",
+        },
+    )
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
+    launched: list[str] = []
+
+    def approve(argv, stdin=None):  # noqa: ANN001
+        launched.append("lane")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    recovery_lines = phase_pr_gates(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda argv: Completed(0, "", ""),
+        approve,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert launched == []
+    assert any("rejection recovered" in line for line in recovery_lines)
+    cycled = store.row("task", tid)
+    assert cycled["payload"]["coordinator"]["handled_rejected_gate_ids"] == [
+        gate_id
+    ]
+    # Represent the legitimate no-change implementer result and approved inner
+    # review returning this unchanged head to the same PR-gate phase.
+    cycled["state"] = "pr-review"
+    cycled["payload"]["coordinator"]["phase"] = "pr_gates_codex"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in cycled.items() if not key.startswith("_")},
+    )
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda argv: Completed(0, "", ""),
+        approve,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert launched == ["lane", "lane"]
+    assert not any("rejection recovered" in line for line in lines)
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert saved["payload"]["coordinator"]["handled_rejected_gate_ids"] == [gate_id]
 
 
 def test_rejection_comment_retries_across_phase_transition_and_closed_pr(

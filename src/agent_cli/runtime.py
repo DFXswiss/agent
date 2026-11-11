@@ -239,7 +239,10 @@ class Runtime:
 
     def capture(self, session_id: str) -> str:
         name = tmux_name(session_id)
-        completed = self._tmux(session_id, ["tmux", "capture-pane", "-t", name, "-p", "-e"])
+        completed = self._tmux(
+            session_id,
+            ["tmux", "capture-pane", "-t", name, "-p", "-e", "-J"],
+        )
         if completed.returncode != 0:
             return ""
         return completed.stdout

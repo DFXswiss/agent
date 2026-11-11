@@ -301,7 +301,15 @@ def test_tmux_prefix_prepended_per_session() -> None:
     assert prefix + ["tmux", "send-keys", "-t", "agent-worker-a", "-l", "--", "hello"] in calls
     calls.clear()
     rt.capture("worker-a")
-    assert prefix + ["tmux", "capture-pane", "-t", "agent-worker-a", "-p", "-e"] in calls
+    assert prefix + [
+        "tmux",
+        "capture-pane",
+        "-t",
+        "agent-worker-a",
+        "-p",
+        "-e",
+        "-J",
+    ] in calls
     calls.clear()
 
     def runner_alive(argv: list[str]) -> Completed:

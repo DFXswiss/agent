@@ -726,6 +726,51 @@ def test_publish_terminals_keeps_capture_beyond_diagnostic_limit(
         store.close()
 
 
+def test_publish_terminals_joins_soft_wrapped_token_before_redaction(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        token = "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+        def pane(argv: list[str]) -> Completed:
+            if argv[:2] != ["tmux", "capture-pane"]:
+                return Completed(0, "", "")
+            if "-J" in argv:
+                return Completed(0, f"credential={token}\n", "")
+            return Completed(
+                0,
+                "credential=github_pat_ABCDEFGHIJKL\nMNOPQRSTUVWXYZ0123456789\n",
+                "",
+            )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, Runtime(runner=pane), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert published == "credential=[redacted]\n"
+        assert token not in published
+        assert "github_pat_" not in published
+    finally:
+        store.close()
+
+
 def test_publish_terminals_grok_preflight_propagates_store_connection_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

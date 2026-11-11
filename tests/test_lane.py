@@ -28,6 +28,7 @@ from agent_cli.lane import (
     openrouter_argv,
     hide_config_dir,
     parse_status,
+    redact_diagnostic,
     record_lane_run,
     tmux_wrap_argv,
 )
@@ -475,6 +476,17 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
         "error reading <config_dir>/settings.json and <config_dir>/key"
     )
     assert hide_config_dir("unchanged", None) == "unchanged"
+
+
+def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:
+    config_dir = "/operator/very-secret-profile"
+    diagnostic = ("x" * 3970) + config_dir + "/settings.json"
+
+    redacted = redact_diagnostic(diagnostic, config_dir=config_dir)
+
+    assert "/operator" not in redacted
+    assert "very-secret-profile" not in redacted
+    assert "<config_dir>/settings.json" in redacted
 
 
 def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
@@ -1783,8 +1795,12 @@ def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
     spec = tmp_path / "spec.md"
     spec.write_text("codex please implement\n", encoding="utf-8")
 
+    deleted_paths: list[Path] = []
+
     def deletes_output(argv: list[str], stdin_text: str | None) -> object:
-        Path(argv[argv.index("--output-last-message") + 1]).unlink()
+        output_path = Path(argv[argv.index("--output-last-message") + 1])
+        deleted_paths.append(output_path)
+        output_path.unlink()
         return SimpleNamespace(returncode=0, stdout="", stderr="codex wrote nothing\n")
 
     result = launch(
@@ -1802,6 +1818,9 @@ def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
     assert result.stdout == ""
     assert "codex wrote nothing" in result.stderr
     assert "lane output file is unavailable" in result.stderr
+    assert deleted_paths
+    assert str(deleted_paths[0]) not in result.stderr
+    assert "FileNotFoundError" not in result.stderr
 
 
 def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
