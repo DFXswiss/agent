@@ -14,6 +14,11 @@ import yaml
 pytestmark = pytest.mark.no_pg
 ROOT = Path(__file__).resolve().parents[1]
 
+# Reviewed guard revision installed by this repository. It declares the
+# actor_app_slug input; moving the pin is a reviewed change that updates this.
+GUARD_ACTION_SHA = "63bd283dc9a3b6eb29827af9f690d2ba79ed1f14"
+GUARD_ACTION_USES = f"DFXswiss/agent/.github/actions/a38-guard@{GUARD_ACTION_SHA}"
+
 
 @pytest.mark.parametrize("step_index", [1, 2], ids=["installer", "guard"])
 def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: int) -> None:
@@ -108,10 +113,7 @@ def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() ->
     ]
     assert len(guard_steps) == 1
     guard_step = guard_steps[0]
-    assert re.fullmatch(
-        r"DFXswiss/agent/\.github/actions/a38-guard@[0-9a-fA-F]{40}",
-        guard_step["uses"],
-    )
+    assert guard_step["uses"] == GUARD_ACTION_USES
     assert steps.index(app_token) < steps.index(guard_step)
 
     guard_with = guard_step["with"]
@@ -125,4 +127,5 @@ def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() ->
     action = yaml.safe_load(
         (ROOT / ".github/actions/a38-guard/action.yml").read_text(encoding="utf-8")
     )
+    # Valid: pinned action.yml declared these same inputs when the pin was set.
     assert set(guard_with) <= set(action["inputs"])
