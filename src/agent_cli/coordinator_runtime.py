@@ -966,27 +966,60 @@ def _apply_implementer_outcome(
     """Apply a persisted implementer outcome. Never relaunches the model."""
     c = coord(task)
 
-    def _mark_applied() -> None:
-        outcome = c.get("lane_outcome")
+    def _mark_applied(target: dict[str, Any]) -> None:
+        outcome = target.get("lane_outcome")
         if isinstance(outcome, dict):
             outcome["applied"] = True
-            c["lane_outcome"] = outcome
+            target["lane_outcome"] = outcome
+
+    def _commit_early_outcome(
+        *,
+        task_state: str,
+        blocker: str,
+        resume: bool,
+        provider_unavailable: bool = False,
+    ) -> None:
+        """Commit an early round verdict and its consumed checkpoint together."""
+        committed_task = copy.deepcopy(task)
+        committed_tr = copy.deepcopy(tr)
+        committed_c = coord(committed_task)
+        committed_tr["implementer_verdict"] = "blocked"
+        committed_tr["finished_at"] = utcnow()
+        committed_c["phase"] = "blocked"
+        if resume:
+            committed_c["resume_phase"] = "implement"
+        else:
+            committed_c.pop("resume_phase", None)
+            committed_c.pop("question_activity_id", None)
+            committed_c.pop("replies_consumed_through", None)
+        committed_c["blocker"] = blocker
+        if provider_unavailable:
+            committed_c["blocker_publish_once"] = True
+            committed_c["blocker_publish_kind"] = "provider-incomplete"
+            committed_c.pop("uncertain_lane", None)
+        _mark_applied(committed_c)
+        committed_task["state"] = task_state
+        with store.conn.transaction():
+            store.write(
+                "task_round",
+                "update",
+                committed_tr["id"],
+                strip_row(committed_tr),
+            )
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        tr.clear()
+        tr.update(committed_tr)
 
     if status != "complete":
-        tr["implementer_verdict"] = "blocked"
-        tr["finished_at"] = utcnow()
-        store.write("task_round", "update", tr["id"], strip_row(tr))
-        c["phase"] = "blocked"
-        c["resume_phase"] = "implement"
-        c["blocker"] = f"implementer status={status}"
         provider_unavailable = status == "unavailable"
-        if provider_unavailable:
-            c["blocker_publish_once"] = True
-            c["blocker_publish_kind"] = "provider-incomplete"
-            c.pop("uncertain_lane", None)
-        _mark_applied()
-        task["state"] = "open"
-        save_task(store, task)
+        _commit_early_outcome(
+            task_state="open",
+            blocker=f"implementer status={status}",
+            resume=True,
+            provider_unavailable=provider_unavailable,
+        )
         return publish_blocker(
             store,
             worker,
@@ -1006,15 +1039,11 @@ def _apply_implementer_outcome(
         ) + draft_lines
 
     if model_result not in _IMPLEMENTER_RESULTS:
-        tr["implementer_verdict"] = "blocked"
-        tr["finished_at"] = utcnow()
-        store.write("task_round", "update", tr["id"], strip_row(tr))
-        c["phase"] = "blocked"
-        c["resume_phase"] = "implement"
-        c["blocker"] = f"implementer invalid RESULT={model_result or 'empty'}"
-        _mark_applied()
-        task["state"] = "open"
-        save_task(store, task)
+        _commit_early_outcome(
+            task_state="open",
+            blocker=f"implementer invalid RESULT={model_result or 'empty'}",
+            resume=True,
+        )
         return publish_blocker(
             store,
             worker,
@@ -1093,17 +1122,11 @@ def _apply_implementer_outcome(
         # Distinct from RESULT ask (reply-recoverable) and from external
         # blockers (CI authorization / incomplete reviews) which keep a
         # non-failed task and resume_phase + question checkpoint.
-        tr["implementer_verdict"] = "blocked"
-        tr["finished_at"] = utcnow()
-        store.write("task_round", "update", tr["id"], strip_row(tr))
-        c["phase"] = "blocked"
-        c.pop("resume_phase", None)
-        c.pop("question_activity_id", None)
-        c.pop("replies_consumed_through", None)
-        c["blocker"] = "implementer blocked"
-        _mark_applied()
-        task["state"] = "failed"
-        save_task(store, task)
+        _commit_early_outcome(
+            task_state="failed",
+            blocker="implementer blocked",
+            resume=False,
+        )
         return publish_blocker(
             store,
             worker,
@@ -1118,7 +1141,7 @@ def _apply_implementer_outcome(
             c["phase"] = "blocked"
             c["resume_phase"] = "implement"
             c["blocker"] = "no-change and no pull request"
-            _mark_applied()
+            _mark_applied(c)
             task["state"] = "open"
             save_task(store, task)
             return publish_blocker(
@@ -1146,7 +1169,7 @@ def _apply_implementer_outcome(
             resume_phase="implement",
             blocker="completed patch lacks concrete English/German change summaries",
         )
-        _mark_applied()
+        _mark_applied(c)
         task["state"] = "open"
         save_task(store, task)
         return publish_blocker(
@@ -1172,7 +1195,7 @@ def _apply_implementer_outcome(
                     resume_phase="implement",
                     blocker="completed patch lacks a reused and added list with file and line",
                 )
-                _mark_applied()
+                _mark_applied(c)
                 task["state"] = "open"
                 save_task(store, task)
                 return publish_blocker(

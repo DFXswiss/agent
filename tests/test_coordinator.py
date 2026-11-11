@@ -3477,10 +3477,17 @@ def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
     from agent_cli import coordinator_lanes
 
     store = Store(tmp_path)
     write_accounts(store.home)
+    raw_model = "api_key=model-secret /test/codex/credentials \x1b[31m" + "m" * 240
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["roles"]["codex-rev"]["model"] = raw_model
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
@@ -3506,6 +3513,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     _patch_pr_gate_git(monkeypatch, tmp_path)
     patch_execute_github(monkeypatch)
     launches: list[str] = []
+    launched_models: list[str] = []
 
     def review(argv: list[str], stdin: str | None = None) -> Completed:
         material = " ".join(argv) + "\n" + (stdin or "")
@@ -3515,6 +3523,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
             else "pr-reviewer-logic"
         )
         launches.append(role)
+        launched_models.append(argv[argv.index("--model") + 1])
         result = (
             "STATUS: complete\nRESULT: rejected\npassword=hunter2 quality defect"
             if role.endswith("quality")
@@ -3524,12 +3533,22 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
         output.write_text(result, encoding="utf-8")
         return Completed(0, "", "")
 
-    real_record_gate = coordinator_lanes.record_gate
+    real_checkpoint = coordinator_lanes._checkpoint_reviewer_outcome
 
-    def crash_before_verdict(*args: Any, **kwargs: Any) -> str:
-        raise RuntimeError("simulated crash before reviewer verdict")
+    def crash_before_verdict(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        checkpoint = real_checkpoint(*args, **kwargs)
+        checkpoint_task = store.row("task", args[1]["id"])
+        assert checkpoint_task is not None
+        outcomes = checkpoint_task["payload"]["coordinator"]["lane_outcome"][
+            "outcomes"
+        ]
+        if {item["dimension"] for item in outcomes} == {"quality", "logic"}:
+            raise RuntimeError("simulated crash before reviewer verdict")
+        return checkpoint
 
-    monkeypatch.setattr(coordinator_lanes, "record_gate", crash_before_verdict)
+    monkeypatch.setattr(
+        coordinator_lanes, "_checkpoint_reviewer_outcome", crash_before_verdict
+    )
     with pytest.raises(
         RuntimeError, match="simulated crash before reviewer verdict"
     ):
@@ -3551,6 +3570,11 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
         "logic",
     }
     assert "hunter2" not in str(checkpoint)
+    assert launched_models == [raw_model, raw_model]
+    assert all(len(str(item["model"])) <= 200 for item in checkpoint["outcomes"])
+    assert "model-secret" not in str(checkpoint)
+    assert "/test/codex" not in str(checkpoint)
+    assert "\x1b" not in str(checkpoint)
     agents = [
         row
         for row in store.rows("agent")
@@ -3559,13 +3583,29 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     ]
     assert len(agents) == 2
     assert all(row["status"] == "done" for row in agents)
+    assert all(len(str(row["model"])) <= 200 for row in agents)
+    assert "model-secret" not in str(agents)
+    assert "/test/codex" not in str(agents)
+    assert "\x1b" not in str(agents)
+    audits = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row.get("payload", {}).get("task_id") == tid
+    ]
+    assert len(audits) == 2
+    assert {row["id"] for row in audits} == {
+        str(uuid5(NAMESPACE_URL, f"coordinator-lane-run:{agent['id']}"))
+        for agent in agents
+    }
     assert not [
         gate
         for gate in store.rows("review_gate")
         if gate.get("task_id") == tid and gate.get("stage") == "review-2"
     ]
 
-    monkeypatch.setattr(coordinator_lanes, "record_gate", real_record_gate)
+    monkeypatch.setattr(
+        coordinator_lanes, "_checkpoint_reviewer_outcome", real_checkpoint
+    )
     lines = coordinator_lanes.phase_pr_gates(
         store,
         worker,
@@ -9647,6 +9687,21 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
             ident,
             {"id": ident, "task_id": tid, "key": key, "status": status},
         )
+    store.write(
+        "local_check",
+        "insert",
+        "waiver-old-coordinator-check",
+        {
+            "id": "waiver-old-coordinator-check",
+            "task_id": tid,
+            "name": "coordinator-check",
+            "command": "/operator/checks --full",
+            "result": "fail",
+            "output": "old failure",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": head,
+        },
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head
     )
@@ -9716,7 +9771,15 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
     assert local_test_gate_satisfied(saved, head) is True
     assert not [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
-    assert len(checks) == 1 and checks[0]["result"] == "skip"
+    assert len(checks) == 3
+    assert next(row for row in checks if row["name"] == "a38")["result"] == "skip"
+    current_precheck = next(
+        row
+        for row in checks
+        if row["name"] == "coordinator-check" and row["id"] != "waiver-old-coordinator-check"
+    )
+    assert current_precheck["result"] == "skip"
+    assert current_precheck["head_sha"] == head
     assert any(parts and parts[0] == "fetch" for parts in git_calls)
     assert ("cat-file", "-e", f"{base}^{{commit}}") in git_calls
 
@@ -9899,8 +9962,11 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
 
 
 @pytest.mark.parametrize("status", ["renamed", "copied"])
-@pytest.mark.parametrize(("entry_count", "expected"), [(500, True), (501, False)])
-def test_a38_context_applies_waiver_limit_to_github_entries_before_path_expansion(
+@pytest.mark.parametrize(
+    ("entry_count", "expected"),
+    [(250, True), (251, False), (500, False), (501, False)],
+)
+def test_a38_context_applies_guard_waiver_limit_after_path_expansion(
     status: str, entry_count: int, expected: bool
 ) -> None:
     from agent_cli.coordinator_a38 import _pull_a38_context
@@ -10806,6 +10872,75 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
     assert agents[0]["status"] == "working"
 
 
+def test_reviewer_audit_failure_rolls_back_checkpoint_and_finished_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "reviewer-audit-rollback"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000001b5"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "head_sha": "a" * 40,
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("audit failed")),
+    )
+
+    with pytest.raises(StoreError, match="audit failed"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="reviewer",
+            vendor="grok",
+            round_num=1,
+            spec_body="Review.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=lambda _argv, _stdin: Completed(
+                0, "STATUS: complete\nRESULT: approved\n", ""
+            ),
+        )
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["lane"]["state"] == "running"
+    assert "lane_outcome" not in saved["payload"]["coordinator"]
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "working"
+    assert [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row.get("payload", {}).get("task_id") == tid
+    ] == []
+
+
 @pytest.mark.parametrize("checkpoint_redaction_failure", [False, True])
 def test_implementer_checkpoint_rollback_keeps_running_state(
     tmp_path: Path,
@@ -11173,6 +11308,95 @@ def test_implementer_done_replay_rollback_keeps_checkpoint_round_and_checklist(
     ]
     assert len(checklist) == 1
     assert checklist[0]["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("status", "result"),
+    [
+        ("partial", ""),
+        ("unavailable", ""),
+        ("complete", "approved"),
+        ("complete", "blocked"),
+    ],
+    ids=("incomplete", "unavailable", "invalid-result", "blocked"),
+)
+def test_implementer_early_outcome_rollback_keeps_checkpoint_and_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    result: str,
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000001b4"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "source": {"repo": "example/project", "number": 7},
+                "lane_outcome": {
+                    "role": "implementer",
+                    "round": 1,
+                    "status": status,
+                    "result": result,
+                    "stdout": "diagnostic",
+                    "applied": False,
+                },
+            }
+        },
+    }
+    task_round = {
+        "id": f"round-{status}-{result or 'empty'}",
+        "task_id": tid,
+        "round": 1,
+        "implementer_verdict": None,
+        "reviewer_verdict": None,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+    }
+    store.write("task", "insert", tid, task)
+    store.write("task_round", "insert", task_round["id"], task_round)
+    live_task = store.row("task", tid)
+    live_round = store.row("task_round", task_round["id"])
+    assert live_task is not None
+    assert live_round is not None
+    before_task = copy.deepcopy(live_task)
+    before_round = copy.deepcopy(live_round)
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "save_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("save failed")),
+    )
+
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_runtime._apply_implementer_outcome(
+            store,
+            worker,
+            live_task,
+            lambda _argv: Completed(0, "", ""),
+            round_num=1,
+            tr=live_round,
+            status=status,
+            model_result=result,
+            stdout="diagnostic",
+            replay=live_task["payload"]["coordinator"]["lane_outcome"],
+            sha=None,
+            draft_lines=[],
+        )
+
+    assert live_task == before_task
+    assert live_round == before_round
+    assert store.row("task", tid) == before_task
+    assert store.row("task_round", task_round["id"]) == before_round
 
 
 @pytest.mark.parametrize(

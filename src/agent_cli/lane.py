@@ -675,6 +675,7 @@ def record_lane_run(
     task_id: str | None = None,
     agent_id: str | None = None,
     round_num: int | None = None,
+    activity_id: str | None = None,
 ) -> str:
     """Write the script-owned, redacted lane audit activity."""
     usage = result.usage
@@ -711,7 +712,7 @@ def record_lane_run(
                 "error": item.get("error") is True,
             }
         )
-    activity_id = str(uuid.uuid4())
+    activity_id = activity_id or str(uuid.uuid4())
     final_text = result.stdout
     if not final_text and result.vendor in ("claude", "openrouter"):
         final_text = result.stderr

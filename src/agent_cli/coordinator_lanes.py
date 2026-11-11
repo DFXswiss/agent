@@ -42,6 +42,7 @@ from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
 from .gate_order import latest_gates, ordered_snapshot_gates
 from .lane import (
+    LANE_MODEL_LIMIT,
     OUTPUT_FILE_VENDORS,
     SPEC_VIA_STDIN,
     LaneResult,
@@ -257,7 +258,11 @@ def _reviewer_replay_fields(
     return {
         "role": result.role,
         "vendor": result.vendor,
-        "model": result.model,
+        "model": redact_lane_text(
+            result.model,
+            config_dir=result.config_dir,
+            limit=LANE_MODEL_LIMIT,
+        ),
         "round": round_num,
         "head": head,
         "dimension": dimension,
@@ -352,9 +357,10 @@ def _checkpoint_reviewer_outcome(
     head: str,
     dimension: str,
     stage: str,
+    session_id: str,
     lane_marker: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Atomically finish a reviewer agent and retain its replayable result."""
+    """Atomically persist a reviewer audit, agent, and replayable result."""
     committed_task = copy.deepcopy(task)
     committed_agent = copy.deepcopy(agent)
     c = coord(committed_task)
@@ -392,7 +398,22 @@ def _checkpoint_reviewer_outcome(
     committed_agent["status"] = "done"
     committed_agent["finished_at"] = utcnow()
     committed_agent["note"] = entry["stdout"] or entry["stderr"]
+    audit_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"coordinator-lane-run:{committed_agent['id']}",
+        )
+    )
     with store.conn.transaction():
+        record_lane_run(
+            store,
+            session_id=session_id,
+            result=result,
+            task_id=str(committed_task["id"]),
+            agent_id=str(committed_agent["id"]),
+            round_num=round_num,
+            activity_id=audit_id,
+        )
         store.write(
             "agent", "update", str(committed_agent["id"]), strip_row(committed_agent)
         )
@@ -620,7 +641,15 @@ def launch_lane(
                 "role": role,
                 "vendor": vendor,
                 "provider": vendor,
-                "model": selected.model,
+                "model": (
+                    redact_lane_text(
+                        selected.model,
+                        config_dir=selected.account.config_dir,
+                        limit=LANE_MODEL_LIMIT,
+                    )
+                    if role == "reviewer"
+                    else selected.model
+                ),
                 "prompt": spec_text,
                 **(
                     {
@@ -749,9 +778,16 @@ def launch_lane(
                 tools_truncated=finalized.tools_truncated,
                 protocol_result=model_result,
             )
-        _record_lane_audit(
-            store, worker, c, result, task_id=str(task["id"]), agent_id=aid, round_num=round_num
-        )
+        if role != "reviewer":
+            _record_lane_audit(
+                store,
+                worker,
+                c,
+                result,
+                task_id=str(task["id"]),
+                agent_id=aid,
+                round_num=round_num,
+            )
     finally:
         if lane_output is not None:
             try:
@@ -852,6 +888,7 @@ def launch_lane(
             head=str(c.get("head_sha") or ""),
             dimension="inner",
             stage="inner-review",
+            session_id=worker.session_id,
             lane_marker=finished_lane,
         )
         return agent, result
@@ -920,7 +957,7 @@ def _record_lane_audit(
     agent_id: str | None,
     round_num: int | None,
 ) -> None:
-    """Record lane.run; an audit failure (including StoreError, a SystemExit) never changes the verdict."""
+    """Record a non-reviewer lane.run without changing its verdict on failure."""
     try:
         record_lane_run(
             store,
@@ -1535,7 +1572,11 @@ def _prepare_pr_review_agent(
                 "role": role,
                 "vendor": vendor,
                 "provider": vendor,
-                "model": selected.model,
+                "model": redact_lane_text(
+                    selected.model,
+                    config_dir=selected.account.config_dir,
+                    limit=LANE_MODEL_LIMIT,
+                ),
                 "prompt": spec_text,
                 "head_sha": head,
                 "dimension": "quality" if role.endswith("quality") else "logic",
@@ -2109,17 +2150,12 @@ def phase_pr_gates(
                 head=head,
                 dimension=str(prep["dimension"]),
                 stage=canonical_stage(stage),
+                session_id=worker.session_id,
             )
-            c = coord(task)
-            _record_lane_audit(
-                store,
-                worker,
-                c,
-                outcome,
-                task_id=str(task["id"]),
-                agent_id=str(prep["agent_id"]),
-                round_num=None,
-            )
+
+    # Each reviewer checkpoint replaces ``task`` with its committed copy.
+    # Refresh the coordinator reference before applying or persisting verdicts.
+    c = coord(task)
 
     if failed_agents:
         c["phase"] = "blocked"

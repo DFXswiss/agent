@@ -330,6 +330,9 @@ for worker in workers.values():
      duplicate an uncertain process), clear any stale `resume_phase`, and
      publish a GitHub-visible blocker. `uncertain_lane` remains final even for
      an older stored task that still contains recovery metadata.
+   Incomplete, invalid-result, and blocked implementer outcomes stage the task
+   and task-round on copies, commit both together, and consume the checkpoint
+   only after that commit succeeds.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
    to the existing PR before later stages. No empty fake PR when there is no
@@ -372,8 +375,9 @@ for worker in workers.values():
    routing the task again. Newly completed gate
    writes and their checklist reconciliation commit atomically; a crash rolls
    both back. Durable ledger insert order resolves gate rows that share a
-   timestamp through one shared ordering rule used by coordinator, CLI, allow,
-   and chain readers. The legacy fallback
+   timestamp through one shared ledger-insert ordering rule used by coordinator,
+   CLI, allow, and chain readers. Updates do not replace an insert sequence, and
+   snapshot-only rows without a ledger insert remain unordered. The legacy fallback
    parses aware ISO-8601 timestamps, normalizes them to UTC, and treats equivalent
    representations as the same instant. Conflicting rows at one instant, and
    histories with a missing or invalid timestamp whose order cannot be
@@ -588,8 +592,9 @@ aborts the row and leaves the same round retryable. Reviewer `RESULT` must be
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
 starting another model. The inner reviewer and each dimension of a parallel PR
-review atomically persist a bounded, redacted, structured outcome with the
-finished agent, bound to the task, round, head, stage, and dimension. Before
+review atomically persist a bounded, redacted, structured outcome, its
+deterministically identified `lane.run` audit, and the finished agent, bound to
+the task, round, head, stage, and dimension. Before
 starting a reviewer, the coordinator replays a matching saved outcome; it
 removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
@@ -706,6 +711,9 @@ No silent failure.
 Every lane process writes script-owned `lane.run` evidence with the configured
 and provider-reported model (both bounded and redacted), token usage when
 supplied, a bounded redacted file-tool transcript, and bounded final text.
+Reviewer agent rows and replay checkpoints store that same bounded,
+config-path-hidden redacted model value; only provider argv retains the raw
+configured model.
 One shared redaction pipeline handles final text, models, diagnostics, agent
 notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
 a CSI/ESC final byte as a possible token character, so the terminal sanitizer
@@ -724,8 +732,10 @@ uncertain-lane stop: the agent note alone says `PR review lane execution failed`
 while the task blocker and issue comment publish only the fixed uncertain-outcome
 text. Raw exception text, worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
-Failure to write the audit row itself is an observation and does not rewrite the
-lane verdict. File-tool targets use one fail-closed rule after terminal,
+Failure to write an implementer audit row itself is an observation and does not
+rewrite the lane verdict. A reviewer audit failure rolls back its finished agent
+and outcome checkpoint because all three records share one transaction.
+File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
 `[A-Za-z0-9._-]` redacts the whole target. A drive fragment is one ASCII letter
@@ -906,10 +916,13 @@ commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
+When a trusted coordinator precheck is configured, the waiver records a
+current-head `coordinator-check` skip so an older failure cannot remain the
+selected result.
 Immediately before draft reconciliation, the waiver path rechecks pull-request
 state and routes a merged or closed pull request directly to merge verification.
-The 500-file waiver ceiling counts GitHub file entries before rename/copy
-entries expand into their old and new paths.
+The 500-file waiver ceiling counts the expanded GitHub path inventory, so each
+rename or copy contributes both its old and new path, matching the guard.
 Coordinator A38 mode does not implement policy migrations; a changed
 `.github/a38.json`, `.github/pr-guard.json`, or any path below
 `.github/workflows/` fails loudly before a suite or inventory waiver can publish
