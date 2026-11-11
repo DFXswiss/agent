@@ -338,26 +338,33 @@ for worker in workers.values():
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence. A successful second-slot lane still starts when the
    checklist keys are `n_a`. Every cached approved gate attempts to reconcile
-   its matching non-`ja` checklist key to `ja`, including after a crash between
-   the gate and checklist writes. Reconciliation closes a key only when
-   `close_allowed` permits that key; a denial keeps the coordinator in the gate
-   phase and returns a recoverable blocker naming the still-open key. After `ja`,
-   both second-slot gates are required again.
+   its matching non-`ja` checklist key to `ja`, including legacy partially
+   recorded state. Reconciliation closes a key only when `close_allowed`
+   permits that key; a denial keeps the coordinator in the gate phase and
+   returns a recoverable blocker naming the still-open key. After `ja`, both
+   second-slot gates are required again.
    On restart, the coordinator inspects durable current-head gate verdicts
    before preparing either dimension. Cached approvals reconcile their
    checklist keys, while any cached rejection routes its recorded evidence to
-   implementation and is never superseded by a new lane. Durable ledger insert
-   order resolves gate rows that share a timestamp through one shared ordering
-   rule used by coordinator, CLI, allow, and chain readers. The legacy fallback
+   implementation and is never superseded by a new lane. Newly completed gate
+   writes and their checklist reconciliation commit atomically; a crash rolls
+   both back. Durable ledger insert order resolves gate rows that share a
+   timestamp through one shared ordering rule used by coordinator, CLI, allow,
+   and chain readers. The legacy fallback
    parses aware ISO-8601 timestamps, normalizes them to UTC, and treats equivalent
    representations as the same instant. Conflicting rows at one instant, and
    histories with a missing or invalid timestamp whose order cannot be
    established, yield an unavailable verdict before a checklist close or review
    publication. Legacy stage aliases are canonicalized before grouping or
-   comparison. Rejection recording, its task
-   transition, and the deterministic `review.post` intent share one local
-   transaction. GitHub publication runs after that commit and a restart reuses
-   the same pending intent. A transient publication error reopens that same
+   comparison. All completed and unavailable parallel gates, their checklist
+   reconciliation, every rejection intent, the combined findings, and the task
+   transition share one local transaction. For an approved A38 first review,
+   the pass count and a recovery marker are checkpointed before that
+   transaction; the marker is cleared with the atomic gate/checklist commit, so
+   recovery reruns a rolled-back lane without counting the same pass twice.
+   GitHub publication runs only after that commit, using the saved intent batch,
+   and a restart reuses every pending intent. A transient publication error
+   reopens that same
    deterministic intent and retries it at the start of every later coordinator
    tick, before phase dispatch and before an early merged/closed transition,
    until the owned intent is verified done. Implementation and later phases may
@@ -568,6 +575,11 @@ STATUS: complete|partial|timeout|unavailable
 RESULT: done|blocked|ask|approved|rejected|no-change
 ```
 
+The parser first counts every `STATUS:` and `RESULT:` line, including lines
+whose values are malformed, and requires exactly one of each. It then validates
+both values and the result allowed for that lane role; an additional malformed
+record cannot be hidden by a later valid one.
+
 A completed implementation additionally returns exactly one English and one
 German change-summary sentence, each ending with a period, directly after
 `RESULT` and before its body:
@@ -587,8 +599,11 @@ evidence human spec input; the script never invents human grants.
 
 ## Evidence hygiene
 
-Outputs stored or published are redacted and bounded. Profile credentials,
-config directory paths, signing-key paths, and raw auth errors must not appear
+Persisted outputs and diagnostics are redacted and bounded. Live terminal
+frames use the same sanitizer and secret redaction without the diagnostic
+length bound, so frame deduplication compares the complete sanitized capture.
+Profile credentials, config directory paths, signing-key paths, and raw auth
+errors must not appear
 in replicated rows or GitHub text. User-facing blockers and questions are
 published on the source issue only when `execution_status=done` is verified;
 otherwise they remain locally visible (`CoordinatorError` / `StoreError`
@@ -602,6 +617,8 @@ supplied, a bounded redacted file-tool transcript, and bounded final text.
 One shared sanitizer removes complete CSI, OSC, other ESC sequences, and
 remaining C0/C1 controls except newline and tab before secret redaction of final
 text, models, diagnostics, agent notes, terminal output, and tool targets.
+Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
+`ESC \`; an unterminated string control is removed through the end of the text.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
@@ -613,7 +630,9 @@ separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
 `[A-Za-z0-9._-]` redacts the whole target. A drive fragment is one ASCII letter
 followed by `:` at that same boundary, whether the following path is absolute or
-drive-relative. The only exception is a single plain whole absolute path under
+drive-relative. Any numeric or named escape (`\x`, `\u`, `\U`, `\N{`, octal
+`\0` through `\7`, or `\c`) also redacts the complete target without decoding.
+The only exception is a single plain whole absolute path under
 the worktree whose relative remainder passes the same checks; it is stored
 worktree-relative and may contain glob `*`, `?`, `[` and `]` characters.
 

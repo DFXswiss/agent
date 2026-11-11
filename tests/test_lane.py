@@ -826,6 +826,31 @@ def test_tool_target_redacts_backslash_and_regex_escaped_fragments(
     assert _tool_target(target, str(worktree), "pattern", tool="Grep") == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    ("tool", "kind", "target"),
+    [
+        ("Grep", "pattern", r"path=C\x3aUsers/someone/config.json"),
+        ("Glob", "pattern", r"src\x2f\x2e\x2e\x2fprivate"),
+        ("Read", "path", r"src\x2fprivate"),
+        ("Grep", "pattern", r"path\u002fprivate"),
+        ("Grep", "pattern", r"path\U0000002fprivate"),
+        ("Grep", "pattern", "path\\N{SOLIDUS}private"),
+        ("Grep", "pattern", r"path\0private"),
+        ("Grep", "pattern", r"path\7private"),
+        ("Grep", "pattern", r"path\cprivate"),
+    ],
+)
+def test_tool_target_redacts_numeric_and_named_escapes(
+    tmp_path: Path, tool: str, kind: str, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(target, str(worktree), kind, tool=tool) == "[redacted]"
+
+
 def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path) -> None:
     from agent_cli.lane import _tool_target
 
@@ -2303,6 +2328,22 @@ def test_sanitize_lane_output_strips_exact_range_boundaries() -> None:
 def test_sanitize_lane_output_removes_complete_osc_and_string_sequences() -> None:
     raw = "a\x1b]0;private title\x07b\x1bPprivate payload\x1b\\c"
     assert _sanitize_lane_output(raw) == "abc"
+
+
+@pytest.mark.parametrize("introducer", ["\x1bP", "\x1b^", "\x1b_", "\x1bX"])
+@pytest.mark.parametrize("terminator", ["\x9c", "\x1b\\"])
+def test_sanitize_lane_output_removes_7_bit_string_controls_with_either_st(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"before{introducer}private payload{terminator}after"
+    assert _sanitize_lane_output(raw) == "beforeafter"
+
+
+@pytest.mark.parametrize("introducer", ["\x1bP", "\x1b^", "\x1b_", "\x1bX"])
+def test_sanitize_lane_output_removes_unterminated_string_control_to_end(
+    introducer: str,
+) -> None:
+    assert _sanitize_lane_output(f"before{introducer}private payload") == "before"
 
 
 def test_cli_dry_run_implementer_grok(

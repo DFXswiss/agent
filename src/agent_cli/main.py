@@ -2798,7 +2798,9 @@ def _publish_terminals(
             continue
         sid = session["id"]
         try:
-            text = redact_secrets(sanitize_terminal_text(runtime.capture(sid)))
+            text = redact_secrets(
+                sanitize_terminal_text(runtime.capture(sid)), limit=None
+            )
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:

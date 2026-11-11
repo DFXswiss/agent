@@ -144,7 +144,7 @@ its outer object has `to_session`, and its `payload` is the strict
 `a38.second-review/v1` result documented in
 [Issue coordinator — A38 mode](docs/issue-coordinator.md#a38-mode).
 
-`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`. An implementer lane closes the round only with exactly one role-valid `RESULT: done|no-change|blocked`; a missing, duplicate, or other `RESULT` aborts the row and leaves the round retryable. Failed-lane notes and printed diagnostics are bounded and secret-redacted.
+`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`. An implementer lane closes the round only with exactly one valid `STATUS` record and exactly one role-valid `RESULT: done|no-change|blocked` record. Every `STATUS:` and `RESULT:` line counts before its value is validated, so a malformed extra record also aborts the row and leaves the round retryable. Failed-lane notes and printed diagnostics are bounded and secret-redacted.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
@@ -194,6 +194,8 @@ redacted. Neither activity stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,
 including a Glob pattern or an absolute or relative-traversal path fragment
 inside a Grep pattern, also when assignment text or punctuation precedes it.
+Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
+`\c`) fail closed by redacting the complete target.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
@@ -229,7 +231,7 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Captures use the shared terminal sanitizer and secret redaction without the bounded diagnostic limit, so deduplication compares the complete sanitized capture. Terminal bytes are not store events.
 
 ## Testing against another hub
 

@@ -5,15 +5,15 @@ from __future__ import annotations
 import re
 
 
-# String controls must be matched before the shorter generic ESC form.  Only
-# complete strings are removed here; any remaining introducer is removed with
-# the C0/C1 controls below without consuming ordinary printable text.
+# String controls must be matched before the shorter generic ESC form. Both
+# 7-bit and 8-bit string controls accept either ST spelling; an unterminated
+# string consumes the remaining text rather than exposing its payload.
 _TERMINAL_ESCAPE_RE = re.compile(
     r"(?:"
-    r"\x1b\][\s\S]*?(?:\x07|\x9c|\x1b\\)"  # OSC, 7-bit
-    r"|\x9d[\s\S]*?(?:\x07|\x9c|\x1b\\)"  # OSC, 8-bit
-    r"|\x1b[P^_X][\s\S]*?\x1b\\"  # DCS/PM/APC/SOS, 7-bit
-    r"|[\x90\x98\x9e\x9f][\s\S]*?(?:\x9c|\x1b\\)"  # 8-bit strings
+    r"\x1b\][\s\S]*?(?:\x07|\x9c|\x1b\\|\Z)"  # OSC, 7-bit
+    r"|\x9d[\s\S]*?(?:\x07|\x9c|\x1b\\|\Z)"  # OSC, 8-bit
+    r"|\x1b[P^_X][\s\S]*?(?:\x9c|\x1b\\|\Z)"  # DCS/PM/APC/SOS, 7-bit
+    r"|[\x90\x98\x9e\x9f][\s\S]*?(?:\x9c|\x1b\\|\Z)"  # 8-bit strings
     r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI
     r"|\x1b[ -/]*[0-~]"  # other complete ESC sequences
     r")"

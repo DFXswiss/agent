@@ -219,7 +219,9 @@ Stored file-tool targets are fail-closed host evidence. Complete terminal
 escapes are removed, separators are normalized, and regex backslash escapes are
 removed first. A target containing `..` anywhere, `~`, a drive fragment, or `/`
 at the start or immediately after a character outside `[A-Za-z0-9._-]` is stored
-as `[redacted]`. A drive fragment is one ASCII letter followed by `:` at that
+as `[redacted]`. A target containing a numeric or named escape (`\x`, `\u`,
+`\U`, `\N{`, octal `\0` through `\7`, or `\c`) is also fully redacted without
+decoding. A drive fragment is one ASCII letter followed by `:` at that
 same boundary, regardless of whether `/` follows. The only absolute-path
 exception is a single plain whole target with no whitespace or regex
 metacharacters other than glob `*`, `?`, `[` and `]`, starting with the absolute
@@ -230,7 +232,9 @@ Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, and tool targets all use one shared sanitizer before secret
 redaction. It removes complete CSI, OSC, and other ESC sequences, then remaining
 C0/C1 controls except newline and tab, so terminal formatting cannot split a
-credential and evade redaction.
+credential and evade redaction. Seven-bit DCS, PM, APC, and SOS strings accept
+both the 8-bit ST byte and `ESC \`; an unterminated string control is removed
+through the end of the text.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
