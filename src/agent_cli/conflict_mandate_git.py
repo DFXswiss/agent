@@ -14,7 +14,7 @@ from .runtime import Completed
 _CONFLICT_MARKER = re.compile(r"^(?:<{7,}|={7,}|>{7,}|\|{7,})(?=\s|$)")
 _DRIVER_PATTERN = (
     r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|"
-    r"diff\..*\.(textconv|command))$"
+    r"diff\..*\.(textconv|command)|diff\.external)$"
 )
 _DRIVER_LINE = re.compile(r"^(\S+)(?:\s|$)")
 _UNMERGED_STATES = frozenset({"UU", "AA"})
@@ -96,12 +96,17 @@ def ambient_driver_names(runner: Runner) -> tuple[str, ...]:
     return tuple(names)
 
 
-def local_driver_names(runner: Runner, worktree: str) -> tuple[str, ...]:
-    """Return the driver names defined by the cloned repository configuration."""
+def effective_driver_names(runner: Runner, worktree: str) -> tuple[str, ...]:
+    """Return driver names from the effective configuration in the worktree.
+
+    The query has no scope option, so it merges the system and global
+    configuration, including ``includeIf`` sections selected by this worktree's
+    Git directory, with the cloned repository configuration.
+    """
     completed = runner(_argv(
-        worktree, "config", "--local", "--get-regexp", _DRIVER_PATTERN,
+        worktree, "config", "--get-regexp", _DRIVER_PATTERN,
     ))
-    return _driver_names(completed, "read repository Git configuration")
+    return _driver_names(completed, "read effective Git configuration")
 
 
 def clone(
@@ -440,6 +445,7 @@ def _numstat_text(runner: Runner, worktree: str, path: str) -> bool:
         "diff",
         "--numstat",
         "--no-ext-diff",
+        "--no-textconv",
         "--",
         path,
     )
@@ -479,6 +485,8 @@ def changed_paths(runner: Runner, worktree: str) -> set[str]:
 
 
 def _diff_paths(runner: Runner, worktree: str, *parts: str) -> set[str]:
+    if parts[:1] == ("diff",):
+        parts = ("diff", "--no-ext-diff", "--no-textconv", *parts[1:])
     completed = require_ok(
         runner,
         worktree,
@@ -507,7 +515,14 @@ def conflict_markers(worktree: str, paths: list[str]) -> list[str]:
 
 
 def diff_check(runner: Runner, worktree: str) -> Completed:
-    return run(runner, worktree, "diff", "--check")
+    return run(
+        runner,
+        worktree,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--check",
+    )
 
 
 def stage_paths(runner: Runner, worktree: str, paths: list[str]) -> None:
@@ -617,7 +632,7 @@ __all__ = [
     "fetch_branch",
     "git_file_snapshot",
     "index_fingerprint",
-    "local_driver_names",
+    "effective_driver_names",
     "merge_commits",
     "push_with_lease",
     "range_commits",

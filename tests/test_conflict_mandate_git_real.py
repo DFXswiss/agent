@@ -14,9 +14,9 @@ from agent_cli.conflict_mandate_git import (
     branch_ref_valid,
     changed_paths,
     conflict_markers,
+    effective_driver_names,
     git_file_snapshot,
     index_fingerprint,
-    local_driver_names,
     repository_state,
     repository_state_changed,
     require_ok,
@@ -40,10 +40,17 @@ if shutil.which("git") is None:
     pytest.skip("git is required", allow_module_level=True)
 
 
-def _run(argv: list[str], *, cwd: Path | None = None) -> Completed:
+def _run(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> Completed:
     env = dict(os.environ)
     for key in ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR"):
         env.pop(key, None)
+    if env_overrides is not None:
+        env.update(env_overrides)
     completed = subprocess.run(
         argv,
         cwd=cwd,
@@ -385,16 +392,56 @@ def test_repository_state_sees_config_and_hook_changes_without_git(tmp_path: Pat
     assert repository_state_changed(after_config, repository_state(git_dir)) is True
 
 
-def test_local_driver_names_reads_the_repository_configuration(tmp_path: Path) -> None:
+def test_effective_driver_names_reads_the_repository_configuration(tmp_path: Path) -> None:
     worktree, git_dir = _separate_git_worktree(tmp_path)
-    assert local_driver_names(_runner, str(worktree)) == ()
+    env = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    assert effective_driver_names(runner, str(worktree)) == ()
     _git(worktree, "config", "--local", "filter.lfs.smudge", "cat")
-    assert local_driver_names(_runner, str(worktree)) == ("filter.lfs.smudge",)
+    assert effective_driver_names(runner, str(worktree)) == ("filter.lfs.smudge",)
     _git(worktree, "config", "--local", "merge.custom.driver", "true")
-    assert local_driver_names(_runner, str(worktree)) == (
+    _git(worktree, "config", "--local", "diff.external", "/usr/bin/diff")
+    assert effective_driver_names(runner, str(worktree)) == (
         "filter.lfs.smudge",
         "merge.custom.driver",
+        "diff.external",
     )
+
+
+def test_effective_driver_names_reads_conditional_global_include(tmp_path: Path) -> None:
+    worktree, git_dir = _separate_git_worktree(tmp_path)
+    git_dir = git_dir.resolve()
+    included = tmp_path / "conditional.gitconfig"
+    included.write_text('[filter "x"]\n\tsmudge = cat\n', encoding="utf-8")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text(
+        f'[includeIf "gitdir:{git_dir}"]\n\tpath = {included}\n',
+        encoding="utf-8",
+    )
+    env = {
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    assert effective_driver_names(runner, str(worktree)) == ("filter.x.smudge",)
+    plain = runner([
+        "git", "config", "--global", "--get-regexp",
+        r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|"
+        r"diff\..*\.(textconv|command)|diff\.external)$",
+    ])
+    assert plain.returncode == 1
+    assert plain.stdout == ""
 
 
 def test_snapshot_detects_rewritten_git_file(tmp_path: Path) -> None:
