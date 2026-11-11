@@ -171,7 +171,7 @@ def _now() -> datetime:
 
 
 def _state_unreadable(worker: ConflictWorker, exc: StateUnreadable) -> list[str]:
-    return [safe(worker, f"state unreadable: {exc.path.name}")]
+    return [safe(worker, str(exc))]
 
 
 def source_lock_key(repo: str, number: int) -> str:
@@ -206,9 +206,6 @@ def _preflight(
             )
         if account.git_identity is None:
             raise ConflictsError("worker GitHub account requires git identity for signed commits")
-        account_runner = account.runner(
-            runner, require_git=True, allow_force_with_lease=True
-        )
     except AccountError as exc:
         raise ConflictsError(str(exc)) from exc
     try:
@@ -230,6 +227,12 @@ def _preflight(
             raise ConflictsError("implementer lane requires workspace-write access")
         ai.require_lane_execution()
     except (AIAccountError, AccountError) as exc:
+        raise ConflictsError(str(exc)) from exc
+    try:
+        account_runner = account.runner(
+            runner, require_git=True, allow_force_with_lease=True
+        )
+    except AccountError as exc:
         raise ConflictsError(str(exc)) from exc
     try:
         drivers = ambient_driver_names(account_runner)
@@ -321,7 +324,7 @@ def _discover(
     transient_error: ConflictTransientError | None = None
     unfinished_repos = {
         request.repo for request, _state in unfinished_requests(
-            worker, runtime.account.login
+            worker, runtime.account.login, clean_terminal=not dry_run
         )
     }
     for repo in worker.repositories:
@@ -1597,19 +1600,37 @@ def _run_request(
         if merge_commits(git_runner, str(ctx.worktree), base=base_ref):
             raise _Blocker(MERGE_COMMIT_BLOCKER)
         save_state(ctx, "rebasing")
+        save_state(ctx, None, rebase_stops=0)
         rebased = rebase(git_runner, str(ctx.worktree), base=base_ref)
         resolved_files: list[str] = []
-        stops = ctx.state.get("conflict_stops", 0)
-        if isinstance(stops, bool) or not isinstance(stops, int) or stops < 0:
+        artifact_stops = ctx.state.get("conflict_stops", 0)
+        if (
+            isinstance(artifact_stops, bool)
+            or not isinstance(artifact_stops, int)
+            or artifact_stops < 0
+        ):
             raise _Blocker("conflict stop counter is unreadable")
+        rebase_stops = ctx.state.get("rebase_stops", 0)
+        if (
+            isinstance(rebase_stops, bool)
+            or not isinstance(rebase_stops, int)
+            or rebase_stops < 0
+        ):
+            raise _Blocker("rebase stop counter is unreadable")
         if rebased.returncode != 0:
             while True:
-                if stops >= ctx.worker.max_rebase_steps:
+                if rebase_stops >= ctx.worker.max_rebase_steps:
                     raise _Blocker(
                         f"rebase exceeded max_rebase_steps ({ctx.worker.max_rebase_steps})"
                     )
-                stops += 1
-                save_state(ctx, None, conflict_stops=stops)
+                artifact_stops += 1
+                rebase_stops += 1
+                save_state(
+                    ctx,
+                    None,
+                    conflict_stops=artifact_stops,
+                    rebase_stops=rebase_stops,
+                )
                 unmerged = unmerged_paths(git_runner, str(ctx.worktree))
                 if not unmerged:
                     raise _Blocker(_rebase_failed(rebased))
@@ -1643,7 +1664,7 @@ def _run_request(
                         runtime,
                         lane_runner,
                         observations=observations,
-                        stop=stops,
+                        stop=artifact_stops,
                         attempt=attempt,
                         base=base_ref,
                         subject=subject,
