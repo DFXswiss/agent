@@ -27,7 +27,9 @@ _TERMINAL_ESCAPE_RE = re.compile(
 )
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _ESC_OR_C1_SEQUENCE_RE = re.compile(
-    rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|[\x80-\x9f])"
+    # Complete sequences must win before the fail-closed lone-ESC fallback so
+    # the strict leading/trailing SGR exemption can still inspect one wrapper.
+    rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|\x1b|[\x80-\x9f])"
 )
 _SGR_WRAPPER_RE = re.compile(r"\x1b\[([0-9;]*)m")
 

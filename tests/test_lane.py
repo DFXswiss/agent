@@ -540,6 +540,45 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() ->
     )
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\x1bopaque-credential",
+        "opaque\x1b-credential",
+        "opaque-credential\x1b",
+    ],
+    ids=("start", "middle", "end"),
+)
+def test_lone_escape_redacts_tokens_across_lane_sinks(raw: str) -> None:
+    assert redact_diagnostic(raw) == "[redacted]"
+    finalized = finalize_lane_output("grok", raw, "", cwd="/work")
+    assert finalized.text == "[redacted]"
+
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="grok",
+            model="model",
+            status="partial",
+            argv=["grok"],
+            returncode=0,
+            stdout=raw,
+            stderr="",
+        ),
+    )
+    assert store.row is not None
+    assert store.row["payload"]["final_text"] == "[redacted]"
+
+
 def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:
     config_dir = "/operator/very-secret-profile"
     diagnostic = (
@@ -1209,7 +1248,7 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
             json.dumps(
                 {
                     "type": "result",
-                    "result": "STATUS: complete",
+                    "result": "STATUS: complete\nRESULT: done",
                     "usage": {"input_tokens": 7, "output_tokens": 2},
                     "modelUsage": {OPERATOR_OPENROUTER_MODEL: {}},
                 }
@@ -1230,7 +1269,7 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
         config_home=tmp_path,
         session_id=DEFAULT_SESSION,
     )
-    assert result.stdout == "STATUS: complete"
+    assert result.stdout == "STATUS: complete\nRESULT: done"
     assert result.status == "complete"
     assert result.usage is not None
     assert result.usage.model == OPERATOR_OPENROUTER_MODEL
@@ -1919,7 +1958,9 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
         seen.append((argv, stdin_text))
         out_path = argv[argv.index("--output-last-message") + 1]
         output_paths.append(out_path)
-        Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
+        Path(out_path).write_text(
+            "STATUS: complete\nRESULT: done\n", encoding="utf-8"
+        )
         return SimpleNamespace(returncode=0, stdout="STATUS: partial\n", stderr="")
 
     result = launch(
@@ -1948,7 +1989,11 @@ def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> No
     contents = "claude please review\n"
     spec.write_text(contents, encoding="utf-8")
     stream = json.dumps(
-        {"type": "result", "result": "reviewed\nSTATUS: complete", "usage": {}}
+        {
+            "type": "result",
+            "result": "reviewed\nSTATUS: complete\nRESULT: approved",
+            "usage": {},
+        }
     )
     seen_stdin: list[str | None] = []
 
@@ -1968,7 +2013,7 @@ def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> No
     )
     assert seen_stdin == [contents]
     assert result.status == "complete"
-    assert result.stdout == "reviewed\nSTATUS: complete"
+    assert result.stdout == "reviewed\nSTATUS: complete\nRESULT: approved"
 
 
 def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
@@ -2047,7 +2092,7 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append(stdin_text)
-        return FakeDone(0, "STATUS: complete\n", "")
+        return FakeDone(0, "STATUS: complete\nRESULT: done\n", "")
 
     result = launch(
         role="implementer",
@@ -2133,7 +2178,11 @@ def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append(list(argv))
-        return SimpleNamespace(returncode=0, stdout="STATUS: complete\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: done\n",
+            stderr="",
+        )
 
     result = launch(
         role="implementer",
@@ -2249,7 +2298,7 @@ def test_launch_tmux_stream_json_uses_output_file_not_pane_capture(
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("review this\n", encoding="utf-8")
-    long_result = "x" * 2500 + "\nSTATUS: complete"
+    long_result = "x" * 2500 + "\nSTATUS: complete\nRESULT: approved"
     stream = json.dumps({"type": "result", "result": long_result, "usage": {}})
     pane_result = json.dumps(
         {"type": "result", "result": "pane text\nSTATUS: partial", "usage": {}}

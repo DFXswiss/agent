@@ -4006,9 +4006,8 @@ def cmd_run(args: list[str]) -> None:
                 # round and checklist, and a pure read of stale state could hand
                 # off with an outdated snapshot.
                 snap = _chain_snapshot(store, tid, extra_head=head)
-                protocol_status, semantic_result = parse_model_result(
-                    result.stdout, result.returncode
-                )
+                protocol_status = result.status
+                semantic_result = result.protocol_result
                 implementer_verdict: str | None = None
                 if (
                     role == "implementer"

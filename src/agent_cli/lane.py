@@ -113,6 +113,10 @@ class LaneResult:
     tools: tuple[dict, ...] = ()
     tools_truncated: bool = False
     activity_error: str | None = None
+    # Parsed exactly once from the unredacted final lane text. Persisted text
+    # must never be reparsed because redaction can remove hidden duplicate
+    # STATUS/RESULT records.
+    protocol_result: str = ""
 
 
 # runner(argv, stdin_text) -> object with returncode, stdout, stderr
@@ -259,17 +263,35 @@ def openrouter_argv(
     ]
 
 
-def hide_config_dir(text: str, config_dir: str | None) -> str:
-    """Replace raw/resolved account paths despite interleaved terminal controls."""
-    if not config_dir:
-        return text
-    raw = str(Path(config_dir).expanduser())
-    resolved = str(Path(raw).resolve())
-    for path in sorted({raw, resolved}, key=len, reverse=True):
+def replace_path_roots(
+    text: str, replacements: tuple[tuple[str, str], ...]
+) -> str:
+    """Replace raw/resolved local roots despite interleaved terminal controls."""
+    variants: list[tuple[str, str]] = []
+    for value, replacement in replacements:
+        if not value or value in ("/", "."):
+            continue
+        raw = str(Path(value).expanduser())
+        try:
+            resolved = str(Path(raw).resolve())
+        except (OSError, RuntimeError, ValueError):
+            resolved = raw
+        variants.extend((path, replacement) for path in {raw, resolved})
+    for path, replacement in sorted(
+        variants, key=lambda item: len(item[0]), reverse=True
+    ):
         text = redact_terminal_interleaved_secret(
-            text, path, replacement="<config_dir>"
+            text, path, replacement=replacement
         )
     return text
+
+
+def hide_config_dir(text: str, config_dir: str | None) -> str:
+    """Replace raw/resolved account paths despite interleaved terminal controls."""
+    return replace_path_roots(
+        text,
+        ((config_dir, "<config_dir>"),) if config_dir else (),
+    )
 
 
 def openrouter_path_error(
@@ -982,16 +1004,22 @@ def launch(
             stream_from_output_file=stream_from_output_file,
             config_dir=selected.account.config_dir,
         )
+        # The protocol is counted on the raw source exactly once. Only the
+        # redacted body below is returned to callers or persisted.
+        from .coordinator_common import parse_model_result
+
+        protocol_status, protocol_result = parse_model_result(
+            finalized.source_text, returncode
+        )
         if stream_from_output_file and not finalized.text and stdout and not stderr:
             # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr
             # so the CLI and lane.run show why a lane produced no stream output.
             stderr = stdout
-        status = parse_status(finalized.text, returncode)
         return LaneResult(
             role=role,
             vendor=vendor,
             model=selected.model,
-            status=status,
+            status=protocol_status,
             argv=argv,
             returncode=returncode,
             stdout=finalized.text,
@@ -1003,6 +1031,7 @@ def launch(
             usage=finalized.usage,
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
+            protocol_result=protocol_result,
         )
     finally:
         if lane_output_file is not None:

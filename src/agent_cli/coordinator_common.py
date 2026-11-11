@@ -472,7 +472,23 @@ def is_sha(value: str) -> bool:
     return bool(_SHA_RE.fullmatch(value))
 
 
-_SURFACE_REF = re.compile(r"`[^`\n]+:\d+`")
+_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
+_BACKTICK_FRAGMENT = re.compile(r"`([^`\n]+)`")
+_DRIVE_SURFACE_REF = re.compile(r"^[A-Za-z]:")
+
+
+def _surface_ref_is_repository_relative(path: str) -> bool:
+    """Accept only a traversal-free repository-relative surface path."""
+    if (
+        not path
+        or path.startswith(("/", "~"))
+        or "\\" in path
+        or _DRIVE_SURFACE_REF.match(path) is not None
+        or any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F for char in path)
+    ):
+        return False
+    parts = path.split("/")
+    return all(part not in ("", ".", "..") for part in parts)
 
 
 def _surface_line_kind(value: str) -> str | None:
@@ -483,7 +499,20 @@ def _surface_line_kind(value: str) -> str | None:
     text = value.strip()
     if text == "" or len(text) > 400:
         return None
-    has_ref = _SURFACE_REF.search(text) is not None
+    refs = list(_SURFACE_REF.finditer(text))
+    fragments = list(_BACKTICK_FRAGMENT.finditer(text))
+    has_ref = bool(refs)
+    if fragments and not has_ref:
+        return None
+    if has_ref and (
+        len(refs) != len(fragments)
+        or text.count("`") != 2 * len(fragments)
+        or any(
+            not _surface_ref_is_repository_relative(match.group(1))
+            for match in refs
+        )
+    ):
+        return None
     folded = text.casefold()
     empty_reason = False
     for prefix in ("none —", "none -"):
