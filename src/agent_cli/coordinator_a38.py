@@ -40,6 +40,7 @@ from .coordinator_common import (
     Runner,
     as_int,
     coord,
+    evidence_base_sha,
     gh_list,
     gh_json,
     is_sha,
@@ -385,7 +386,6 @@ def phase_tests(
             "A38 policy migrations are not supported by coordinator A38 mode"
         )
     policy_revision = base_sha
-    c["base_sha"] = base_sha
     a38["base_sha"] = base_sha
     a38["policy_revision"] = policy_revision
     markdown_only, guard_docs_only = markdown_and_guard_docs_only(changed_paths)
@@ -2000,7 +2000,7 @@ def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[st
 def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> bool:
     c = coord(task)
     a38 = _a38_state(c)
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=True)
     report = a38.get("report")
     waiver = a38.get("report_waiver")
     legacy_report = (
@@ -2074,7 +2074,7 @@ def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
     if not is_sha(base_sha):
         raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
     _drop_base_evidence(c)
-    c["base_sha"] = base_sha
+    _a38_state(c)["base_sha"] = base_sha
 
 
 def mark_base_moved_after_evidence(
@@ -2144,7 +2144,7 @@ def phase_await_ready(
         save_task(store, task)
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
     observed_base = str(view.get("baseRefOid") or "").lower() if isinstance(view, dict) else ""
-    saved_base = str(c.get("base_sha") or "").lower()
+    saved_base = evidence_base_sha(c, a38=True)
     if is_sha(saved_base) and observed_base != saved_base:
         invalidate_base_evidence(c, observed_base)
         c["phase"] = "tests"

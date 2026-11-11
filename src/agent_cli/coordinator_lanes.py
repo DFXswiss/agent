@@ -22,6 +22,7 @@ from .coordinator_common import (
     checklist_key_for_stage,
     control_dir,
     coord,
+    evidence_base_sha,
     harden_grok_write_argv,
     is_sha,
     parse_model_result,
@@ -701,7 +702,7 @@ def review_rules_bound(
     """True when REVIEW.md exists at the pinned base. A missing file is not an error."""
     c = coord(task)
     worktree = str(c.get("worktree") or "")
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     if not worktree or not is_sha(base_sha):
         return False
     return _show_base_path(store, worker, runner, worktree, base_sha, "REVIEW.md") is not None
@@ -722,7 +723,7 @@ def write_review_context(
     """
     c = coord(task)
     worktree = str(c.get("worktree") or "")
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     if not worktree or not is_sha(base_sha):
         raise CoordinatorError("review context requires worktree and pinned base_sha")
     ctrl = control_dir(worker, task["id"])
@@ -819,7 +820,7 @@ def write_review_diff(
 
     c = coord(task)
     worktree = str(c.get("worktree") or "")
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     if not worktree or not base_sha:
         raise CoordinatorError("review diff requires worktree and pinned base_sha")
     ctrl = control_dir(worker, task["id"])
@@ -1645,6 +1646,20 @@ def phase_pr_gates(
         for _prep, outcome, status, model_result in rejected_outcomes
     ]
     rejection_activity_ids: list[str] = []
+    incomplete_resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
+    incomplete_affected = ", ".join(
+        str(prep["dimension"])
+        for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
+    )
+    incomplete_details = "; ".join(
+        f"{prep['dimension']}: status={status or 'empty'}, "
+        f"result={model_result or 'empty'}"
+        for prep, _outcome, status, model_result, _evidence in incomplete_outcomes
+    )
+    incomplete_blocker = (
+        f"{vendor} {incomplete_affected} review unavailable/incomplete "
+        f"({incomplete_details}). Not a code rejection."
+    )
 
     # Complete both dimensions' durable work before the first external call.
     # A crash in GitHub publication must leave every parallel verdict, every
@@ -1723,6 +1738,28 @@ def phase_pr_gates(
                 task, head=head, evidence=rejection_evidence
             )
             save_task(store, task)
+        elif incomplete_outcomes:
+            from .coordinator_github import queue_issue_comment
+
+            c["phase"] = "blocked"
+            c["resume_phase"] = incomplete_resume
+            c["blocker"] = incomplete_blocker
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "provider-incomplete"
+            source = c["source"]
+            qid = queue_issue_comment(
+                store,
+                worker,
+                repo=str(source["repo"]),
+                number=int(source["number"]),
+                body=f"Blocked: {incomplete_blocker}",
+                kind="provider-incomplete",
+            )
+            prior = c.get("question_activity_id")
+            c["question_activity_id"] = qid
+            if prior != qid:
+                c["replies_consumed_through"] = None
+            save_task(store, task)
         elif (
             worker.a38
             and not second_stage
@@ -1747,38 +1784,22 @@ def phase_pr_gates(
         return lines
 
     if incomplete_outcomes:
-        resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
-        affected = ", ".join(
-            str(prep["dimension"])
-            for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
-        )
-        details = "; ".join(
-            f"{prep['dimension']}: status={status or 'empty'}, "
-            f"result={model_result or 'empty'}"
-            for prep, _outcome, status, model_result, _evidence in incomplete_outcomes
-        )
-        c["phase"] = "blocked"
-        c["resume_phase"] = resume
-        c["blocker"] = f"{stage} provider incomplete ({details})"
-        qid = _post_issue_status(
+        from .coordinator_github import publish_blocker
+
+        blocker_lines = publish_blocker(
             store,
             worker,
-            runner,
             task,
-            f"Blocked: {vendor} {affected} review unavailable/incomplete "
-            f"({details}). Not a code rejection.",
-            "provider-incomplete",
+            runner,
+            incomplete_blocker,
+            kind="provider-incomplete",
+            reply_checkpoint=True,
         )
-        prior = c.get("question_activity_id")
-        c["question_activity_id"] = qid
-        if prior != qid:
-            c["replies_consumed_through"] = None
-        save_task(store, task)
         lines.extend(
             f"{stage}/{prep['dimension']} unavailable; blocked"
             for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
         )
-        return lines
+        return [*lines, *blocker_lines]
 
     if reconciliation_blockers:
         save_task(store, task)

@@ -216,14 +216,26 @@ def coordinator_env(
     worker: WorkerConfig,
     repo_cfg: RepositoryConfig,
 ) -> dict[str, str]:
+    base_sha = evidence_base_sha(coord_data, a38=worker.a38)
     return {
         "AGENT_COORDINATOR_HEAD": str(coord_data.get("head_sha") or ""),
-        "AGENT_COORDINATOR_BASE": str(coord_data.get("base_sha") or repo_cfg.base),
+        "AGENT_COORDINATOR_BASE": base_sha or repo_cfg.base,
         "AGENT_COORDINATOR_REPO": repo_cfg.repo,
         "AGENT_COORDINATOR_PR": str(coord_data.get("pr_number") or ""),
         "AGENT_COORDINATOR_SESSION": worker.session_id,
         "AGENT_COORDINATOR_WORKTREE": str(coord_data.get("worktree") or ""),
     }
+
+
+def evidence_base_sha(coord_data: dict[str, Any], *, a38: bool) -> str:
+    """Return the live evidence base without changing the checkout checkpoint."""
+    if a38:
+        state = coord_data.get("a38")
+        if isinstance(state, dict):
+            base_sha = str(state.get("base_sha") or "").lower()
+            if is_sha(base_sha):
+                return base_sha
+    return str(coord_data.get("base_sha") or "")
 
 
 def harden_grok_write_argv(argv: list[str]) -> list[str]:

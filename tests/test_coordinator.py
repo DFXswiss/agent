@@ -8112,17 +8112,48 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
 def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agent_cli.coordinator_a38 import phase_await_ready
+    from agent_cli.coordinator_a38 import phase_await_ready, phase_tests
+    from agent_cli.coordinator_git import _write_marker, verify_checkout_identity
+    from agent_cli.coordinator_lanes import write_review_diff
 
     store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
     task = store.row("task", task_id)
-    task["payload"]["coordinator"]["phase"] = "await_ready"
+    checkpoint = task["payload"]["coordinator"]
+    checkout_base = checkpoint["base_sha"]
+    branch = f"task-{task_id[:8]}"
+    worktree = Path(checkpoint["worktree"])
+    worktree.mkdir(parents=True)
+    (worktree / ".git").mkdir()
+    checkpoint["phase"] = "await_ready"
+    checkpoint["branch"] = branch
     store.write(
         "task",
         "update",
         task_id,
         {key: value for key, value in task.items() if not key.startswith("_")},
     )
+    _write_marker(
+        worker,
+        task_id,
+        {
+            "task_id": task_id,
+            "session_id": worker.session_id,
+            "target_repo": "example/project",
+            "publication_repo": "example/project",
+            "branch": branch,
+            "base": "develop",
+            "worktree": str(worktree),
+            "worker_login": "worker-bot",
+            "base_sha": checkout_base,
+            "phase": "ready",
+        },
+    )
+    fake.branch = branch
+    fake.branches.add(branch)
+    fake.remotes = {
+        "origin": "https://github.com/example/project.git",
+        "publication": "https://github.com/example/project.git",
+    }
     moved_base = "c" * 40
     fake.pr["baseRefOid"] = moved_base
 
@@ -8133,9 +8164,32 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
         "PR base changed while awaiting guard Ready; invalidating A38 report evidence"
     ]
     assert saved["phase"] == "tests"
-    assert saved["base_sha"] == moved_base
+    assert saved["base_sha"] == checkout_base
+    assert saved["a38"]["base_sha"] == moved_base
     assert "report" not in saved["a38"]
     assert "policy_revision" not in saved["a38"]
+
+    # The next tick still validates the immutable checkout marker, remeasures
+    # the live PR base, and binds later review artifacts to that live base.
+    verify_checkout_identity(store, worker, fake, str(worktree))
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *args, **kwargs: (moved_base, ["README.md"]),
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *args: [])
+
+    rerun = phase_tests(store, worker, store.row("task", task_id), fake)
+
+    remeasured = store.row("task", task_id)["payload"]["coordinator"]
+    assert rerun == [f"A38 report waived on {fake.head[:7]} (markdown-only change set)"]
+    assert remeasured["phase"] == "pr_gates_grok"
+    assert remeasured["base_sha"] == checkout_base
+    assert remeasured["a38"]["base_sha"] == moved_base
+    write_review_diff(store, worker, store.row("task", task_id), fake, head=fake.head)
+    assert any(
+        command[-2:] == ["diff", f"{moved_base}..{fake.head}"]
+        for command in fake.git_commands
+    )
 
 
 @pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
