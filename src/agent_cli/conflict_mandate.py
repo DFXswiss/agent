@@ -6,6 +6,7 @@ and docs/conflict-mandate.md.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from dataclasses import dataclass, replace
@@ -68,7 +69,7 @@ from .conflict_mandate_git import (
     fetch_branch,
     git_file_snapshot,
     index_fingerprint,
-    local_driver_names,
+    effective_driver_names,
     merge_commits,
     push_with_lease,
     range_commits,
@@ -188,6 +189,11 @@ def _preflight(
         session_component(worker)
     except StoreError as exc:
         raise ConflictsError(str(exc)) from exc
+    if os.environ.get("GIT_EXTERNAL_DIFF") is not None:
+        raise ConflictsError(
+            "GIT_EXTERNAL_DIFF is set; the conflicts worker refuses to run "
+            "with an external diff program"
+        )
     session = store.row("session", worker.session_id)
     if session is None:
         raise ConflictsError(f"session {worker.session_id} not found")
@@ -706,6 +712,12 @@ def _verify_lane(
     status: str,
     result: str,
 ) -> str | None:
+    """Verify a complete lane attempt; a non-complete status fails by itself.
+
+    The index fingerprint and the worktree's ``.git`` file are checked for
+    every attempt by the caller. This change-set, conflict-marker, and diff
+    verification runs only when the lane status is ``complete``.
+    """
     if status != "complete":
         return f"lane status was {status or 'missing'}"
     if result not in {"done", "blocked"}:
@@ -1098,7 +1110,7 @@ def _prepare_worktree(
             dest=ctx.worktree,
             git_dir=ctx.control / "git",
         )
-        drivers = local_driver_names(git_runner, str(ctx.worktree))
+        drivers = effective_driver_names(git_runner, str(ctx.worktree))
         if drivers:
             raise _Blocker(
                 "repository configuration defines Git drivers",

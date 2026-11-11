@@ -138,7 +138,7 @@ class FakeConflictTransport:
         self.calls.append(["git", *args])
         if args[:1] == ["config"] and "--get-regexp" in args:
             scopes = [scope for scope in ("--system", "--global", "--local") if scope in args]
-            scope = scopes[0] if scopes else "--local"
+            scope = scopes[0] if scopes else "effective"
             self.driver_config_reads.append(scope)
             output = self.driver_config.get(scope, "")
             return Completed(0 if output else 1, output, "")
@@ -903,6 +903,13 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
     assert fake.check_calls[0]["cwd"] == str(fake.clone_path)
     assert fake.check_calls[0]["env"]["AGENT_CONFLICTS_HEAD"]
     assert fake.check_calls[0]["clear_ambient_github"] is True
+    diff_calls = [
+        call for call in fake.raw_calls if "git" in call and "diff" in call
+    ]
+    assert diff_calls
+    for call in diff_calls:
+        assert "--no-ext-diff" in call
+        assert "--no-textconv" in call
 
 
 def test_push_uses_verified_sha_when_head_moves_after_verification(
@@ -1478,6 +1485,23 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "`parse_model_result(stdout, returncode)`" in doc
     assert "A tick processes at most one request through the workflow" in doc
     assert "without Git, a lane, or a comment" in doc
+
+
+def test_documentation_describes_effective_config_and_complete_lane_checks() -> None:
+    doc = (
+        Path(__file__).resolve().parents[1] / "docs" / "conflict-mandate.md"
+    ).read_text(encoding="utf-8")
+    assert "`diff.external`" in doc
+    assert "`GIT_EXTERNAL_DIFF` is set in the worker process" in doc
+    assert "includeIf \"gitdir:...\"" in doc
+    assert "config --get-regexp <pattern>`" in doc
+    assert (
+        "Every `git diff`\ninvocation of this feature passes `--no-ext-diff` "
+        "and `--no-textconv`."
+    ) in doc
+    assert "the index fingerprint and the `.git` file\n   are always checked" in doc
+    assert "run only when the lane status is `complete`" in doc
+    assert "`partial` or `timeout` attempt is a failed verification by its status alone" in doc
 
 
 def test_checkpoint_advances_and_finished_request_is_not_reprocessed(
@@ -4446,6 +4470,40 @@ def test_global_git_driver_blocks_preflight_without_discovery(
     assert not any(call[:1] == ["clone"] for call in fake.calls)
 
 
+def test_global_external_diff_blocks_preflight_without_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.driver_config["--global"] = "diff.external /usr/bin/diff\n"
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == [
+        "preflight blocked: the worker Git configuration defines filter, merge "
+        "or diff drivers (diff.external); the conflicts worker refuses to run "
+        "with them"
+    ]
+    assert fake.pr_comments == []
+    assert fake.lanes == []
+    assert not any(any(part.startswith("repos/") for part in call) for call in fake.raw_calls)
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_external_diff_environment_blocks_preflight_without_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setenv("GIT_EXTERNAL_DIFF", "/usr/bin/diff")
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == [
+        "preflight blocked: GIT_EXTERNAL_DIFF is set; the conflicts worker "
+        "refuses to run with an external diff program"
+    ]
+    assert fake.raw_calls == []
+    assert fake.pr_comments == []
+    assert fake.lanes == []
+
+
 def test_driver_free_global_configuration_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4458,12 +4516,12 @@ def test_driver_free_global_configuration_continues(
     assert fake.lanes == []
 
 
-def test_local_git_driver_after_clone_blocks_and_removes_directories(
+def test_effective_git_driver_after_clone_blocks_and_removes_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    fake.driver_config["--local"] = "merge.custom.driver true\n"
+    fake.driver_config["effective"] = "merge.custom.driver true\n"
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any(line.startswith("blocker posted") for line in lines)
     assert "repository configuration defines Git drivers" in fake.pr_comments[0]["body"]
@@ -4474,6 +4532,9 @@ def test_local_git_driver_after_clone_blocks_and_removes_directories(
     assert not any(
         call[:1] == ["rebase"] and "--abort" not in call for call in fake.calls
     )
+    assert not any(call[:1] == ["checkout"] for call in fake.calls)
+    assert "effective" in fake.driver_config_reads
+    assert "--local" not in fake.driver_config_reads
 
 
 def test_blocked_request_without_marker_is_not_rediscovered(
