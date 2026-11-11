@@ -599,15 +599,25 @@ starting another model. The inner reviewer and each dimension of a parallel PR
 review atomically persist a bounded, redacted, structured outcome, its
 deterministically identified `lane.run` audit, and the finished agent, bound to
 the task, round, head, stage, and dimension. A finished reviewer result remains
-in a local checkpoint with bounded stdout and stderr until that transaction
-commits. Each parallel worker writes its checkpoint atomically as soon as its
-lane returns, before publishing the result to shared memory or waiting for its
-sibling. Structurally valid incomplete, unavailable, and malformed-protocol
-results are recovered and then classified by the normal verdict path; they are
+in a local checkpoint outside the worktree and every reviewer read directory
+until that transaction commits. The checkpoint omits the account configuration
+directory; recovery reloads it from the agent's configured role. Every string,
+model, reported model, usage value, tool field, and collection is bounded and
+redacted through the same serializer as `lane.run`, and the complete JSON file
+has a hard size limit. Each parallel worker writes its checkpoint atomically as
+soon as its lane returns, before publishing the result to shared memory or
+waiting for its sibling. Structurally valid incomplete, unavailable, and
+malformed-protocol results are recovered and then classified by the normal
+verdict path; they are
 not converted into uncertain outcomes. An audit-only rollback retries only this
 checkpoint on the next tick, visits every saved sibling before classifying a
 working row without a checkpoint as uncertain, and never discards an already
-committed parallel sibling. Before
+committed parallel sibling. A saved sibling or failed checkpoint defers that
+classification until a later tick. A reviewer execution failure is marked
+finished only in the same transaction that records the task's `uncertain_lane`;
+if that transaction fails, the agent remains a fresh working start. This
+transaction commits before a different sibling may return for a checkpoint
+retry. Before
 starting a reviewer, the coordinator replays a matching saved outcome; it
 removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
@@ -697,9 +707,11 @@ are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is
 applied. An unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
-Live terminal frames join tmux soft-wrapped lines before using the same
-sanitizer and secret redaction without the diagnostic length bound, so frame
-deduplication compares the complete sanitized capture. The sanitizer preserves
+Live terminal frames resolve the attached session's configured provider profile,
+join tmux soft-wrapped lines, and use `redact_lane_text` with that configuration
+directory and no diagnostic length bound. This also hides profiles outside the
+usual user-home roots before publication, and frame deduplication compares the
+complete sanitized capture. The sanitizer preserves
 tabs and newlines, and terminal publication otherwise preserves captured
 whitespace. Tmux-backed lane
 diagnostics likewise join soft-wrapped lines before redaction and before their
@@ -921,10 +933,17 @@ that merely occupies the deterministic id is measured again and is not test
 evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. The verified report intent and its pending comment row become
-visible in one transaction. Invalidating or replacing that intent changes any
-still-pending row to `error` in the same transaction, so the generic GitHub
-executor cannot publish evidence for a discarded base or payload. A moved live
-value first updates
+visible in one transaction. That transaction changes every other still-pending
+coordinator A38 report for the task, including legacy and superseded
+deterministic ids, to `error`. Publication and invalidation hold the same
+per-activity cross-process advisory lock; the executor re-reads both the pending
+activity and the task's current matching intent immediately before a GitHub
+POST. It never moves a non-pending row to `done`. Rows bound to a coordinator
+task, including
+rows with either the current or legacy deterministic coordinator report id,
+fail closed without a current matching intent. Unbound report-marked comments
+from other executor paths remain eligible for publication. A moved live value
+first updates
 `coordinator.a38.pending_base_sha`; only bound report-or-waiver evidence plus
 the recorded local gate promotes it to `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,

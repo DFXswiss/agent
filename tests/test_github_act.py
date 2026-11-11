@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -123,6 +125,194 @@ def test_scan_rejects_stale_a38_report_activity_before_github(
     assert row["execution_status"] == "error"
     assert "no matching current report intent" in row["execution_error"]
     assert calls == []
+
+
+@pytest.mark.parametrize("identity", ["current", "legacy"])
+def test_scan_fails_closed_for_unbound_deterministic_coordinator_a38_report(
+    tmp_path: Path, identity: str
+) -> None:
+    from agent_cli.coordinator_a38 import _report_activity_id
+
+    store = Store(tmp_path)
+    _owned_session(store)
+    task_id = "aa000001-0000-4000-8000-000000000303"
+    head = "a" * 40
+    base = "b" * 40
+    activity_id = (
+        _report_activity_id(
+            task_id,
+            head=head,
+            base_sha=base,
+            policy_revision=base,
+        )
+        if identity == "current"
+        else str(
+            uuid5(
+                NAMESPACE_URL,
+                f"coordinator-a38-report:{task_id}:{head}",
+            )
+        )
+    )
+    store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "s1",
+            "repo": "example/project",
+            "ref": 42,
+            "payload": {
+                "coordinator": {
+                    "head_sha": head,
+                    "pr_number": 42,
+                    "source": {"repo": "example/project"},
+                    "a38": {"base_sha": base, "policy_revision": base},
+                }
+            },
+        },
+    )
+    _pending(
+        store,
+        activity_id,
+        "comment.post",
+        {
+            "repo": "example/project",
+            "number": 42,
+            "body": (
+                "<!-- DFX-LOCAL-CI:v1 -->\ncoordinator report\n"
+                "<!-- /DFX-LOCAL-CI:v1 -->"
+            ),
+            "target": "pr",
+            "exact_body": True,
+        },
+    )
+    calls: list[list[str]] = []
+
+    assert scan_github(
+        store,
+        lambda argv: calls.append(list(argv)) or Completed(1, "", "must not run"),
+    ) == [f"comment.post {activity_id} error"]
+    row = store.row("activity", activity_id)
+    assert row["execution_status"] == "error"
+    assert "no matching current report intent" in row["execution_error"]
+    assert calls == []
+
+
+def test_a38_report_invalidation_waits_for_discovery_publication_lock(
+    tmp_path: Path,
+) -> None:
+    from contextlib import contextmanager
+
+    from agent_cli.coordinator_a38 import _discard_report_intent
+
+    executor_store = Store(tmp_path)
+    invalidator_store = Store(tmp_path)
+    _owned_session(executor_store)
+    task_id = "aa000001-0000-4000-8000-000000000304"
+    activity_id = "aa000001-0000-4000-8000-000000000305"
+    body = (
+        "<!-- DFX-LOCAL-CI:v1 -->\ncurrent report\n"
+        "<!-- /DFX-LOCAL-CI:v1 -->"
+    )
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    intent = {
+        "head": "a" * 40,
+        "base_sha": "b" * 40,
+        "policy_revision": "b" * 40,
+        "activity_id": activity_id,
+        "body_sha256": digest,
+        "private": True,
+    }
+    executor_store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "s1",
+            "repo": "example/project",
+            "ref": 42,
+            "payload": {
+                "coordinator": {
+                    "source": {"repo": "example/project"},
+                    "pr_number": 42,
+                    "a38": {"report_intent": intent},
+                }
+            },
+        },
+    )
+    _pending(
+        executor_store,
+        activity_id,
+        "comment.post",
+        {
+            "repo": "example/project",
+            "number": 42,
+            "body": body,
+            "target": "pr",
+            "exact_body": True,
+            "_coordinator_a38_report": {
+                "task_id": task_id,
+                "head": "a" * 40,
+                "base_sha": "b" * 40,
+                "policy_revision": "b" * 40,
+                "body_sha256": digest,
+                "private": True,
+            },
+        },
+    )
+    discovery_started = threading.Event()
+    invalidation_started = threading.Event()
+    invalidation_done = threading.Event()
+    posts: list[list[str]] = []
+    real_exclusive = invalidator_store.exclusive
+
+    @contextmanager
+    def observed_exclusive(key: str):
+        invalidation_started.set()
+        with real_exclusive(key):
+            yield
+
+    invalidator_store.exclusive = observed_exclusive  # type: ignore[method-assign]
+
+    def invalidate() -> None:
+        assert discovery_started.wait(5)
+        task = invalidator_store.row("task", task_id)
+        assert task is not None
+        _discard_report_intent(
+            invalidator_store,
+            task,
+            reason="test invalidation during discovery",
+        )
+        invalidation_done.set()
+
+    thread = threading.Thread(target=invalidate)
+    thread.start()
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[1] == "api":
+            discovery_started.set()
+            assert invalidation_started.wait(5)
+            assert not invalidation_done.is_set()
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "pr", "comment"]:
+            posts.append(list(argv))
+            return Completed(
+                0,
+                "https://github.com/example/project/pull/42#issuecomment-1\n",
+                "",
+            )
+        raise AssertionError(argv)
+
+    assert scan_github(executor_store, runner) == [f"comment.post {activity_id} done"]
+    thread.join(5)
+    assert not thread.is_alive()
+    assert invalidation_done.is_set()
+    assert len(posts) == 1
+    assert executor_store.row("activity", activity_id)["execution_status"] == "done"
+    saved = executor_store.row("task", task_id)
+    assert "report_intent" not in saved["payload"]["coordinator"]["a38"]
 
 
 def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:

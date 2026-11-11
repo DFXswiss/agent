@@ -33,6 +33,8 @@ OUTPUT_FILE_VENDORS = frozenset({"codex", "openrouter"})
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 NPROC_CAP = 800
 LANE_MODEL_LIMIT = 200
+LANE_TOOL_LIMIT = 200
+LANE_USAGE_VALUE_LIMIT = 1_000_000_000_000_000
 # Stripped from every lane and every lane pane: a lane runs on its own provider
 # login, never on the orchestrator's ambient Claude credentials, its API route
 # (gateway, Bedrock, Vertex, Foundry), Claude Code session markers, or ambient
@@ -678,19 +680,64 @@ def record_lane_run(
     activity_id: str | None = None,
 ) -> str:
     """Write the script-owned, redacted lane audit activity."""
+    metadata = bounded_lane_metadata(result)
+    activity_id = activity_id or str(uuid.uuid4())
+    final_text = result.stdout
+    if not final_text and result.vendor in ("claude", "openrouter"):
+        final_text = result.stderr
+    payload = {
+        "role": result.role,
+        "vendor": result.vendor,
+        **metadata,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "round": round_num,
+        "status": result.status,
+        "returncode": result.returncode,
+        "final_text": redact_lane_text(
+            final_text, config_dir=result.config_dir, limit=4000
+        ),
+    }
+    store.write(  # type: ignore[attr-defined]
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": session_id,
+            "type": "lane.run",
+            "payload": payload,
+            "execution_status": "done",
+        },
+    )
+    return activity_id
+
+
+def _bounded_usage_value(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return max(0, min(value, LANE_USAGE_VALUE_LIMIT))
+
+
+def bounded_lane_metadata(result: LaneResult) -> dict[str, object]:
+    """Return the shared bounded/redacted model, usage, and tool audit fields."""
     usage = result.usage
     usage_payload = None
     if usage is not None:
         usage_payload = {
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "cache_read_input_tokens": usage.cache_read_input_tokens,
-            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-            "num_turns": usage.num_turns,
-            "duration_ms": usage.duration_ms,
+            "input_tokens": _bounded_usage_value(usage.input_tokens),
+            "output_tokens": _bounded_usage_value(usage.output_tokens),
+            "cache_read_input_tokens": _bounded_usage_value(
+                usage.cache_read_input_tokens
+            ),
+            "cache_creation_input_tokens": _bounded_usage_value(
+                usage.cache_creation_input_tokens
+            ),
+            "num_turns": _bounded_usage_value(usage.num_turns),
+            "duration_ms": _bounded_usage_value(usage.duration_ms),
         }
     safe_tools = []
-    for item in result.tools[:200]:
+    for item in result.tools[:LANE_TOOL_LIMIT]:
         if not isinstance(item, dict):
             continue
         safe_tools.append(
@@ -712,13 +759,7 @@ def record_lane_run(
                 "error": item.get("error") is True,
             }
         )
-    activity_id = activity_id or str(uuid.uuid4())
-    final_text = result.stdout
-    if not final_text and result.vendor in ("claude", "openrouter"):
-        final_text = result.stderr
-    payload = {
-        "role": result.role,
-        "vendor": result.vendor,
+    return {
         "model": redact_lane_text(
             result.model, config_dir=result.config_dir, limit=LANE_MODEL_LIMIT
         ),
@@ -731,31 +772,12 @@ def record_lane_run(
             if usage is not None and usage.model is not None
             else None
         ),
-        "task_id": task_id,
-        "agent_id": agent_id,
-        "round": round_num,
-        "status": result.status,
-        "returncode": result.returncode,
         "usage": usage_payload,
         "tools": safe_tools,
-        "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact_lane_text(
-            final_text, config_dir=result.config_dir, limit=4000
+        "tools_truncated": (
+            result.tools_truncated or len(result.tools) > LANE_TOOL_LIMIT
         ),
     }
-    store.write(  # type: ignore[attr-defined]
-        "activity",
-        "insert",
-        activity_id,
-        {
-            "id": activity_id,
-            "session_id": session_id,
-            "type": "lane.run",
-            "payload": payload,
-            "execution_status": "done",
-        },
-    )
-    return activity_id
 
 
 def _default_runner(

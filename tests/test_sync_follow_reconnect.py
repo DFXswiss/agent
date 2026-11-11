@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -984,6 +985,85 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
             f"terminal grok configuration error: {error}"
             in capsys.readouterr().err
         )
+    finally:
+        store.close()
+
+
+def test_publish_terminals_redacts_configured_profile_outside_home_roots(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    config_dir = "/opt/profiles/grok-live"
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "grok", "second": "codex"},
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+                "accounts": {
+                    "grok-a": {"provider": "grok", "config_dir": config_dir},
+                },
+                "roles": {
+                    "interactive": {
+                        "account": "grok-a",
+                        "model": "operator-model",
+                        "access": "workspace-write",
+                    },
+                },
+                "sessions": {"grok": {"interactive": "interactive"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                    "ai_binding": {
+                        "role": "interactive",
+                        "account": "grok-a",
+                        "provider": "grok",
+                        "model": "operator-model",
+                        "access": "workspace-write",
+                        "configuration": hashlib.sha256(
+                            config_dir.encode()
+                        ).hexdigest(),
+                    },
+                },
+            },
+        )
+
+        class _ProfileRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        f"loading {config_dir}/credentials.json\n"
+                        if argv[:2] == ["tmux", "capture-pane"]
+                        else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _ProfileRuntime(), ws, {}, {})
+
+        published = base64.b64decode(json.loads(ws.sent[0])["data"]).decode("utf-8")
+        assert config_dir not in published
+        assert published == "loading <config_dir>/credentials.json\n"
     finally:
         store.close()
 
