@@ -42,7 +42,11 @@ from agent_cli.conflict_mandate_state import (
     unfinished_requests,
 )
 from agent_cli.coordinator_common import CoordinatorError, prompt_prohibitions
-from agent_cli.github_accounts import GitHubHttpsRemoteError, _network_remote_targets
+from agent_cli.github_accounts import (
+    GitHubHttpsRemoteError,
+    _network_remote_targets,
+    _split_git_command,
+)
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import make_session, write_accounts
@@ -139,8 +143,13 @@ class FakeConflictTransport:
 
     def _git(self, argv: list[str]) -> Completed:
         args = argv[argv.index("git") + 1 :] if "git" in argv else list(argv)
-        while args and args[0] in {"-C", "-c"}:
-            args = args[2:]
+        while args:
+            if args[0] in {"-C", "-c"}:
+                args = args[2:]
+            elif args[0] == "--literal-pathspecs":
+                args = args[1:]
+            else:
+                break
         self.calls.append(["git", *args])
         if args[:1] == ["config"] and "--get-regexp" in args:
             scopes = [scope for scope in ("--system", "--global", "--local") if scope in args]
@@ -905,6 +914,12 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
     assert "--no-git" not in fake.lanes[0]
     assert "STATUS: complete" not in " ".join(" ".join(call) for call in fake.calls)
     assert any(fake_call == ["git", "add", "--", "src/app.py"] for fake_call in fake.calls)
+    assert any(
+        "--literal-pathspecs" in call
+        and call[-3:] == ["add", "--", "src/app.py"]
+        for call in fake.raw_calls
+        if "git" in call
+    )
     assert fake.check_calls[0]["argv"] == ["/operator/checks"]
     assert fake.check_calls[0]["cwd"] == str(fake.clone_path)
     assert fake.check_calls[0]["env"]["AGENT_CONFLICTS_HEAD"]
@@ -984,8 +999,7 @@ def test_network_git_argv_uses_account_runner_allowlist_and_sets_hooks_after_clo
     checked = []
     for call in git_calls:
         args = call[1:]
-        verb_index = 2 if args[:1] == ["-C"] else 0
-        verb = args[verb_index]
+        verb, _rest = _split_git_command(args)
         if verb not in {"clone", "fetch", "push"}:
             continue
         checked.append(call)
@@ -996,7 +1010,7 @@ def test_network_git_argv_uses_account_runner_allowlist_and_sets_hooks_after_clo
         assert targets
         assert "-c" not in call
         if verb in {"fetch", "push"}:
-            assert "-C" in call
+            assert args[:3] == ["-C", str(fake.clone_path), "--literal-pathspecs"]
         if verb == "push":
             with pytest.raises(GitHubHttpsRemoteError, match="unsupported git network option"):
                 _network_remote_targets(args)
@@ -1012,6 +1026,7 @@ def test_network_git_argv_uses_account_runner_allowlist_and_sets_hooks_after_clo
     )
     assert git_calls[clone_index + 1] == [
         "git", "-C", str(fake.clone_path),
+        "--literal-pathspecs",
         "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
         "config", "core.hooksPath", "/dev/null",
     ]
@@ -4038,7 +4053,8 @@ def test_all_local_git_commands_disable_the_fsmonitor(
     assert local
     for call in local:
         parts = call[call.index("git") + 1:]
-        assert parts[2:6] == [
+        assert parts[2] == "--literal-pathspecs"
+        assert parts[3:7] == [
             "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
         ]
 
