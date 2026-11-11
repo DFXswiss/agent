@@ -3867,7 +3867,7 @@ def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     assert f"{vendor} logic — rejected" in reviews[0]["payload"]["body"]
 
 
-def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
+def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A completed no-change/inner-review cycle may retry gates on the same head."""
@@ -3907,7 +3907,10 @@ def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
             "dimension": "logic",
             "vendor": "codex",
             "verdict": "rejected",
-            "evidence": "Already handled without a head change.",
+            "evidence": (
+                "STATUS: complete\nRESULT: rejected\n"
+                "Already handled without a head change.\n"
+            ),
             "head_sha": head,
             "agent_id": "aa000001-0000-4000-8000-0000000000d6",
             "recorded_at": "2026-01-01T00:00:00.000000Z",
@@ -3917,8 +3920,16 @@ def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
     patch_execute_github(monkeypatch)
     launched: list[str] = []
 
-    def approve(argv, stdin=None):  # noqa: ANN001
+    def repeat_rejection(argv, stdin=None):  # noqa: ANN001
         launched.append("lane")
+        text = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
+        if "pr-reviewer-logic" in text or "Logic:" in text:
+            return Completed(
+                0,
+                "STATUS: complete\nRESULT: rejected\n"
+                "Already handled without a head change.\n",
+                "",
+            )
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     recovery_lines = phase_pr_gates(
@@ -3926,7 +3937,7 @@ def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
         worker,
         store.row("task", tid),
         lambda argv: Completed(0, "", ""),
-        approve,
+        repeat_rejection,
         vendor="codex",
         stage="review-2",
     )
@@ -3953,7 +3964,7 @@ def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
         worker,
         store.row("task", tid),
         lambda argv: Completed(0, "", ""),
-        approve,
+        repeat_rejection,
         vendor="codex",
         stage="review-2",
     )
@@ -3961,8 +3972,17 @@ def test_handled_rejected_gate_allows_fresh_same_head_gate_attempt(
     assert launched == ["lane", "lane"]
     assert not any("rejection recovered" in line for line in lines)
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "ci"
-    assert saved["payload"]["coordinator"]["handled_rejected_gate_ids"] == [gate_id]
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    handled = saved["payload"]["coordinator"]["handled_rejected_gate_ids"]
+    assert gate_id in handled
+    assert len(handled) == 2
+    reviews = [
+        row for row in store.rows("activity") if row.get("type") == "review.post"
+    ]
+    assert len(reviews) == 2
+    assert len({row["id"] for row in reviews}) == 2
+    assert reviews[0]["payload"]["body"] == reviews[1]["payload"]["body"]
+    assert all(row["execution_status"] == "done" for row in reviews)
 
 
 def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
@@ -6652,6 +6672,7 @@ def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
     store, worker, fake, task = _a38_external_review_env(
         tmp_path, monkeypatch, task_id=task_id
     )
+    fake.remotes["origin"] = "https://github.com/example/project.git"
     monkeypatch.setattr(coordinator_a38, "verify_signed_clean_head", lambda *_a: fake.head)
     monkeypatch.setattr(
         coordinator_a38,
@@ -8257,6 +8278,33 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
     }
     moved_base = "c" * 40
     fake.pr["baseRefOid"] = moved_base
+    original_git = fake._git
+    fetched_bases: set[str] = set()
+
+    def require_fetched_base(argv: list[str]) -> Completed:
+        parts = argv[1:]
+        if parts and parts[0] == "-C":
+            parts = parts[2:]
+        if parts and parts[0] == "fetch":
+            fetched_bases.add(moved_base)
+            return original_git(argv)
+        if parts[:2] == ["cat-file", "-e"] and parts[-1] == f"{moved_base}^{{commit}}":
+            original_git(argv)
+            return Completed(
+                0 if moved_base in fetched_bases else 128,
+                "",
+                "" if moved_base in fetched_bases else "unknown revision",
+            )
+        if parts and parts[0] == "diff" and parts[-1] == f"{moved_base}..{fake.head}":
+            original_git(argv)
+            return Completed(
+                0 if moved_base in fetched_bases else 128,
+                "",
+                "" if moved_base in fetched_bases else "unknown revision",
+            )
+        return original_git(argv)
+
+    fake._git = require_fetched_base  # type: ignore[method-assign]
 
     lines = phase_await_ready(store, worker, store.row("task", task_id), fake)
 
@@ -8287,6 +8335,15 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
     assert remeasured["base_sha"] == checkout_base
     assert remeasured["a38"]["base_sha"] == moved_base
     write_review_diff(store, worker, store.row("task", task_id), fake, head=fake.head)
+    assert moved_base in fetched_bases
+    assert [
+        "git",
+        "-C",
+        str(worktree),
+        "cat-file",
+        "-e",
+        f"{moved_base}^{{commit}}",
+    ] in fake.git_commands
     assert any(
         command[-2:] == ["diff", f"{moved_base}..{fake.head}"]
         for command in fake.git_commands
@@ -8732,6 +8789,8 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
         if parts[0] == "fetch":
             return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
         if parts[0] == "rev-parse":
             return Completed(0, "b" * 40 + "\n", "")
         if parts[0] == "show":
@@ -8814,6 +8873,8 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
 
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
         if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
             return Completed(0, "", "")
         if parts[0] == "rev-parse":
             return Completed(0, "b" * 40 + "\n", "")
@@ -8956,6 +9017,13 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("suite must be waived")),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    git_calls: list[tuple[str, ...]] = []
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        git_calls.append(parts)
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
 
     lines = phase_a38_tests(
         store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
@@ -8978,6 +9046,8 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
     assert not [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
     assert len(checks) == 1 and checks[0]["result"] == "skip"
+    assert any(parts and parts[0] == "fetch" for parts in git_calls)
+    assert ("cat-file", "-e", f"{base}^{{commit}}") in git_calls
 
 
 def test_a38_policy_change_fails_before_old_base_evidence_is_run(
@@ -9194,6 +9264,8 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
 
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
         if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
             return Completed(0, "", "")
         if parts[0] == "rev-parse":
             return Completed(0, base + "\n", "")

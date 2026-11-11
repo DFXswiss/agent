@@ -189,8 +189,10 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
-text. Both configured and provider-reported model strings are bounded and
-redacted. Neither activity stores argv, environment, profile paths, or
+text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
+redacted, printed, or persisted in that evidence. Both configured and
+provider-reported model strings are bounded and redacted. Neither activity
+stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,
 including a Glob pattern or an absolute or relative-traversal path fragment
 inside a Grep pattern, also when assignment text or punctuation precedes it.

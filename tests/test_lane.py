@@ -2001,6 +2001,64 @@ def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("kill-session" in c for c in calls)
 
 
+def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    token = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
+
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            captured = token if "-J" in argv else token[:25] + "\n" + token[25:]
+            return CompletedProcess(argv, 0, f"credential={captured}\n", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+
+    captured = _run_in_tmux(
+        ["grok"], name="agent-lane-t", cwd="/w", stdin_text=None
+    )
+    diagnostic = redact_diagnostic(captured.stdout)
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="grok",
+            model="model",
+            status="unavailable",
+            argv=list(captured.args),
+            returncode=captured.returncode,
+            stdout=captured.stdout,
+            stderr=captured.stderr,
+        ),
+    )
+
+    capture_call = next(call for call in calls if "capture-pane" in call)
+    assert "-J" in capture_call
+    assert token not in diagnostic
+    assert "sk-or-v1-" not in diagnostic
+    assert "qrstuvwxyz012345" not in diagnostic
+    assert "[redacted]" in diagnostic
+    assert store.row is not None
+    evidence = store.row["payload"]["final_text"]
+    assert token not in evidence
+    assert "sk-or-v1-" not in evidence
+    assert "qrstuvwxyz012345" not in evidence
+    assert "[redacted]" in evidence
+
+
 @pytest.mark.parametrize("vendor", ["claude", "openrouter"])
 def test_launch_tmux_stream_json_uses_output_file_not_pane_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str

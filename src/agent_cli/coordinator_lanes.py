@@ -843,6 +843,7 @@ def queue_comment_review(
     worker: WorkerConfig,
     task: dict[str, Any],
     *,
+    gate_id: str,
     body: str,
 ) -> str:
     from .coordinator_common import as_int, target_repo
@@ -856,7 +857,8 @@ def queue_comment_review(
     activity_id = str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"coordinator-gate-comment:{task['id']}:{target}:{number}:{redacted_body}",
+            f"coordinator-gate-comment:{task['id']}:{target}:{number}:"
+            f"{gate_id}:{redacted_body}",
         )
     )
     queue_activity(
@@ -1399,6 +1401,7 @@ def phase_pr_gates(
                     store,
                     worker,
                     task,
+                    gate_id=str(gate["id"]),
                     body=(
                         f"**{vendor} {gate.get('dimension')} — rejected** "
                         f"at `{head[:7]}`\n\n{evidence}"
@@ -1718,6 +1721,7 @@ def phase_pr_gates(
                 store,
                 worker,
                 task,
+                gate_id=gate_id,
                 body=(
                     f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
                     f"{evidence}"

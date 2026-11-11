@@ -762,7 +762,9 @@ def _run_in_tmux(
         raw = status.stdout.strip()
         if raw.isdigit():
             returncode = int(raw)
-    captured = _tmux_call(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])
+    captured = _tmux_call(
+        ["tmux", "capture-pane", "-t", name, "-p", "-J", "-S", "-"]
+    )
     _tmux_call(["tmux", "kill-session", "-t", name])
     return subprocess.CompletedProcess(
         wrap,
