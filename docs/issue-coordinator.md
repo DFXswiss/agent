@@ -348,8 +348,12 @@ for worker in workers.values():
    second-slot gates are required again.
    On restart, the coordinator inspects durable current-head gate verdicts
    before preparing either dimension. Cached approvals reconcile their
-   checklist keys, while any cached rejection routes its recorded evidence to
-   implementation and is never superseded by a new lane. Newly completed gate
+   checklist keys, while an unhandled cached rejection routes its recorded
+   evidence to implementation and is never superseded by a new lane. The
+   rejection row is marked handled atomically with that route. After the
+   resulting implement/inner-review cycle, a fresh gate attempt may run on an
+   unchanged head; the old handled rejection remains history rather than
+   routing the task again. Newly completed gate
    writes and their checklist reconciliation commit atomically; a crash rolls
    both back. Durable ledger insert order resolves gate rows that share a
    timestamp through one shared ordering rule used by coordinator, CLI, allow,
@@ -504,7 +508,10 @@ of an A38 task, also while blocked or asking, first checks for a merge the same 
     that exact merged head (`readiness_head`), even when its keys were closed on an
     earlier head, it first runs the owner hub-statement default or the configured
     trusted readiness command and publishes its blocker with a reply checkpoint
-    when those keys cannot be closed.
+    when those keys cannot be closed. The exception is a persisted
+    `provider-incomplete` checkpoint: even if the pull request becomes merged or
+    closed after a crash, it stays in `blocked` until its queued blocker intent
+    is verified published and an authorized reply consumes that checkpoint.
 
 ### Trusted readiness JSON contract
 
@@ -602,9 +609,14 @@ evidence human spec input; the script never invents human grants.
 
 ## Evidence hygiene
 
-Persisted outputs and diagnostics are redacted and bounded. Live terminal
-frames use the same sanitizer and secret redaction without the diagnostic
-length bound, so frame deduplication compares the complete sanitized capture.
+Persisted outputs and diagnostics are redacted and bounded. Configured paths
+are hidden before the diagnostic length bound is applied, and an unreadable
+lane output reports only a fixed error category rather than the raw `OSError`.
+Live terminal frames join tmux soft-wrapped lines before using the same
+sanitizer and secret redaction without the diagnostic length bound, so frame
+deduplication compares the complete sanitized capture. Hub assignment failures
+are terminal-sanitized before every exact raw, header, or URL-encoded device
+bearer form is removed, followed by generic redaction and bounding.
 Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. User-facing blockers and questions are

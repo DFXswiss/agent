@@ -436,18 +436,15 @@ def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
     from .coordinator_common import redact
 
     safe = sanitize_terminal_text(text or "")
-    return hide_config_dir(redact(safe, limit=DIAGNOSTIC_LIMIT), config_dir)
+    safe = hide_config_dir(safe, config_dir)
+    return redact(safe, limit=DIAGNOSTIC_LIMIT)
 
 
 def output_read_failure(exc: BaseException) -> str:
     """Bounded, redacted diagnostic for an unreadable lane output file."""
-    from .coordinator_common import redact
-
     if isinstance(exc, UnicodeDecodeError):
-        message = "lane output file is not valid UTF-8"
-    else:
-        message = f"lane output file is unavailable: {type(exc).__name__}: {exc}"
-    return redact(message, limit=1000)
+        return "lane output file is not valid UTF-8"
+    return "lane output file is unavailable"
 
 
 def unreadable_output_result(

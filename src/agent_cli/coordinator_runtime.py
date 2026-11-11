@@ -1612,8 +1612,15 @@ def advance_one(
     rejection_publication_lines = reconcile_rejection_review_intents(
         store, worker, task, runner
     )
+    pending_provider_checkpoint = (
+        phase == "blocked"
+        and c.get("blocker_publish_once") is True
+        and c.get("blocker_publish_kind") == "provider-incomplete"
+    )
     final_blocker = phase == "blocked" and (
-        bool(c.get("uncertain_lane")) or not c.get("resume_phase")
+        bool(c.get("uncertain_lane"))
+        or not c.get("resume_phase")
+        or pending_provider_checkpoint
     )
     if (
         worker.a38
@@ -1624,7 +1631,9 @@ def advance_one(
         # Once the pull request exists the guard may make it Ready and a human may
         # merge it in any phase, also while asking or recoverably blocked; check that
         # first. A non-recoverable or uncertain blocker stays final even if stale
-        # recovery metadata is present.
+        # recovery metadata is present. A provider-incomplete checkpoint also stays
+        # blocked until its queued publication is verified and an authorized reply
+        # consumes the checkpoint; otherwise a restart could strand or reorder it.
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
             if live_state == "MERGED" and _source_still_assigned(

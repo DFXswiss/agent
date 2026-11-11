@@ -172,6 +172,27 @@ def test_assignment_failure_value_removes_echoed_bearer_and_control_chars() -> N
     assert "[redacted]" in failure.detail
 
 
+def test_assignment_failure_sanitizes_before_removing_exact_bare_bearer() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    token = "secret-device-token"
+    emitted = sanitized_assignment_text(
+        "hub rejected secret-dev\x1b[31mice-token",
+        token,
+        limit=200,
+    )
+
+    assert token not in emitted
+    assert "secret-dev" not in emitted
+    assert "ice-token" not in emitted
+    assert emitted == "hub rejected [redacted]"
+    assert sanitized_assignment_text(
+        "retry Bearer%20secret-device-token",
+        token,
+        limit=200,
+    ) == "retry [redacted]"
+
+
 _ISSUE_URL = "https://github.com/Example/Project/issues/{number}"
 
 
