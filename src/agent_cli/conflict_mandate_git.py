@@ -11,7 +11,7 @@ from .coordinator_common import CoordinatorError, Runner, redact
 from .runtime import Completed
 
 
-_CONFLICT_MARKER = re.compile(r"^(?:<{7}|={7}|>{7}|\|{7})(?=\s|$)")
+_CONFLICT_MARKER = re.compile(r"^(?:<{7,}|={7,}|>{7,}|\|{7,})(?=\s|$)")
 _DRIVER_PATTERN = (
     r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|"
     r"diff\..*\.(textconv|command))$"
@@ -354,7 +354,7 @@ def rebase_continue(runner: Runner, worktree: str) -> Completed:
     )
 
 
-def rebase_complete(runner: Runner, worktree: str, *, base: str) -> bool:
+def rebase_complete(runner: Runner, worktree: str) -> bool:
     # Ancestry of origin/<base> is verified separately by the final-head
     # verification. A rebase is in progress when either Git marker exists.
     for name in ("rebase-merge", "rebase-apply"):
@@ -369,7 +369,7 @@ def rebase_complete(runner: Runner, worktree: str, *, base: str) -> bool:
     return True
 
 
-def rebase_abort(runner: Runner, worktree: str, *, base: str = "") -> None:
+def rebase_abort(runner: Runner, worktree: str) -> None:
     if not Path(worktree).exists():
         # A blocker can finish before the clone creates a worktree. There is no
         # rebase to abort in that case.
@@ -380,7 +380,7 @@ def rebase_abort(runner: Runner, worktree: str, *, base: str = "") -> None:
         completed = None
     if completed is not None and completed.returncode == 0:
         return
-    if not rebase_complete(runner, worktree, base=base):
+    if not rebase_complete(runner, worktree):
         raise CoordinatorError("rebase abort failed")
 
 

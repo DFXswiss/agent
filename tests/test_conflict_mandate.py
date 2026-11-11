@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1488,9 +1487,10 @@ def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
         return Completed(
             0,
             "STATUS: complete\nRESULT: blocked\n"
-            "A product decision is required. "
+            "SUMMARY_EN: A product decision is required. "
             + "x" * 700
-            + "\n",
+            + "\n"
+            "SUMMARY_DE: Eine Produktentscheidung ist erforderlich.\n",
             "",
         )
 
@@ -1500,6 +1500,7 @@ def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
     body = fake.pr_comments[0]["body"]
     assert "`src/app.py: conflict marker remains`" in body
     assert "Lane note:\n```\nA product decision is required." in body
+    assert "SUMMARY_EN:" not in _comment_code(body)
     assert len(body) < 4000
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
@@ -1686,6 +1687,28 @@ def test_check_timeout_is_a_blocker(
     assert any("blocker" in line for line in lines)
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
     assert "timeout" in fake.pr_comments[0]["body"]
+
+
+def test_undecodable_check_output_is_a_failed_check_blocker_without_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def undecodable(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", undecodable)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert not any(line.startswith("transient:") for line in lines)
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "check command could not be evaluated" in body
+    assert "UnicodeDecodeError" in body
+    assert "configured check failed" not in body
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
 def test_lease_rejection_restarts_from_pull_read_on_next_tick(
@@ -1942,6 +1965,8 @@ def test_lane_spec_contains_the_shared_prompt_prohibitions(
         / "lane-1.md"
     ).read_text(encoding="utf-8")
     assert prompt_prohibitions() in spec
+    assert "Answer with STATUS:, RESULT:, SUMMARY_EN:, and SUMMARY_DE:" in spec
+    assert "RESULT: blocked followed by one factual sentence" not in spec
 
 
 def test_workflow_accepts_conflicted_path_with_space_and_non_ascii(
@@ -3043,6 +3068,31 @@ def test_wrongly_typed_comment_url_makes_listing_transient_and_keeps_checkpoint(
     assert not checkpoint.exists()
 
 
+def test_mismatched_comment_urls_make_listing_transient_and_keep_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {
+            **_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7),
+            "issue_url": "https://api.github.com/repos/example/project/issues/42",
+            "html_url": "https://github.com/example/project/pull/43#issuecomment-7",
+        },
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(
+        line.startswith("transient:") and "inconsistent comment URLs" in line
+        for line in lines
+    )
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
 def test_well_formed_plain_issue_comment_is_skipped_and_advances_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3347,7 +3397,10 @@ def test_blocked_lane_that_changes_the_index_reports_the_index_blocker(
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
     fake.lane_changes_index = True
     fake.lane_output = (
-        "STATUS: complete\nRESULT: blocked\nA product decision is required.\n"
+        "STATUS: complete\n"
+        "RESULT: blocked\n"
+        "SUMMARY_EN: A product decision is required.\n"
+        "SUMMARY_DE: Eine Produktentscheidung ist erforderlich.\n"
     )
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any("blocker" in line for line in lines)
