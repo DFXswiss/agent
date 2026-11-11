@@ -4076,11 +4076,17 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
 
     tid = "aa000001-0000-4000-8000-000000000062"
     store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
+        "codex-rev"
+    )
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     published = _record_blocker_publications(monkeypatch)
-    real_mkstemp = coordinator_lanes.tempfile.mkstemp
-    mkstemp_calls = 0
+    real_provider_argv = coordinator_lanes.provider_argv
+    provider_calls = 0
     output_paths: list[Path] = []
     private_worktree = task["payload"]["coordinator"]["worktree"]
     private_config = "/test/codex"
@@ -4089,16 +4095,15 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
         f"{private_config}/settings.json"
     )
 
-    def fail_second_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
-        nonlocal mkstemp_calls
-        mkstemp_calls += 1
-        if mkstemp_calls == 2:
+    def fail_second_provider(*args: Any, **kwargs: Any) -> list[str]:
+        nonlocal provider_calls
+        provider_calls += 1
+        output_paths.append(Path(kwargs["output_file"]))
+        if provider_calls == 2:
             raise OSError(raw_failure)
-        fd, path = real_mkstemp(dir=tmp_path)
-        output_paths.append(Path(path))
-        return fd, path
+        return real_provider_argv(*args, **kwargs)
 
-    monkeypatch.setattr(coordinator_lanes.tempfile, "mkstemp", fail_second_mkstemp)
+    monkeypatch.setattr(coordinator_lanes, "provider_argv", fail_second_provider)
     lines = advance_one(
         store,
         worker,
@@ -4146,29 +4151,20 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     ]
 
 
-def test_preparation_failure_after_mkstemp_removes_owned_output(
+def test_preparation_failure_leaves_no_deterministic_reviewer_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
 
     tid = "aa000001-0000-4000-8000-000000000064"
     store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
-    real_mkstemp = coordinator_lanes.tempfile.mkstemp
     output_paths: list[Path] = []
 
-    def tracked_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
-        fd, path = real_mkstemp(dir=tmp_path)
-        output_paths.append(Path(path))
-        return fd, path
+    def fail_provider(*_args: Any, **kwargs: Any) -> list[str]:
+        output_paths.append(Path(kwargs["output_file"]))
+        raise RuntimeError("provider argv failed")
 
-    monkeypatch.setattr(coordinator_lanes.tempfile, "mkstemp", tracked_mkstemp)
-    monkeypatch.setattr(
-        coordinator_lanes,
-        "provider_argv",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("provider argv failed")
-        ),
-    )
+    monkeypatch.setattr(coordinator_lanes, "provider_argv", fail_provider)
 
     with pytest.raises(RuntimeError, match="provider argv failed"):
         coordinator_lanes._prepare_pr_review_agent(
@@ -4183,6 +4179,9 @@ def test_preparation_failure_after_mkstemp_removes_owned_output(
         )
 
     assert output_paths and all(not path.exists() for path in output_paths)
+    assert output_paths[0].parent == (
+        store.home / "coordinator-reviewer-spools" / tid
+    )
     assert [row for row in store.rows("agent") if row.get("task_id") == tid] == []
 
 
@@ -7104,6 +7103,49 @@ def test_a38_merged_base_requires_bound_report_or_waiver(
         "deviation_granted",
     ):
         assert statuses[key] == "pending"
+
+
+@pytest.mark.parametrize("failure", ["missing-promoted-base", "different-head"])
+def test_a38_merged_untrusted_evidence_is_a_final_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "await_merge"
+    checkpoint["resume_phase"] = "tests"
+    checkpoint["question_activity_id"] = "stale-question"
+    if failure == "missing-promoted-base":
+        checkpoint["a38"].pop("base_sha", None)
+        expected = "merged PR has no trusted evidence base"
+    else:
+        fake.pr["headRefOid"] = "c" * 40
+        expected = "merged PR head differs from reviewed head"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "d" * 40}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)
+    final = saved["payload"]["coordinator"]
+    assert final["phase"] == "blocked"
+    assert final.get("resume_phase") is None
+    assert final.get("question_activity_id") is None
+    assert expected in final["blocker"]
+    assert any(expected in line for line in lines)
+    assert saved["state"] != "done"
 
 
 def test_a38_uncertain_lane_with_stale_resume_is_final_after_merge(
@@ -10115,7 +10157,9 @@ def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
         assert calls == []
 
 
-@pytest.mark.parametrize("failing", ["none", "run"])
+@pytest.mark.parametrize(
+    "failing", ["none", "run", "unreadable-head", "different-head"]
+)
 def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
@@ -10204,7 +10248,7 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         calls.append(argv[0])
         if argv[0] == "run":
             output_path = Path(argv[argv.index("--output") + 1])
-            if failing == "none":
+            if failing in ("none", "unreadable-head", "different-head"):
                 _write_coordinator_a38_report(output_path, head=head, base=base)
             else:
                 output_path.write_text("report", encoding="utf-8")
@@ -10214,22 +10258,73 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
 
     monkeypatch.setattr("agent_cli.coordinator_a38.pr_state", lambda *a, **k: "MERGED")
     monkeypatch.setattr(
-        "agent_cli.coordinator_a38.fresh_pr_head", lambda *a, **k: head
+        "agent_cli.coordinator_a38.fresh_pr_head",
+        lambda *a, **k: (
+            None
+            if failing == "unreadable-head"
+            else "c" * 40
+            if failing == "different-head"
+            else head
+        ),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.ensure_draft",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not push a merged PR")),
     )
 
-    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+    if failing == "different-head":
+        from agent_cli.coordinator_common import NonRecoverableCoordinatorError
+
+        with pytest.raises(
+            NonRecoverableCoordinatorError,
+            match="merged PR head differs from reviewed head",
+        ):
+            phase_a38_tests(
+                store,
+                worker,
+                store.row("task", tid),
+                lambda argv: Completed(0, "", ""),
+            )
+        checkpoint = store.row("task", tid)["payload"]["coordinator"]
+        assert checkpoint["phase"] == "tests"
+        assert "report" not in checkpoint["a38"]
+        assert "base_sha" not in checkpoint["a38"]
+        return
+
+    lines = phase_a38_tests(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda argv: Completed(0, "", ""),
+    )
 
     saved = store.row("task", tid)
     checkpoint = saved["payload"]["coordinator"]
-    assert checkpoint["phase"] == "await_merge"
     if failing == "run":
+        assert checkpoint["phase"] == "await_merge"
         assert lines == ["PR merged during the A38 suite; verifying the merge"]
         assert "report" not in checkpoint["a38"]
         return
+    if failing == "unreadable-head":
+        assert checkpoint["phase"] == "tests"
+        assert lines == [
+            "PR head temporarily unavailable after the A38 suite; retrying"
+        ]
+        assert "report" not in checkpoint["a38"]
+        assert "base_sha" not in checkpoint["a38"]
+        assert not [
+            row for row in store.rows("activity")
+            if row.get("type") == "comment.post"
+        ]
+        local = next(
+            row
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid
+            and row.get("key") == "local_check_pass"
+        )
+        assert local["status"] == "pending"
+        return
+    assert checkpoint["phase"] == "await_merge"
     assert lines == [
         f"A38 passed and report posted on {head[:7]}; PR merged, verifying the merge"
     ]
@@ -13528,7 +13623,10 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
 
     monkeypatch.setattr(coordinator_lanes, "_write_reviewer_spool", fail_spool)
 
-    with pytest.raises(OSError, match="spool filesystem unavailable"):
+    with pytest.raises(
+        CoordinatorError,
+        match=coordinator_lanes.REVIEWER_SPOOL_WRITE_ERROR,
+    ):
         coordinator_lanes.launch_lane(
             store,
             worker,
@@ -13546,6 +13644,317 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
         not path.exists()
         for path in [*raw_paths, *temporary_paths, *final_paths]
     )
+
+
+def test_advance_one_redacts_sequential_reviewer_spool_write_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
+
+    tid = "aa000001-0000-4000-8000-00000000022b"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
+        "codex-rev"
+    )
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    published = _record_blocker_publications(monkeypatch)
+    worktree = Path(task["payload"]["coordinator"]["worktree"])
+    worktree.mkdir(parents=True)
+    task["workflow"] = "implement"
+    task["state"] = "reviewing"
+    task["current_round"] = 1
+    task["models"] = {"first": "codex", "second": "grok"}
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "inner_review"
+    checkpoint["pr_number"] = 42
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    store.write(
+        "task_round",
+        "insert",
+        f"{tid}-round-1",
+        {
+            "id": f"{tid}-round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": "done",
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    private_path = "/var/lib/agent/coordinator-reviewer-spools/private.tmp"
+
+    def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    def fail_spool(*_args: Any, **_kwargs: Any) -> Path:
+        raise OSError(f"Permission denied: '{private_path}'")
+
+    monkeypatch.setattr(coordinator_lanes, "_write_reviewer_spool", fail_spool)
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=reviewer)
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    blocker = saved["payload"]["coordinator"]["blocker"]
+    agents = [
+        row for row in store.rows("agent") if row.get("task_id") == tid
+    ]
+    comments = [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(agents) == 1
+    assert len(comments) == 1
+    assert published == [comments[0]["id"]]
+    exposed = "\n".join(
+        (
+            blocker,
+            str(agents[0].get("note") or ""),
+            str(comments[0].get("payload") or ""),
+            *lines,
+        )
+    )
+    assert coordinator_lanes.REVIEWER_SPOOL_WRITE_ERROR in exposed
+    assert private_path not in exposed
+
+
+def test_sequential_reviewer_restart_removes_unspooled_managed_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
+        "codex-rev"
+    )
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "sequential-output-recovery"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-00000000022c"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "codex", "second": "grok"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "head_sha": "a" * 40,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_a, **_k: {}
+    )
+    raw_paths: list[Path] = []
+
+    def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        raw_paths.append(output)
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\nsecret\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_write_reviewer_spool",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            store.row("task", tid),
+            role="reviewer",
+            vendor="codex",
+            round_num=1,
+            spec_body="Review.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=reviewer,
+        )
+
+    agent = next(row for row in store.rows("agent") if row.get("task_id") == tid)
+    assert agent["status"] == "working"
+    assert agent["reviewer_output"] == {
+        "version": coordinator_lanes._REVIEWER_OUTPUT_CHECKPOINT_VERSION,
+        "name": f"{agent['id']}.output",
+    }
+    assert raw_paths == [
+        store.home
+        / "coordinator-reviewer-spools"
+        / tid
+        / f"{agent['id']}.output"
+    ]
+    assert raw_paths[0].exists()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        coordinator_lanes, "_post_issue_status", lambda *_a, **_k: "comment"
+    )
+    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            store.row("task", tid),
+            role="reviewer",
+            vendor="codex",
+            round_num=1,
+            spec_body="Review.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=lambda *_a: pytest.fail("reviewer was relaunched"),
+        )
+    assert not raw_paths[0].exists()
+
+
+def test_parallel_reviewer_restart_removes_unspooled_managed_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-00000000022d"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="codex",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    raw_path = Path(prepared["output_file"])
+    raw_path.write_text("secret provider output", encoding="utf-8")
+    agent = store.row("agent", prepared["agent_id"])
+    assert agent is not None
+    assert raw_path == (
+        store.home
+        / "coordinator-reviewer-spools"
+        / tid
+        / f"{agent['id']}.output"
+    )
+    assert agent["reviewer_output"]["name"] == raw_path.name
+    monkeypatch.setattr(
+        coordinator_lanes, "_post_issue_status", lambda *_a, **_k: "comment"
+    )
+
+    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+        coordinator_lanes.phase_pr_gates(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+            lambda *_a: pytest.fail("reviewer was relaunched"),
+            vendor="codex",
+            stage="review-2",
+        )
+
+    assert not raw_path.exists()
+
+
+def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-00000000022e"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    monkeypatch.setattr(
+        store,
+        "row_insert_sequences",
+        lambda table: {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_prepare_pr_review_agent",
+        lambda *_a, **_k: pytest.fail("reviewer lane was prepared"),
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "queue_comment_review",
+        lambda *_a, **_k: pytest.fail("review comment was queued"),
+    )
+
+    with pytest.raises(
+        CoordinatorError,
+        match="review-2/quality gate history ordering is unavailable",
+    ):
+        coordinator_lanes.phase_pr_gates(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+            lambda *_a: pytest.fail("reviewer lane was launched"),
+            vendor="codex",
+            stage="review-2",
+        )
+
+    assert not [
+        row for row in store.rows("agent") if row.get("task_id") == tid
+    ]
+    assert not [
+        row for row in store.rows("activity")
+        if row.get("type") == "review.post"
+    ]
+    assert _checklist_status(store, tid)["review_2_quality"] == "n_a"
 
 
 def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(

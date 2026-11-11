@@ -1319,13 +1319,15 @@ def phase_tests(
     draft_lines: list[str] = []
     if live_state in ("MERGED", "CLOSED"):
         live_head = fresh_pr_head(store, worker, task, runner)
-        if live_head != head:
-            c["phase"] = "await_merge"
-            save_task(store, task)
+        if live_head is None:
             return [
-                f"PR {live_state.lower()} during the A38 suite with an unbound head; "
-                "verifying the merge"
+                "PR head temporarily unavailable after the A38 suite; retrying"
             ]
+        if live_head != head:
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
     else:
         draft_lines = ensure_draft(store, worker, task, runner)
         if str(coord(task).get("head_sha") or "") != head:

@@ -2791,10 +2791,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "a merged PR cannot be remeasured"
                 )
             observed_base = str((info.get("base") or {}).get("sha") or "").lower()
-            saved_base = evidence_base_sha(c, a38=True)
+            a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+            saved_base = str(a38.get("base_sha") or "").lower()
             if not is_sha(observed_base):
                 return ["merge observed but base SHA missing or invalid"]
-            a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
             pending_base = str(a38.get("pending_base_sha") or "").lower()
             if pending_base:
                 from .coordinator_a38 import mark_base_moved_after_evidence
@@ -2818,6 +2818,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 from .coordinator_a38 import mark_base_moved_after_evidence
 
                 if not is_sha(saved_base):
+                    clear_reply_recovery(c)
                     raise NonRecoverableCoordinatorError(
                         "task-done refused: merged PR has no trusted evidence base; "
                         f"observed base {observed_base}"
@@ -2832,7 +2833,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
                 )
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
-            raise CoordinatorError("merged PR head differs from reviewed head")
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
         if worker.a38:
             from .coordinator_a38 import merged_base_evidence_satisfied
 
