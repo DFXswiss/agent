@@ -272,9 +272,14 @@ exists on GitHub, without Git, a lane, or a comment.
    did not complete` with the status. A lane status of `unavailable` is
    transient. An exception while starting the lane process itself means the
    lane never ran and is also transient when the index and `.git` file are
-   unchanged. Every attempt takes
-   its own fingerprints directly before and
-   after that attempt's lane run. Lane stdout and stderr pass through the
+   unchanged. A termination that propagates out of the lane is re-raised
+   unchanged; before that the script verifies the `.git` file and compares the
+   index fingerprint, and it removes the worktree and the Git directory when
+   either check fails or cannot be performed. An index read that fails after a
+   returned lane result still writes the lane log and the `lane.run` record,
+   then finishes with the blocker `index could not be read after the lane run`.
+   Every attempt takes its own fingerprints directly before and after that
+   attempt's lane run. Lane stdout and stderr pass through the
    worker-aware masking before they reach the lane log in the control
    directory, the lane-run record,
    or any returned line. The base branch and commit subject are redacted before
@@ -314,11 +319,13 @@ exists on GitHub, without Git, a lane, or a comment.
    running Git in them, and nothing is pushed. Those two direct verifications
    run after every check return, including a non-zero exit, a timeout, and a
    raised error; a metadata difference keeps this blocker ahead of the check
-   result. An exception that is not a termination (`SystemExit` that is not a
-   `StoreError`, or `KeyboardInterrupt`) finishes after metadata verification as
-   the blocker `check command could not be evaluated`, with the masked exception
-   type name, and nothing is pushed; it is neither a generic tick error nor
-   transient. The same direct cleanup and
+   result. An exception raised while running the check command, other than a
+   termination, finishes after metadata verification as the blocker
+   `check command could not be evaluated`, with the masked exception type
+   name, and nothing is pushed; it is neither a generic tick error nor
+   transient. A termination (`KeyboardInterrupt`, or a `SystemExit` that is
+   not a `StoreError`) is not turned into a blocker: it propagates out of
+   the tick. The same direct cleanup and
    no-Git rule applies when the pre-push `.git` file verification fails. The
    hook comparison records the
    entry names and their sizes and does not hash a hook's content. After the
@@ -366,15 +373,15 @@ exists on GitHub, without Git, a lane, or a comment.
    whose pull-request head equals the stored new head, and a resumed
    `result-pending` request, do the same read before posting rather than
    posting a body rendered before the push. On the resume path of a request in
-   phase `pushing`, an unreadable pull request is a transient failure like any
-   other of a known request: `transient_start` is recorded once and the tick
-   returns a transient line. While the push has not happened, the request is
-   still before the outcome and finishes with a blocker after 24 hours. Once
-   the push has updated the branch, including a resumed `pushing` request whose
-   pull-request head equals the stored new head, the same stored result is
-   retried on every tick without a time limit and is never replaced by a
-   blocker; each such tick returns `result comment not posted yet: <masked
-   reason>`. A result comment that cannot be posted stays in `result-pending`.
+   phase `pushing`, an unreadable pull request is transient without a time
+   limit: the tick returns a transient line, keeps the phase, and posts no
+   comment, because only the pull-request head can decide whether the push
+   already happened. Once the push has updated the branch, including a resumed
+   `pushing` request whose pull-request head equals the stored new head, the
+   same stored result is retried on every tick without a time limit and is
+   never replaced by a blocker; each such tick returns
+   `result comment not posted yet: <masked reason>`. A result comment that
+   cannot be posted stays in `result-pending`.
 
 `--dry-run` performs discovery and pull-request reads and prints
 `would accept ...`, `would rebase <head> onto <base>`, and the push route. A
@@ -456,8 +463,9 @@ A result comment that cannot be posted is retried on every tick without a time
 limit and is never replaced by a blocker. The 24-hour limit applies to every
 transient failure before the outcome of a request is decided. A request in
 `pushing` is not turned into a blocker while GitHub cannot be read for its
-marker lookup, because the branch head cannot be used to decide whether the
-push already happened. Aborting a
+marker lookup or for the pull request whose head decides the outcome, because
+the branch head cannot be used to decide whether the push already happened.
+Aborting a
 rebase is a local Git operation and uses the request's already-created Git
 runner; it does not authenticate to GitHub again. A stored request is resumed
 only when both its recorded worker session id and worker login equal the
@@ -490,6 +498,9 @@ When the clone, or any step before the first successful checkout, fails, the
 worktree and the separate Git directory are removed directly. A blocker runs
 `git rebase --abort` only when the worktree's `.git` file exists and metadata
 verification has not failed; otherwise it removes both directories directly.
+The blocker reason, its facts, and the no-Git flag are persisted in phase
+`blocker-pending` before that cleanup, so a termination during cleanup resumes
+the same blocker and posts exactly one comment.
 
 ## Trust boundary of checks
 

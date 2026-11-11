@@ -2770,6 +2770,49 @@ def test_failed_rebase_abort_still_removes_repositories_and_posts_blocker(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_plain_store_error_from_rebase_abort_still_posts_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.rebase_rc = 128
+    fake.unmerged = False
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def runner(argv: list[str]) -> Completed:
+        if "git" in argv and "rebase" in argv and "--abort" in argv:
+            raise StoreError("rebase abort unavailable")
+        if (
+            "git" in argv
+            and "rebase" in argv
+            and "--continue" not in argv
+            and "rev-parse" not in argv
+        ):
+            return Completed(
+                128, "", "fatal: invalid upstream 'origin/develop'"
+            )
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=runner)
+    assert any("blocker" in line for line in lines)
+    assert fake.clone_path is not None
+    assert fake.git_dir is not None
+    assert not fake.clone_path.exists()
+    assert not fake.git_dir.exists()
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "blocked"
+    assert state["blocker"].startswith("rebase failed\n")
+    assert state["blocker_skip_git"] is True
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "rebase failed" in body
+    assert "invalid upstream" in body
+    assert "rebase abort failed" not in body
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_rebase_continue_failure_without_unmerged_paths_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3249,7 +3292,7 @@ def _control_git_dir(tmp_path: Path) -> Path:
     )
 
 
-def test_resume_after_push_with_unreadable_pull_request_times_out_with_one_blocker(
+def test_resume_after_push_with_unreadable_pull_request_stays_transient_without_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
@@ -3271,9 +3314,14 @@ def test_resume_after_push_with_unreadable_pull_request_times_out_with_one_block
         resolved_files=["src/app.py"],
         check_result="passed",
     )
+    readable = {"value": False}
 
     def unreadable(argv: list[str]) -> Completed:
-        if argv[:1] == ["gh"] and "/pulls/42" in " ".join(argv):
+        if (
+            not readable["value"]
+            and argv[:1] == ["gh"]
+            and "/pulls/42" in " ".join(argv)
+        ):
             return Completed(1, "", "GitHub unreachable")
         return fake(argv)
 
@@ -3281,22 +3329,37 @@ def test_resume_after_push_with_unreadable_pull_request_times_out_with_one_block
     assert lines == ["transient: GitHub unreachable"]
     state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
     assert state["phase"] == "pushing"
-    assert state["transient_start"] == "2026-09-02T00:00:00Z"
+    assert fake.pr_comments == []
     first_line = tick(store, worker_cfg, runner=unreadable, lane_runner=fake.lane)
     assert first_line == ["transient: GitHub unreachable"]
-    assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["transient_start"] == (
-        "2026-09-02T00:00:00Z"
-    )
+    assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"] == "pushing"
     assert fake.pr_comments == []
 
     clock["now"] = datetime(2026, 9, 3, 1, tzinfo=timezone.utc)
     lines = tick(store, worker_cfg, runner=unreadable, lane_runner=fake.lane)
-    assert any("blocker" in line for line in lines)
-    assert len(fake.pr_comments) == 1
-    assert "blocked" in fake.pr_comments[0]["body"]
-    assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"] == "blocked"
+    assert lines == ["transient: GitHub unreachable"]
+    assert fake.pr_comments == []
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "pushing"
+    assert state["old_head"] == "a" * 40
+    assert state["new_head"] == new_head
+    assert state["replayed_commits"] == 2
+    assert state["resolved_files"] == ["src/app.py"]
+    assert state["check_result"] == "passed"
     assert not any(call[:1] == ["clone"] for call in fake.calls)
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+    readable["value"] = True
+    fake.pull["head"]["sha"] = new_head
+    lines = tick(store, worker_cfg, runner=unreadable, lane_runner=fake.lane)
+    assert lines == [f"pushed {new_head} and finished request 7"]
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "- Old head: `" + "a" * 40 + "`" in body
+    assert "- New head: `" + new_head + "`" in body
+    assert "24 hours" not in body
+    assert "blocked" not in body
+    assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"] == "finished"
 
 
 def test_github_protected_release_branch_blocks_without_clone(
@@ -4017,6 +4080,147 @@ def test_lane_that_changes_the_index_still_records_the_lane_run_and_log(
         / "example__project" / "pr-42-c7"
     )
     assert (control / "lane-s1-a1.log").exists()
+
+
+@pytest.mark.parametrize(
+    "lane_output, expected_note",
+    [
+        ("STATUS: complete\nRESULT: done\n", None),
+        (
+            "STATUS: complete\n"
+            "RESULT: blocked\n"
+            "SUMMARY_EN: A product decision is required.\n",
+            "A product decision is required.",
+        ),
+    ],
+)
+def test_index_read_failure_after_lane_result_still_records_lane_run_and_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lane_output: str,
+    expected_note: str | None,
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    fake.lane_output = lane_output
+    lane_finished = {"value": False}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        lane_finished["value"] = True
+        return completed
+
+    def failing_index(argv: list[str]) -> Completed:
+        if lane_finished["value"] and "ls-files" in argv:
+            return Completed(1, "", "index unreadable")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=failing_index, lane_runner=lane)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.lanes) == 1
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "index could not be read after the lane run" in body
+    if expected_note is None:
+        assert "- Lane note:" not in body
+    else:
+        assert f"- Lane note: `{expected_note}`" in body
+    records = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run"
+        and row.get("session_id") == "worker-session"
+    ]
+    assert len(records) == 1
+    control = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session"
+        / "example__project" / "pr-42-c7"
+    )
+    assert (control / "lane-s1-a1.log").exists()
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_plain_store_error_from_index_read_after_lane_result_still_records_lane_run_and_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lane_finished = {"value": False}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        lane_finished["value"] = True
+        return completed
+
+    def failing_index(argv: list[str]) -> Completed:
+        if lane_finished["value"] and "ls-files" in argv:
+            raise StoreError("index unavailable")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=failing_index, lane_runner=lane)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.lanes) == 1
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "index could not be read after the lane run" in body
+    records = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run"
+        and row.get("session_id") == "worker-session"
+    ]
+    assert len(records) == 1
+    control = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session"
+        / "example__project" / "pr-42-c7"
+    )
+    assert (control / "lane-s1-a1.log").exists()
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_blocker_is_persisted_before_cleanup_and_resumes_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.lane_changes_index = True
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+
+    def interrupting(argv: list[str]) -> Completed:
+        if argv[:1] == ["git"] and "rebase" in argv and "--abort" in argv:
+            raise KeyboardInterrupt
+        return fake(argv)
+
+    with pytest.raises(KeyboardInterrupt):
+        tick(store, worker_cfg, runner=interrupting, lane_runner=fake.lane)
+    assert fake.pr_comments == []
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "blocker-pending"
+    assert "lane changed the index" in state["blocker"]
+
+    fake.calls.clear()
+    fake.raw_calls.clear()
+    fake.lanes.clear()
+    fake.check_calls.clear()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert "lane changed the index" in fake.pr_comments[0]["body"]
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+    assert fake.lanes == []
+    assert fake.check_calls == []
+    assert not any("push" in call for call in fake.calls)
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "blocked"
+
+    tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert len(fake.pr_comments) == 1
 
 
 def test_blocked_lane_that_changes_the_index_reports_the_index_blocker(
@@ -5173,6 +5377,65 @@ def test_lane_system_exit_propagates_out_of_tick(
         tick(store, worker_cfg, runner=fake, lane_runner=terminating)
     assert raised.value.code == 130
     assert fake.pr_comments == []
+    worktree = (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    )
+    assert worktree.exists()
+    assert _control_git_dir(tmp_path).exists()
+
+
+@pytest.mark.parametrize(
+    "termination",
+    [SystemExit(130), KeyboardInterrupt()],
+    ids=["system-exit", "keyboard-interrupt"],
+)
+def test_lane_termination_after_index_change_removes_both_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination: BaseException,
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def terminating(*args: Any, **kwargs: Any) -> Any:
+        fake.lane_index_writes += 1
+        raise termination
+
+    with pytest.raises(type(termination)):
+        tick(store, worker_cfg, runner=fake, lane_runner=terminating)
+    assert fake.pr_comments == []
+    worktree = (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    )
+    assert not worktree.exists()
+    assert not _control_git_dir(tmp_path).exists()
+
+
+def test_lane_termination_with_unreadable_index_removes_both_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    lane_started = {"value": False}
+
+    def terminating(*args: Any, **kwargs: Any) -> Any:
+        lane_started["value"] = True
+        raise SystemExit(130)
+
+    def failing_index(argv: list[str]) -> Completed:
+        if lane_started["value"] and "ls-files" in argv:
+            return Completed(1, "", "index unreadable")
+        return fake(argv)
+
+    with pytest.raises(SystemExit) as raised:
+        tick(store, worker_cfg, runner=failing_index, lane_runner=terminating)
+    assert raised.value.code == 130
+    assert fake.pr_comments == []
+    worktree = (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    )
+    assert not worktree.exists()
+    assert not _control_git_dir(tmp_path).exists()
 
 
 def test_record_writer_system_exit_propagates_out_of_tick(
