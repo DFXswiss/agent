@@ -15,7 +15,6 @@ from .model_slots import (
     ModelSlots,
     ModelSlotsError,
     canonical_checklist,
-    canonical_key,
     canonical_stage,
     implementer_from_snapshot,
     models_from_snapshot,
@@ -44,6 +43,7 @@ from .coordinator_common import (
     gh_list,
     is_sha,
     redact,
+    reopen_base_bound_checklist,
     save_task,
     scoped,
     strip_row,
@@ -1667,7 +1667,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         if is_sha(saved_base) and observed_base != saved_base:
             from .coordinator_a38 import invalidate_base_evidence
 
-            invalidate_base_evidence(c, observed_base)
+            invalidate_base_evidence(store, task, observed_base)
             c["phase"] = "tests"
             save_task(store, task)
             return ["PR base changed before readiness; invalidating A38 report evidence"]
@@ -2538,26 +2538,6 @@ def _readiness_keys_closed(store: Store, task: dict[str, Any], head: str) -> boo
     )
 
 
-def _reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:
-    """Make test/readiness closes visibly stale after an unmeasurable base move."""
-    keys = {
-        "local_check_pass",
-        "contributing_ok",
-        "deviation_declared",
-        "deviation_granted",
-    }
-    for item in store.rows("checklist_item"):
-        if item.get("task_id") != task["id"] or canonical_key(
-            str(item.get("key") or "")
-        ) not in keys:
-            continue
-        item["status"] = "pending"
-        item["evidence"] = None
-        item["source"] = "script"
-        item["updated_at"] = utcnow()
-        store.write("checklist_item", "update", item["id"], strip_row(item))
-
-
 def _close_readiness_after_merge(
     store: Store,
     worker: WorkerConfig,
@@ -2678,6 +2658,26 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             saved_base = evidence_base_sha(c, a38=True)
             if not is_sha(observed_base):
                 return ["merge observed but base SHA missing or invalid"]
+            a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+            pending_base = str(a38.get("pending_base_sha") or "").lower()
+            if pending_base:
+                from .coordinator_a38 import mark_base_moved_after_evidence
+
+                if is_sha(saved_base) and saved_base != observed_base:
+                    mark_base_moved_after_evidence(
+                        c, old_base=saved_base, new_base=observed_base
+                    )
+                reopen_base_bound_checklist(store, task)
+                save_task(store, task)
+                if is_sha(saved_base) and saved_base != observed_base:
+                    raise NonRecoverableCoordinatorError(
+                        "task-done refused: merged PR base moved after evidence from "
+                        f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
+                    )
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base evidence was still pending; "
+                    "a merged PR cannot be remeasured"
+                )
             if not is_sha(saved_base) or observed_base != saved_base:
                 from .coordinator_a38 import mark_base_moved_after_evidence
 
@@ -2689,7 +2689,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 mark_base_moved_after_evidence(
                     c, old_base=saved_base, new_base=observed_base
                 )
-                _reopen_base_bound_checklist(store, task)
+                reopen_base_bound_checklist(store, task)
                 save_task(store, task)
                 raise NonRecoverableCoordinatorError(
                     "task-done refused: merged PR base moved after evidence from "
@@ -2697,6 +2697,21 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             raise CoordinatorError("merged PR head differs from reviewed head")
+        if worker.a38:
+            from .coordinator_a38 import merged_base_evidence_satisfied
+
+            if not merged_base_evidence_satisfied(
+                store,
+                task,
+                head=expected_head,
+                base_sha=observed_base,
+            ):
+                reopen_base_bound_checklist(store, task)
+                save_task(store, task)
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR has no report or waiver evidence "
+                    f"bound to base {observed_base}; a merged PR cannot be remeasured"
+                )
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.

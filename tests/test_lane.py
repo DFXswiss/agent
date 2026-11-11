@@ -480,12 +480,19 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
 
 def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:
     config_dir = "/operator/very-secret-profile"
-    diagnostic = ("x" * 3970) + config_dir + "/settings.json"
+    diagnostic = (
+        ("x" * 3920)
+        + "<config_dir>/cache "
+        + config_dir
+        + "/settings.json"
+    )
 
     redacted = redact_diagnostic(diagnostic, config_dir=config_dir)
 
     assert "/operator" not in redacted
     assert "very-secret-profile" not in redacted
+    assert "<config-dir>" not in redacted
+    assert "<config_dir>/cache" in redacted
     assert "<config_dir>/settings.json" in redacted
 
 
@@ -863,6 +870,27 @@ def test_tool_target_redacts_numeric_and_named_escapes(
     assert _tool_target(target, str(worktree), kind, tool=tool) == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "path=\x1b/opt/private/config.json",
+        "path=\x1b[31C:/private/config.json",
+        "path=\x1b[31~/private/config.json",
+        "path=\x1b../private/config.json",
+        "src/allowed\x08/hidden",
+    ],
+)
+def test_tool_target_redacts_raw_control_bytes_before_path_classification(
+    tmp_path: Path, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == "[redacted]"
+
+
 def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path) -> None:
     from agent_cli.lane import _tool_target
 
@@ -952,6 +980,58 @@ def test_record_lane_run_removes_escape_sequence_before_secret_redaction() -> No
     assert "sk-or-" not in final_text
     assert "[31m" not in final_text
     assert "[redacted]" in final_text
+
+
+def test_raw_redaction_precedes_terminal_sanitization_for_diagnostics_and_lane_evidence() -> None:
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    split_token = "github_\x1b[31pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    diagnostic = redact_diagnostic(f"provider rejected {split_token}")
+    assert "github_" not in diagnostic
+    assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" not in diagnostic
+    assert "[redacted]" in diagnostic
+
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="openrouter",
+            model=split_token,
+            status="complete",
+            argv=["claude"],
+            returncode=0,
+            stdout=f"provider output {split_token}\nSTATUS: complete",
+            stderr="",
+            usage=LaneUsage(
+                model=split_token,
+                input_tokens=1,
+                output_tokens=1,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+                num_turns=1,
+                duration_ms=1,
+            ),
+            tools=({"tool": split_token, "target": "src/module.py", "error": False},),
+        ),
+    )
+
+    assert store.row is not None
+    payload = store.row["payload"]
+    for value in (
+        payload["model"],
+        payload["reported_model"],
+        payload["final_text"],
+        payload["tools"][0]["tool"],
+    ):
+        assert "github_" not in value
+        assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" not in value
+        assert "[redacted]" in value
 
 
 @pytest.mark.parametrize("config_inside_worktree", [False, True])

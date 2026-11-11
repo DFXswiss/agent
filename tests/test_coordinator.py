@@ -5191,6 +5191,16 @@ def _a38_external_review_env(
         models={"first": "grok", "second": None},
     )
     checkpoint = task["payload"]["coordinator"]
+    checkpoint["a38"].update(
+        base_sha=fake.base,
+        policy_revision=fake.base,
+        report={
+            "head": fake.head,
+            "base_sha": fake.base,
+            "policy_revision": fake.base,
+            "activity_id": "seed-a38-report",
+        },
+    )
     checkpoint["a38"]["second_review"] = {
         "head": fake.head,
         "pinged": list(worker.second_reviewers),
@@ -5202,6 +5212,21 @@ def _a38_external_review_env(
         "update",
         task_id,
         {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    store.write(
+        "local_check",
+        "insert",
+        f"{task_id}-a38-local",
+        {
+            "id": f"{task_id}-a38-local",
+            "task_id": task_id,
+            "name": "a38",
+            "command": "agent a38 run",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": fake.head,
+        },
     )
     patch_execute_github(monkeypatch)
     monkeypatch.setattr("agent_cli.coordinator_a38.review_rules_bound", lambda *a: True)
@@ -6029,7 +6054,7 @@ def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
 
 
-def test_a38_merged_base_move_blocks_completion_over_two_ticks(
+def test_a38_merge_before_pending_base_remeasurement_blocks_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_runtime import advance_one
@@ -6040,7 +6065,7 @@ def test_a38_merged_base_move_blocks_completion_over_two_ticks(
     )
     checkpoint = task["payload"]["coordinator"]
     old_base = checkpoint["base_sha"]
-    checkpoint["phase"] = "tests"
+    checkpoint["phase"] = "await_ready"
     checkpoint["evidence"].update(
         readiness_head=fake.head,
         readiness_base=old_base,
@@ -6062,18 +6087,36 @@ def test_a38_merged_base_move_blocks_completion_over_two_ticks(
         {key: value for key, value in task.items() if not key.startswith("_")},
     )
     new_base = "c" * 40
-    fake.base = new_base
     fake.pr["baseRefOid"] = new_base
+
+    first = advance_one(store, worker, runner=fake, lane_runner=None)
+    assert first == [
+        "PR base changed while awaiting guard Ready; invalidating A38 report evidence"
+    ]
+    pending = store.row("task", task_id)["payload"]["coordinator"]
+    assert pending["phase"] == "tests"
+    assert pending["a38"]["base_sha"] == old_base
+    assert pending["a38"]["pending_base_sha"] == new_base
+    statuses = _checklist_status(store, task_id)
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert statuses[key] == "pending"
+
+    fake.base = new_base
     fake.pr["state"] = "MERGED"
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
     fake.pr["mergeCommit"] = {"oid": "d" * 40}
     fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
 
-    first = advance_one(store, worker, runner=fake, lane_runner=None)
-    assert first == ["PR merged during tests; verifying the merge"]
+    second = advance_one(store, worker, runner=fake, lane_runner=None)
+    assert second == ["PR merged during tests; verifying the merge"]
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
 
-    second = advance_one(store, worker, runner=fake, lane_runner=None)
+    third = advance_one(store, worker, runner=fake, lane_runner=None)
 
     saved = store.row("task", task_id)
     checkpoint = saved["payload"]["coordinator"]
@@ -6085,7 +6128,7 @@ def test_a38_merged_base_move_blocks_completion_over_two_ticks(
         "new_base": new_base,
     }
     assert old_base in checkpoint["blocker"] and new_base in checkpoint["blocker"]
-    assert any(old_base in line and new_base in line for line in second)
+    assert any(old_base in line and new_base in line for line in third)
     assert "report" not in checkpoint["a38"]
     statuses = _checklist_status(store, task_id)
     for key in (
@@ -6097,6 +6140,44 @@ def test_a38_merged_base_move_blocks_completion_over_two_ticks(
         assert statuses[key] == "pending"
     assert saved["state"] != "done"
     assert not [row for row in store.rows("activity") if row.get("type") == "pr.merged"]
+
+
+def test_a38_merged_base_requires_bound_report_or_waiver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_common import NonRecoverableCoordinatorError
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "await_merge"
+    checkpoint["a38"].pop("report", None)
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "d" * 40}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match="no report or waiver evidence bound to base",
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), fake)
+
+    statuses = _checklist_status(store, task_id)
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert statuses[key] == "pending"
 
 
 def test_a38_uncertain_lane_with_stale_resume_is_final_after_merge(
@@ -8231,10 +8312,14 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
         phase_await_ready(store, worker, task, malformed_draft)
 
 
-def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
+def test_a38_base_move_remeasures_then_allows_merge_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agent_cli.coordinator_a38 import phase_await_ready, phase_tests
+    from agent_cli.coordinator_a38 import (
+        merged_base_evidence_satisfied,
+        phase_await_ready,
+        phase_tests,
+    )
     from agent_cli.coordinator_git import _write_marker, verify_checkout_identity
     from agent_cli.coordinator_lanes import write_review_diff
 
@@ -8314,9 +8399,19 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
     ]
     assert saved["phase"] == "tests"
     assert saved["base_sha"] == checkout_base
-    assert saved["a38"]["base_sha"] == moved_base
+    assert saved["a38"]["base_sha"] == fake.base
+    assert saved["a38"]["pending_base_sha"] == moved_base
     assert "report" not in saved["a38"]
     assert "policy_revision" not in saved["a38"]
+    assert "readiness_head" not in saved.get("evidence", {})
+    moved_statuses = _checklist_status(store, task_id)
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert moved_statuses[key] == "pending"
 
     # The next tick still validates the immutable checkout marker, remeasures
     # the live PR base, and binds later review artifacts to that live base.
@@ -8334,6 +8429,13 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
     assert remeasured["phase"] == "pr_gates_grok"
     assert remeasured["base_sha"] == checkout_base
     assert remeasured["a38"]["base_sha"] == moved_base
+    assert "pending_base_sha" not in remeasured["a38"]
+    assert merged_base_evidence_satisfied(
+        store,
+        store.row("task", task_id),
+        head=fake.head,
+        base_sha=moved_base,
+    )
     write_review_diff(store, worker, store.row("task", task_id), fake, head=fake.head)
     assert moved_base in fetched_bases
     assert [
@@ -8348,6 +8450,68 @@ def test_a38_await_ready_base_move_invalidates_report_and_reruns_tests(
         command[-2:] == ["diff", f"{moved_base}..{fake.head}"]
         for command in fake.git_commands
     )
+
+    # A later tick may complete only after the replacement evidence was
+    # promoted; this is the opposite ordering from the pending-base merge test.
+    from types import SimpleNamespace
+
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "await_merge"
+    checkpoint.setdefault("evidence", {})["readiness_head"] = fake.head
+    checkpoint["a38"]["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "reviews": [
+            {
+                "reviewer": "outside-reviewer",
+                "blocks_merge": False,
+                "at": "2026-01-01T00:00:00Z",
+            }
+        ],
+    }
+    for item in store.rows("checklist_item"):
+        if item.get("task_id") != task_id:
+            continue
+        if item.get("key") in {"contributing_ok", "review_2_quality", "review_2_logic"}:
+            item["status"] = "ja"
+        elif item.get("key") in {"deviation_declared", "deviation_granted"}:
+            item["status"] = "n_a"
+        store.write(
+            "checklist_item",
+            "update",
+            item["id"],
+            {key: value for key, value in item.items() if not key.startswith("_")},
+        )
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.base = moved_base
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "d" * 40}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    monkeypatch.setattr(
+        coordinator_github,
+        "_trusted_done_review",
+        lambda *args, **kwargs: ("worker-bot", {}),
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "evaluate_allow",
+        lambda *args, **kwargs: SimpleNamespace(allowed=True),
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), fake
+    ) == ["human merge verified example/project#42; task done"]
+    assert store.row("task", task_id)["state"] == "done"
 
 
 @pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
@@ -9156,7 +9320,7 @@ def test_a38_report_intent_identity_includes_base_and_policy_revision() -> None:
     assert len({first, moved, policy_changed}) == 3
 
 
-def test_a38_context_reads_authoritative_base_and_one_pr_inventory() -> None:
+def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
     from agent_cli.coordinator_a38 import _pull_a38_context
 
     head = "a" * 40
@@ -9203,7 +9367,98 @@ def test_a38_context_reads_authoritative_base_and_one_pr_inventory() -> None:
 
     assert observed_base == base
     assert paths == ["docs/guide.md", ".github/workflows/a38-guard.yml"]
-    assert len(calls) == 2
+    assert len(calls) == 3
+
+
+def test_a38_context_retries_when_base_moves_during_file_inventory() -> None:
+    from agent_cli.coordinator_a38 import _pull_a38_context
+
+    head = "a" * 40
+    base_one = "b" * 40
+    base_two = "c" * 40
+    metadata = [base_one, base_two, base_two, base_two]
+    inventories = [
+        [{"status": "modified", "filename": "README.md"}],
+        [{"status": "modified", "filename": "src/agent_cli/lane.py"}],
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "headRefOid": head,
+                        "baseRefOid": metadata.pop(0),
+                        "baseRefName": "develop",
+                    }
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"]:
+            return Completed(0, json.dumps([inventories.pop(0)]), "")
+        raise AssertionError(argv)
+
+    observed_base, paths = _pull_a38_context(
+        runner,
+        repo="example/project",
+        number=42,
+        expected_head=head,
+        expected_base="develop",
+    )
+
+    assert observed_base == base_two
+    assert paths == ["src/agent_cli/lane.py"]
+    assert metadata == []
+    assert inventories == []
+
+
+def test_a38_context_bounds_repeated_inventory_races() -> None:
+    from agent_cli.coordinator_a38 import (
+        A38_CONTEXT_READ_ATTEMPTS,
+        _pull_a38_context,
+    )
+
+    head = "a" * 40
+    bases = iter(("b" * 40, "c" * 40) * A38_CONTEXT_READ_ATTEMPTS)
+    inventory_reads = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal inventory_reads
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "headRefOid": head,
+                        "baseRefOid": next(bases),
+                        "baseRefName": "develop",
+                    }
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"]:
+            inventory_reads += 1
+            return Completed(
+                0,
+                json.dumps([[{"status": "modified", "filename": "README.md"}]]),
+                "",
+            )
+        raise AssertionError(argv)
+
+    with pytest.raises(
+        CoordinatorError,
+        match="changed while reading its file inventory; retrying",
+    ):
+        _pull_a38_context(
+            runner,
+            repo="example/project",
+            number=42,
+            expected_head=head,
+            expected_base="develop",
+        )
+
+    assert inventory_reads == A38_CONTEXT_READ_ATTEMPTS
 
 
 def test_a38_tests_run_policy_run_verify_and_post_exact_report(

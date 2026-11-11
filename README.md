@@ -197,7 +197,8 @@ credentials; a tool target outside the worktree is stored as `[redacted]`,
 including a Glob pattern or an absolute or relative-traversal path fragment
 inside a Grep pattern, also when assignment text or punctuation precedes it.
 Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
-`\c`) fail closed by redacting the complete target.
+`\c`) fail closed by redacting the complete target. Any raw ESC or C0/C1
+control byte does the same before path classification.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
@@ -233,7 +234,7 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before captures use the shared terminal sanitizer and secret redaction without the bounded diagnostic limit, so a wrapped credential cannot evade redaction and deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before captures use the shared raw-redaction, terminal-sanitization, second-redaction pipeline without the bounded diagnostic limit. CSI/ESC final bytes may be token characters during the raw pass, so neither wrapping nor control removal can make a credential evade redaction. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
 
 ## Testing against another hub
 

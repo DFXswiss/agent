@@ -771,6 +771,50 @@ def test_publish_terminals_joins_soft_wrapped_token_before_redaction(
         store.close()
 
 
+def test_publish_terminals_redacts_raw_csi_overlap_before_sanitizing(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        split_token = "github_\x1b[31pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+
+        class _RawCsiRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        f"credential={split_token}\n"
+                        if argv[:2] == ["tmux", "capture-pane"]
+                        else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _RawCsiRuntime(), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert published == "credential=[redacted]\n"
+    finally:
+        store.close()
+
+
 def test_publish_terminals_grok_preflight_propagates_store_connection_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

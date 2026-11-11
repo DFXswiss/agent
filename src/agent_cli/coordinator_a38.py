@@ -45,6 +45,7 @@ from .coordinator_common import (
     gh_json,
     is_sha,
     redact,
+    reopen_base_bound_checklist,
     save_task,
     scoped,
     target_repo,
@@ -86,6 +87,7 @@ PROVIDER_DISPLAY = {
 SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
+A38_CONTEXT_READ_ATTEMPTS = 3
 # The executor appends "\n" plus the activity marker with a 36-character activity id.
 ACTIVITY_MARKER_LENGTH = len("\n" + ACTIVITY_MARKER.format(id="0" * 36))
 # Both prompts appear twice in the comment (record and machine block) and the findings once;
@@ -298,48 +300,71 @@ def _pull_a38_context(
     expected_head: str,
     expected_base: str,
 ) -> tuple[str, list[str]]:
-    """Return the authoritative PR base SHA and one fail-closed file inventory."""
-    view = gh_json(
-        api,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
-            repo,
-            "--json",
-            "headRefOid,baseRefOid,baseRefName",
-        ],
+    """Return metadata and inventory from one stable PR head/base snapshot."""
+    metadata_argv = [
+        "gh",
+        "pr",
+        "view",
+        str(number),
+        "--repo",
+        repo,
+        "--json",
+        "headRefOid,baseRefOid,baseRefName",
+    ]
+
+    def metadata() -> tuple[str, str, str]:
+        view = gh_json(api, metadata_argv)
+        if not isinstance(view, dict):
+            raise CoordinatorError("A38 pull request metadata is invalid")
+        head = str(view.get("headRefOid") or "").lower()
+        base_sha = str(view.get("baseRefOid") or "").lower()
+        base_name = str(view.get("baseRefName") or "")
+        return head, base_sha, base_name
+
+    last_before: tuple[str, str, str] | None = None
+    for _attempt in range(A38_CONTEXT_READ_ATTEMPTS):
+        before = metadata()
+        last_before = before
+        if (
+            before[0] != expected_head
+            or not is_sha(before[1])
+            or before[2] != expected_base
+        ):
+            continue
+        entries = gh_list(
+            api,
+            [
+                "gh",
+                "api",
+                "--paginate",
+                "--slurp",
+                f"repos/{repo}/pulls/{number}/files?per_page=100",
+            ],
+        )
+        # GitHub caps this endpoint without an explicit truncation marker.
+        if len(entries) >= GITHUB_PR_FILES_CAP:
+            raise CoordinatorError("A38 pull request file inventory is incomplete")
+        paths = github_file_paths(entries)
+        if paths is None:
+            raise CoordinatorError("A38 pull request file inventory is invalid")
+        after = metadata()
+        if after == before:
+            return before[1], paths
+    if last_before is not None and last_before[0] != expected_head:
+        raise CoordinatorError(
+            "A38 pull request head differs from the clean signed head"
+        )
+    if last_before is not None and not is_sha(last_before[1]):
+        raise CoordinatorError(
+            "A38 pull request base revision is not a 40-hex SHA"
+        )
+    if last_before is not None and last_before[2] != expected_base:
+        raise CoordinatorError(
+            "A38 pull request base branch differs from coordinator configuration"
+        )
+    raise CoordinatorError(
+        "A38 pull request changed while reading its file inventory; retrying"
     )
-    if not isinstance(view, dict):
-        raise CoordinatorError("A38 pull request metadata is invalid")
-    head = str(view.get("headRefOid") or "").lower()
-    base_sha = str(view.get("baseRefOid") or "").lower()
-    if head != expected_head:
-        raise CoordinatorError("A38 pull request head differs from the clean signed head")
-    if not is_sha(base_sha):
-        raise CoordinatorError("A38 pull request base revision is not a 40-hex SHA")
-    if view.get("baseRefName") != expected_base:
-        raise CoordinatorError("A38 pull request base branch differs from coordinator configuration")
-    entries = gh_list(
-        api,
-        [
-            "gh",
-            "api",
-            "--paginate",
-            "--slurp",
-            f"repos/{repo}/pulls/{number}/files?per_page=100",
-        ],
-    )
-    # GitHub caps this endpoint without an explicit truncation marker. Reaching
-    # that cap is therefore not a complete inventory and cannot grant a waiver.
-    if len(entries) >= GITHUB_PR_FILES_CAP:
-        raise CoordinatorError("A38 pull request file inventory is incomplete")
-    paths = github_file_paths(entries)
-    if paths is None:
-        raise CoordinatorError("A38 pull request file inventory is invalid")
-    return base_sha, paths
 
 
 def _report_activity_id(
@@ -378,6 +403,12 @@ def phase_tests(
         expected_head=head,
         expected_base=cfg.base,
     )
+    saved_base = evidence_base_sha(c, a38=True)
+    if is_sha(saved_base) and saved_base != base_sha:
+        invalidate_base_evidence(store, task, base_sha)
+        a38 = _a38_state(c)
+    elif saved_base != base_sha:
+        a38["pending_base_sha"] = base_sha
     # Policy migration is intentionally not implemented by this coordinator.
     # Never publish evidence against the obsolete base policy when the manifest
     # itself changed; the caller receives a loud, stable unsupported boundary.
@@ -386,8 +417,6 @@ def phase_tests(
             "A38 policy migrations are not supported by coordinator A38 mode"
         )
     policy_revision = base_sha
-    a38["base_sha"] = base_sha
-    a38["policy_revision"] = policy_revision
     fetched = git(
         store,
         worker,
@@ -446,6 +475,7 @@ def phase_tests(
             f"A38 waiver on {head}: {waiver_reason}",
             source="script",
         )
+        _promote_base_evidence(store, task, head=head, base_sha=base_sha)
         draft_lines = ensure_draft(store, worker, task, runner)
         if str(coord(task).get("head_sha") or "") != head:
             raise CoordinatorError(
@@ -519,6 +549,7 @@ def phase_tests(
             evidence["tests_pass"] = True
             evidence["tests_head"] = head
         set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
+        _promote_base_evidence(store, task, head=head, base_sha=base_sha)
         c["phase"] = "pr_gates_grok"
         task["state"] = "pr-review"
         save_task(store, task)
@@ -713,6 +744,7 @@ def phase_tests(
         evidence["tests_pass"] = True
         evidence["tests_head"] = head
     set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
+    _promote_base_evidence(store, task, head=head, base_sha=base_sha)
     c["phase"] = "pr_gates_grok"
     task["state"] = "pr-review"
     save_task(store, task)
@@ -2010,6 +2042,8 @@ def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[st
 def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> bool:
     c = coord(task)
     a38 = _a38_state(c)
+    if a38.get("pending_base_sha"):
+        raise CoordinatorError(f"A38 base evidence is still pending on {head[:7]}")
     base_sha = evidence_base_sha(c, a38=True)
     report = a38.get("report")
     waiver = a38.get("report_waiver")
@@ -2073,18 +2107,100 @@ def _drop_base_evidence(c: dict[str, Any]) -> None:
         evidence.pop("tests_pass", None)
         evidence.pop("tests_waiver", None)
         evidence.pop("tests_head", None)
+        evidence.pop("readiness_head", None)
+        evidence.pop("readiness_base", None)
+        evidence.pop("readiness_at", None)
     a38 = _a38_state(c)
     for key in ("report", "report_waiver", "guard_status"):
         a38.pop(key, None)
     a38.pop("policy_revision", None)
 
 
-def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
+def invalidate_base_evidence(
+    store: Store, task: dict[str, Any], base_sha: str
+) -> None:
     """Drop report/test evidence whose intent was bound to the previous PR base."""
     if not is_sha(base_sha):
         raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
+    c = coord(task)
     _drop_base_evidence(c)
-    _a38_state(c)["base_sha"] = base_sha
+    _a38_state(c)["pending_base_sha"] = base_sha
+    reopen_base_bound_checklist(store, task)
+
+
+def _bound_base_evidence(
+    a38: Mapping[str, Any], *, head: str, base_sha: str
+) -> bool:
+    report = a38.get("report")
+    waiver = a38.get("report_waiver")
+    report_bound = (
+        isinstance(report, Mapping)
+        and report.get("head") == head
+        and report.get("base_sha") == base_sha
+        and report.get("policy_revision") == base_sha
+    )
+    waiver_bound = (
+        isinstance(waiver, Mapping)
+        and waiver.get("head") == head
+        and waiver.get("base_sha") == base_sha
+        and waiver.get("policy_revision") == base_sha
+        and waiver.get("reason")
+        in {"markdown-only change set", "guard-docs change set"}
+    )
+    return report_bound != waiver_bound
+
+
+def _local_gate_recorded(
+    store: Store, task: Mapping[str, Any], *, head: str
+) -> bool:
+    checklist_closed = any(
+        row.get("task_id") == task["id"]
+        and str(row.get("key") or "") == "local_check_pass"
+        and row.get("status") == "ja"
+        for row in store.rows("checklist_item")
+    )
+    check_recorded = any(
+        row.get("task_id") == task["id"]
+        and row.get("name") == "a38"
+        and row.get("head_sha") == head
+        and row.get("result") in {"pass", "skip"}
+        for row in store.rows("local_check")
+    )
+    return checklist_closed and check_recorded
+
+
+def _promote_base_evidence(
+    store: Store, task: dict[str, Any], *, head: str, base_sha: str
+) -> None:
+    """Promote a measured base only after its report/waiver and local gate exist."""
+    c = coord(task)
+    a38 = _a38_state(c)
+    pending = str(a38.get("pending_base_sha") or "").lower()
+    if pending and pending != base_sha:
+        raise CoordinatorError("A38 pending base differs from measured evidence")
+    if not _bound_base_evidence(a38, head=head, base_sha=base_sha):
+        raise CoordinatorError("A38 base promotion requires bound report or waiver evidence")
+    if not local_test_gate_satisfied(task, head) or not _local_gate_recorded(
+        store, task, head=head
+    ):
+        raise CoordinatorError("A38 base promotion requires the recorded local gate")
+    a38["base_sha"] = base_sha
+    a38["policy_revision"] = base_sha
+    a38.pop("pending_base_sha", None)
+
+
+def merged_base_evidence_satisfied(
+    store: Store, task: dict[str, Any], *, head: str, base_sha: str
+) -> bool:
+    """Return whether completion evidence is fully bound to the merged base."""
+    c = coord(task)
+    a38 = _a38_state(c)
+    return (
+        not a38.get("pending_base_sha")
+        and a38.get("base_sha") == base_sha
+        and _bound_base_evidence(a38, head=head, base_sha=base_sha)
+        and _local_gate_recorded(store, task, head=head)
+    )
 
 
 def mark_base_moved_after_evidence(
@@ -2156,7 +2272,7 @@ def phase_await_ready(
     observed_base = str(view.get("baseRefOid") or "").lower() if isinstance(view, dict) else ""
     saved_base = evidence_base_sha(c, a38=True)
     if is_sha(saved_base) and observed_base != saved_base:
-        invalidate_base_evidence(c, observed_base)
+        invalidate_base_evidence(store, task, observed_base)
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
