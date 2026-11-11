@@ -117,6 +117,14 @@ class _PullRequestBaseUnavailable(CoordinatorError):
     """Transient missing or malformed base revision from a pull-request read."""
 
 
+class _PullRequestNotOpen(CoordinatorError):
+    """The pull request closed before an A38 measurement context was accepted."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__(f"A38 pull request is already {state.lower()}")
+
+
 class A38ReportCheckpointConflict(CoordinatorError):
     """Transient conflict with a fresher A38 report task checkpoint."""
 
@@ -329,19 +337,24 @@ def _pull_a38_context(
         "--repo",
         repo,
         "--json",
-        "headRefOid,baseRefOid,baseRefName",
+        "headRefOid,baseRefOid,baseRefName,state",
     ]
 
-    def metadata() -> tuple[str, str, str]:
+    def metadata() -> tuple[str, str, str, str]:
         view = gh_json(api, metadata_argv)
         if not isinstance(view, dict):
             raise CoordinatorError("A38 pull request metadata is invalid")
         head = str(view.get("headRefOid") or "").lower()
         base_sha = str(view.get("baseRefOid") or "").lower()
         base_name = str(view.get("baseRefName") or "")
-        return head, base_sha, base_name
+        state = str(view.get("state") or "").upper()
+        if state in ("MERGED", "CLOSED"):
+            raise _PullRequestNotOpen(state)
+        if state != "OPEN":
+            raise CoordinatorError("A38 pull request state is invalid")
+        return head, base_sha, base_name, state
 
-    last_before: tuple[str, str, str] | None = None
+    last_before: tuple[str, str, str, str] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS):
         before = metadata()
         last_before = before
@@ -880,6 +893,12 @@ def phase_tests(
             expected_head=head,
             expected_base=cfg.base,
         )
+    except _PullRequestNotOpen as exc:
+        c["phase"] = "await_merge"
+        save_task(store, task)
+        return [
+            f"PR {exc.state.lower()} before A38 measurement; verifying the merge"
+        ]
     except _PullRequestBaseUnavailable:
         return ["PR state temporarily unavailable; retrying"]
     # Policy migration is intentionally not implemented by this coordinator.
