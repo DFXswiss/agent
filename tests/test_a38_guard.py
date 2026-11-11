@@ -6,6 +6,7 @@ Does not execute network I/O or pull-request code. Safe YAML only.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -3847,7 +3848,97 @@ def _api_path(url: str) -> str:
     return url.split("?", 1)[0]
 
 
+def _git_blob_sha(raw: bytes) -> str:
+    return hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
+
+
 class A38WorkflowInventoryTests(unittest.TestCase):
+    def _blob_fixture(
+        self,
+        *,
+        head: dict[str, str],
+        base: dict[str, str],
+        raw_by_sha: dict[str, bytes],
+        graphql: Any,
+        calls: list[tuple[str, str, dict[str, Any] | None]],
+    ) -> GitHubApi:
+        for sha in raw_by_sha:
+            a38_guard._blob_cache.pop(sha, None)
+            self.addCleanup(a38_guard._blob_cache.pop, sha, None)
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            method_u = method.upper()
+            path = _api_path(url)
+            payload = json.loads(body.decode("utf-8")) if body is not None else None
+            calls.append((method_u, path, payload))
+            if method_u == "GET" and path == f"/repos/{REPO}/git/trees/{HEAD}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {"path": item, "type": "blob", "sha": sha}
+                        for item, sha in head.items()
+                    ],
+                }, {}
+            if method_u == "GET" and path == f"/repos/{REPO}/git/trees/{BASE}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {"path": item, "type": "blob", "sha": sha}
+                        for item, sha in base.items()
+                    ],
+                }, {}
+            if method_u == "POST" and path == "/graphql":
+                if isinstance(graphql, BaseException):
+                    raise graphql
+                if callable(graphql):
+                    return graphql(payload)
+                return graphql
+            prefix = f"/repos/{REPO}/git/blobs/"
+            if method_u == "GET" and path.startswith(prefix):
+                sha = path.removeprefix(prefix)
+                raw = raw_by_sha[sha]
+                return 200, {
+                    "sha": sha,
+                    "encoding": "base64",
+                    "content": base64.b64encode(raw).decode("ascii"),
+                }, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        return GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+
+    @staticmethod
+    def _verified_graphql(
+        raw_by_sha: dict[str, bytes],
+        overrides: dict[str, Any] | None = None,
+    ) -> Any:
+        replacements = overrides or {}
+
+        def response(
+            payload: dict[str, Any],
+        ) -> tuple[int, Any, dict[str, str]]:
+            variables = payload["variables"]
+            blobs: dict[str, Any] = {}
+            index = 0
+            while f"oid{index}" in variables:
+                sha = variables[f"oid{index}"]
+                blobs[f"b{index}"] = replacements.get(
+                    sha,
+                    {
+                        "oid": sha,
+                        "text": raw_by_sha[sha].decode("utf-8"),
+                        "isBinary": False,
+                        "isTruncated": False,
+                    },
+                )
+                index += 1
+            return 200, {"data": {"repository": blobs}}, {}
+
+        return response
+
     def test_three_level_tree_without_recursive(self) -> None:
         commit = "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
         github = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
@@ -4099,6 +4190,400 @@ class A38WorkflowInventoryTests(unittest.TestCase):
         self.assertEqual(len(blob_calls), 1)
         self.assertFalse(any("bytes changed" in item for item in problems))
         self.assertFalse(any("/contents/" in url for url in urls))
+
+    def test_verified_graphql_prefetch_matches_rest_only_problems(self) -> None:
+        head_raw = {
+            ".github/workflows/alpha.yml": b"jobs:\n  alpha: {}\n",
+            ".github/workflows/beta.yml": b"jobs:\n  beta: {}\n",
+            ".github/workflows/gamma.yml": b"jobs:\n  extra: {}\n",
+        }
+        base_raw = {
+            path: raw.replace(b"{}", b"{timeout-minutes: 1}")
+            for path, raw in head_raw.items()
+        }
+        head = {path: _git_blob_sha(raw) for path, raw in head_raw.items()}
+        base = {path: _git_blob_sha(raw) for path, raw in base_raw.items()}
+        raw_by_sha = {
+            **{sha: head_raw[path] for path, sha in head.items()},
+            **{sha: base_raw[path] for path, sha in base.items()},
+        }
+        policy = {
+            "jobs": [
+                {"workflow": path, "job": path.rsplit("/", 1)[1].split(".")[0]}
+                for path in list(head)[:2]
+            ],
+            "exclusions": [],
+        }
+
+        rest_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        rest_api = self._blob_fixture(
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
+            graphql=(404, {"message": "not found"}, {}),
+            calls=rest_calls,
+        )
+        rest_problems = check_workflows_against_policy(
+            rest_api, REPO, head_sha=HEAD, base_sha=BASE, policy=policy
+        )
+        for sha in raw_by_sha:
+            a38_guard._blob_cache.pop(sha, None)
+
+        graphql_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        graphql_api = self._blob_fixture(
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
+            graphql=self._verified_graphql(raw_by_sha),
+            calls=graphql_calls,
+        )
+        graphql_problems = check_workflows_against_policy(
+            graphql_api, REPO, head_sha=HEAD, base_sha=BASE, policy=policy
+        )
+        self.assertEqual(graphql_problems, rest_problems)
+        self.assertEqual(
+            len([call for call in graphql_calls if call[1] == "/graphql"]), 1
+        )
+        self.assertFalse(any("/git/blobs/" in call[1] for call in graphql_calls))
+
+    def test_unverified_graphql_blobs_fall_back_individually(self) -> None:
+        raws = {
+            name: f"jobs:\n  {name}: {{}}\n".encode("utf-8")
+            for name in ("verified", "wrong", "missing", "truncated")
+        }
+        head = {
+            f".github/workflows/{name}.yml": _git_blob_sha(raw)
+            for name, raw in raws.items()
+        }
+        raw_by_sha = {head[path]: raws[path.rsplit("/", 1)[1][:-4]] for path in head}
+        wrong_sha = head[".github/workflows/wrong.yml"]
+        missing_sha = head[".github/workflows/missing.yml"]
+        truncated_sha = head[".github/workflows/truncated.yml"]
+        overrides = {
+            wrong_sha: {
+                "oid": wrong_sha,
+                "text": "jobs:\n  different: {}\n",
+                "isBinary": False,
+                "isTruncated": False,
+            },
+            missing_sha: None,
+            truncated_sha: {
+                "oid": truncated_sha,
+                "text": raws["truncated"].decode("utf-8"),
+                "isBinary": False,
+                "isTruncated": True,
+            },
+        }
+        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        api = self._blob_fixture(
+            head=head,
+            base={},
+            raw_by_sha=raw_by_sha,
+            graphql=self._verified_graphql(raw_by_sha, overrides),
+            calls=calls,
+        )
+        check_workflows_against_policy(
+            api, REPO, head_sha=HEAD, base_sha=BASE, policy={"jobs": [], "exclusions": []}
+        )
+        blob_calls = [call[1] for call in calls if "/git/blobs/" in call[1]]
+        self.assertEqual(
+            sorted(blob_calls),
+            sorted(
+                f"/repos/{REPO}/git/blobs/{sha}"
+                for sha in (wrong_sha, missing_sha, truncated_sha)
+            ),
+        )
+
+    def test_graphql_prefetch_failures_preserve_rest_result(self) -> None:
+        raw = b"jobs:\n  fallback: {}\n"
+        sha = _git_blob_sha(raw)
+        head = {".github/workflows/fallback.yml": sha}
+        raw_by_sha = {sha: raw}
+        rest_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        rest_api = self._blob_fixture(
+            head=head,
+            base={},
+            raw_by_sha=raw_by_sha,
+            graphql=(404, {"message": "not found"}, {}),
+            calls=rest_calls,
+        )
+        expected = check_workflows_against_policy(
+            rest_api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={"jobs": [], "exclusions": []},
+        )
+        cases = (
+            ("http", (502, {"message": "bad gateway"}, {})),
+            ("body", (200, ["not", "a", "mapping"], {})),
+            ("exception", OSError("graphql unavailable")),
+        )
+        for name, graphql in cases:
+            with self.subTest(name=name):
+                calls: list[tuple[str, str, dict[str, Any] | None]] = []
+                api = self._blob_fixture(
+                    head=head,
+                    base={},
+                    raw_by_sha=raw_by_sha,
+                    graphql=graphql,
+                    calls=calls,
+                )
+                result = check_workflows_against_policy(
+                    api,
+                    REPO,
+                    head_sha=HEAD,
+                    base_sha=BASE,
+                    policy={"jobs": [], "exclusions": []},
+                )
+                self.assertEqual(result, expected)
+                self.assertEqual(
+                    [call[1] for call in calls if "/git/blobs/" in call[1]],
+                    [f"/repos/{REPO}/git/blobs/{sha}"],
+                )
+
+    def test_graphql_pool_primary_limit_falls_back_to_rest(self) -> None:
+        head_raw = b"jobs:\n  head: {}\n"
+        base_raw = b"jobs:\n  base: {}\n"
+        head_sha = _git_blob_sha(head_raw)
+        base_sha = _git_blob_sha(base_raw)
+        head = {".github/workflows/head.yml": head_sha}
+        base = {".github/workflows/base.yml": base_sha}
+        raw_by_sha = {head_sha: head_raw, base_sha: base_raw}
+        rest_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        rest_api = self._blob_fixture(
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
+            graphql=(404, {"message": "not found"}, {}),
+            calls=rest_calls,
+        )
+        expected = check_workflows_against_policy(
+            rest_api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={"jobs": [], "exclusions": []},
+        )
+        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        api = self._blob_fixture(
+            head=head,
+            base=base,
+            raw_by_sha=raw_by_sha,
+            graphql=(
+                403,
+                {"message": "API rate limit exceeded"},
+                {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                    "x-ratelimit-resource": "graphql",
+                },
+            ),
+            calls=calls,
+        )
+        result = check_workflows_against_policy(
+            api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={"jobs": [], "exclusions": []},
+        )
+        self.assertEqual(result, expected)
+        self.assertEqual(
+            sorted(call[1] for call in calls if "/git/blobs/" in call[1]),
+            sorted(
+                (
+                    f"/repos/{REPO}/git/blobs/{head_sha}",
+                    f"/repos/{REPO}/git/blobs/{base_sha}",
+                )
+            ),
+        )
+        later = f"/repos/{REPO}/issues/1"
+        self.assertEqual(api.get_optional(later)[0], 404)
+        self.assertEqual(calls[-1][:2], ("GET", later))
+
+    def test_graphql_primary_limit_without_noncore_resource_stops_run(self) -> None:
+        raw = b"jobs:\n  limited: {}\n"
+        sha = _git_blob_sha(raw)
+        for resource in (None, " core "):
+            with self.subTest(resource=resource):
+                headers = {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                }
+                if resource is not None:
+                    headers["x-ratelimit-resource"] = resource
+                calls: list[tuple[str, str, dict[str, Any] | None]] = []
+                api = self._blob_fixture(
+                    head={".github/workflows/limited.yml": sha},
+                    base={},
+                    raw_by_sha={sha: raw},
+                    graphql=(
+                        403,
+                        {"message": "API rate limit exceeded"},
+                        headers,
+                    ),
+                    calls=calls,
+                )
+                with self.assertRaises(RateLimitError):
+                    check_workflows_against_policy(
+                        api,
+                        REPO,
+                        head_sha=HEAD,
+                        base_sha=BASE,
+                        policy={"jobs": [], "exclusions": []},
+                    )
+                self.assertFalse(any("/git/blobs/" in call[1] for call in calls))
+
+    def test_graphql_prefetch_chunks_and_passes_oids_as_variables(self) -> None:
+        raw_by_sha = {
+            _git_blob_sha(f"blob {index}".encode("utf-8")): f"blob {index}".encode("utf-8")
+            for index in range(51)
+        }
+        for sha in raw_by_sha:
+            a38_guard._blob_cache.pop(sha, None)
+            self.addCleanup(a38_guard._blob_cache.pop, sha, None)
+        payloads: list[dict[str, Any]] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            self.assertEqual(method, "POST")
+            self.assertEqual(_api_path(url), "/graphql")
+            payload = json.loads(body.decode("utf-8"))
+            payloads.append(payload)
+            return self._verified_graphql(raw_by_sha)(payload)
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        a38_guard._prefetch_git_blobs(api, REPO, set(raw_by_sha))
+        self.assertEqual(len(payloads), 2)
+        self.assertEqual(
+            sorted(
+                len(
+                    [
+                        key
+                        for key in payload["variables"]
+                        if key.startswith("oid")
+                    ]
+                )
+                for payload in payloads
+            ),
+            [1, 50],
+        )
+        self.assertEqual(
+            sorted(
+                value
+                for payload in payloads
+                for key, value in payload["variables"].items()
+                if key.startswith("oid")
+            ),
+            sorted(raw_by_sha),
+        )
+        for payload in payloads:
+            self.assertEqual(payload["variables"]["owner"], "example")
+            self.assertEqual(payload["variables"]["name"], "public-app")
+            self.assertFalse(any(sha in payload["query"] for sha in raw_by_sha))
+
+    def test_graphql_alias_cannot_substitute_a_different_blob(self) -> None:
+        raw_x = b"jobs:\n  expected: {}\n"
+        raw_y = b"jobs:\n  substituted: {}\n"
+        sha_x = _git_blob_sha(raw_x)
+        sha_y = _git_blob_sha(raw_y)
+        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        api = self._blob_fixture(
+            head={".github/workflows/expected.yml": sha_x},
+            base={},
+            raw_by_sha={sha_x: raw_x, sha_y: raw_y},
+            graphql=self._verified_graphql(
+                {sha_x: raw_x, sha_y: raw_y},
+                {
+                    sha_x: {
+                        "oid": sha_y,
+                        "text": raw_y.decode("utf-8"),
+                        "isBinary": False,
+                        "isTruncated": False,
+                    }
+                },
+            ),
+            calls=calls,
+        )
+        a38_guard._prefetch_git_blobs(api, REPO, {sha_x})
+        self.assertNotIn(sha_x, a38_guard._blob_cache)
+        self.assertNotIn(sha_y, a38_guard._blob_cache)
+        self.assertEqual(a38_guard._fetch_git_blob(api, REPO, sha_x), raw_x)
+        self.assertEqual(
+            [call[1] for call in calls if "/git/blobs/" in call[1]],
+            [f"/repos/{REPO}/git/blobs/{sha_x}"],
+        )
+        self.assertNotIn(sha_y, a38_guard._blob_cache)
+
+    def test_graphql_utf8_hashing_preserves_non_ascii_crlf_and_bom(self) -> None:
+        raw_by_path = {
+            ".github/workflows/non-ascii.yml": "jobs:\n  café: {}\n".encode("utf-8"),
+            ".github/workflows/crlf.yml": b"jobs:\r\n  windows: {}\r\n",
+            ".github/workflows/bom.yml": b"\xef\xbb\xbfjobs:\n  bom: {}\n",
+        }
+        head = {path: _git_blob_sha(raw) for path, raw in raw_by_path.items()}
+        raw_by_sha = {head[path]: raw for path, raw in raw_by_path.items()}
+        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        api = self._blob_fixture(
+            head=head,
+            base={},
+            raw_by_sha=raw_by_sha,
+            graphql=self._verified_graphql(raw_by_sha),
+            calls=calls,
+        )
+        check_workflows_against_policy(
+            api, REPO, head_sha=HEAD, base_sha=BASE, policy={"jobs": [], "exclusions": []}
+        )
+        self.assertFalse(any("/git/blobs/" in call[1] for call in calls))
+        self.assertEqual(
+            {sha: a38_guard._blob_cache[sha] for sha in raw_by_sha}, raw_by_sha
+        )
+
+    def test_oversize_and_unencodable_graphql_text_use_rest(self) -> None:
+        surrogate_raw = b"jobs:\n  surrogate: {}\n"
+        oversize_raw = b"x" * (a38_guard.MAX_FILE_BYTES + 1)
+        surrogate_sha = _git_blob_sha(surrogate_raw)
+        oversize_sha = _git_blob_sha(oversize_raw)
+        head = {
+            ".github/workflows/a-surrogate.yml": surrogate_sha,
+            ".github/workflows/z-oversize.yml": oversize_sha,
+        }
+        raw_by_sha = {surrogate_sha: surrogate_raw, oversize_sha: oversize_raw}
+        overrides = {
+            surrogate_sha: {
+                "oid": surrogate_sha,
+                "text": "\ud800",
+                "isBinary": False,
+                "isTruncated": False,
+            }
+        }
+        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        api = self._blob_fixture(
+            head=head,
+            base={},
+            raw_by_sha=raw_by_sha,
+            graphql=self._verified_graphql(raw_by_sha, overrides),
+            calls=calls,
+        )
+        a38_guard._prefetch_git_blobs(api, REPO, {surrogate_sha, oversize_sha})
+        self.assertNotIn(surrogate_sha, a38_guard._blob_cache)
+        self.assertNotIn(oversize_sha, a38_guard._blob_cache)
+        self.assertEqual(
+            a38_guard._fetch_git_blob(api, REPO, surrogate_sha), surrogate_raw
+        )
+        with self.assertRaises(GuardError) as caught:
+            a38_guard._fetch_git_blob(api, REPO, oversize_sha)
+        self.assertEqual(str(caught.exception), "repository file exceeds size limit")
+        self.assertEqual(
+            [call[1] for call in calls if "/git/blobs/" in call[1]],
+            [
+                f"/repos/{REPO}/git/blobs/{surrogate_sha}",
+                f"/repos/{REPO}/git/blobs/{oversize_sha}",
+            ],
+        )
+        self.assertNotIn(oversize_sha, a38_guard._blob_cache)
 
     def test_ordinary_403_does_not_sleep_rate_limit_403_retries_once(self) -> None:
         slept: list[float] = []
@@ -5399,6 +5884,125 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertEqual(completed["writes"], ["workflow:approve:17"])
         self.assertEqual(completed["workflow_approvals"], [])
         self.assertEqual(completed["environment_approvals"], [])
+
+    def test_full_sha_commit_cache_requires_matching_response_sha(self) -> None:
+        commit = "1234567890abcdef1234567890abcdef12345678"
+        branch_named_like_sha = "abcdef1234567890abcdef1234567890abcdef12"
+        missing = "0123456789abcdef0123456789abcdef01234567"
+        other = "fedcba0987654321fedcba0987654321fedcba09"
+        calls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path = _api_path(url)
+            calls.append(path)
+            if path == f"/repos/o/r/commits/{commit}":
+                return 200, {"sha": commit.upper(), "answer": "commit"}, {}
+            if path == f"/repos/o/r/commits/{branch_named_like_sha}":
+                answer = "first" if calls.count(path) == 1 else "second"
+                return 200, {"sha": other, "answer": answer}, {}
+            if path == f"/repos/o/r/commits/{missing}":
+                return 404, {"message": "not found"}, {}
+            return 200, {"status": "ahead"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        commit_path = f"/repos/o/r/commits/{commit}"
+        branch_path = f"/repos/o/r/commits/{branch_named_like_sha}"
+        missing_path = f"/repos/o/r/commits/{missing}"
+        compare_path = f"/repos/o/r/compare/{commit}...{other}"
+        for path in (commit_path, branch_path, missing_path, compare_path):
+            first = api.request("GET", path)
+            second = api.request("GET", path)
+            if path == branch_path:
+                self.assertEqual(first[1]["answer"], "first")
+                self.assertEqual(second[1]["answer"], "second")
+        self.assertEqual(calls.count(f"/repos/o/r/commits/{commit}"), 1)
+        self.assertEqual(calls.count(branch_path), 2)
+        self.assertEqual(calls.count(f"/repos/o/r/commits/{missing}"), 2)
+        self.assertEqual(calls.count(compare_path), 2)
+        self.assertEqual(api.request_count, 7)
+        self.assertIn("requests=7", a38_guard._format_api_cost(api))
+
+    def test_compare_404_old_404_cache_and_commit_pattern_is_anchored(self) -> None:
+        left = "234567890abcdef1234567890abcdef123456789"
+        right = "bcdef1234567890abcdef1234567890abcdef123"
+        calls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append(url.removeprefix("https://api.github.com"))
+            return 404, {"message": "not found"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        compare = f"/repos/o/r/compare/{left}...{right}"
+        old_paths = (
+            f"/repos/o/r/contents/file.yml?ref={left}",
+            f"/repos/o/r/git/trees/{left}",
+            f"/repos/o/r/git/blobs/{left}",
+        )
+        unanchored = (
+            f"/foo/repos/o/r/commits/{left}",
+            f"/repos/o/r/x/commits/{left}",
+        )
+        for path in (compare, *old_paths, *unanchored):
+            api.request("GET", path)
+            api.request("GET", path)
+        self.assertEqual(calls.count(compare), 2)
+        for path in old_paths:
+            self.assertEqual(calls.count(path), 1)
+        for path in unanchored:
+            self.assertEqual(calls.count(path), 2)
+
+    def test_cost_pool_ignores_tagged_and_untagged_graphql_at_edges(self) -> None:
+        core = {
+            "X-RateLimit-Resource": "core",
+            "x-ratelimit-used": "1",
+            "x-ratelimit-remaining": "4999",
+        }
+        for resource in ("graphql", None):
+            for graphql_first in (True, False):
+                with self.subTest(
+                    resource=resource, graphql_first=graphql_first
+                ):
+                    graphql = {
+                        "x-ratelimit-used": "99",
+                        "x-ratelimit-remaining": "4901",
+                    }
+                    if resource is not None:
+                        graphql["X-RateLimit-Resource"] = resource
+
+                    def request_fn(
+                        method: str, url: str, body: bytes | None = None
+                    ) -> tuple[int, Any, dict[str, str]]:
+                        headers = graphql if _api_path(url) == "/graphql" else core
+                        return 200, {}, headers
+
+                    api = GitHubApi(
+                        "t", request_fn=request_fn, sleep_fn=lambda _s: None
+                    )
+                    if graphql_first:
+                        api.request(
+                            "POST",
+                            "/graphql",
+                            body={"query": "query { viewer { login } }"},
+                        )
+                    api.request("GET", "/repos/o/r/pulls/1")
+                    if not graphql_first:
+                        api.request(
+                            "POST",
+                            "/graphql",
+                            body={"query": "query { viewer { login } }"},
+                        )
+
+                    self.assertEqual(api.pool_first, a38_guard._pool_sample(core))
+                    self.assertEqual(api.pool_last, a38_guard._pool_sample(core))
+                    cost = a38_guard._format_api_cost(api)
+                    self.assertIn("requests=2", cost)
+                    self.assertIn("families=graphql:1,pulls:1", cost)
+                    self.assertNotIn("x-ratelimit-used=99", cost)
+                    self.assertNotIn("x-ratelimit-remaining=4901", cost)
 
     def test_cost_line_on_success(self) -> None:
         fake = FakeAPI()
