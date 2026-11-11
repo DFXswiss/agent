@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,11 +20,16 @@ from agent_cli.conflict_mandate_config import load_conflict_config
 from agent_cli.conflict_mandate_github import ConflictTransientError, read_remote_head
 from agent_cli.conflict_mandate_git import push_with_lease
 from agent_cli.conflict_mandate_state import (
+    REQUIRED_STATE_KEYS,
+    STATE_KEY_TYPES,
+    STATE_PHASES,
     Request,
     StateUnreadable,
     comment_body,
     context,
+    control_dir,
     parse_time,
+    read_state_json,
     safe,
     save_state,
     read_json,
@@ -1131,6 +1137,33 @@ def test_missing_skill_and_unknown_provider_refuse_before_transport(tmp_path: Pa
     assert any("codex" in line for line in lines)
 
 
+@pytest.mark.parametrize(
+    ("implementer", "second", "message"),
+    [
+        ("codex", "claude", "codex is refused as implementer provider"),
+        ("deepseek", "claude", "is not supported by the lane launcher"),
+    ],
+)
+def test_refused_implementer_provider_reads_no_github_account(
+    tmp_path: Path, implementer: str, second: str, message: str
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["conflicts"])
+    fake = FakeConflictTransport(tmp_path)
+    data = json.loads((store.home / "ai-accounts.json").read_text(encoding="utf-8"))
+    data["models"]["second"] = second
+    data["implementer"] = implementer
+    (store.home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
+    lines = tick(store, worker(tmp_path), runner=fake)
+    assert len(lines) == 1
+    assert lines[0].startswith("preflight blocked: ")
+    assert message in lines[0]
+    assert fake.raw_calls == []
+    assert fake.lanes == []
+    assert fake.pr_comments == []
+
+
 def test_conflicts_error_is_visible() -> None:
     assert issubclass(ConflictsError, StoreError)
     assert issubclass(StateUnreadable, StoreError)
@@ -1142,10 +1175,13 @@ def test_read_json_separates_missing_from_unreadable(tmp_path: Path) -> None:
     path.write_text(json.dumps({"phase": "rebasing"}), encoding="utf-8")
     assert read_json(path) == {"phase": "rebasing"}
     path.write_text("[]", encoding="utf-8")
-    with pytest.raises(StateUnreadable, match="state unreadable: state.json"):
+    with pytest.raises(StateUnreadable, match=r"state unreadable: state\.json \(not an object\)"):
         read_json(path)
     path.write_text("{not json", encoding="utf-8")
-    with pytest.raises(StateUnreadable, match="state unreadable: state.json"):
+    with pytest.raises(
+        StateUnreadable,
+        match=r"state unreadable: state\.json \(not valid JSON\)",
+    ):
         read_json(path)
 
 
@@ -1357,6 +1393,39 @@ def test_comment_post_failure_keeps_retrying_only_the_comment(
     assert state["phase"] == "blocker-pending"
 
 
+def test_resumed_blocker_with_unknown_fact_label_is_unreadable_and_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(
+        ctx,
+        "blocker-pending",
+        blocker="previous blocker",
+        blocker_facts=[["Repository", "example/project"]],
+    )
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    unknown_label = "## /srv/private/note.md"
+    state["blocker_facts"][0][0] = unknown_label
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    fake.pr_comments.clear()
+    fake.comment_posts = 0
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == [
+        "state unreadable: state.json (key blocker_facts has an unknown label)"
+    ]
+    assert unknown_label not in "\n".join(lines)
+    assert ctx.state_path.read_bytes() == before
+    assert fake.pr_comments == []
+    assert fake.comment_posts == 0
+
+
 def test_safe_masks_absolute_paths_and_keeps_repository_names(tmp_path: Path) -> None:
     worker_cfg = worker(tmp_path)
     text = safe(
@@ -1393,6 +1462,19 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "repair or remove an unreadable `state.json`" in doc
     assert "`lane-s<stop>-a<attempt>.md`" in doc
     assert "persisted as `conflict_stops` in `state.json`" in doc
+    assert "`grok`, `claude`, or" in doc
+    assert "`codex` is refused because it can run commands" in doc
+    assert "such as `deepseek`" in doc
+    assert "validated completely" in doc
+    assert "unknown keys and wrong types make the state" in doc
+    assert "state unreadable: <masked file name> (<reason>)" in doc
+    assert "key <name> has type <type>" in doc
+    assert "phase is not known" in doc
+    assert "never a value read from the file" in doc
+    assert "`rebase_stops`" in doc
+    assert "current rebase attempt" in doc
+    assert "terminal phase" in doc
+    assert "removes both directly without Git" in doc
     assert "`parse_model_result(stdout, returncode)`" in doc
     assert "A tick processes at most one request through the workflow" in doc
     assert "without Git, a lane, or a comment" in doc
@@ -2710,7 +2792,7 @@ def test_marker_lookup_failure_records_transient_start(
         created_at="2026-09-01T00:00:00Z",
     )
     ctx = context(worker_cfg, request, worker_login="worker-bot")
-    save_state(ctx, "rebased", transient_start=None)
+    save_state(ctx, "rebasing", transient_start=None)
     monkeypatch.setattr(
         "agent_cli.conflict_mandate._marker_exists",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -2737,7 +2819,7 @@ def test_marker_lookup_failure_times_out_after_24_hours(
         created_at="2026-09-01T00:00:00Z",
     )
     ctx = context(worker_cfg, request, worker_login="worker-bot")
-    save_state(ctx, "rebased", transient_start="2026-09-01T00:00:00Z")
+    save_state(ctx, "rebasing", transient_start="2026-09-01T00:00:00Z")
     monkeypatch.setattr(
         "agent_cli.conflict_mandate._marker_exists",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -3704,6 +3786,277 @@ def test_lane_contradicting_status_without_result_is_not_complete(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def _workflow_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, dict[str, Any]]:
+    store = Store(tmp_path / "store")
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["conflicts"])
+
+    captured: dict[str, dict[str, Any]] = {}
+    from agent_cli import conflict_mandate
+
+    original_save_state = conflict_mandate.save_state
+
+    def capturing_save_state(ctx: Any, phase: str | None = None, **extra: Any) -> None:
+        original_save_state(ctx, phase, **extra)
+        state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+        captured.setdefault(state["phase"], state)
+
+    monkeypatch.setattr(conflict_mandate, "save_state", capturing_save_state)
+
+    def scenario(name: str) -> tuple[FakeConflictTransport, Any]:
+        root = tmp_path / name
+        root.mkdir()
+        fake = FakeConflictTransport(root)
+        fake.comments = [_mandate_comment()]
+        patch_account_runners(monkeypatch, fake)
+        monkeypatch.setattr("agent_cli.conflict_mandate._now", lambda: NOW)
+        monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+        return fake, worker(root)
+
+    fake, worker_cfg = scenario("normal")
+    fake.comment_post_rc = 1
+    tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert "result-pending" in captured
+    fake.comment_post_rc = 0
+    tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert "finished" in captured
+
+    transient_fake, transient_worker = scenario("transient")
+    transient_fake.pull["mergeable"] = None
+    tick(store, transient_worker, runner=transient_fake)
+    assert "discovered" in captured
+    assert "transient" in captured
+
+    blocker_fake, blocker_worker = scenario("blocker")
+    blocker_fake.lane_output = "STATUS: complete\nRESULT: blocked\nA decision is required.\n"
+
+    def unresolved_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = blocker_fake.lane(argv, stdin)
+        assert blocker_fake.clone_path is not None
+        (blocker_fake.clone_path / blocker_fake.conflict_file).write_text(
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
+            encoding="utf-8",
+        )
+        return completed
+
+    blocker_fake.comment_post_rc = 1
+    tick(store, blocker_worker, runner=blocker_fake, lane_runner=unresolved_lane)
+    assert "blocker-pending" in captured
+    blocker_fake.comment_post_rc = 0
+    tick(store, blocker_worker, runner=blocker_fake, lane_runner=unresolved_lane)
+    assert "blocked" in captured
+    return captured
+
+
+def test_state_phase_fixtures_cover_every_written_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    states = _workflow_states(tmp_path, monkeypatch)
+    assert tuple(STATE_PHASES) == (
+        "discovered",
+        "read",
+        "prepared",
+        "rebasing",
+        "checking",
+        "pushing",
+        "result-pending",
+        "blocker-pending",
+        "transient",
+        "finished",
+        "blocked",
+    )
+    assert set(states) == set(STATE_PHASES)
+    observed = {key for state in states.values() for key in state}
+    assert observed <= set(STATE_KEY_TYPES)
+
+
+@pytest.mark.parametrize("phase", STATE_PHASES)
+def test_valid_owned_state_of_each_workflow_phase_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    state = _workflow_states(tmp_path, monkeypatch)[phase]
+    request = Request(
+        repo=state["repo"],
+        number=state["number"],
+        comment_id=state["comment_id"],
+        created_at=state["created_at"],
+    )
+    state_path = control_dir(worker(tmp_path), request) / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert read_state_json(
+        state_path,
+        worker_session_id="worker-session",
+        worker_login="worker-bot",
+    ) == (state, True)
+
+
+def test_every_required_state_key_is_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _workflow_states(tmp_path, monkeypatch)["rebasing"]
+    request = Request(
+        repo=original["repo"],
+        number=original["number"],
+        comment_id=original["comment_id"],
+        created_at=original["created_at"],
+    )
+    state_path = control_dir(worker(tmp_path), request) / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    for key in REQUIRED_STATE_KEYS:
+        state = dict(original)
+        del state[key]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with pytest.raises(
+            StateUnreadable,
+            match=rf"state unreadable: state\.json \(key {key} is missing\)",
+        ):
+            read_state_json(
+                state_path,
+                worker_session_id="worker-session",
+                worker_login="worker-bot",
+            )
+
+
+@pytest.mark.parametrize("key", sorted(STATE_KEY_TYPES))
+def test_corrupt_owned_state_key_is_unreadable_without_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "finished"
+    state[key] = _wrong_state_value(key)
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    fake.calls.clear()
+    fake.raw_calls.clear()
+    fake.lanes.clear()
+    fake.pr_comments.clear()
+    fake.reactions.clear()
+    fake.comment_posts = 0
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines[0].startswith("state unreadable: state.json")
+    assert ctx.state_path.read_bytes() == before
+    assert fake.pr_comments == []
+    assert fake.lanes == []
+    assert fake.comment_posts == 0
+    assert fake.reactions == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+    assert not any(
+        "git" in call
+        and not ("config" in call and {"--system", "--global"} & set(call))
+        for call in fake.raw_calls
+    )
+
+
+def _wrong_state_value(key: str) -> Any:
+    if key == "repo":
+        return "other/project"
+    if key in {"number", "comment_id"}:
+        return 999
+    if key in {"phase", "created_at", "first_seen", "updated_at"}:
+        return 7
+    if key in {
+        "observed_head",
+        "observed_base",
+        "old_head",
+        "new_head",
+        "base_sha",
+    }:
+        return "not-a-sha"
+    if key in {
+        "conflict_stops",
+        "rebase_stops",
+        "replayed_commits",
+    }:
+        return "wrong"
+    if key in {"resolved_files", "blocker_facts"}:
+        return "wrong"
+    if key in {"blocker", "result_body", "check_result", "mergeable", "finished_by"}:
+        return 7
+    if key in {"blocker_skip_git"}:
+        return "wrong"
+    return 7
+
+
+def test_unknown_owned_state_key_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, "rebasing")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    state["unknown"] = 1
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["state unreadable: state.json (unknown key unknown)"]
+    assert ctx.state_path.read_bytes() == before
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_foreign_worker_state_is_ignored_silently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, "rebasing")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    state["worker_session_id"] = "another-session"
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert not any(line.startswith("state unreadable: state.json") for line in lines)
+    assert ctx.state_path.read_bytes() == before
+
+
+def test_foreign_worker_login_state_is_ignored_silently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, "rebasing")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    state["worker_login"] = "other-bot"
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert not any(line.startswith("state unreadable: state.json") for line in lines)
+    assert ctx.state_path.read_bytes() == before
+
+
 def test_two_conflict_stops_keep_distinct_lane_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3767,6 +4120,53 @@ def test_resumed_conflict_stop_counter_continues_lane_artifact_names(
     assert (control / "lane-s2-a1.log").exists()
     state = json.loads((control / "state.json").read_text(encoding="utf-8"))
     assert state["conflict_stops"] == 2
+
+
+def test_stop_limit_counts_only_the_current_rebase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    worker_cfg = replace(worker_cfg, max_rebase_steps=2)
+    fake.lane_results = [(127, "")]
+    lines: list[str] = []
+    control = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session"
+        / "example__project" / "pr-42-c7"
+    )
+    for _ in range(3):
+        fake.lane_results = [(127, "")]
+        lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+        assert any(line.startswith("transient:") for line in lines)
+        assert not any("max_rebase_steps" in line for line in lines)
+        assert fake.pr_comments == []
+        assert json.loads((control / "state.json").read_text(encoding="utf-8"))[
+            "rebase_stops"
+        ] == 1
+    artifacts = sorted(path.name for path in control.glob("lane-*"))
+    assert artifacts == [
+        "lane-s1-a1.log",
+        "lane-s1-a1.md",
+        "lane-s2-a1.log",
+        "lane-s2-a1.md",
+        "lane-s3-a1.log",
+        "lane-s3-a1.md",
+    ]
+
+
+def test_rebase_with_more_stops_than_the_limit_still_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.extra_stops = 2
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    worker_cfg = replace(worker_cfg, max_rebase_steps=2)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert "rebase exceeded max_rebase_steps (2)" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
 def test_lane_unavailable_is_transient_with_one_start_and_no_comment(
@@ -4000,7 +4400,7 @@ def test_comment_formatter_removes_every_formatting_character(
         worker_cfg,
         "blocker",
         "reason \u061c\u00ad visible text",
-        [("Note", "frame \u061c\u00ad text")],
+        [("Lane note", "frame \u061c\u00ad text")],
     )
     assert "\u061c" not in body
     assert "\u00ad" not in body
@@ -4098,6 +4498,43 @@ def test_blocked_request_without_marker_is_not_rediscovered(
     assert not any(call[:1] == ["clone"] for call in fake.calls)
 
 
+@pytest.mark.parametrize("phase", ["finished", "blocked"])
+def test_terminal_state_removes_leftover_worktree_and_git_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, phase)
+    ctx.worktree.mkdir(parents=True)
+    (ctx.worktree / ".git").write_text("gitdir: leftover\n", encoding="utf-8")
+    (ctx.control / "git").mkdir(parents=True)
+    (ctx.control / "git" / "config").write_text("leftover\n", encoding="utf-8")
+    before = ctx.state_path.read_bytes()
+    fake.calls.clear()
+    fake.raw_calls.clear()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["idle"]
+    assert not ctx.worktree.exists()
+    assert not (ctx.control / "git").exists()
+    assert ctx.state_path.read_bytes() == before
+    assert fake.pr_comments == []
+    assert fake.comment_posts == 0
+    assert fake.reactions == []
+    assert not any(
+        "git" in call
+        and not ("config" in call and {"--system", "--global"} & set(call))
+        for call in fake.raw_calls
+    )
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
 def test_corrupt_unfinished_state_is_reported_and_left_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4114,7 +4551,7 @@ def test_corrupt_unfinished_state_is_reported_and_left_untouched(
     fake.calls.clear()
     fake.raw_calls.clear()
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
-    assert lines == ["state unreadable: state.json"]
+    assert lines == ["state unreadable: state.json (not valid JSON)"]
     assert state_path.read_bytes() == before
     assert fake.pr_comments == []
     assert fake.comments == [_mandate_comment()]
@@ -4148,7 +4585,7 @@ def test_state_with_wrong_owner_shape_is_ignored_not_reported(
     fake.calls.clear()
     fake.raw_calls.clear()
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
-    assert lines != ["state unreadable: state.json"]
+    assert not any(line.startswith("state unreadable: state.json") for line in lines)
     assert state_path.read_bytes() == before
 
 
@@ -4166,7 +4603,8 @@ def test_corrupt_checkpoint_is_reported_without_discovery_for_that_worker(
     fake.calls.clear()
     fake.raw_calls.clear()
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
-    assert lines == ["state unreadable: checkpoint.json"]
+    assert lines[0].startswith("state unreadable: checkpoint.json")
+    assert "(key example/project has type int)" in lines[0]
     assert checkpoint.read_bytes() == before
     assert fake.pr_comments == []
     assert not any(
@@ -4194,7 +4632,7 @@ def test_wrongly_typed_unfinished_state_is_reported_and_left_untouched(
     fake.calls.clear()
     fake.raw_calls.clear()
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
-    assert lines == ["state unreadable: state.json"]
+    assert lines == ["state unreadable: state.json (key phase has type int)"]
     assert ctx.state_path.read_bytes() == before
     assert fake.pr_comments == []
     assert not any(
@@ -4202,6 +4640,26 @@ def test_wrongly_typed_unfinished_state_is_reported_and_left_untouched(
         and not ("config" in call and {"--system", "--global"} & set(call))
         for call in fake.raw_calls
     )
+
+
+def test_unknown_phase_reason_does_not_reveal_phase_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, "rebasing")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    secret_phase = "distinctive-secret-phase-value"
+    state["phase"] = secret_phase
+    ctx.state_path.write_text(json.dumps(state), encoding="utf-8")
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["state unreadable: state.json (phase is not known)"]
+    assert secret_phase not in "\n".join(lines)
 
 
 def test_failed_clone_removes_both_directories_and_a_later_blocker_runs_no_git(
