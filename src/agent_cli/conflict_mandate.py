@@ -17,6 +17,7 @@ from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts, load_model_configuration
 from .conflict_mandate_config import ConflictWorker
 from .conflict_mandate_github import (
+    ConflictHeadRepositoryGone,
     ConflictTransientError,
     add_eyes,
     find_result_comment,
@@ -25,6 +26,7 @@ from .conflict_mandate_github import (
     post_comment_once,
     pull_number_from_comment,
     read_branch_protection,
+    read_remote_head,
     read_optional_pull,
     read_pull,
     result_marker,
@@ -71,7 +73,6 @@ from .conflict_mandate_git import (
     rebase_abort,
     rebase_complete,
     rebase_continue,
-    remote_head,
     remove_repository,
     repository_state,
     repository_state_changed,
@@ -118,6 +119,17 @@ class ConflictsError(StoreError):
 
 class _Blocker(Exception):
     """A deterministic failure that finishes the request with one comment."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        facts: tuple[tuple[str, str], ...] = (),
+        skip_git: bool = False,
+    ) -> None:
+        super().__init__(reason)
+        self.facts = facts
+        self.skip_git = skip_git
 
 
 _Request = Request
@@ -169,6 +181,11 @@ def _preflight(
         raise ConflictsError(f"worker session missing skill conflicts")
     try:
         account = account_for(store, worker.session_id)
+        if account.command_prefix or account.worktree_paths:
+            raise ConflictsError(
+                "the conflicts worker does not support an account with "
+                "command_prefix or worktree_paths in this revision"
+            )
         if account.git_identity is None:
             raise ConflictsError("worker GitHub account requires git identity for signed commits")
         account_runner = account.runner(runner, require_git=True)
@@ -273,6 +290,7 @@ def _discover(
     initial_cutoff = current - INITIAL_LOOKBACK
     candidates: list[tuple[datetime, _Request]] = []
     marked_request: _Request | None = None
+    transient_error: ConflictTransientError | None = None
     unfinished_repos = {
         request.repo for request, _state in unfinished_requests(
             worker, runtime.account.login
@@ -298,6 +316,7 @@ def _discover(
                     newest_scanned = created
         repo_candidates: list[tuple[datetime, _Request]] = []
         repo_transient = False
+        repo_transient_time: datetime | None = None
         for comment in comments:
             number = pull_number_from_comment(comment)
             if number is None:
@@ -336,13 +355,23 @@ def _discover(
                 continue
             try:
                 pull = read_optional_pull(scoped_runner, repo, number)
-            except ConflictTransientError:
+            except ConflictHeadRepositoryGone as exc:
+                if exc.state == "open":
+                    repo_candidates.append((created, request))
+                continue
+            except ConflictTransientError as exc:
                 if dry_run:
                     raise
                 _record_transient(request_ctx)
                 repo_transient = True
+                if repo_transient_time is None or created < repo_transient_time:
+                    repo_transient_time = created
+                if transient_error is None:
+                    transient_error = exc
                 continue
-            if pull is None or pull.get("state") != "open":
+            if pull is None:
+                continue
+            if pull.get("state") != "open":
                 continue
             repo_candidates.append((created, request))
         repo_has_open = False
@@ -364,9 +393,14 @@ def _discover(
             if marker is not None:
                 # Discovery is also the first tick's marker check. Returning it
                 # lets the caller finalize local state without a second listing.
-                if marked_request is None:
+                if marked_request is None and not repo_transient:
                     marked_request = request
                 continue
+            if repo_transient_time is not None:
+                request = replace(
+                    request,
+                    created_at=iso(min(created_at, repo_transient_time)),
+                )
             candidates.append((created_at, request))
             repo_has_open = True
             break
@@ -379,27 +413,48 @@ def _discover(
         ):
             advance_checkpoint_time(worker, repo, newest_scanned)
     if not candidates:
+        if marked_request is not None:
+            return marked_request
+        if transient_error is not None:
+            raise transient_error
         return marked_request
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
 
 
-def _pull_fields(pull: dict[str, Any]) -> tuple[str, str, str, str, str, str, object]:
+def _read_pull_or_blocker(
+    runner: Runner,
+    repo: str,
+    number: int,
+) -> dict[str, Any]:
+    try:
+        return read_pull(runner, repo, number)
+    except ConflictHeadRepositoryGone as exc:
+        raise _Blocker(str(exc)) from exc
+
+
+def _pull_fields(pull: dict[str, Any]) -> tuple[str, str, str, str, str, object]:
+    state = pull.get("state")
+    if state == "closed":
+        raise _Blocker("pull request is no longer open")
+    if state != "open":
+        raise ConflictTransientError("pull request state is unreadable")
     head = pull.get("head")
     base = pull.get("base")
     if not isinstance(head, dict) or not isinstance(base, dict):
         raise ConflictTransientError("pull request shape is unreadable")
+    if "repo" not in head:
+        raise ConflictTransientError("pull request head repository is unreadable")
     head_repo_obj = head.get("repo")
-    base_repo_obj = base.get("repo")
+    if head_repo_obj is None:
+        raise _Blocker("head repository is gone")
     head_repo = head_repo_obj.get("full_name") if isinstance(head_repo_obj, dict) else None
-    base_repo = base_repo_obj.get("full_name") if isinstance(base_repo_obj, dict) else None
     values = (
         head.get("ref"),
         head.get("sha"),
         head_repo,
         base.get("ref"),
         base.get("sha"),
-        base_repo,
     )
     if any(not isinstance(value, str) or not value for value in values):
         raise ConflictTransientError("pull request branch fields are unreadable")
@@ -407,14 +462,16 @@ def _pull_fields(pull: dict[str, Any]) -> tuple[str, str, str, str, str, str, ob
         r"[0-9a-f]{40}", str(values[4]).lower()
     ):
         raise ConflictTransientError("pull request commit ids are unreadable")
+    mergeable = pull.get("mergeable")
+    if mergeable is not None and not isinstance(mergeable, bool):
+        raise ConflictTransientError("GitHub mergeable state is unreadable")
     return (
         str(values[0]),
         str(values[1]).lower(),
         str(values[2]),
         str(values[3]),
         str(values[4]).lower(),
-        str(values[5]),
-        pull.get("mergeable"),
+        mergeable,
     )
 
 
@@ -448,14 +505,50 @@ def _push_route(
     raise _Blocker(LOCK_REFUSED)
 
 
+def _verify_push_target(
+    request_runtime: _RequestRuntime,
+    *,
+    repo: str,
+    number: int,
+    observed_head_sha: str,
+    head_repo: str,
+    head_ref: str,
+    base_ref: str,
+) -> None:
+    pull = _read_pull_or_blocker(request_runtime.github, repo, number)
+    state = pull.get("state")
+    if state == "closed":
+        raise _Blocker("pull request is no longer open")
+    if state != "open":
+        raise ConflictTransientError("pull request state is unreadable")
+    (
+        current_head_ref,
+        current_head_sha,
+        current_head_repo,
+        current_base_ref,
+        _current_base_sha,
+        _mergeable,
+    ) = _pull_fields(pull)
+    if (
+        current_head_ref != head_ref
+        or current_head_repo != head_repo
+        or current_base_ref != base_ref
+    ):
+        raise _Blocker("pull request refs or repository changed")
+    if current_head_sha != observed_head_sha:
+        raise ConflictTransientError(
+            "pull request head moved; restarting from the pull request read"
+        )
+    if read_branch_protection(request_runtime.github, head_repo, head_ref):
+        raise _Blocker(f"refusing to push protected head ref {head_ref}")
+
+
 def _commit_subject(git_runner: Runner, worktree: Path) -> str:
     completed = git_run(git_runner, str(worktree), "log", "-1", "--format=%s", "REBASE_HEAD")
     if completed.returncode != 0:
-        completed = git_run(git_runner, str(worktree), "log", "-1", "--format=%s")
-    if completed.returncode != 0:
-        return "unknown replayed commit"
+        return "unavailable"
     text = (completed.stdout or "").strip()
-    subject = text.splitlines()[0] if text else "unknown replayed commit"
+    subject = text.splitlines()[0] if text else "unavailable"
     return redact(subject, limit=300)
 
 
@@ -472,7 +565,7 @@ def _lane_spec(
         "Resolve the current Git rebase conflict in this worktree.",
         "",
         f"Base branch: {base}",
-        f"Replayed commit subject: {subject}",
+        f"Commit being replayed: {subject}",
         "Conflicted paths (edit only these files):",
         *(f"- {path}" for path in paths),
         "",
@@ -552,7 +645,7 @@ def _verify_lane(
 ) -> str | None:
     if status != "complete":
         return f"lane status was {status or 'missing'}"
-    if result != "done":
+    if result not in {"done", "blocked"}:
         return f"lane RESULT was {result or 'missing'}"
     changed = changed_paths(git_runner, str(worktree))
     outside = sorted((changed - before) - set(paths))
@@ -618,6 +711,7 @@ def _run_lane_attempt(
     runner: Runner,
     lane_runner: LaneRunner | None,
     *,
+    observations: list[str],
     attempt: int,
     base: str,
     subject: str,
@@ -659,12 +753,25 @@ def _run_lane_attempt(
         if index_before != index_after:
             raise _Blocker("lane changed the index") from exc
         raise ConflictTransientError(redact(str(exc))) from exc
-    _verify_metadata(ctx, expected_git_file)
-    index_after = index_fingerprint(git_runner, str(ctx.worktree))
-    if index_before != index_after:
-        raise _Blocker("lane changed the index")
     stdout = safe(ctx.worker, result.stdout or "")
     stderr = safe(ctx.worker, result.stderr or "")
+    parsed_result = parse_model_result(result.stdout, result.returncode)[1]
+    metadata_failure = _lane_metadata_failure(
+        ctx,
+        expected_git_file,
+        output=stdout,
+        result=(parsed_result if result.status == "complete" else ""),
+    )
+    if metadata_failure is not None:
+        raise metadata_failure
+    index_after = index_fingerprint(git_runner, str(ctx.worktree))
+    lane_facts = (
+        (("Lane note", _blocked_sentence(stdout)),)
+        if result.status == "complete" and parsed_result == "blocked"
+        else ()
+    )
+    if index_before != index_after:
+        raise _Blocker("lane changed the index", facts=lane_facts)
     atomic_write(
         ctx.control / f"lane-{attempt}.log",
         redact(stdout or stderr or "", limit=COMMENT_LIMIT),
@@ -675,12 +782,14 @@ def _run_lane_attempt(
             session_id=ctx.worker.session_id,
             result=replace(result, stdout=stdout, stderr=stderr),
         )
-    except (Exception, SystemExit):  # noqa: BLE001 — audit failure never changes the verdict
-        pass
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 — audit failure never changes the verdict
+        observations.append(
+            safe(ctx.worker, f"lane record not written: {exc}")
+        )
     return (
         result.status,
         stdout,
-        parse_model_result(result.stdout, result.returncode)[1],
+        parsed_result,
         index_before,
         index_after,
     )
@@ -709,6 +818,8 @@ def _result_body(
     number: int,
     old_head: str,
     new_head: str,
+    base_ref: str | None,
+    base_sha: str | None,
     replayed: int,
     resolved_files: list[str],
     check_result: str,
@@ -719,20 +830,21 @@ def _result_body(
         if check_result == "passed"
         else check_result
     )
-    return comment_body(
-        "result",
-        check_fact,
-        [
-            ("Repository", repo),
-            ("Pull request", str(number)),
-            ("Old head", old_head),
-            ("New head", new_head),
-            ("Replayed commits", str(replayed)),
-            ("Files resolved by the lane", ", ".join(resolved_files) or "none"),
-            ("Checks", check_result),
-            ("Mergeable", _mergeable_fact(mergeable)),
-        ],
-    )
+    facts = [
+        ("Repository", repo),
+        ("Pull request", str(number)),
+        ("Old head", old_head),
+        ("New head", new_head),
+    ]
+    if base_ref is not None and base_sha is not None:
+        facts.append(("Base", f"{base_ref} {base_sha}"))
+    facts.extend([
+        ("Replayed commits", str(replayed)),
+        ("Files resolved by the lane", ", ".join(resolved_files) or "none"),
+        ("Checks", check_result),
+        ("Mergeable", _mergeable_fact(mergeable)),
+    ])
+    return comment_body("result", check_fact, facts)
 
 
 def _mergeable_fact(value: object) -> str:
@@ -749,7 +861,7 @@ def _read_result_mergeable(
 ) -> str:
     try:
         pull = read_pull(request_runtime.github, request.repo, request.number)
-    except ConflictTransientError:
+    except (ConflictHeadRepositoryGone, ConflictTransientError):
         return "unknown"
     return _mergeable_fact(pull.get("mergeable"))
 
@@ -797,17 +909,23 @@ def _finish_blocker(
     reason: str,
     facts: list[tuple[str, str]],
     dry_run: bool,
+    skip_git: bool = False,
 ) -> list[str]:
     safe_reason = safe(ctx.worker, reason)[:1500]
     safe_facts = [(label, safe(ctx.worker, value)) for label, value in facts]
     if not dry_run:
-        rebase_abort(request_runtime.git, str(ctx.worktree))
+        if skip_git:
+            remove_repository(ctx.worktree)
+            remove_repository(ctx.control / "git")
+        else:
+            rebase_abort(request_runtime.git, str(ctx.worktree))
         body = comment_body("blocker", safe_reason, safe_facts)
         save_state(
             ctx,
             "blocker-pending",
             blocker=safe_reason,
             blocker_facts=safe_facts,
+            blocker_skip_git=skip_git,
             transient_start=None,
         )
         try:
@@ -933,8 +1051,26 @@ def _verify_metadata(ctx: _Context, expected: tuple[bytes, bool]) -> None:
     try:
         verify_git_file(ctx.worktree, expected)
     except CoordinatorError as exc:
-        shutil.rmtree(ctx.worktree, ignore_errors=True)
-        raise _Blocker(str(exc)) from exc
+        raise _Blocker(str(exc), skip_git=True) from exc
+
+
+def _lane_metadata_failure(
+    ctx: _Context,
+    expected: tuple[bytes, bool],
+    *,
+    output: str,
+    result: str,
+) -> _Blocker | None:
+    try:
+        verify_git_file(ctx.worktree, expected)
+    except CoordinatorError as exc:
+        facts = (
+            (("Lane note", _blocked_sentence(output)),)
+            if result == "blocked" and output
+            else ()
+        )
+        return _Blocker(str(exc), facts=facts, skip_git=True)
+    return None
 
 
 def _verify_pre_push(
@@ -950,6 +1086,11 @@ def _verify_pre_push(
 ) -> None:
     try:
         verify_git_file(ctx.worktree, expected_git_file)
+    except CoordinatorError as exc:
+        raise _Blocker(
+            f"checks changed the repository state: {exc}", skip_git=True
+        ) from exc
+    try:
         verify_clean_worktree(git_runner, str(ctx.worktree))
         current = rev_parse(git_runner, str(ctx.worktree), "HEAD")
         if current != head:
@@ -1010,7 +1151,7 @@ def _run_checks(
     commits: list[str],
     expected_git_file: tuple[bytes, bool],
     head_repo: str,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, bool]:
     argv = list(ctx.worker.repositories[ctx.request.repo].check_argv)
     expected_state = repository_state(ctx.control / "git")
     env = {
@@ -1030,19 +1171,19 @@ def _run_checks(
             clear_ambient_github=True,
         )
     except OSError as exc:
-        return False, redact(f"check command unavailable: {exc}", limit=FAILURE_TAIL_LIMIT)
+        return False, redact(f"check command unavailable: {exc}", limit=FAILURE_TAIL_LIMIT), False
     # Compare the Git directory directly, before any Git command of this
     # process runs again in the worktree.
     if repository_state_changed(expected_state, repository_state(ctx.control / "git")):
         remove_repository(ctx.worktree)
         remove_repository(ctx.control / "git")
-        return False, CHECKS_CHANGED_STATE
+        return False, CHECKS_CHANGED_STATE, True
     if completed.returncode != 0:
         tail = bounded_tail(
             completed.stderr or completed.stdout or "check command failed",
             limit=FAILURE_TAIL_LIMIT,
         )
-        return False, tail
+        return False, tail, False
     try:
         _verify_pre_push(
             ctx,
@@ -1055,13 +1196,15 @@ def _run_checks(
             head_repo=head_repo,
         )
     except _Blocker as exc:
-        return False, str(exc)
-    return True, "passed"
+        return False, str(exc), exc.skip_git
+    return True, "passed", False
 
 
 def _stored_result_body(ctx: _Context, *, mergeable: object) -> str | None:
     old_head = ctx.state.get("old_head")
     new_head = ctx.state.get("new_head")
+    base_ref = ctx.state.get("base_ref")
+    base_sha = ctx.state.get("base_sha")
     replayed = ctx.state.get("replayed_commits")
     resolved_files = ctx.state.get("resolved_files")
     check_result = ctx.state.get("check_result")
@@ -1084,6 +1227,8 @@ def _stored_result_body(ctx: _Context, *, mergeable: object) -> str | None:
         number=ctx.request.number,
         old_head=old_head,
         new_head=new_head,
+        base_ref=base_ref if isinstance(base_ref, str) else None,
+        base_sha=base_sha if isinstance(base_sha, str) else None,
         replayed=replayed,
         resolved_files=files,
         check_result=check_result,
@@ -1125,7 +1270,9 @@ def _run_request(
     lane_runner: LaneRunner | None,
     *,
     dry_run: bool,
+    observations: list[str] | None = None,
 ) -> list[str]:
+    observations = observations if observations is not None else []
     if not dry_run:
         save_state(ctx)
     request_runtime = runtime.request
@@ -1143,7 +1290,7 @@ def _run_request(
                 # A transient read enters the shared handler below: it records
                 # transient_start once, returns a transient line, and finishes
                 # the request with a blocker after 24 hours.
-                pull = read_pull(
+                pull = _read_pull_or_blocker(
                     request_runtime.github, ctx.request.repo, ctx.request.number
                 )
                 if pull.get("head", {}).get("sha") == new_head:
@@ -1166,6 +1313,7 @@ def _run_request(
                 reason=reason,
                 facts=facts if isinstance(facts, list) else [],
                 dry_run=False,
+                skip_git=ctx.state.get("blocker_skip_git") is True,
             )
         if not dry_run and phase == "result-pending":
             body = _stored_result_body(ctx, mergeable=None)
@@ -1215,16 +1363,15 @@ def _run_request(
                 ctx.request.comment_id,
                 login=runtime.account.login,
             )
-        pull = read_pull(request_runtime.github, ctx.request.repo, ctx.request.number)
-        if pull.get("state") != "open":
-            raise _Blocker("pull request is no longer open")
+        pull = _read_pull_or_blocker(
+            request_runtime.github, ctx.request.repo, ctx.request.number
+        )
         (
             head_ref,
             head_sha,
             head_repo,
             base_ref,
             base_sha,
-            _base_repo,
             mergeable,
         ) = _pull_fields(pull)
         try:
@@ -1383,6 +1530,7 @@ def _run_request(
                         runtime,
                         runner,
                         lane_runner,
+                        observations=observations,
                         attempt=attempt,
                         base=base_ref,
                         subject=subject,
@@ -1390,10 +1538,8 @@ def _run_request(
                         expected_git_file=expected_git_file,
                         failed_verification=failed,
                     )
-                    if status == "timeout":
-                        raise ConflictTransientError("lane timed out")
-                    if status == "complete" and result == "blocked":
-                        raise _Blocker(_blocked_sentence(output))
+                    if status == "unavailable":
+                        raise ConflictTransientError("lane was unavailable")
                     failed = _verify_lane(
                         git_runner,
                         ctx.worktree,
@@ -1406,6 +1552,11 @@ def _run_request(
                     if failed is None:
                         lane_ok = True
                         break
+                    if status == "complete" and result == "blocked":
+                        raise _Blocker(
+                            failed,
+                            facts=(("Lane note", _blocked_sentence(output)),),
+                        )
                     if attempt == 1:
                         outside_after = changed_paths(
                             git_runner, str(ctx.worktree)
@@ -1421,7 +1572,10 @@ def _run_request(
                                     f"cannot restore changes outside the conflicted set: {exc}"
                                 ) from exc
                 if not lane_ok:
-                    raise _Blocker(f"lane verification failed twice: {failed}")
+                    raise _Blocker(
+                        "lane did not complete",
+                        facts=(("Failed verification", failed),),
+                    )
                 resolved_files.extend(path for path in paths if path not in resolved_files)
                 stage_paths(git_runner, str(ctx.worktree), paths)
                 continued = rebase_continue(git_runner, str(ctx.worktree))
@@ -1435,11 +1589,11 @@ def _run_request(
             ctx, git_runner, base_ref=base_ref
         )
         save_state(ctx, "checking", new_head=head, resolved_files=resolved_files)
-        checks_ok, check_result = _run_checks(
+        checks_ok, check_result, checks_skip_git = _run_checks(
             ctx,
             git_runner,
             head=head,
-            base_sha=base_sha,
+            base_sha=verified_base_sha,
             verified_base_sha=verified_base_sha,
             base_ref=base_ref,
             commits=commits,
@@ -1448,17 +1602,28 @@ def _run_request(
         )
         if not checks_ok:
             if check_result.startswith(CHECKS_CHANGED_STATE):
-                raise _Blocker(check_result)
+                raise _Blocker(check_result, skip_git=checks_skip_git)
             raise _Blocker(f"configured check failed:\n{check_result}")
         save_state(
             ctx,
             "pushing",
             old_head=head_sha,
             new_head=head,
+            base_ref=base_ref,
+            base_sha=verified_base_sha,
             replayed_commits=len(commits),
             resolved_files=resolved_files,
             check_result=check_result,
             mergeable=_mergeable_fact(mergeable),
+        )
+        _verify_push_target(
+            request_runtime,
+            repo=ctx.request.repo,
+            number=ctx.request.number,
+            observed_head_sha=head_sha,
+            head_repo=head_repo,
+            head_ref=head_ref,
+            base_ref=base_ref,
         )
         pushed = push_with_lease(
             git_runner,
@@ -1476,12 +1641,12 @@ def _run_request(
                 limit=detail_limit,
             )
             try:
-                current_remote_head = remote_head(
-                    git_runner,
-                    str(ctx.worktree),
-                    ref=head_ref,
+                current_remote_head = read_remote_head(
+                    request_runtime.github,
+                    head_repo,
+                    head_ref,
                 )
-            except (CoordinatorError, OSError) as exc:
+            except ConflictTransientError as exc:
                 raise ConflictTransientError(
                     f"cannot read the publication branch after push failure: {exc}"
                 ) from exc
@@ -1507,8 +1672,10 @@ def _run_request(
             facts=[
                 ("Repository", ctx.request.repo),
                 ("Pull request", str(ctx.request.number)),
+                *exc.facts,
             ],
             dry_run=dry_run,
+            skip_git=exc.skip_git,
         )
     except ConflictTransientError as exc:
         if dry_run:
@@ -1545,6 +1712,7 @@ def tick(
     lock_key = f"{WORKER_LOCK_PREFIX}{worker.session_id}"
     if runner is default_run_argv:
         runner = lambda argv: run_bounded(argv, timeout=worker.lane_timeout)
+    observations: list[str] = []
     try:
         with process_scope(), store.exclusive(lock_key):
             try:
@@ -1617,18 +1785,20 @@ def tick(
                         runner,
                         lane_runner,
                         dry_run=dry_run,
+                        observations=observations,
                     )
+                    lines.extend(observations)
                 return lines or ["idle"]
             except ConflictTransientError as exc:
-                return [f"transient: {safe(worker, exc)}"]
+                return [f"transient: {safe(worker, exc)}", *observations]
             except (_Blocker, ConflictsError) as exc:
-                return [f"blocked: {safe(worker, exc)}"]
+                return [f"blocked: {safe(worker, exc)}", *observations]
             except StoreError as exc:
-                return [f"store error: {safe(worker, exc)}"]
+                return [f"store error: {safe(worker, exc)}", *observations]
             except Exception as exc:  # noqa: BLE001 — tick must never raise silently
-                return [f"error: {safe(worker, exc)}"]
+                return [f"error: {safe(worker, exc)}", *observations]
     except StoreError as exc:
-        return [f"lock error: {safe(worker, exc)}"]
+        return [f"lock error: {safe(worker, exc)}", *observations]
 
 
 __all__ = [

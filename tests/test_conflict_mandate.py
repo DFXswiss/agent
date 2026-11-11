@@ -16,10 +16,11 @@ from agent_cli.conflict_mandate import (
     tick,
 )
 from agent_cli.conflict_mandate_config import load_conflict_config
-from agent_cli.conflict_mandate_github import ConflictTransientError
+from agent_cli.conflict_mandate_github import ConflictTransientError, read_remote_head
 from agent_cli.conflict_mandate_state import (
     Request,
     context,
+    parse_time,
     safe,
     save_state,
     unfinished_requests,
@@ -97,6 +98,7 @@ class FakeConflictTransport:
         self.lane_changes: set[str] | None = None
         self.preexisting_dirty = False
         self.reactions: list[int] = []
+        self.reaction_list: Any = []
         self.check_rc = 0
         self.check_calls: list[dict[str, Any]] = []
         self.github_down = False
@@ -104,6 +106,11 @@ class FakeConflictTransport:
         self.comment_post_rc = 0
         self.protected = False
         self.protection_read_fails = False
+        self.protection_on_after_reads: int | None = None
+        self.branch_reads = 0
+        self.pull_state_after_reads: int | None = None
+        self.pull_reads = 0
+        self.remote_read_body: Any = None
         self.lane_changes_index = False
         self.lane_index_writes = 0
 
@@ -156,6 +163,7 @@ class FakeConflictTransport:
             if "--" in args:
                 restored = set(args[args.index("--") + 1:])
                 self.changed.difference_update(restored)
+            self.rev_parse_head = self.pull["head"]["sha"]
             return Completed(0, "", "")
         if args[:1] == ["rev-list"]:
             if "--merges" in args:
@@ -219,11 +227,6 @@ class FakeConflictTransport:
             return Completed(0 if self.signed_ok else 1, "", "")
         if args[:1] == ["push"]:
             return Completed(self.push_rc, "", self.push_stderr if self.push_rc else "")
-        if args[:1] == ["ls-remote"]:
-            if self.remote_read_fails:
-                return Completed(1, "", "network unavailable")
-            ref = args[-1]
-            return Completed(0, f"{self.remote_head_sha}\t{ref}\n", "")
         return Completed(0, "", "")
 
     def __call__(self, argv: list[str]) -> Completed:
@@ -240,10 +243,11 @@ class FakeConflictTransport:
             command[:2] == ["gh", "api"]
             and command[-1].startswith("repos/")
             and "/issues/comments" in command[-1]
+            and not command[-1].endswith("/reactions")
         ):
             return Completed(0, json.dumps([self.comments]), "")
         if command[:2] == ["gh", "api"] and command[-1].startswith("repos/") and command[-1].endswith("/reactions"):
-            return Completed(0, json.dumps([]), "")
+            return Completed(0, json.dumps(self.reaction_list), "")
         joined = " ".join(command)
         if command[:3] == ["gh", "api", "-X"] and command[3] == "POST":
             if any("reactions" in value for value in command):
@@ -259,18 +263,44 @@ class FakeConflictTransport:
                 {
                     "id": 900 + len(self.pr_comments),
                     "body": body,
-                    "user": {"login": "worker-bot"},
+                    "user": {"login": "worker-bot", "type": "Bot"},
+                    "created_at": "2026-09-02T00:00:00Z",
+                    "updated_at": "2026-09-02T00:00:00Z",
+                    "html_url": (
+                        "https://github.com/example/project/pull/42"
+                        f"#issuecomment-{900 + len(self.pr_comments)}"
+                    ),
                 }
             )
             return Completed(0, "", "")
         if command[:2] == ["gh", "api"] and "/branches/" in command[-1]:
+            self.branch_reads += 1
             if self.protection_read_fails:
                 return Completed(1, "", "GitHub unreachable")
-            return Completed(0, json.dumps({"name": "feature", "protected": self.protected}), "")
+            protected = self.protected
+            if (
+                self.protection_on_after_reads is not None
+                and self.branch_reads > self.protection_on_after_reads
+            ):
+                protected = True
+            return Completed(0, json.dumps({"name": "feature", "protected": protected}), "")
+        if command[:2] == ["gh", "api"] and "/git/ref/heads/" in command[-1]:
+            if self.remote_read_fails:
+                return Completed(1, "", "network unavailable")
+            if self.remote_read_body is not None:
+                return Completed(0, json.dumps(self.remote_read_body), "")
+            return Completed(0, json.dumps({"object": {"sha": self.remote_head_sha}}), "")
         if "issues/42/comments" in joined:
             return Completed(0, json.dumps([self.pr_comments]), "")
         if "/pulls/42" in joined:
-            return Completed(0, json.dumps(self.pull), "")
+            self.pull_reads += 1
+            pull = dict(self.pull)
+            if (
+                self.pull_state_after_reads is not None
+                and self.pull_reads > self.pull_state_after_reads
+            ):
+                pull["state"] = "closed"
+            return Completed(0, json.dumps(pull), "")
         if command[:2] == ["gh", "api"] and command[-1] == "repos/example/project":
             return Completed(0, json.dumps({"permissions": self.permissions}), "")
         return Completed(1, "", f"unhandled {command}")
@@ -483,6 +513,25 @@ def test_result_facts_include_and_store_mergeable(
     assert state["old_head"] == "a" * 40
 
 
+def test_checks_and_result_use_the_verified_base_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.pull["base"]["sha"] = "c" * 40
+    fake.remote_base_sha = "b" * 40
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert fake.check_calls[0]["env"]["AGENT_CONFLICTS_BASE"] == "b" * 40
+    assert "Base: develop " + "b" * 40 in fake.pr_comments[0]["body"]
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["base_sha"] == "b" * 40
+
+
 def _result_after_push(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -500,6 +549,7 @@ def _result_after_push(
             fake.pull["head"]["sha"] = "d" * 40
             fake.pull["mergeable"] = mergeable_after_push
             fake.rev_parse_head = "d" * 40
+            fake.remote_head_sha = "d" * 40
             state["pushed"] = True
         if read_after_push_fails and state["pushed"] and "/pulls/42" in " ".join(argv):
             return Completed(1, "", "GitHub unreachable")
@@ -545,6 +595,32 @@ def test_result_comment_reports_unknown_when_post_push_read_fails(
     assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
 
 
+def test_result_comment_reports_unknown_when_head_repository_disappears_after_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    state = {"pushed": False}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:1] == ["git"] and "push" in argv:
+            fake.pull["head"]["sha"] = "d" * 40
+            fake.pull["head"]["repo"] = None
+            fake.rev_parse_head = "d" * 40
+            fake.remote_head_sha = "d" * 40
+            state["pushed"] = True
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=runner, lane_runner=fake.lane)
+    assert state["pushed"] is True
+    assert any("pushed" in line for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "head repository is gone" not in fake.pr_comments[0]["body"]
+    assert "blocked" not in fake.pr_comments[0]["body"]
+
+
 def test_result_pending_resume_reads_mergeable_before_posting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -571,6 +647,35 @@ def test_result_pending_resume_reads_mergeable_before_posting(
     assert lines == ["result comment posted"]
     assert len(fake.pr_comments) == 1
     assert "Mergeable: true" in fake.pr_comments[0]["body"]
+
+
+def test_result_pending_resume_reports_unknown_when_head_repository_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.pull["head"]["sha"] = "d" * 40
+    fake.pull["head"]["repo"] = None
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(
+        ctx,
+        "result-pending",
+        old_head="a" * 40,
+        new_head="d" * 40,
+        replayed_commits=2,
+        resolved_files=["src/app.py"],
+        check_result="passed",
+        mergeable="false",
+    )
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["result comment posted"]
+    assert len(fake.pr_comments) == 1
+    assert "Mergeable: unknown" in fake.pr_comments[0]["body"]
+    assert "head repository is gone" not in fake.pr_comments[0]["body"]
 
 
 def test_dry_run_has_no_reaction_or_state_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -753,7 +858,14 @@ def test_lane_marker_retries_then_blocks_without_push(tmp_path: Path, monkeypatc
 def test_existing_marker_finishes_without_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    fake.pr_comments = [{"id": 1, "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: done", "user": {"login": "worker-bot"}}]
+    fake.pr_comments = [{
+        "id": 1,
+        "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: done",
+        "user": {"login": "worker-bot", "type": "Bot"},
+        "created_at": "2026-09-01T00:00:00Z",
+        "updated_at": "2026-09-01T00:00:00Z",
+        "html_url": "https://github.com/example/project/pull/42#issuecomment-1",
+    }]
     lines = tick(store, worker_cfg, runner=fake)
     assert "finished" in lines[0]
     assert fake.lanes == []
@@ -769,7 +881,10 @@ def test_quoted_result_marker_later_in_worker_comment_does_not_finish(
         {
             "id": 1,
             "body": "EN: this only quotes the marker\n<!-- agent-conflicts:result:v1:7 -->\n",
-            "user": {"login": "worker-bot"},
+            "user": {"login": "worker-bot", "type": "Bot"},
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+            "html_url": "https://github.com/example/project/pull/42#issuecomment-1",
         }
     ]
     lines = tick(store, worker_cfg, runner=fake, dry_run=True)
@@ -788,7 +903,10 @@ def test_marker_on_first_tick_is_reported_finished(
         {
             "id": 1,
             "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: already done",
-            "user": {"login": "worker-bot"},
+            "user": {"login": "worker-bot", "type": "Bot"},
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+            "html_url": "https://github.com/example/project/pull/42#issuecomment-1",
         }
     ]
     lines = tick(store, worker_cfg, runner=fake, dry_run=True)
@@ -1086,6 +1204,10 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "`push was refused by the remote`" in doc
     assert "split at the last colon" in doc
     assert "bounded runner timed out is" in doc
+    assert "Lane note" in doc
+    assert "`REBASE_HEAD`" in doc
+    assert "`AGENT_CONFLICTS_BASE`" in doc
+    assert "`command_prefix` or `worktree_paths`" in doc
 
 
 def test_checkpoint_advances_and_finished_request_is_not_reprocessed(
@@ -1120,7 +1242,10 @@ def test_older_comment_does_not_hide_a_newer_request(
         {
             "id": 900,
             "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: done",
-            "user": {"login": "worker-bot"},
+            "user": {"login": "worker-bot", "type": "Bot"},
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+            "html_url": "https://github.com/example/project/pull/42#issuecomment-900",
         }
     ]
     lines = tick(store, worker_cfg, runner=fake, dry_run=True)
@@ -1192,25 +1317,51 @@ def test_unsupported_unmerged_state_blocks_without_lane(
     assert "DU" in fake.pr_comments[0]["body"]
 
 
-def test_lane_blocked_quotes_one_bounded_sentence(
+def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    fake.lane_results = []
-    fake.lane_output = (
-        "STATUS: complete\nRESULT: blocked\n"
-        "A product decision is required. "
-        + "x" * 700
-        + "\n"
-    )
-    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+
+    def blocked_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        fake.lane(argv, stdin)
+        if fake.clone_path is not None:
+            (fake.clone_path / "src" / "app.py").write_text(
+                "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
+                encoding="utf-8",
+            )
+        return Completed(
+            0,
+            "STATUS: complete\nRESULT: blocked\n"
+            "A product decision is required. "
+            + "x" * 700
+            + "\n",
+            "",
+        )
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=blocked_lane)
     assert any("blocker" in line for line in lines)
     assert len(fake.lanes) == 1
     body = fake.pr_comments[0]["body"]
-    assert "A product decision is required." in body
+    assert "src/app.py: conflict marker remains" in body
+    assert "Lane note: A product decision is required." in body
     assert len(body) < 4000
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_lane_blocked_after_resolving_everything_continues_to_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    fake.lane_output = "STATUS: complete\nRESULT: blocked\nA product decision is required.\n"
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert len(fake.lanes) == 1
+    assert len(fake.pr_comments) == 1
+    assert "- Result: blocked" not in fake.pr_comments[0]["body"]
+    assert any("--force-with-lease=refs/heads/feature:" + "a" * 40 in " ".join(call) for call in fake.calls)
 
 
 def test_check_failure_posts_redacted_tail_and_does_not_push(
@@ -1290,6 +1441,36 @@ def test_missing_account_or_lane_binding_refuses_precisely(
     assert fake.comments == []
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("command_prefix", ["docker", "run", "--rm"]),
+        ("worktree_paths", {"/host/work": "/container/work"}),
+    ],
+)
+def test_preflight_refuses_container_backed_worker_accounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["conflicts"])
+    fake = FakeConflictTransport(tmp_path)
+    patch_account_runners(monkeypatch, fake)
+    accounts_path = store.home / "github-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["accounts"]["worker"][field] = value
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+    lines = tick(store, worker(tmp_path), runner=fake)
+    assert lines == [
+        "preflight blocked: the conflicts worker does not support an account with "
+        "command_prefix or worktree_paths in this revision"
+    ]
+    assert fake.raw_calls == []
+
+
 def test_read_only_implementer_binding_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1362,6 +1543,26 @@ def test_lane_spec_redacts_base_branch_and_commit_subject(
         for path in (tmp_path / "work" / ".conflicts-control").rglob("*.md")
     )
     assert "Replay ghp_" not in specs
+
+
+def test_lane_subject_falls_back_to_unavailable_without_reading_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def missing_rebase_head(argv: list[str]) -> Completed:
+        if argv[:1] == ["git"] and "log" in argv:
+            assert "REBASE_HEAD" in argv
+            return Completed(128, "", "fatal: ambiguous argument 'REBASE_HEAD'")
+        return fake(argv)
+
+    tick(store, worker_cfg, runner=missing_rebase_head, lane_runner=fake.lane)
+    spec = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session"
+        / "example__project" / "pr-42-c7" / "lane-1.md"
+    ).read_text(encoding="utf-8")
+    assert "Commit being replayed: unavailable" in spec
 
 
 def _two_worker_config(root: Path) -> dict[str, Any]:
@@ -1495,6 +1696,26 @@ def test_lane_that_rewrites_git_file_blocks_without_push(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_lane_rewriting_only_git_file_blocks_without_any_later_git_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        fake.lane(argv, stdin)
+        if fake.clone_path is not None:
+            (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
+        fake.calls.clear()
+        fake.raw_calls.clear()
+        return Completed(0, "STATUS: complete\nRESULT: done\n", "")
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
+    assert any("blocker" in line for line in lines)
+    assert "lane changed the repository metadata" in fake.pr_comments[0]["body"]
+    assert not any("git" in call for call in fake.raw_calls)
+
+
 def test_feature_at_branch_reaches_push_with_exact_lease(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1614,6 +1835,29 @@ def test_check_that_rewrites_publication_url_blocks_without_push(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_check_that_rewrites_only_the_worktree_git_file_skips_all_later_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def rewrite_check(argv: list[str], **kwargs: Any) -> Completed:
+        fake.check_calls.append({"argv": argv, **kwargs})
+        assert fake.clone_path is not None
+        (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
+        fake.calls.clear()
+        fake.raw_calls.clear()
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", rewrite_check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "checks changed the repository state" in fake.pr_comments[0]["body"]
+    assert "repository metadata" in fake.pr_comments[0]["body"]
+    assert not any("git" in call for call in fake.raw_calls)
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def _failed_push(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1632,7 +1876,7 @@ def _failed_push(
     return fake, lines
 
 
-def test_push_failure_unreadable_remote_head_is_transient(
+def test_push_failure_unreadable_api_head_is_transient(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake, lines = _failed_push(
@@ -1642,7 +1886,7 @@ def test_push_failure_unreadable_remote_head_is_transient(
     assert fake.pr_comments == []
 
 
-def test_push_failure_moved_remote_head_is_transient(
+def test_push_failure_moved_api_head_is_transient(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake, lines = _failed_push(tmp_path, monkeypatch, remote_head_sha="d" * 40)
@@ -1660,16 +1904,31 @@ def test_push_failure_unchanged_remote_head_blocks_with_bounded_tail(
     assert "push was refused by the remote" in body
     assert "policy refused the update" in body
     assert "x" * 1600 not in body
+    assert not any("ls-remote" in call for call in fake.calls)
     assert any(
-        call[:3] == ["git", "ls-remote", "publication"] for call in fake.calls
+        call[:2] == ["gh", "api"]
+        and "repos/worker-bot/project/git/ref/heads/feature" in call[-1]
+        for call in fake.calls
     )
-    ls_remote = next(
-        call
-        for call in fake.raw_calls
-        if "git" in call and "ls-remote" in call
-    )
-    ls_remote_args = ls_remote[ls_remote.index("git") + 1:]
-    assert _network_remote_targets(ls_remote_args) is None
+
+
+def test_read_remote_head_uses_url_encoded_api_ref(tmp_path: Path) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    assert read_remote_head(fake, "worker-bot/project", "release/2026.11") == "a" * 40
+    assert fake.calls[-1] == [
+        "gh", "api", "repos/worker-bot/project/git/ref/heads/release%2F2026.11"
+    ]
+
+
+def test_read_remote_head_unreadable_or_missing_object_is_transient(tmp_path: Path) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.remote_read_fails = True
+    with pytest.raises(ConflictTransientError):
+        read_remote_head(fake, "worker-bot/project", "feature")
+    fake.remote_read_fails = False
+    fake.remote_read_body = {"object": {"sha": "not-a-sha"}}
+    with pytest.raises(ConflictTransientError):
+        read_remote_head(fake, "worker-bot/project", "feature")
 
 
 def test_push_timeout_with_unchanged_remote_head_is_transient(
@@ -1841,6 +2100,13 @@ def test_unreadable_first_pull_request_does_not_stop_the_second_mandate(
         tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-43-c8" / "state.json"
     )
     assert json.loads(second_state_path.read_text(encoding="utf-8"))["phase"] == "finished"
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    checkpoint_data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert parse_time(checkpoint_data["example/project"]) < datetime(
+        2026, 9, 1, 1, tzinfo=timezone.utc
+    )
 
     fake.calls.clear()
     lines = tick(store, worker_cfg, runner=runner, lane_runner=fake.lane)
@@ -1848,6 +2114,27 @@ def test_unreadable_first_pull_request_does_not_stop_the_second_mandate(
     assert json.loads(state_path.read_text(encoding="utf-8"))["phase"] == "transient"
     assert json.loads(second_state_path.read_text(encoding="utf-8"))["phase"] == "finished"
     assert len(fake.pr_comments) == 1
+
+
+def test_unreadable_pull_request_does_not_advance_checkpoint_past_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [_mandate_comment_at("2026-09-01T01:00:00Z", comment_id=7)]
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            return Completed(0, json.dumps({**fake.pull, "state": None}), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
 
 
 def test_checkpoint_advances_past_only_marker_finished_mandate(
@@ -1869,7 +2156,10 @@ def test_checkpoint_advances_past_only_marker_finished_mandate(
         {
             "id": 900,
             "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: done",
-            "user": {"login": "worker-bot"},
+            "user": {"login": "worker-bot", "type": "Bot"},
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+            "html_url": "https://github.com/example/project/pull/42#issuecomment-900",
         }
     ]
     lines = tick(store, worker_cfg, runner=fake)
@@ -2139,6 +2429,329 @@ def test_github_branch_protection_unreadable_is_transient(
     assert not any(call[:1] == ["clone"] for call in fake.calls)
 
 
+def test_malformed_pull_request_state_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            return Completed(0, json.dumps({**fake.pull, "state": "merged"}), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(line.startswith("transient:") and "state is unreadable" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_missing_pull_request_head_sha_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            pull = {**fake.pull, "head": {**fake.pull["head"]}}
+            pull["head"].pop("sha")
+            return Completed(0, json.dumps(pull), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(line.startswith("transient:") and "head.sha is unreadable" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+@pytest.mark.parametrize(
+    "field,mutate",
+    [
+        (
+            "head.ref is unreadable",
+            lambda pull: pull["head"].__setitem__("ref", None),
+        ),
+        (
+            "base.ref is unreadable",
+            lambda pull: pull["base"].__setitem__("ref", 7),
+        ),
+        (
+            "base.sha is unreadable",
+            lambda pull: pull["base"].__setitem__("sha", ["b" * 40]),
+        ),
+    ],
+)
+def test_malformed_pull_request_ref_fields_are_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, mutate: Any
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            pull = {
+                **fake.pull,
+                "head": {**fake.pull["head"]},
+                "base": {**fake.pull["base"]},
+            }
+            mutate(pull)
+            return Completed(0, json.dumps(pull), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(
+        line.startswith("transient:") and field in line
+        for line in lines
+    )
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_malformed_pull_request_head_repository_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            pull = {**fake.pull, "head": {**fake.pull["head"], "repo": {"full_name": 7}}}
+            return Completed(0, json.dumps(pull), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(
+        line.startswith("transient:") and "head repository is unreadable" in line
+        for line in lines
+    )
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_missing_pull_request_mergeable_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and "repos/example/project/pulls/42" in " ".join(argv):
+            pull = dict(fake.pull)
+            pull.pop("mergeable")
+            return Completed(0, json.dumps(pull), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(line.startswith("transient:") and "mergeable state is unreadable" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_deleted_pull_request_head_repository_blocks_without_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.pull["head"]["repo"] = None
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert "head repository is gone" in fake.pr_comments[0]["body"]
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_malformed_repository_permissions_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.pull["head"]["repo"]["full_name"] = "example/project"
+    fake.permissions = {"push": "yes"}
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "permissions are unreadable" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_malformed_branch_protection_flag_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def malformed(argv: list[str]) -> Completed:
+        if argv[:1] == ["gh"] and any("/branches/" in item for item in argv):
+            return Completed(0, json.dumps({"name": "feature", "protected": "yes"}), "")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=malformed)
+    assert any(line.startswith("transient:") and "branch protection lookup is unreadable" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_malformed_remote_ref_sha_is_transient_with_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.push_rc = 1
+    fake.remote_read_body = {"object": {"sha": "a" * 39}}
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+
+
+def test_malformed_comment_entry_makes_listing_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        _mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7),
+        {**_mandate_comment_at("2026-09-01T01:00:00Z", comment_id=8), "id": "eight"},
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "comment id" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+def test_malformed_comment_body_makes_listing_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {**_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7), "body": None},
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "comment body" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("user", None, "comment author"),
+        ("created_at", 7, "comment creation time"),
+        ("updated_at", None, "comment update time"),
+    ],
+)
+def test_malformed_comment_fields_make_listing_transient_and_keep_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    field: str, value: Any, message: str,
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {**_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7), field: value},
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and message in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+def test_missing_comment_user_type_makes_listing_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {
+            **_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7),
+            "user": {"login": "AuthorizedHuman"},
+        },
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "comment author" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+def test_wrongly_typed_comment_url_makes_listing_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {
+            **_mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7),
+            "html_url": None,
+        },
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "comment URL" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
+def test_well_formed_plain_issue_comment_is_skipped_and_advances_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = [
+        {
+            **_mandate_comment_at("2026-09-01T03:00:00Z", comment_id=11),
+            "html_url": "https://github.com/example/project/issues/42#issuecomment-11",
+        },
+    ]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any("finished" in line or line == "idle" for line in lines)
+    assert fake.pr_comments == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = json.loads(
+        (tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert checkpoint["example/project"] == "2026-09-01T03:00:00Z"
+
+
+def test_malformed_pull_comment_entry_is_transient_without_marker_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    malformed_comments = [{
+        "id": 900,
+        "body": "<!-- agent-conflicts:result:v1:7 -->\nEN: done",
+        "user": {"login": "worker-bot", "type": "Bot"},
+        "created_at": "2026-09-01T00:00:00Z",
+        "html_url": "https://github.com/example/project/pull/42#issuecomment-900",
+    }]
+    fake.pr_comments = list(malformed_comments)
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "update time" in line for line in lines)
+    assert fake.pr_comments == malformed_comments
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
 def test_github_branch_protection_unprotected_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2151,6 +2764,124 @@ def test_github_branch_protection_unprotected_continues(
     assert len(fake.pr_comments) == 1
 
 
+def test_protection_turning_on_during_pre_push_checks_blocks_without_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def protection_on(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/branches/" in item for item in argv
+        ):
+            return Completed(0, json.dumps({"name": "feature", "protected": True}), "")
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(store, worker_cfg, runner=protection_on, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "refusing to push protected head ref feature" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_pull_request_closed_during_pre_push_checks_blocks_without_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def closed_after_checks(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/pulls/42" in item for item in argv
+        ):
+            return Completed(0, json.dumps({**fake.pull, "state": "closed"}), "")
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(store, worker_cfg, runner=closed_after_checks, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "pull request is no longer open" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_pull_request_head_moved_during_pre_push_checks_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def moved_head(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/pulls/42" in item for item in argv
+        ):
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        **fake.pull,
+                        "head": {**fake.pull["head"], "sha": "d" * 40},
+                    }
+                ),
+                "",
+            )
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(store, worker_cfg, runner=moved_head, lane_runner=fake.lane)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_pull_request_ref_change_during_pre_push_checks_blocks_without_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def changed_ref(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/pulls/42" in item for item in argv
+        ):
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        **fake.pull,
+                        "head": {**fake.pull["head"], "ref": "other-feature"},
+                    }
+                ),
+                "",
+            )
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(store, worker_cfg, runner=changed_ref, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert "pull request refs or repository changed" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_all_local_git_commands_disable_the_fsmonitor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2161,7 +2892,7 @@ def test_all_local_git_commands_disable_the_fsmonitor(
     local = [
         call
         for call in fake.raw_calls
-        if "git" in call and not {"clone", "fetch", "push", "ls-remote"} & set(call)
+        if "git" in call and not {"clone", "fetch", "push"} & set(call)
     ]
     assert local
     for call in local:
@@ -2200,7 +2931,7 @@ def test_blocked_lane_that_changes_the_index_reports_the_index_blocker(
     assert len(fake.lanes) == 1
     assert len(fake.pr_comments) == 1
     assert "lane changed the index" in fake.pr_comments[0]["body"]
-    assert "A product decision is required." not in fake.pr_comments[0]["body"]
+    assert "Lane note: A product decision is required." in fake.pr_comments[0]["body"]
     assert not any(call[:1] == ["git"] and "push" in call for call in fake.calls)
 
 
@@ -2218,16 +2949,78 @@ def test_lane_timeout_with_changed_index_reports_the_index_blocker(
     assert not any(call[:1] == ["git"] and "push" in call for call in fake.calls)
 
 
-def test_lane_timeout_with_unchanged_state_is_transient(
+def test_lane_timeout_then_success_retries_the_same_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    fake.lane_output = "STATUS: timeout\n"
+    fake.lane_results = ["STATUS: timeout\n", "STATUS: complete\nRESULT: done\n"]
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert len(fake.lanes) == 2
+    second_spec = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "lane-2.md"
+    )
+    assert "lane status was timeout" in second_spec.read_text(encoding="utf-8")
+    assert len(fake.pr_comments) == 1
+    assert any("--force-with-lease" in " ".join(call) for call in fake.raw_calls)
+
+
+def test_lane_timeout_twice_blocks_with_two_starts_and_no_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.lane_results = ["STATUS: timeout\n", "STATUS: timeout\n"]
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.lanes) == 2
+    assert len(fake.pr_comments) == 1
+    assert "lane did not complete" in fake.pr_comments[0]["body"]
+    assert "Failed verification: lane status was timeout" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_lane_unavailable_is_transient_with_one_start_and_no_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.lane_results = ["STATUS: unavailable\n"]
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any(line.startswith("transient:") for line in lines)
+    assert len(fake.lanes) == 1
     assert fake.pr_comments == []
-    assert not any(call[:1] == ["git"] and "push" in call for call in fake.calls)
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_lane_partial_twice_blocks_with_two_starts_and_no_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.lane_results = ["STATUS: partial\n", "STATUS: partial\n"]
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.lanes) == 2
+    assert len(fake.pr_comments) == 1
+    assert "lane did not complete" in fake.pr_comments[0]["body"]
+    assert "Failed verification: lane status was partial" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_malformed_reaction_listing_is_transient_with_no_comment_or_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.reaction_list = [{"content": "eyes", "user": {"login": 7}}]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "reaction author" in line for line in lines)
+    assert fake.pr_comments == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
 
 
 def test_lane_start_failure_after_index_change_blocks_with_index_blocker(
@@ -2281,6 +3074,51 @@ def test_lane_start_failure_with_unchanged_state_is_transient(
     assert any(line.startswith("transient:") for line in lines)
     assert fake.pr_comments == []
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_failed_lane_record_is_visible_and_the_lane_result_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def fail_record(*args: Any, **kwargs: Any) -> str:
+        raise OSError("token=secret-value audit store unavailable")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", fail_record)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert any(line.startswith("lane record not written: ") for line in lines)
+    assert not any("secret-value" in line for line in lines)
+    assert len(fake.pr_comments) == 1
+    assert len(fake.lanes) == 1
+
+
+def test_failed_lane_record_survives_a_later_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.lane_output = "STATUS: complete\nRESULT: blocked\nA product decision is required.\n"
+
+    def unresolved_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        assert fake.clone_path is not None
+        (fake.clone_path / fake.conflict_file).write_text(
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
+            encoding="utf-8",
+        )
+        return completed
+
+    def fail_record(*args: Any, **kwargs: Any) -> str:
+        raise OSError("audit store unavailable")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", fail_record)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=unresolved_lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert any(line == "lane record not written: audit store unavailable" for line in lines)
+    assert len(fake.pr_comments) == 1
 
 
 def test_check_that_appends_to_git_config_blocks_without_git_or_push(
@@ -2338,11 +3176,21 @@ def test_lane_output_with_foreign_absolute_path_is_masked(
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
     monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
     foreign = "/srv/private/worktrees/example__project/pr-42-c7/src/app.py"
+
+    def unresolved_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        assert fake.clone_path is not None
+        (fake.clone_path / fake.conflict_file).write_text(
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
+            encoding="utf-8",
+        )
+        return completed
+
     fake.lane_output = (
         "STATUS: complete\n"
         f"RESULT: blocked\nA product decision is required in {foreign}.\n"
     )
-    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=unresolved_lane)
     rendered = "\n".join(lines)
     logs = "\n".join(
         path.read_text(encoding="utf-8")
@@ -2353,3 +3201,6 @@ def test_lane_output_with_foreign_absolute_path_is_masked(
     assert "/srv/private" not in rendered
     assert "/srv/private" not in logs
     assert any("blocker" in line for line in lines)
+    blocker = fake.pr_comments[0]["body"]
+    assert "Lane note:" in blocker
+    assert "/srv/private" not in blocker
