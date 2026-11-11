@@ -27,7 +27,6 @@ from agent_cli.lane import (
     launch,
     openrouter_argv,
     hide_config_dir,
-    parse_status,
     redact_diagnostic,
     record_lane_run,
     tmux_wrap_argv,
@@ -448,7 +447,6 @@ def test_finalize_lane_output_drops_text_of_a_failed_result(result_fields) -> No
              "usage": {"input_tokens": 5, "output_tokens": 1}, **result_fields}
     out = finalize_lane_output("claude", json.dumps(event), "", cwd="/work")
     assert out.text == ""
-    assert parse_status(out.text, 0) == "partial"
     assert out.usage is not None and out.usage.input_tokens == 5
 
 
@@ -1444,40 +1442,6 @@ def test_launch_openrouter_missing_key_records_stderr_reason(tmp_path: Path) -> 
     )
     assert store.row is not None
     assert store.row["payload"]["final_text"] == reason
-
-
-def test_parse_status_complete() -> None:
-    assert parse_status("hello\nSTATUS: complete\n", 0) == "complete"
-
-
-def test_parse_status_last_line_wins() -> None:
-    assert parse_status("STATUS: complete\nSTATUS: partial\n", 0) == "partial"
-
-
-def test_parse_status_schema_line_not_complete() -> None:
-    assert (
-        parse_status("STATUS: complete | partial | timeout | unavailable", 0) == "partial"
-    )
-
-
-def test_parse_status_completed_suffix_not_complete() -> None:
-    assert parse_status("STATUS: completed\n", 0) == "partial"
-
-
-def test_parse_status_newline_after_colon_not_complete() -> None:
-    assert parse_status("STATUS:\ncomplete\n", 0) == "partial"
-
-
-def test_parse_status_rc_124_timeout() -> None:
-    assert parse_status("no status here", 124) == "timeout"
-
-
-def test_parse_status_rc_nonzero_unavailable() -> None:
-    assert parse_status("no status here", 1) == "unavailable"
-
-
-def test_parse_status_rc_zero_partial() -> None:
-    assert parse_status("no status here", 0) == "partial"
 
 
 def test_launch_requires_config_home_and_session_id(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ never submits a GitHub review approval and never changes draft state.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -557,6 +558,63 @@ def _task_pending_report_activity_ids(
     return sorted(matches)
 
 
+def _report_task_lock(task_id: object) -> str:
+    return f"coordinator-a38-report-task:{task_id}"
+
+
+def _report_checkpoint_state(task: Mapping[str, Any]) -> tuple[Any, ...]:
+    candidate = dict(task)
+    c = coord(candidate)
+    a38 = _a38_state(c)
+    return (
+        c.get("head_sha"),
+        a38.get("pending_base_sha"),
+        a38.get("base_sha"),
+        a38.get("policy_revision"),
+        a38.get("report_intent"),
+    )
+
+
+def _checkpoint_report_context(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    head: str,
+    base_sha: str,
+    policy_revision: str,
+) -> None:
+    """Persist the live report binding before measurement under its task lock."""
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        fresh_c = coord(fresh)
+        fresh_a38 = _a38_state(fresh_c)
+        current_head = str(fresh_c.get("head_sha") or "")
+        if current_head and current_head != head:
+            raise CoordinatorError("A38 report task head changed during measurement")
+        for key, expected in (
+            ("pending_base_sha", base_sha),
+            ("base_sha", base_sha),
+            ("policy_revision", policy_revision),
+        ):
+            current = str(fresh_a38.get(key) or "")
+            if current and current != expected:
+                raise CoordinatorError(
+                    "A38 report task base or policy changed during measurement"
+                )
+        committed_task = copy.deepcopy(fresh)
+        committed_c = coord(committed_task)
+        committed_a38 = _a38_state(committed_c)
+        committed_c["head_sha"] = head
+        if evidence_base_sha(committed_c, a38=True) != base_sha:
+            committed_a38["pending_base_sha"] = base_sha
+        with store.conn.transaction():
+            save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+
+
 def _checkpoint_report_intent(
     store: Store,
     task: dict[str, Any],
@@ -566,9 +624,37 @@ def _checkpoint_report_intent(
     payload: dict[str, Any],
 ) -> None:
     """Atomically save one intent and retire every superseded pending report."""
-    task_lock = f"coordinator-a38-report-task:{task['id']}"
-    with store.exclusive(task_lock):
-        pending_ids = _task_pending_report_activity_ids(store, task)
+    candidate_intent = _a38_state(coord(task)).get("report_intent")
+    if not isinstance(candidate_intent, dict):
+        raise CoordinatorError("A38 report checkpoint intent is missing")
+    expected_head = str(candidate_intent.get("head") or "")
+    expected_base = str(candidate_intent.get("base_sha") or "")
+    expected_policy = str(candidate_intent.get("policy_revision") or "")
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        fresh_c = coord(fresh)
+        fresh_a38 = _a38_state(fresh_c)
+        current_bases = {
+            str(fresh_a38.get(key) or "")
+            for key in ("pending_base_sha", "base_sha")
+            if fresh_a38.get(key)
+        }
+        current_policy = str(fresh_a38.get("policy_revision") or "")
+        if (
+            str(fresh_c.get("head_sha") or "") != expected_head
+            or current_bases != {expected_base}
+            or (current_policy and current_policy != expected_policy)
+        ):
+            raise CoordinatorError(
+                "A38 report task head, base, or policy changed before checkpoint"
+            )
+        committed_task = copy.deepcopy(fresh)
+        _a38_state(coord(committed_task))["report_intent"] = copy.deepcopy(
+            candidate_intent
+        )
+        pending_ids = _task_pending_report_activity_ids(store, committed_task)
         lock_ids = sorted(set((*pending_ids, activity_id)))
         with ExitStack() as locks:
             for pending_id in lock_ids:
@@ -576,7 +662,9 @@ def _checkpoint_report_intent(
                     store.exclusive(a38_report_activity_lock(pending_id))
                 )
             with store.conn.transaction():
-                for pending_id in _task_pending_report_activity_ids(store, task):
+                for pending_id in _task_pending_report_activity_ids(
+                    store, committed_task
+                ):
                     if pending_id == activity_id:
                         continue
                     _retire_pending_report_activity(
@@ -584,7 +672,7 @@ def _checkpoint_report_intent(
                         {"activity_id": pending_id},
                         reason="A38 report activity superseded by the current report intent",
                     )
-                save_task(store, task)
+                save_task(store, committed_task)
                 queue_activity(
                     store,
                     activity_id=activity_id,
@@ -592,22 +680,37 @@ def _checkpoint_report_intent(
                     typ="comment.post",
                     payload=payload,
                 )
+    task.clear()
+    task.update(committed_task)
 
 
 def _discard_report_intent(
     store: Store, task: dict[str, Any], *, reason: str
 ) -> None:
     """Retire a pending report row and its task intent in one transaction."""
-    a38 = _a38_state(coord(task))
-    intent = a38.get("report_intent")
-    if intent is None:
-        return
-    activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
-    lock_key = a38_report_activity_lock(str(activity_id or "missing"))
-    with store.exclusive(lock_key), store.conn.transaction():
-        _retire_pending_report_activity(store, intent, reason=reason)
-        a38.pop("report_intent", None)
-        save_task(store, task)
+    candidate_intent = _a38_state(coord(task)).get("report_intent")
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        fresh_a38 = _a38_state(coord(fresh))
+        intent = fresh_a38.get("report_intent")
+        if intent is None:
+            task.clear()
+            task.update(fresh)
+            return
+        if intent != candidate_intent:
+            raise CoordinatorError("A38 report intent changed before invalidation")
+        activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+        lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+        committed_task = copy.deepcopy(fresh)
+        committed_a38 = _a38_state(coord(committed_task))
+        with store.exclusive(lock_key), store.conn.transaction():
+            _retire_pending_report_activity(store, intent, reason=reason)
+            committed_a38.pop("report_intent", None)
+            save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
 
 
 def phase_tests(
@@ -638,10 +741,12 @@ def phase_tests(
         return ["PR state temporarily unavailable; retrying"]
     c["head_sha"] = head
     _reconcile_pending_base(store, task, base_sha)
+    c = coord(task)
     a38 = _a38_state(c)
     saved_base = evidence_base_sha(c, a38=True)
     if is_sha(saved_base) and saved_base != base_sha:
         invalidate_base_evidence(store, task, base_sha)
+        c = coord(task)
         a38 = _a38_state(c)
     elif saved_base != base_sha:
         a38["pending_base_sha"] = base_sha
@@ -663,6 +768,15 @@ def phase_tests(
             + ", ".join(sorted(unsupported_policy_paths))
         )
     policy_revision = base_sha
+    _checkpoint_report_context(
+        store,
+        task,
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
+    )
+    c = coord(task)
+    a38 = _a38_state(c)
     fetched = git(
         store,
         worker,
@@ -1150,6 +1264,8 @@ def phase_tests(
         session_id=worker.session_id,
         payload=expected_payload,
     )
+    c = coord(task)
+    a38 = _a38_state(c)
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
@@ -2617,20 +2733,32 @@ def invalidate_base_evidence(
     """Drop report/test evidence whose intent was bound to the previous PR base."""
     if not is_sha(base_sha):
         raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
-    c = coord(task)
-    intent = _a38_state(c).get("report_intent")
-    activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
-    lock_key = a38_report_activity_lock(str(activity_id or "missing"))
-    with store.exclusive(lock_key), store.conn.transaction():
-        _retire_pending_report_activity(
-            store,
-            intent,
-            reason="A38 report intent invalidated by a pull request base change",
-        )
-        _drop_base_evidence(c)
-        _a38_state(c)["pending_base_sha"] = base_sha
-        reopen_base_bound_checklist(store, task)
-        save_task(store, task)
+    candidate_state = _report_checkpoint_state(task)
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        if _report_checkpoint_state(fresh) != candidate_state:
+            raise CoordinatorError(
+                "A38 report task changed before base invalidation"
+            )
+        committed_task = copy.deepcopy(fresh)
+        committed_c = coord(committed_task)
+        intent = _a38_state(committed_c).get("report_intent")
+        activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+        lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+        with store.exclusive(lock_key), store.conn.transaction():
+            _retire_pending_report_activity(
+                store,
+                intent,
+                reason="A38 report intent invalidated by a pull request base change",
+            )
+            _drop_base_evidence(committed_c)
+            _a38_state(committed_c)["pending_base_sha"] = base_sha
+            reopen_base_bound_checklist(store, committed_task)
+            save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
 
 
 def _reconcile_pending_base(
@@ -2811,11 +2939,13 @@ def phase_await_ready(
     if (pending_base or is_sha(saved_base)) and not is_sha(observed_base):
         return ["PR state temporarily unavailable; retrying"]
     if pending_base and _reconcile_pending_base(store, task, observed_base):
+        c = coord(task)
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
     if is_sha(saved_base) and observed_base != saved_base:
         invalidate_base_evidence(store, task, observed_base)
+        c = coord(task)
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]

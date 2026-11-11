@@ -1676,6 +1676,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         from .coordinator_a38 import _reconcile_pending_base
 
         if _reconcile_pending_base(store, task, observed_base):
+            c = coord(task)
             c["phase"] = "tests"
             save_task(store, task)
             return [
@@ -1686,6 +1687,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
             from .coordinator_a38 import invalidate_base_evidence
 
             invalidate_base_evidence(store, task, observed_base)
+            c = coord(task)
             c["phase"] = "tests"
             save_task(store, task)
             return ["PR base changed before readiness; invalidating A38 report evidence"]
