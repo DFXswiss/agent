@@ -1101,35 +1101,25 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertIn("Draft instructions", body)
         self.assertIn("Entwurf-Hinweise", body)
-        self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
         self.assertIn(result.standard_url, body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)
         self.assertIn(f"[A38-Qualitätsregeln]({steps})", body)
-        self.assertIn("review record", body)
-        self.assertIn("Review-Nachweis", body)
-        self.assertIn("unless it is waived", body)
-        self.assertIn("sofern er nicht entfällt", body)
-        self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            f"Please follow the steps in the [A38 quality rules]({steps}) "
+            "and leave this pull request in draft.",
             body,
         )
         self.assertIn(
-            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            f"Bitte folge den Schritten in den [A38-Qualitätsregeln]({steps}) "
+            "und lass diesen Pull Request im Draft.",
             body,
         )
-        self.assertIn(
-            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
-            body,
-        )
-        self.assertIn(
-            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
-            body,
-        )
-        self.assertIn("lass den Pull Request im Draft", body)
+        self.assertNotIn("Two review runs are required", body)
+        self.assertNotIn("one_review_authors", body)
+        self.assertNotIn("Thanks for your contribution", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("<details>", body)
@@ -1162,35 +1152,25 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertIn("Draft instructions", body)
         self.assertIn("Entwurf-Hinweise", body)
-        self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
         self.assertIn(result.standard_url, body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)
         self.assertIn(f"[A38-Qualitätsregeln]({steps})", body)
-        self.assertIn("review record", body)
-        self.assertIn("Review-Nachweis", body)
-        self.assertIn("unless it is waived", body)
-        self.assertIn("sofern er nicht entfällt", body)
-        self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            f"Please follow the steps in the [A38 quality rules]({steps}) "
+            "and leave this pull request in draft.",
             body,
         )
         self.assertIn(
-            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            f"Bitte folge den Schritten in den [A38-Qualitätsregeln]({steps}) "
+            "und lass diesen Pull Request im Draft.",
             body,
         )
-        self.assertIn(
-            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
-            body,
-        )
-        self.assertIn(
-            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
-            body,
-        )
-        self.assertIn("lass den Pull Request im Draft", body)
+        self.assertNotIn("Two review runs are required", body)
+        self.assertNotIn("one_review_authors", body)
+        self.assertNotIn("Thanks for your contribution", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("<details>", body)
@@ -1227,35 +1207,25 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertIn("Draft instructions", body)
         self.assertIn("Entwurf-Hinweise", body)
-        self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
         self.assertIn(result.standard_url, body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)
         self.assertIn(f"[A38-Qualitätsregeln]({steps})", body)
-        self.assertIn("review record", body)
-        self.assertIn("Review-Nachweis", body)
-        self.assertIn("unless it is waived", body)
-        self.assertIn("sofern er nicht entfällt", body)
-        self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            f"Please follow the steps in the [A38 quality rules]({steps}) "
+            "and leave this pull request in draft.",
             body,
         )
         self.assertIn(
-            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            f"Bitte folge den Schritten in den [A38-Qualitätsregeln]({steps}) "
+            "und lass diesen Pull Request im Draft.",
             body,
         )
-        self.assertIn(
-            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
-            body,
-        )
-        self.assertIn(
-            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
-            body,
-        )
-        self.assertIn("lass den Pull Request im Draft", body)
+        self.assertNotIn("Two review runs are required", body)
+        self.assertNotIn("one_review_authors", body)
+        self.assertNotIn("Thanks for your contribution", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("<details>", body)
@@ -1993,35 +1963,25 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertIn("Draft instructions", body)
         self.assertIn("Entwurf-Hinweise", body)
-        self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
         self.assertIn(result.standard_url, body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)
         self.assertIn(f"[A38-Qualitätsregeln]({steps})", body)
-        self.assertIn("review record", body)
-        self.assertIn("Review-Nachweis", body)
-        self.assertIn("unless it is waived", body)
-        self.assertIn("sofern er nicht entfällt", body)
-        self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            f"Please follow the steps in the [A38 quality rules]({steps}) "
+            "and leave this pull request in draft.",
             body,
         )
         self.assertIn(
-            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            f"Bitte folge den Schritten in den [A38-Qualitätsregeln]({steps}) "
+            "und lass diesen Pull Request im Draft.",
             body,
         )
-        self.assertIn(
-            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
-            body,
-        )
-        self.assertIn(
-            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
-            body,
-        )
-        self.assertIn("lass den Pull Request im Draft", body)
+        self.assertNotIn("Two review runs are required", body)
+        self.assertNotIn("one_review_authors", body)
+        self.assertNotIn("Thanks for your contribution", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("<details>", body)
@@ -3369,7 +3329,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             "pass: markdown-only change set; A38 report not required",
         )
         self.assertIn("Draft instructions", result.comment_body)
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
         self.assertNotIn("optional for this markdown-only waiver", result.comment_body)
         self.assertNotIn(
             "author local-CI report not required because every changed "
@@ -3391,7 +3354,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         enforce = status_context_enforce("develop")
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertFalse(matching)
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
         self.assertNotIn("optional for this markdown-only waiver", result.comment_body)
         self.assertTrue(any(w == "status:skipped:draft" for w in result.writes))
 
@@ -3420,7 +3386,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             (matching[0].get("description") or "").startswith("review_fail:")
         )
         self.assertIn("review completion comment missing", matching[0]["description"])
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
 
     def test_draft_missing_review_does_not_clear_hard_fail_status(self) -> None:
         fake = FakeAPI()
@@ -3563,7 +3532,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertFalse(result.review_ok)
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
         enforce = status_context_enforce("develop")
         self.assertFalse(
             any(
@@ -3585,7 +3557,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertTrue(result.ok, msg=result.reasons)
         self.assertEqual(result.status, "pass")
         self.assertEqual(result.mode, "observe")
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
         self.assertNotIn("optional for this markdown-only waiver", result.comment_body)
         observe = status_context_observe("develop")
         matching = [s for s in fake.statuses if s.get("context") == observe]
@@ -3765,7 +3740,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             "pass: guard-docs change set; A38 report not required",
         )
         self.assertIn("Draft instructions", result.comment_body)
-        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertIn(
+            "Please follow the steps in the [A38 quality rules]",
+            result.comment_body,
+        )
         self.assertNotIn("optional for this guard-docs waiver", result.comment_body)
         self.assertNotIn(
             "author local-CI report not required because the change set is "
