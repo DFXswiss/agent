@@ -660,6 +660,35 @@ def test_final_mergeable_wait_rejects_changed_head(monkeypatch):
     assert delays == [2.0]
 
 
+def test_final_mergeable_wait_rejects_changed_config(monkeypatch):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["mergeable"] = True
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    delays: list[float] = []
+
+    def fresh_assessment(*args, **kwargs):
+        result = assess_pull(*args, **kwargs)
+        fake.pull["mergeable"] = None
+        return result
+
+    def change_config_during_wait(delay: float) -> None:
+        delays.append(delay)
+        fake.set_pr_guard_config(fake.config, revision=BASE2)
+        fake.ref_commits["develop"] = BASE2
+        fake.pull["mergeable"] = True
+
+    monkeypatch.setattr("agent_cli.a38_guard.assess_pull", fresh_assessment)
+    api._sleep = change_config_during_wait
+    with pytest.raises(GuardError, match="changed before lifecycle transition"):
+        pr_lifecycle.reconcile_lifecycle(api, assessment)
+    assert fake.transitions == []
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert not [w for w in fake.writes if w.startswith("comment:")]
+    assert delays == [2.0]
+
+
 def test_draft_still_unknown_after_mergeable_retries_stays_unchanged():
     baseline_fake = LifecycleAPI()
     baseline_fake.pull["draft"] = True

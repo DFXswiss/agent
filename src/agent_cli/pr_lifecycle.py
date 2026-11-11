@@ -1281,8 +1281,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if target is None or dry_run:
         return result
     # Re-read state/config and CI immediately before changing readiness.
-    final_snap = fetch_pull(api, assessment.repo, assessment.pr)
-    final_config = resolve_trusted_guard_config(api, final_snap)
+    # The mergeable wait comes first, so the snapshot and configuration
+    # below are read after it.
     final_pull = api.get_json(path)
     if target == "ready" and final_pull.get("mergeable") is None:
         final_pull = _await_mergeable(api, path, final_pull)
@@ -1294,6 +1294,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError(
                 "pull or configuration changed before lifecycle transition"
             )
+    final_snap = fetch_pull(api, assessment.repo, assessment.pr)
+    final_config = resolve_trusted_guard_config(api, final_snap)
     if (final_snap != snap or final_config.fingerprint != trusted.fingerprint
             or final_config.config_revision != trusted.config_revision
             or final_pull.get("draft") != pull["draft"]):
