@@ -90,6 +90,19 @@ def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() ->
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/a38-guard.yml").read_text(encoding="utf-8")
     )
+    example = yaml.safe_load(
+        (ROOT / "examples/a38-guard.yml").read_text(encoding="utf-8")
+    )
+    assert "concurrency" not in workflow
+
+    guard_job = workflow["jobs"]["guard"]
+    example_guard_job = example["jobs"]["guard"]
+    assert guard_job["if"] == example_guard_job["if"]
+    assert guard_job["concurrency"] == {
+        "group": example_guard_job["concurrency"]["group"],
+        "cancel-in-progress": False,
+    }
+
     steps = workflow["jobs"]["guard"]["steps"]
 
     app_token_steps = [step for step in steps if step.get("id") == "app-token"]
