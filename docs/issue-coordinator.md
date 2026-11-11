@@ -428,7 +428,9 @@ for worker in workers.values():
    `cancelled`, and pending checks still block. Hard
    protocol faults
    (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
-   pagination truncation — typed `CiObservationProtocolError` /
+   pagination truncation, or any workflow-run entry that is not an object or
+   lacks a valid exact head, workflow path, event, positive id, status,
+   conclusion, or positive attempt — typed `CiObservationProtocolError` /
    `CiInventoryProtocolError`) enter recoverable blocked + `resume_phase=ci` +
    checkpoint; an authorized reply resumes CI once valid evidence is restored.
    Transient observation transport (PR view **or** inventory `gh_json` /
@@ -442,8 +444,12 @@ for worker in workers.values():
    `/logs` archive bytes). Inaccessible logs, including successful fetches with
    empty or whitespace-only output, are a reply-recoverable blocker.
    Transient pending returns without an idle model.
-9. **Ready**: run `readiness_argv` (cwd = worktree, ambient GitHub tokens
-   cleared). Stdout must be the fixed JSON readiness contract below (trusted
+9. **Ready**: first read the live pull-request base. In A38 mode the script
+   reconciles a pending base and invalidates evidence for a moved base before
+   it runs `readiness_argv`; the command runs only when the observed base still
+   matches the promoted evidence base. Then run `readiness_argv` (cwd =
+   worktree, ambient GitHub tokens cleared). Stdout must be the fixed JSON
+   readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
    head, author/base/mergeability, tests, and all four same-head gates. The two
@@ -944,9 +950,15 @@ evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. The verified report intent and its pending comment row become
 visible in one transaction. Under the task-wide report lock, that checkpoint
-reloads the task and rejects it only when another writer changed the head,
-pending or promoted base, policy revision, or report intent from the snapshot
-read at the start of the tick. It then records the newly verified head on the
+reloads the task and rejects it when another writer changed the head, pending
+or promoted base, policy revision, or report intent from the snapshot read at
+the start of the tick. Report publication and inventory-waiver finalisation
+reload that checkpoint under the task lock; publication also holds the
+activity lock and requires the current intent to match the completed activity.
+Only then do the report or waiver, local gate, base promotion, and phase
+transition commit together. Every such conflict reloads the task and retries
+without saving the stale caller row or publishing a blocker. The checkpoint
+then records the newly verified head on the
 fresh row and, when it differs from the promoted evidence base, records the
 observed base as pending. While a base remeasurement is pending,
 `pending_base_sha` is the active checkpoint binding and the previously promoted

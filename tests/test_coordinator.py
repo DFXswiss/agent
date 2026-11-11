@@ -1862,6 +1862,82 @@ def test_ci_inventory_protocol_fault_blocks_with_ci_resume_then_recovers(
     assert "implementer" not in fake.launched
 
 
+@pytest.mark.no_pg
+def test_ci_inventory_rejects_non_object_and_missing_run_fields() -> None:
+    from agent_cli.coordinator_common import CiInventoryProtocolError
+    from agent_cli.coordinator_github import _paginate_workflow_runs
+
+    fake = FakeGh()
+    valid = {
+        "id": 1,
+        "path": ".github/workflows/ci.yml",
+        "event": "pull_request",
+        "head_sha": fake.head,
+        "status": "completed",
+        "conclusion": "failure",
+        "run_attempt": 1,
+    }
+    invalid_entries: list[Any] = ["not-an-object"]
+    for field in (
+        "head_sha",
+        "path",
+        "event",
+        "id",
+        "status",
+        "conclusion",
+        "run_attempt",
+    ):
+        entry = dict(valid)
+        entry.pop(field)
+        invalid_entries.append(entry)
+
+    for entry in invalid_entries:
+        fake.workflow_inventory_body = {
+            "total_count": 1,
+            "workflow_runs": [entry],
+        }
+        with pytest.raises(CiInventoryProtocolError, match="workflow inventory entry"):
+            _paginate_workflow_runs(fake, "example/project", fake.head)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("head_sha", "not-a-sha"),
+        ("head_sha", "c" * 40),
+        ("path", ""),
+        ("event", ""),
+        ("id", 0),
+        ("status", "unknown"),
+        ("conclusion", "unknown"),
+        ("run_attempt", 0),
+    ],
+)
+def test_ci_inventory_rejects_invalid_run_fields(field: str, value: Any) -> None:
+    from agent_cli.coordinator_common import CiInventoryProtocolError
+    from agent_cli.coordinator_github import _paginate_workflow_runs
+
+    fake = FakeGh()
+    entry = {
+        "id": 1,
+        "path": ".github/workflows/ci.yml",
+        "event": "pull_request",
+        "head_sha": fake.head,
+        "status": "completed",
+        "conclusion": "failure",
+        "run_attempt": 1,
+    }
+    entry[field] = value
+    fake.workflow_inventory_body = {
+        "total_count": 1,
+        "workflow_runs": [entry],
+    }
+
+    with pytest.raises(CiInventoryProtocolError, match=f"invalid {field}"):
+        _paginate_workflow_runs(fake, "example/project", fake.head)
+
+
 def test_ci_inventory_transport_failure_retries_same_ci_phase(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -9383,6 +9459,7 @@ def test_a38_new_head_is_checkpointed_on_first_measurement_tick(
         {key: value for key, value in task.items() if not key.startswith("_")},
     )
     fake.head = new_head
+    fake.remotes["origin"] = "https://github.com/example/project.git"
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
         lambda *args, **kwargs: (fake.base, ["README.md"], True, False),
@@ -9400,6 +9477,41 @@ def test_a38_new_head_is_checkpointed_on_first_measurement_tick(
     assert saved["a38"]["report_waiver"]["head"] == new_head
     assert saved["a38"]["base_sha"] == fake.base
     assert "pending_base_sha" not in saved["a38"]
+
+
+def test_a38_readiness_invalidates_moved_base_before_running_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "readiness"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    moved_base = "c" * 40
+    fake.pr["baseRefOid"] = moved_base
+    monkeypatch.setattr(
+        coordinator_github,
+        "_readiness_for_head",
+        lambda *_args, **_kwargs: pytest.fail(
+            "readiness command ran before A38 base reconciliation"
+        ),
+    )
+
+    lines = phase_readiness(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert lines == [
+        "PR base changed before readiness; invalidating A38 report evidence"
+    ]
+    assert saved["phase"] == "tests"
+    assert saved["a38"]["pending_base_sha"] == moved_base
+    assert "report" not in saved["a38"]
 
 
 @pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
@@ -13734,6 +13846,7 @@ def test_a38_report_intent_retires_only_superseded_coordinator_reports(
     coordinator_a38._checkpoint_report_intent(
         store,
         task,
+        expected_intent=None,
         activity_id=current_id,
         session_id="worker-session",
         payload=current_payload,
@@ -13837,6 +13950,7 @@ def test_a38_stale_report_checkpoint_cannot_overwrite_newer_base_invalidation(
     coordinator_a38._checkpoint_report_intent(
         store,
         current,
+        expected_intent=None,
         activity_id=new_activity_id,
         session_id="worker-session",
         payload=current_payload,
@@ -13844,11 +13958,12 @@ def test_a38_stale_report_checkpoint_cannot_overwrite_newer_base_invalidation(
 
     with pytest.raises(
         coordinator_a38.A38ReportCheckpointConflict,
-        match="head, base, or policy changed",
+        match="head, base, policy, or intent changed",
     ):
         coordinator_a38._checkpoint_report_intent(
             store,
             stale,
+            expected_intent=None,
             activity_id=old_activity_id,
             session_id="worker-session",
             payload=stale_payload,
@@ -13859,6 +13974,100 @@ def test_a38_stale_report_checkpoint_cannot_overwrite_newer_base_invalidation(
     assert saved["report_intent"]["activity_id"] == new_activity_id
     assert store.row("activity", new_activity_id)["execution_status"] == "pending"
     assert store.row("activity", old_activity_id) is None
+
+
+def test_a38_report_checkpoint_rejects_concurrent_same_context_intent(
+    tmp_path: Path,
+) -> None:
+    import hashlib
+
+    from agent_cli import coordinator_a38
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    tid = "aa000001-0000-4000-8000-000000000231"
+    head = "a" * 40
+    base = "b" * 40
+    previous_intent = {
+        "head": head,
+        "base_sha": base,
+        "policy_revision": base,
+        "activity_id": "aa000001-0000-4000-8000-000000000232",
+        "body_sha256": "c" * 64,
+        "private": True,
+    }
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "ref": "42",
+        "workflow": "implement",
+        "state": "local-check",
+        "payload": {
+            "coordinator": {
+                "source": {"repo": "example/project"},
+                "pr_number": 42,
+                "head_sha": head,
+                "a38": {
+                    "pending_base_sha": base,
+                    "report_intent": previous_intent,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    stale = store.row("task", tid)
+    stale_body = "stale report"
+    stale_digest = hashlib.sha256(stale_body.encode()).hexdigest()
+    stale_intent = {
+        **previous_intent,
+        "activity_id": "aa000001-0000-4000-8000-000000000233",
+        "body_sha256": stale_digest,
+    }
+    stale["payload"]["coordinator"]["a38"]["report_intent"] = stale_intent
+    stale_payload = coordinator_a38._report_activity_payload(
+        stale,
+        repo="example/project",
+        number=42,
+        body=stale_body,
+        head=head,
+        base_sha=base,
+        policy_revision=base,
+        body_sha256=stale_digest,
+        private=True,
+    )
+    current = store.row("task", tid)
+    current_intent = {
+        **previous_intent,
+        "activity_id": "aa000001-0000-4000-8000-000000000234",
+        "body_sha256": "d" * 64,
+    }
+    current["payload"]["coordinator"]["a38"]["report_intent"] = current_intent
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in current.items() if not key.startswith("_")},
+    )
+
+    with pytest.raises(
+        coordinator_a38.A38ReportCheckpointConflict,
+        match="intent changed",
+    ):
+        coordinator_a38._checkpoint_report_intent(
+            store,
+            stale,
+            expected_intent=previous_intent,
+            activity_id=stale_intent["activity_id"],
+            session_id="worker-session",
+            payload=stale_payload,
+        )
+
+    saved_intent = store.row("task", tid)["payload"]["coordinator"]["a38"][
+        "report_intent"
+    ]
+    assert saved_intent == current_intent
+    assert store.row("activity", stale_intent["activity_id"]) is None
 
 
 def test_a38_report_context_conflict_reloads_and_retries_without_stale_save_or_blocker(
@@ -13989,6 +14198,350 @@ def test_a38_report_context_conflict_reloads_and_retries_without_stale_save_or_b
     assert saved_a38["report_intent"]["activity_id"] == new_activity_id
     assert "blocker" not in saved["payload"]["coordinator"]
     assert stale["payload"]["coordinator"]["a38"] == saved_a38
+
+
+@pytest.mark.parametrize("conflict_kind", ["discard", "base-invalidation"])
+def test_a38_invalidation_conflict_reloads_without_stale_save_or_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    conflict_kind: str,
+) -> None:
+    from agent_cli import coordinator_a38, coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-000000000235"
+    head = "a" * 40
+    base = "b" * 40
+    old_intent = {
+        "head": head,
+        "base_sha": base,
+        "policy_revision": base,
+        "activity_id": "aa000001-0000-4000-8000-000000000236",
+        "body_sha256": "c" * 64,
+        "private": True,
+    }
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "local-check",
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "source": {"repo": "example/project", "number": 7},
+                "head_sha": head,
+                "a38": {
+                    "pending_base_sha": base,
+                    "report_intent": old_intent,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    stale = store.row("task", tid)
+    monkeypatch.setattr(coordinator_runtime, "_open_tasks", lambda *_args: [stale])
+    monkeypatch.setattr(
+        coordinator_runtime, "reconcile_rejection_review_intents", lambda *_args: []
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_execution_binding", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "_verify_source_assigned", lambda *_args: None
+    )
+
+    def conflict_on_invalidation(
+        store_arg: Store,
+        _worker: Any,
+        stale_task: dict[str, Any],
+        _runner: Any,
+    ) -> list[str]:
+        fresh = store_arg.row("task", tid)
+        fresh_a38 = fresh["payload"]["coordinator"]["a38"]
+        if conflict_kind == "discard":
+            fresh_a38["report_intent"] = {
+                **old_intent,
+                "activity_id": "aa000001-0000-4000-8000-000000000237",
+            }
+            store_arg.write(
+                "task",
+                "update",
+                tid,
+                {key: value for key, value in fresh.items() if not key.startswith("_")},
+            )
+        else:
+            coordinator_a38.invalidate_base_evidence(
+                store_arg, fresh, "d" * 40
+            )
+        if conflict_kind == "discard":
+            coordinator_a38._discard_report_intent(
+                store_arg, stale_task, reason="stale invalidation"
+            )
+        else:
+            coordinator_a38.invalidate_base_evidence(
+                store_arg, stale_task, "e" * 40
+            )
+        raise AssertionError("invalidation conflict was not raised")
+
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_tests", conflict_on_invalidation
+    )
+    saves: list[str] = []
+    blockers: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "save_task",
+        lambda *_args, **_kwargs: saves.append("saved"),
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "publish_blocker",
+        lambda *_args, **_kwargs: blockers.append("published") or ["blocked"],
+    )
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    assert lines == ["A38 report checkpoint changed concurrently; retrying"]
+    assert saves == []
+    assert blockers == []
+    saved_a38 = store.row("task", tid)["payload"]["coordinator"]["a38"]
+    if conflict_kind == "discard":
+        assert saved_a38["report_intent"]["activity_id"].endswith("237")
+    else:
+        assert saved_a38["pending_base_sha"] == "d" * 40
+        assert "report_intent" not in saved_a38
+
+
+def test_a38_report_finalization_rejects_retired_published_intent(
+    tmp_path: Path,
+) -> None:
+    import hashlib
+
+    from agent_cli import coordinator_a38
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-000000000238"
+    activity_id = "aa000001-0000-4000-8000-000000000239"
+    head = "a" * 40
+    base = "b" * 40
+    body = "published report"
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    intent = {
+        "head": head,
+        "base_sha": base,
+        "policy_revision": base,
+        "activity_id": activity_id,
+        "body_sha256": digest,
+        "private": True,
+    }
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": "42",
+        "workflow": "implement",
+        "state": "local-check",
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "source": {"repo": "example/project"},
+                "pr_number": 42,
+                "head_sha": head,
+                "a38": {"pending_base_sha": base, "report_intent": intent},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "checklist_item",
+        "insert",
+        f"{tid}-local",
+        {
+            "id": f"{tid}-local",
+            "task_id": tid,
+            "key": "local_check_pass",
+            "status": "pending",
+            "evidence": None,
+            "source": "script",
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    store.write(
+        "local_check",
+        "insert",
+        f"{tid}-check",
+        {
+            "id": f"{tid}-check",
+            "task_id": tid,
+            "name": "a38",
+            "command": "agent a38 run",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": head,
+        },
+    )
+    payload = coordinator_a38._report_activity_payload(
+        task,
+        repo="example/project",
+        number=42,
+        body=body,
+        head=head,
+        base_sha=base,
+        policy_revision=base,
+        body_sha256=digest,
+        private=True,
+    )
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": payload,
+            "execution_status": "done",
+            "result": {
+                "id": 99,
+                "url": "https://github.com/example/project/pull/42#issuecomment-99",
+            },
+        },
+    )
+    stale = store.row("task", tid)
+    expected_state = coordinator_a38._report_checkpoint_state(stale)
+    fresh = store.row("task", tid)
+    fresh["payload"]["coordinator"]["a38"]["report_intent"] = {
+        **intent,
+        "activity_id": "aa000001-0000-4000-8000-000000000240",
+    }
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in fresh.items() if not key.startswith("_")},
+    )
+
+    with pytest.raises(
+        coordinator_a38.A38ReportCheckpointConflict,
+        match="intent changed before finalization",
+    ):
+        coordinator_a38._finalize_report_evidence(
+            store,
+            worker,
+            stale,
+            expected_state=expected_state,
+            head=head,
+            base_sha=base,
+            policy_revision=base,
+            live_state="OPEN",
+            activity_id=activity_id,
+        )
+
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["a38"]["report_intent"]["activity_id"].endswith("240")
+    assert "report" not in saved["a38"]
+    assert "base_sha" not in saved["a38"]
+    local_item = store.row("checklist_item", f"{tid}-local")
+    assert local_item["status"] == "pending"
+
+
+def test_a38_waiver_finalization_rejects_concurrent_report_intent(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-000000000241"
+    head = "a" * 40
+    base = "b" * 40
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": "42",
+        "workflow": "implement",
+        "state": "local-check",
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "source": {"repo": "example/project"},
+                "pr_number": 42,
+                "head_sha": head,
+                "a38": {"pending_base_sha": base},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "checklist_item",
+        "insert",
+        f"{tid}-local",
+        {
+            "id": f"{tid}-local",
+            "task_id": tid,
+            "key": "local_check_pass",
+            "status": "pending",
+            "evidence": None,
+            "source": "script",
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    stale = store.row("task", tid)
+    expected_state = coordinator_a38._report_checkpoint_state(stale)
+    fresh = store.row("task", tid)
+    fresh["payload"]["coordinator"]["a38"]["report_intent"] = {
+        "head": head,
+        "base_sha": base,
+        "policy_revision": base,
+        "activity_id": "aa000001-0000-4000-8000-000000000242",
+        "body_sha256": "c" * 64,
+        "private": True,
+    }
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in fresh.items() if not key.startswith("_")},
+    )
+
+    with pytest.raises(
+        coordinator_a38.A38ReportCheckpointConflict,
+        match="intent changed before finalization",
+    ):
+        coordinator_a38._finalize_report_evidence(
+            store,
+            worker,
+            stale,
+            expected_state=expected_state,
+            head=head,
+            base_sha=base,
+            policy_revision=base,
+            live_state="OPEN",
+            waiver_reason="markdown-only change set",
+        )
+
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["a38"]["report_intent"]["activity_id"].endswith("242")
+    assert "report_waiver" not in saved["a38"]
+    assert "base_sha" not in saved["a38"]
+    assert not [
+        row
+        for row in store.rows("local_check")
+        if row.get("task_id") == tid
+    ]
+    assert store.row("checklist_item", f"{tid}-local")["status"] == "pending"
 
 
 def test_unavailable_inner_reviewer_commits_provider_incomplete_checkpoint(

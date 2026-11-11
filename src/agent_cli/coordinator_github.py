@@ -840,6 +840,59 @@ def _rollup_state(check: dict[str, Any]) -> str:
     return ""
 
 
+_WORKFLOW_RUN_STATUSES = CI_PENDING | frozenset({"completed"})
+_WORKFLOW_RUN_CONCLUSIONS = CI_ACTION_REQUIRED | CI_SUCCESS | frozenset(
+    {
+        "cancelled",
+        "failure",
+        "neutral",
+        "skipped",
+        "stale",
+        "startup_failure",
+        "timed_out",
+    }
+)
+
+
+def _validate_workflow_run(item: Any, head: str) -> dict[str, Any]:
+    """Validate one exact-head Actions inventory row before classification."""
+    if not isinstance(item, dict):
+        raise CiInventoryProtocolError("workflow inventory entry is not an object")
+    run_head = item.get("head_sha")
+    path = item.get("path")
+    event = item.get("event")
+    run_id = item.get("id")
+    status = item.get("status")
+    conclusion = item.get("conclusion")
+    attempt = item.get("run_attempt")
+    if (
+        not isinstance(run_head, str)
+        or not is_sha(run_head)
+        or run_head.lower() != head.lower()
+    ):
+        raise CiInventoryProtocolError("workflow inventory entry has invalid head_sha")
+    if not isinstance(path, str) or not path.strip():
+        raise CiInventoryProtocolError("workflow inventory entry has invalid path")
+    if not isinstance(event, str) or not event.strip():
+        raise CiInventoryProtocolError("workflow inventory entry has invalid event")
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid id")
+    if not isinstance(status, str) or status not in _WORKFLOW_RUN_STATUSES:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid status")
+    if "conclusion" not in item:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid conclusion")
+    if status == "completed":
+        if not isinstance(conclusion, str) or conclusion not in _WORKFLOW_RUN_CONCLUSIONS:
+            raise CiInventoryProtocolError(
+                "workflow inventory entry has invalid conclusion"
+            )
+    elif conclusion is not None:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid conclusion")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid run_attempt")
+    return item
+
+
 def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[str, Any]]:
     """Paginate Actions runs for an exact head; fail closed on truncation/unknown shape.
 
@@ -871,8 +924,7 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
         if not isinstance(batch, list):
             raise CiInventoryProtocolError("workflow inventory missing workflow_runs")
         for item in batch:
-            if isinstance(item, dict):
-                runs.append(item)
+            runs.append(_validate_workflow_run(item, head))
         total = as_int(raw.get("total_count"))
         if total is not None and len(runs) >= total:
             break
@@ -1143,22 +1195,19 @@ def _observe_exact_head_ci(
 def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dict[str, Any]]:
     """Disambiguate by workflow path + event; keep highest attempt/id per key."""
     latest: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        if str(run.get("head_sha") or "").lower() != head.lower():
-            continue
-        path = run.get("path")
-        event = run.get("event") or ""
-        if not isinstance(path, str) or not path:
-            continue
+    for item in runs:
+        run = _validate_workflow_run(item, head)
+        path = run["path"]
+        event = run["event"]
         key = f"{path}|{event}"
         prev = latest.get(key)
-        run_attempt = as_int(run.get("run_attempt")) or 0
-        run_id = as_int(run.get("id")) or 0
+        run_attempt = run["run_attempt"]
+        run_id = run["id"]
         if prev is None:
             latest[key] = run
             continue
-        prev_attempt = as_int(prev.get("run_attempt")) or 0
-        prev_id = as_int(prev.get("id")) or 0
+        prev_attempt = prev["run_attempt"]
+        prev_id = prev["id"]
         if run_attempt > prev_attempt or (run_attempt == prev_attempt and run_id > prev_id):
             latest[key] = run
     return latest
@@ -1630,6 +1679,50 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head changed before readiness"]
 
+    target = target_repo(task)
+    number = as_int(c.get("pr_number"))
+    if number is None:
+        raise CoordinatorError("readiness requires PR number")
+    scoped_runner = scoped(store, worker.session_id, runner)
+    if worker.a38:
+        try:
+            before_readiness = _fetch_pr_json(
+                scoped_runner,
+                target,
+                number,
+                "headRefOid,baseRefOid",
+            )
+        except CiObservationTransportError:
+            c["phase"] = "readiness"
+            save_task(store, task)
+            return [
+                f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"
+            ]
+        if not isinstance(before_readiness, dict):
+            raise CoordinatorError("PR view failed")
+        if str(before_readiness.get("headRefOid") or "").lower() != head:
+            raise CoordinatorError("PR head does not match clean signed head")
+        observed_base = str(before_readiness.get("baseRefOid") or "").lower()
+        from .coordinator_a38 import _reconcile_pending_base, invalidate_base_evidence
+
+        if _reconcile_pending_base(store, task, observed_base):
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return [
+                "PR base changed before readiness; invalidating A38 report evidence"
+            ]
+        a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+        promoted_base = str(a38_state.get("base_sha") or "").lower()
+        if not is_sha(promoted_base) or observed_base != promoted_base:
+            invalidate_base_evidence(store, task, observed_base)
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return [
+                "PR base changed before readiness; invalidating A38 report evidence"
+            ]
+
     base_sha = evidence_base_sha(c, a38=worker.a38)
     readiness = _readiness_for_head(
         worker,
@@ -1648,11 +1741,6 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head modified by readiness; invalidating evidence"]
 
-    target = target_repo(task)
-    number = as_int(c.get("pr_number"))
-    if number is None:
-        raise CoordinatorError("readiness requires PR number")
-    scoped_runner = scoped(store, worker.session_id, runner)
     try:
         pr = _fetch_pr_json(
             scoped_runner,
@@ -1682,8 +1770,9 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
             return [
                 "PR base changed before readiness; invalidating A38 report evidence"
             ]
-        saved_base = evidence_base_sha(c, a38=True)
-        if is_sha(saved_base) and observed_base != saved_base:
+        a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+        promoted_base = str(a38_state.get("base_sha") or "").lower()
+        if not is_sha(promoted_base) or observed_base != promoted_base:
             from .coordinator_a38 import invalidate_base_evidence
 
             invalidate_base_evidence(store, task, observed_base)
