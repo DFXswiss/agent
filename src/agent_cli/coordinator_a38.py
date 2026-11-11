@@ -617,6 +617,7 @@ def _checkpoint_report_intent(
     store: Store,
     task: dict[str, Any],
     *,
+    expected_intent: Any,
     activity_id: str,
     session_id: str,
     payload: dict[str, Any],
@@ -640,9 +641,10 @@ def _checkpoint_report_intent(
             str(fresh_c.get("head_sha") or "") != expected_head
             or active_base != expected_base
             or (current_policy and current_policy != expected_policy)
+            or fresh_a38.get("report_intent") != expected_intent
         ):
             raise A38ReportCheckpointConflict(
-                "A38 report task head, base, or policy changed before checkpoint"
+                "A38 report task head, base, policy, or intent changed before checkpoint"
             )
         committed_task = copy.deepcopy(fresh)
         _a38_state(coord(committed_task))["report_intent"] = copy.deepcopy(
@@ -689,12 +691,14 @@ def _discard_report_intent(
             raise CoordinatorError("A38 report task no longer exists")
         fresh_a38 = _a38_state(coord(fresh))
         intent = fresh_a38.get("report_intent")
+        if intent != candidate_intent:
+            raise A38ReportCheckpointConflict(
+                "A38 report intent changed before invalidation"
+            )
         if intent is None:
             task.clear()
             task.update(fresh)
             return
-        if intent != candidate_intent:
-            raise CoordinatorError("A38 report intent changed before invalidation")
         activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
         lock_key = a38_report_activity_lock(str(activity_id or "missing"))
         committed_task = copy.deepcopy(fresh)
@@ -702,6 +706,150 @@ def _discard_report_intent(
         with store.exclusive(lock_key), store.conn.transaction():
             _retire_pending_report_activity(store, intent, reason=reason)
             committed_a38.pop("report_intent", None)
+            save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+
+
+def _finalize_report_evidence(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    *,
+    expected_state: tuple[Any, ...],
+    head: str,
+    base_sha: str,
+    policy_revision: str,
+    live_state: str | None,
+    activity_id: str | None = None,
+    waiver_reason: str | None = None,
+    coordinator_check_command: str | None = None,
+) -> None:
+    """Commit published-report or waiver evidence against one fresh checkpoint."""
+    if (activity_id is None) == (waiver_reason is None):
+        raise CoordinatorError("A38 finalization requires exactly one report or waiver")
+    expected_intent = expected_state[-1]
+    lock_key = a38_report_activity_lock(
+        str(activity_id or f"waiver:{task['id']}")
+    )
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        fresh_a38 = _a38_state(coord(fresh))
+        if (
+            _report_checkpoint_state(fresh) != expected_state
+            or fresh_a38.get("report_intent") != expected_intent
+        ):
+            raise A38ReportCheckpointConflict(
+                "A38 report task or intent changed before finalization"
+            )
+
+        committed_task = copy.deepcopy(fresh)
+        committed_c = coord(committed_task)
+        committed_a38 = _a38_state(committed_c)
+        with store.exclusive(lock_key), store.conn.transaction():
+            if activity_id is not None:
+                activity = store.row("activity", activity_id)
+                payload = activity.get("payload") if isinstance(activity, dict) else None
+                binding = (
+                    payload.get(A38_REPORT_BINDING_KEY)
+                    if isinstance(payload, dict)
+                    else None
+                )
+                result = activity.get("result") if isinstance(activity, dict) else None
+                if (
+                    not isinstance(expected_intent, dict)
+                    or expected_intent.get("activity_id") != activity_id
+                    or not isinstance(activity, dict)
+                    or not _own_report_activity(
+                        store, worker, committed_task, activity, head
+                    )
+                    or activity.get("execution_status") != "done"
+                    or not isinstance(binding, dict)
+                    or binding
+                    != {
+                        "task_id": str(committed_task["id"]),
+                        "head": head,
+                        "base_sha": base_sha,
+                        "policy_revision": policy_revision,
+                        "body_sha256": expected_intent.get("body_sha256"),
+                        "private": expected_intent.get("private"),
+                    }
+                    or not isinstance(result, dict)
+                    or not isinstance(result.get("url"), str)
+                    or not result["url"]
+                ):
+                    raise A38ReportCheckpointConflict(
+                        "published A38 report activity no longer matches its intent"
+                    )
+                committed_a38.pop("report_waiver", None)
+                committed_a38["report"] = {
+                    "head": head,
+                    "base_sha": base_sha,
+                    "policy_revision": policy_revision,
+                    "activity_id": activity_id,
+                    "id": result.get("id"),
+                    "url": result["url"],
+                }
+                evidence = committed_c.setdefault("evidence", {})
+                if isinstance(evidence, dict):
+                    evidence.pop("tests_waiver", None)
+                    evidence["tests_pass"] = True
+                    evidence["tests_head"] = head
+                checklist_evidence = f"A38 pass on {head}"
+            else:
+                assert waiver_reason is not None
+                committed_a38.pop("report", None)
+                committed_a38["report_waiver"] = {
+                    "head": head,
+                    "base_sha": base_sha,
+                    "policy_revision": policy_revision,
+                    "reason": waiver_reason,
+                    "observed_at": utcnow(),
+                }
+                _record_local_check(
+                    store,
+                    committed_task,
+                    name="a38",
+                    command="A38 author report waiver",
+                    passed=None,
+                    output=waiver_reason,
+                    head=head,
+                )
+                if coordinator_check_command is not None:
+                    _record_local_check(
+                        store,
+                        committed_task,
+                        name="coordinator-check",
+                        command=coordinator_check_command,
+                        passed=None,
+                        output=f"skipped by A38 inventory waiver: {waiver_reason}",
+                        head=head,
+                    )
+                evidence = committed_c.setdefault("evidence", {})
+                if isinstance(evidence, dict):
+                    evidence.pop("tests_pass", None)
+                    evidence["tests_waiver"] = waiver_reason
+                    evidence["tests_head"] = head
+                checklist_evidence = f"A38 waiver on {head}: {waiver_reason}"
+
+            set_checklist(
+                store,
+                committed_task,
+                "local_check_pass",
+                "ja",
+                checklist_evidence,
+                source="script",
+            )
+            _promote_base_evidence(
+                store, committed_task, head=head, base_sha=base_sha
+            )
+            if live_state in ("MERGED", "CLOSED"):
+                committed_c["phase"] = "await_merge"
+            else:
+                committed_c["phase"] = "pr_gates_grok"
+                committed_task["state"] = "pr-review"
             save_task(store, committed_task)
     task.clear()
     task.update(committed_task)
@@ -804,52 +952,23 @@ def phase_tests(
             reason="A38 report intent replaced by an inventory waiver",
         )
         c = coord(task)
-        a38 = _a38_state(c)
-        a38.pop("report", None)
-        a38["report_waiver"] = {
-            "head": head,
-            "base_sha": base_sha,
-            "policy_revision": policy_revision,
-            "reason": waiver_reason,
-            "observed_at": utcnow(),
-        }
-        _record_local_check(
-            store,
-            task,
-            name="a38",
-            command="A38 author report waiver",
-            passed=None,
-            output=waiver_reason,
-            head=head,
-        )
-        if cfg.check_argv:
-            _record_local_check(
-                store,
-                task,
-                name="coordinator-check",
-                command=check_label(c, cfg),
-                passed=None,
-                output=f"skipped by A38 inventory waiver: {waiver_reason}",
-                head=head,
-            )
-        evidence = c.setdefault("evidence", {})
-        if isinstance(evidence, dict):
-            evidence.pop("tests_pass", None)
-            evidence["tests_waiver"] = waiver_reason
-            evidence["tests_head"] = head
-        set_checklist(
-            store,
-            task,
-            "local_check_pass",
-            "ja",
-            f"A38 waiver on {head}: {waiver_reason}",
-            source="script",
-        )
-        _promote_base_evidence(store, task, head=head, base_sha=base_sha)
+        finalization_state = copy.deepcopy(_report_checkpoint_state(task))
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
-            c["phase"] = "await_merge"
-            save_task(store, task)
+            _finalize_report_evidence(
+                store,
+                worker,
+                task,
+                expected_state=finalization_state,
+                head=head,
+                base_sha=base_sha,
+                policy_revision=policy_revision,
+                live_state=live_state,
+                waiver_reason=waiver_reason,
+                coordinator_check_command=(
+                    check_label(c, cfg) if cfg.check_argv else None
+                ),
+            )
             return [
                 f"PR {live_state.lower()} during the A38 inventory waiver; "
                 "verifying the merge"
@@ -868,9 +987,18 @@ def phase_tests(
                 f"draft PR {c.get('pr_number')} head {head}",
                 source="script",
             )
-        c["phase"] = "pr_gates_grok"
-        task["state"] = "pr-review"
-        save_task(store, task)
+        _finalize_report_evidence(
+            store,
+            worker,
+            task,
+            expected_state=finalization_state,
+            head=head,
+            base_sha=base_sha,
+            policy_revision=policy_revision,
+            live_state=live_state,
+            waiver_reason=waiver_reason,
+            coordinator_check_command=(check_label(c, cfg) if cfg.check_argv else None),
+        )
         return [f"A38 report waived on {head[:7]} ({waiver_reason})", *draft_lines]
     a38.pop("report_waiver", None)
     evidence = c.get("evidence")
@@ -999,27 +1127,18 @@ def phase_tests(
             or not result["url"]
         ):
             raise CoordinatorError("A38 report comment was not verified published")
-        a38["report"] = {
-            "head": head,
-            "base_sha": base_sha,
-            "policy_revision": policy_revision,
-            "activity_id": activity_id,
-            "id": result.get("id"),
-            "url": result["url"],
-        }
-        evidence = c.setdefault("evidence", {})
-        if isinstance(evidence, dict):
-            evidence["tests_pass"] = True
-            evidence["tests_head"] = head
-        set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
-        _promote_base_evidence(store, task, head=head, base_sha=base_sha)
         live_state = pr_state(store, worker, task, runner)
-        if live_state in ("MERGED", "CLOSED"):
-            c["phase"] = "await_merge"
-        else:
-            c["phase"] = "pr_gates_grok"
-            task["state"] = "pr-review"
-        save_task(store, task)
+        _finalize_report_evidence(
+            store,
+            worker,
+            task,
+            expected_state=copy.deepcopy(_report_checkpoint_state(task)),
+            head=head,
+            base_sha=base_sha,
+            policy_revision=policy_revision,
+            live_state=live_state,
+            activity_id=activity_id,
+        )
         if live_state in ("MERGED", "CLOSED"):
             return [
                 f"A38 report already posted on {head[:7]}; "
@@ -1240,6 +1359,7 @@ def phase_tests(
                 or fallback.get("payload") != expected_payload
             ):
                 raise CoordinatorError("verified A38 report activity id is occupied")
+    previous_intent = copy.deepcopy(a38.get("report_intent"))
     a38["report_intent"] = {
         "head": head,
         "base_sha": base_sha,
@@ -1254,12 +1374,11 @@ def phase_tests(
     _checkpoint_report_intent(
         store,
         task,
+        expected_intent=previous_intent,
         activity_id=activity_id,
         session_id=worker.session_id,
         payload=expected_payload,
     )
-    c = coord(task)
-    a38 = _a38_state(c)
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
@@ -1267,26 +1386,17 @@ def phase_tests(
     result = row.get("result") if isinstance(row.get("result"), dict) else {}
     if not isinstance(result.get("url"), str) or not result["url"]:
         raise CoordinatorError("A38 report comment URL was not verified")
-    a38["report"] = {
-        "head": head,
-        "base_sha": base_sha,
-        "policy_revision": policy_revision,
-        "activity_id": activity_id,
-        "id": result.get("id"),
-        "url": result.get("url"),
-    }
-    evidence = c.setdefault("evidence", {})
-    if isinstance(evidence, dict):
-        evidence["tests_pass"] = True
-        evidence["tests_head"] = head
-    set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
-    _promote_base_evidence(store, task, head=head, base_sha=base_sha)
-    if live_state in ("MERGED", "CLOSED"):
-        c["phase"] = "await_merge"
-    else:
-        c["phase"] = "pr_gates_grok"
-        task["state"] = "pr-review"
-    save_task(store, task)
+    _finalize_report_evidence(
+        store,
+        worker,
+        task,
+        expected_state=copy.deepcopy(_report_checkpoint_state(task)),
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
+        live_state=live_state,
+        activity_id=activity_id,
+    )
     if live_state in ("MERGED", "CLOSED"):
         return [
             f"A38 passed and report posted on {head[:7]}; "
@@ -2733,7 +2843,7 @@ def invalidate_base_evidence(
         if fresh is None:
             raise CoordinatorError("A38 report task no longer exists")
         if _report_checkpoint_state(fresh) != candidate_state:
-            raise CoordinatorError(
+            raise A38ReportCheckpointConflict(
                 "A38 report task changed before base invalidation"
             )
         committed_task = copy.deepcopy(fresh)
