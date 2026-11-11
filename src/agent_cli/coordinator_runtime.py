@@ -625,7 +625,12 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                 pages = search_result
             else:
                 raise CoordinatorError("owner issue search returned no page object")
-            found: list[Any] = []
+            if not pages:
+                raise CoordinatorError(
+                    "owner issue search returned incomplete results (no pages)"
+                )
+            found: list[tuple[dict[str, Any], str]] = []
+            identities: set[str] = set()
             total_count = 0
             for page in pages:
                 if page.get("incomplete_results") is True:
@@ -637,28 +642,54 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                 items = page.get("items")
                 if not isinstance(items, list):
                     raise CoordinatorError("owner issue search page has no items array")
-                found.extend(items)
-            if total_count > len(found):
+                for issue in items:
+                    if not isinstance(issue, dict):
+                        raise CoordinatorError(
+                            "owner issue search returned incomplete results "
+                            "(malformed issue identity)"
+                        )
+                    repository_url = issue.get("repository_url")
+                    match = re.fullmatch(
+                        r"https://api\.github\.com/repos/([^/]+)/([^/]+)",
+                        str(repository_url or ""),
+                    )
+                    number = as_int(issue.get("number"))
+                    if match is None or number is None or number <= 0:
+                        raise CoordinatorError(
+                            "owner issue search returned incomplete results "
+                            "(malformed issue identity)"
+                        )
+                    repo = f"{match.group(1)}/{match.group(2)}"
+                    identity = source_key(repo, number)
+                    if identity in identities:
+                        raise CoordinatorError(
+                            "owner issue search returned incomplete results "
+                            f"(duplicate issue identity {identity})"
+                        )
+                    identities.add(identity)
+                    found.append((issue, repo))
+            if total_count > len(identities):
                 raise CoordinatorError(
-                    f"owner issue search was truncated ({len(found)} of {total_count} results)"
+                    "owner issue search was truncated "
+                    f"({len(identities)} of {total_count} results)"
+                )
+            if total_count < len(identities):
+                raise CoordinatorError(
+                    "owner issue search returned incomplete results "
+                    f"({len(identities)} unique identities exceed total_count {total_count})"
                 )
         except CoordinatorError as exc:
             lines.append(f"discover owner {owner}: {redact(str(exc))}")
             continue
-        for issue in found:
-            if not isinstance(issue, dict) or str(issue.get("state") or "").casefold() != "open":
+        for issue, repo in found:
+            if str(issue.get("state") or "").casefold() != "open":
                 continue
             repository = issue.get("repository")
             if isinstance(repository, dict) and repository.get("archived") is True:
                 continue
-            repository_url = issue.get("repository_url")
-            match = re.fullmatch(r"https://api\.github\.com/repos/([^/]+)/([^/]+)", str(repository_url or ""))
-            if match is None:
-                continue
-            repo = f"{match.group(1)}/{match.group(2)}"
             if repo.casefold() in explicit_names:
                 continue
-            if match.group(1).casefold() not in worker.repository_owners:
+            if repo.partition("/")[0].casefold() not in worker.repository_owners:
                 continue
             candidates.append((repo, issue, None))
     seen: set[str] = set()

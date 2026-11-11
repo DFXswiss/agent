@@ -193,6 +193,30 @@ def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing
     ) == "retry [redacted]"
 
 
+def test_assignment_sanitizer_uses_one_bearer_helper_for_both_passes(
+    monkeypatch,
+) -> None:
+    import agent_cli.hub_assign as hub_assign
+
+    calls: list[str] = []
+    original = hub_assign._without_bearer
+
+    def recording_without_bearer(text: str, token: str | None) -> str:
+        calls.append(text)
+        return original(text, token)
+
+    monkeypatch.setattr(hub_assign, "_without_bearer", recording_without_bearer)
+
+    emitted = hub_assign.sanitized_assignment_text(
+        "retry Bearer secret-device-token",
+        "secret-device-token",
+        limit=200,
+    )
+
+    assert emitted == "retry [redacted]"
+    assert len(calls) == 2
+
+
 def test_assignment_failure_redacts_fully_and_mixed_percent_encoded_path_bearers() -> None:
     from agent_cli.hub_assign import sanitized_assignment_text
 

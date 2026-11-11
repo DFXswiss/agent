@@ -722,34 +722,42 @@ def test_tool_target_redacts_escaping_path_fragments_in_grep_pattern(
     # so surrounding regex or prose cannot leak host details.
     assert (
         _tool_target(
-            "needle in /opt/openrouter-profile/key", str(worktree), "pattern", tool="Grep"
+            "needle in /opt/openrouter-profile/key", str(worktree), "pattern"
         )
         == "[redacted]"
     )
     assert (
         _tool_target(
-            "needle in C:\\Users\\someone\\key", str(worktree), "pattern", tool="Grep"
+            "needle in C:\\Users\\someone\\key", str(worktree), "pattern"
         )
         == "[redacted]"
     )
     assert (
         _tool_target(
-            "needle in ../../outside.txt", str(worktree), "pattern", tool="Grep"
+            "needle in ../../outside.txt", str(worktree), "pattern"
         )
         == "[redacted]"
     )
     assert (
         _tool_target(
-            "needle in src/module.py", str(worktree), "pattern", tool="Grep"
+            "needle in src/module.py", str(worktree), "pattern"
         )
         == "needle in src/module.py"
     )
     assert (
         _tool_target(
-            "secret=abc", str(worktree), "pattern", tool="Grep"
+            "secret=abc", str(worktree), "pattern"
         )
         == "[redacted]"
     )
+
+
+def test_tool_target_api_is_tool_independent() -> None:
+    from inspect import signature
+
+    from agent_cli.lane import _tool_target
+
+    assert tuple(signature(_tool_target).parameters) == ("target", "cwd", "kind")
 
 
 def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
@@ -765,63 +773,62 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
             "^/opt/profiles/router/openrouter-api-key$",
             str(worktree),
             "pattern",
-            tool="Grep",
         )
         == "[redacted]"
     )
     assert (
         _tool_target(
-            "^src/module.py$", str(worktree), "pattern", tool="Grep"
+            "^src/module.py$", str(worktree), "pattern"
         )
         == "^src/module.py$"
     )
     assert (
         _tool_target(
-            "**/../../outside.txt", str(worktree), "pattern", tool="Glob"
+            "**/../../outside.txt", str(worktree), "pattern"
         )
         == "[redacted]"
     )
 
 
 @pytest.mark.parametrize(
-    ("tool", "pattern"),
+    "pattern",
     [
-        ("Grep", "path=/opt/profiles/router/openrouter-api-key"),
-        ("Grep", "source=/opt/company/private-repo/config.json"),
-        ("Grep", "source='/opt/company/private-repo/config.json'"),
-        ("Grep", 'source="/opt/company/private-repo/config.json"'),
-        ("Grep", "source:/opt/company/private-repo/config.json"),
-        ("Grep", "^path=/opt/profiles/router/openrouter-api-key$"),
-        ("Grep", "(?:/opt/profiles/router/openrouter-api-key)"),
-        ("Grep", r"path=\/opt/profiles/router/openrouter-api-key"),
-        ("Grep", "path=~/private/config.json"),
-        ("Grep", r"path=C:Users\someone\config.json"),
-        ("Grep", r"C:Users\someone\config.json"),
-        ("Grep", r"path=C:\Users\someone\config.json"),
-        ("Grep", "path=C:/Users/someone/config.json"),
-        ("Grep", r"path=C:\\Users\\someone\\config.json"),
-        ("Grep", r"path=C\:Users\someone\config\.json"),
-        ("Grep", r"path=C\:\\Users\\someone\\config\.json"),
-        ("Grep", r"path=\\\\server\\share\\config.json"),
-        ("Grep", "path=../../private.txt"),
-        ("Grep", "source=../outside/*.json"),
-        ("Grep", "source:(../../outside.json)"),
-        ("Grep", r"..\..\x"),
-        ("Grep", r"\.\.\/outside.json"),
-        ("Grep", r"path=\.\.\/outside.json"),
-        ("Grep", r"source:..\..\outside.json"),
-        ("Glob", "source=/opt/company/private-repo/*.json"),
+        "path=/opt/profiles/router/openrouter-api-key",
+        "source=/opt/company/private-repo/config.json",
+        "source='/opt/company/private-repo/config.json'",
+        'source="/opt/company/private-repo/config.json"',
+        "source:/opt/company/private-repo/config.json",
+        "^path=/opt/profiles/router/openrouter-api-key$",
+        "(?:/opt/profiles/router/openrouter-api-key)",
+        r"path=\/opt/profiles/router/openrouter-api-key",
+        "path=~/private/config.json",
+        r"path=C:Users\someone\config.json",
+        r"C:Users\someone\config.json",
+        r"path=C:\Users\someone\config.json",
+        "path=C:/Users/someone/config.json",
+        r"path=C:\\Users\\someone\\config.json",
+        r"path=C\:Users\someone\config\.json",
+        r"path=C\:\\Users\\someone\\config\.json",
+        r"path=\\\\server\\share\\config.json",
+        "path=../../private.txt",
+        "source=../outside/*.json",
+        "source:(../../outside.json)",
+        r"..\..\x",
+        r"\.\.\/outside.json",
+        r"path=\.\.\/outside.json",
+        r"source:..\..\outside.json",
+        "source=/opt/company/private-repo/*.json",
     ],
 )
 def test_tool_target_redacts_embedded_outside_path_fragments(
-    tmp_path: Path, tool: str, pattern: str
+    tmp_path: Path, pattern: str
 ) -> None:
     from agent_cli.lane import _tool_target
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
 
-    assert _tool_target(pattern, str(worktree), "pattern", tool=tool) == "[redacted]"
+    assert _tool_target(pattern, str(worktree), "pattern") == "[redacted]"
 
 
 @pytest.mark.parametrize("target", ["key:value", "http:", "scheme:http:value"])
@@ -833,7 +840,7 @@ def test_tool_target_does_not_treat_ordinary_colon_text_as_drive_fragment(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
 
-    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == target
+    assert _tool_target(target, str(worktree), "pattern") == target
 
 
 @pytest.mark.parametrize(
@@ -866,7 +873,7 @@ def test_tool_target_redacts_embedded_absolute_path_even_inside_worktree(
 
     # The former partial behavior retained embedded worktree paths. The
     # fail-closed exception now applies only when the whole target is that path.
-    assert _tool_target(pattern, str(worktree), "pattern", tool="Grep") == "[redacted]"
+    assert _tool_target(pattern, str(worktree), "pattern") == "[redacted]"
 
 
 @pytest.mark.parametrize("prefix", [";", "|", ")", ",", "'", '"', "=", ":"])
@@ -882,7 +889,7 @@ def test_tool_target_redacts_traversal_and_absolute_fragments_after_any_prefix(
     worktree.mkdir()
 
     assert (
-        _tool_target(f"needle{prefix}{fragment}", str(worktree), "pattern", tool="Grep")
+        _tool_target(f"needle{prefix}{fragment}", str(worktree), "pattern")
         == "[redacted]"
     )
 
@@ -904,32 +911,32 @@ def test_tool_target_redacts_backslash_and_regex_escaped_fragments(
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
-    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == "[redacted]"
+    assert _tool_target(target, str(worktree), "pattern") == "[redacted]"
 
 
 @pytest.mark.parametrize(
-    ("tool", "kind", "target"),
+    ("kind", "target"),
     [
-        ("Grep", "pattern", r"path=C\x3aUsers/someone/config.json"),
-        ("Glob", "pattern", r"src\x2f\x2e\x2e\x2fprivate"),
-        ("Read", "path", r"src\x2fprivate"),
-        ("Grep", "pattern", r"path\u002fprivate"),
-        ("Grep", "pattern", r"path\U0000002fprivate"),
-        ("Grep", "pattern", "path\\N{SOLIDUS}private"),
-        ("Grep", "pattern", r"path\0private"),
-        ("Grep", "pattern", r"path\7private"),
-        ("Grep", "pattern", r"path\cprivate"),
+        ("pattern", r"path=C\x3aUsers/someone/config.json"),
+        ("pattern", r"src\x2f\x2e\x2e\x2fprivate"),
+        ("path", r"src\x2fprivate"),
+        ("pattern", r"path\u002fprivate"),
+        ("pattern", r"path\U0000002fprivate"),
+        ("pattern", "path\\N{SOLIDUS}private"),
+        ("pattern", r"path\0private"),
+        ("pattern", r"path\7private"),
+        ("pattern", r"path\cprivate"),
     ],
 )
 def test_tool_target_redacts_numeric_and_named_escapes(
-    tmp_path: Path, tool: str, kind: str, target: str
+    tmp_path: Path, kind: str, target: str
 ) -> None:
     from agent_cli.lane import _tool_target
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
 
-    assert _tool_target(target, str(worktree), kind, tool=tool) == "[redacted]"
+    assert _tool_target(target, str(worktree), kind) == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -950,7 +957,7 @@ def test_tool_target_redacts_raw_control_bytes_before_path_classification(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
 
-    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == "[redacted]"
+    assert _tool_target(target, str(worktree), "pattern") == "[redacted]"
 
 
 def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path) -> None:
@@ -961,7 +968,7 @@ def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path
 
     assert (
         _tool_target(
-            str(worktree / "src" / "*.py"), str(worktree), "pattern", tool="Glob"
+            str(worktree / "src" / "*.py"), str(worktree), "pattern"
         )
         == "src/*.py"
     )
@@ -970,7 +977,6 @@ def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path
             f"{worktree}/src path=/opt/company/private-repo/config.json",
             str(worktree),
             "pattern",
-            tool="Grep",
         )
         == "[redacted]"
     )

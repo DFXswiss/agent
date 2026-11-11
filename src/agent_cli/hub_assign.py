@@ -25,16 +25,9 @@ def _without_bearer(text: str, token: str | None) -> str:
     return text
 
 
-def _without_interleaved_bearer(text: str, token: str | None) -> str:
-    """Remove encoded bearer forms even when terminal controls split characters."""
-    for form in _bearer_forms(token):
-        text = redact_terminal_interleaved_urlencoded_secret(text, form)
-    return text
-
-
 def sanitized_assignment_text(text: str, token: str | None, *, limit: int) -> str:
     """Bounded, redacted, control-character-free hub text without the bearer."""
-    cleaned = _without_interleaved_bearer(str(text or ""), token)
+    cleaned = _without_bearer(str(text or ""), token)
     cleaned = redact(cleaned, limit=None)
     cleaned = _without_bearer(cleaned, token)
     return redact(cleaned, limit=limit)
