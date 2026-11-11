@@ -94,12 +94,14 @@ from .coordinator_github import (
 from .coordinator_lanes import (
     _IMPLEMENTER_RESULTS,
     _REVIEWER_RESULTS,
+    clear_reviewer_replay_outcomes,
     implementer_replay_fields,
     invalidate_head_evidence,
     launch_lane,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
     reconcile_rejection_review_intents,
+    reviewer_replay_outcomes,
     review_rules_bound,
     set_checklist,
     write_review_context,
@@ -1382,33 +1384,105 @@ def _reject_inner_and_reopen(
     task: dict[str, Any],
     tr: dict[str, Any],
     findings: str,
+    *,
+    agent_id: str,
 ) -> list[str]:
     c = coord(task)
     tr["reviewer_verdict"] = "rejected"
     tr["finished_at"] = utcnow()
-    store.write("task_round", "update", tr["id"], strip_row(tr))
     c["findings"] = redact(findings)
     n = int(task.get("current_round") or 0) + 1
     rid = str(uuid.uuid4())
-    store.write(
-        "task_round",
-        "insert",
-        rid,
-        {
-            "id": rid,
-            "task_id": task["id"],
-            "round": n,
-            "implementer_verdict": None,
-            "reviewer_verdict": None,
-            "started_at": utcnow(),
-            "finished_at": None,
-        },
-    )
     task["current_round"] = n
     task["state"] = "implementing"
     c["phase"] = "implement"
-    save_task(store, task)
+    with store.conn.transaction():
+        store.write("task_round", "update", tr["id"], strip_row(tr))
+        store.write(
+            "task_round",
+            "insert",
+            rid,
+            {
+                "id": rid,
+                "task_id": task["id"],
+                "round": n,
+                "implementer_verdict": None,
+                "reviewer_verdict": None,
+                "started_at": utcnow(),
+                "finished_at": None,
+            },
+        )
+        clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
+        save_task(store, task)
     return [f"inner reviewer rejected; new round={n}"]
+
+
+def _apply_inner_reviewer_replay(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    tr: dict[str, Any],
+    outcome: dict[str, Any],
+) -> list[str]:
+    """Apply one durable inner-review result without launching another model."""
+    c = coord(task)
+    status = str(outcome.get("status") or "")
+    model_result = str(outcome.get("result") or "")
+    stdout = str(outcome.get("stdout") or "")
+    stderr = str(outcome.get("stderr") or "")
+    agent_id = str(outcome["agent_id"])
+    round_num = int(task.get("current_round") or 0)
+    if (
+        status in ("timeout", "partial", "unavailable")
+        or model_result not in _REVIEWER_RESULTS
+    ):
+        c["phase"] = "blocked"
+        c["resume_phase"] = "inner_review"
+        c["blocker"] = (
+            f"inner reviewer incomplete (status={status} "
+            f"result={model_result or 'empty'})"
+        )
+        with store.conn.transaction():
+            clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
+            save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Inner reviewer incomplete (status={status}, "
+            f"result={model_result or 'empty'}); not a code rejection.",
+            kind="reviewer-incomplete",
+            reply_checkpoint=True,
+        )
+    if not review_is_approved(status, model_result):
+        return _reject_inner_and_reopen(
+            store,
+            worker,
+            task,
+            tr,
+            stdout or stderr or "rejected",
+            agent_id=agent_id,
+        )
+
+    tr["reviewer_verdict"] = "approved"
+    tr["finished_at"] = utcnow()
+    task["state"] = "local-check"
+    c["phase"] = "tests"
+    with store.conn.transaction():
+        store.write("task_round", "update", tr["id"], strip_row(tr))
+        set_checklist(
+            store,
+            task,
+            "reviewer_approved",
+            "ja",
+            f"round {round_num} approved",
+            source="script",
+        )
+        clear_reviewer_replay_outcomes(task, agent_ids={agent_id})
+        save_task(store, task)
+    return [f"inner reviewer approved round={round_num}"]
 
 
 def phase_inner_review(
@@ -1431,9 +1505,23 @@ def phase_inner_review(
         c["phase"] = "implement"
         save_task(store, task)
         return ["inner review deferred: implementer not done"]
+    head = str(c.get("head_sha") or "")
+    replay = reviewer_replay_outcomes(
+        store,
+        task,
+        vendor=_first_slot_vendor(task),
+        round_num=round_num,
+        head=head,
+        stage="inner-review",
+    )
+    if replay:
+        if len(replay) != 1 or replay[0].get("dimension") != "inner":
+            raise CoordinatorError("inner reviewer lane outcome checkpoint is invalid")
+        return _apply_inner_reviewer_replay(
+            store, worker, task, runner, tr, replay[0]
+        )
     task["state"] = "reviewing"
     save_task(store, task)
-    head = str(c.get("head_sha") or "")
     diff_note = ""
     if head and c.get("base_sha"):
         try:
@@ -1457,7 +1545,7 @@ def phase_inner_review(
                 f"Cannot build inner-review diff: {redact(str(exc))}",
                 kind="review-diff",
             )
-    agent, result = launch_lane(
+    agent, _result = launch_lane(
         store,
         worker,
         task,
@@ -1472,45 +1560,19 @@ def phase_inner_review(
         runner=runner,
         lane_runner=lane_runner,
     )
-    status, model_result = parse_model_result(result.stdout, result.returncode)
-    if (
-        status in ("timeout", "partial", "unavailable")
-        or model_result not in _REVIEWER_RESULTS
-    ):
-        c["phase"] = "blocked"
-        c["resume_phase"] = "inner_review"
-        c["blocker"] = (
-            f"inner reviewer incomplete (status={status} result={model_result or 'empty'})"
-        )
-        save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            f"Inner reviewer incomplete (status={status}, result={model_result or 'empty'}); "
-            "not a code rejection.",
-            kind="reviewer-incomplete",
-            reply_checkpoint=True,
-        )
-    if not review_is_approved(status, model_result):
-        return _reject_inner_and_reopen(store, worker, task, tr, result.stdout or "rejected")
-
-    tr["reviewer_verdict"] = "approved"
-    tr["finished_at"] = utcnow()
-    store.write("task_round", "update", tr["id"], strip_row(tr))
-    task["state"] = "local-check"
-    c["phase"] = "tests"
-    set_checklist(
+    replay = reviewer_replay_outcomes(
         store,
         task,
-        "reviewer_approved",
-        "ja",
-        f"round {round_num} approved",
-        source="script",
+        vendor=_first_slot_vendor(task),
+        round_num=round_num,
+        head=head,
+        stage="inner-review",
     )
-    save_task(store, task)
-    return [f"inner reviewer approved round={round_num}"]
+    if len(replay) != 1 or replay[0].get("agent_id") != agent.get("id"):
+        raise CoordinatorError("finished inner reviewer has no durable outcome")
+    return _apply_inner_reviewer_replay(
+        store, worker, task, runner, tr, replay[0]
+    )
 
 
 def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
