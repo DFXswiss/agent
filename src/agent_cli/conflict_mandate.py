@@ -40,6 +40,7 @@ from .conflict_mandate_state import (
     TRANSIENT_BLOCK_AFTER,
     Context,
     Request,
+    StateUnreadable,
     advance_checkpoint,
     advance_checkpoint_time,
     atomic_write,
@@ -47,6 +48,7 @@ from .conflict_mandate_state import (
     comment_body,
     context,
     iso,
+    iso_ceiling,
     parse_time,
     read_checkpoint,
     safe,
@@ -166,6 +168,10 @@ class _Runtime:
 def _now() -> datetime:
     """Current UTC time for discovery and transient-failure decisions."""
     return datetime.now(timezone.utc)
+
+
+def _state_unreadable(worker: ConflictWorker, exc: StateUnreadable) -> list[str]:
+    return [safe(worker, f"state unreadable: {exc.path.name}")]
 
 
 def source_lock_key(repo: str, number: int) -> str:
@@ -373,6 +379,8 @@ def _discover(
             request_ctx = context(
                 worker, request, worker_login=runtime.account.login
             )
+            if request_ctx.foreign_state:
+                continue
             if request_ctx.state.get("phase") in ("finished", "blocked"):
                 continue
             try:
@@ -433,7 +441,11 @@ def _discover(
             and newest_scanned is not None
             and not dry_run
         ):
-            advance_checkpoint_time(worker, repo, newest_scanned)
+            checkpoint_value = newest_scanned
+            scanned_time = parse_time(newest_scanned)
+            if initial and scanned_time is not None and scanned_time < initial_cutoff:
+                checkpoint_value = iso_ceiling(initial_cutoff)
+            advance_checkpoint_time(worker, repo, checkpoint_value)
     if not candidates:
         if marked_request is not None:
             return marked_request
@@ -759,6 +771,7 @@ def _run_lane_attempt(
     lane_runner: LaneRunner | None,
     *,
     observations: list[str],
+    stop: int,
     attempt: int,
     base: str,
     subject: str,
@@ -766,7 +779,7 @@ def _run_lane_attempt(
     expected_git_file: tuple[bytes, bool],
     failed_verification: str | None,
 ) -> tuple[str, str, str]:
-    spec_path = ctx.control / f"lane-{attempt}.md"
+    spec_path = ctx.control / f"lane-s{stop}-a{attempt}.md"
     spec = _lane_spec(
         base=safe(ctx.worker, base),
         subject=safe(ctx.worker, subject),
@@ -812,39 +825,39 @@ def _run_lane_attempt(
         raise
     stdout = safe(ctx.worker, result.stdout or "")
     stderr = safe(ctx.worker, result.stderr or "")
-    parsed_result = parse_model_result(result.stdout, result.returncode)[1]
+    status, parsed_result = parse_model_result(result.stdout, result.returncode)
     metadata_failure = _lane_metadata_failure(
         ctx,
         expected_git_file,
         output=stdout,
-        result=(parsed_result if result.status == "complete" else ""),
+        result=(parsed_result if status == "complete" else ""),
     )
     if metadata_failure is not None:
         raise metadata_failure
     index_after = index_fingerprint(git_runner, str(ctx.worktree))
     note = (
         _blocked_sentence(stdout)
-        if result.status == "complete" and parsed_result == "blocked"
+        if status == "complete" and parsed_result == "blocked"
         else None
     )
     lane_facts = (("Lane note", note),) if note is not None else ()
     if index_before != index_after:
         raise _Blocker("lane changed the index", facts=lane_facts)
     atomic_write(
-        ctx.control / f"lane-{attempt}.log",
+        ctx.control / f"lane-s{stop}-a{attempt}.log",
         redact(stdout or stderr or "", limit=COMMENT_LIMIT),
     )
     try:
         record_lane_run(
             store,
             session_id=ctx.worker.session_id,
-            result=replace(result, stdout=stdout, stderr=stderr),
+            result=replace(result, status=status, stdout=stdout, stderr=stderr),
         )
     except (StoreError, Exception) as exc:  # noqa: BLE001 — audit failure never changes the verdict
         observations.append(
             safe(ctx.worker, f"lane record not written: {exc}")
         )
-    return result.status, stdout, parsed_result
+    return status, stdout, parsed_result
 
 
 def _finish_marker(
@@ -1586,7 +1599,9 @@ def _run_request(
         save_state(ctx, "rebasing")
         rebased = rebase(git_runner, str(ctx.worktree), base=base_ref)
         resolved_files: list[str] = []
-        stops = 0
+        stops = ctx.state.get("conflict_stops", 0)
+        if isinstance(stops, bool) or not isinstance(stops, int) or stops < 0:
+            raise _Blocker("conflict stop counter is unreadable")
         if rebased.returncode != 0:
             while True:
                 if stops >= ctx.worker.max_rebase_steps:
@@ -1594,6 +1609,7 @@ def _run_request(
                         f"rebase exceeded max_rebase_steps ({ctx.worker.max_rebase_steps})"
                     )
                 stops += 1
+                save_state(ctx, None, conflict_stops=stops)
                 unmerged = unmerged_paths(git_runner, str(ctx.worktree))
                 if not unmerged:
                     raise _Blocker(_rebase_failed(rebased))
@@ -1627,6 +1643,7 @@ def _run_request(
                         runtime,
                         lane_runner,
                         observations=observations,
+                        stop=stops,
                         attempt=attempt,
                         base=base_ref,
                         subject=subject,
@@ -1812,6 +1829,10 @@ def tick(
 ) -> list[str]:
     """One bounded, resumable advancement for one worker.
 
+    A tick processes at most one request through the workflow. Before that it
+    may close the local bookkeeping of earlier requests whose result marker
+    already exists on GitHub, without Git, a lane, or a comment.
+
     Errors become observation lines; only a termination (a SystemExit that is not
     a StoreError, or KeyboardInterrupt) propagates to the caller.
     """
@@ -1823,6 +1844,8 @@ def tick(
         with process_scope(), store.exclusive(lock_key):
             try:
                 runtime = _preflight(store, worker, runner)
+            except StateUnreadable as exc:
+                return _state_unreadable(worker, exc)
             except (ConflictsError, CoordinatorError, AccountError) as exc:
                 return [f"preflight blocked: {safe(worker, exc)}"]
             try:
@@ -1894,6 +1917,8 @@ def tick(
                     )
                     lines.extend(observations)
                 return lines or ["idle"]
+            except StateUnreadable as exc:
+                return [*_state_unreadable(worker, exc), *observations]
             except ConflictTransientError as exc:
                 return [f"transient: {safe(worker, exc)}", *observations]
             except (_Blocker, ConflictsError) as exc:
@@ -1902,6 +1927,8 @@ def tick(
                 return [f"store error: {safe(worker, exc)}", *observations]
             except Exception as exc:  # noqa: BLE001 — tick must never raise silently
                 return [f"error: {safe(worker, exc)}", *observations]
+    except StateUnreadable as exc:
+        return [*_state_unreadable(worker, exc), *observations]
     except StoreError as exc:
         return [f"lock error: {safe(worker, exc)}", *observations]
 
