@@ -15,6 +15,9 @@ from agent_cli.conflict_mandate_git import (
     changed_paths,
     conflict_markers,
     git_file_snapshot,
+    index_fingerprint,
+    repository_state,
+    repository_state_changed,
     require_ok,
     range_commits,
     rebase,
@@ -293,6 +296,32 @@ def _separate_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
         ]
     ).returncode == 0
     return worktree, git_dir
+
+
+def test_index_fingerprint_detects_staged_edit_between_reads(tmp_path: Path) -> None:
+    _upstream, worktree = _repo_pair(tmp_path)
+    before = index_fingerprint(_runner, str(worktree))
+    outside = worktree / "outside.txt"
+    outside.write_text("edited outside the lane\n", encoding="utf-8")
+    assert index_fingerprint(_runner, str(worktree)) == before
+    _git(worktree, "add", "outside.txt")
+    staged = index_fingerprint(_runner, str(worktree))
+    assert staged != before
+    outside.write_text("edited again\n", encoding="utf-8")
+    assert index_fingerprint(_runner, str(worktree)) == staged
+
+
+def test_repository_state_sees_config_and_hook_changes_without_git(tmp_path: Path) -> None:
+    _worktree, git_dir = _separate_git_worktree(tmp_path)
+    (git_dir / "hooks").mkdir(exist_ok=True)
+    before = repository_state(git_dir)
+    assert repository_state_changed(before, repository_state(git_dir)) is False
+    with (git_dir / "config").open("a", encoding="utf-8") as handle:
+        handle.write("\n[alias]\n\tnoop = !true\n")
+    assert repository_state_changed(before, repository_state(git_dir)) is True
+    after_config = repository_state(git_dir)
+    (git_dir / "hooks" / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    assert repository_state_changed(after_config, repository_state(git_dir)) is True
 
 
 def test_snapshot_detects_rewritten_git_file(tmp_path: Path) -> None:

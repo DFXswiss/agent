@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from urllib.parse import quote
 
 from .coordinator_common import CoordinatorError, Runner, gh_json, redact
 
@@ -108,6 +109,22 @@ def has_push_permission(runner: Runner, repo: str) -> bool:
     return permissions.get("push") is True if isinstance(permissions, dict) else False
 
 
+def read_branch_protection(runner: Runner, head_repo: str, head_ref: str) -> bool:
+    """Return whether GitHub reports the head branch as protected."""
+    encoded = quote(head_ref, safe="")
+    data = _api(
+        runner,
+        ["gh", "api", f"repos/{head_repo}/branches/{encoded}"],
+        "branch protection",
+    )
+    if not isinstance(data, dict):
+        raise ConflictTransientError("branch protection lookup did not return an object")
+    protected = data.get("protected")
+    if not isinstance(protected, bool):
+        raise ConflictTransientError("branch protection lookup is unreadable")
+    return protected
+
+
 def _comment_author(comment: dict[str, Any]) -> str | None:
     user = comment.get("user")
     return user.get("login") if isinstance(user, dict) and isinstance(user.get("login"), str) else None
@@ -192,6 +209,7 @@ __all__ = [
     "list_repository_comments",
     "post_comment_once",
     "pull_number_from_comment",
+    "read_branch_protection",
     "read_optional_pull",
     "read_pull",
     "result_marker",

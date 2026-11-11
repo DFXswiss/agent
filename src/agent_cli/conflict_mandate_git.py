@@ -1,7 +1,9 @@
 """Bounded Git plumbing for the comment-mandated conflict worker."""
 from __future__ import annotations
 
+import hashlib
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +26,16 @@ class UnmergedPath:
 
 
 def _argv(worktree: str, *parts: str) -> list[str]:
-    return ["git", "-C", worktree, "-c", "core.hooksPath=/dev/null", *parts]
+    return [
+        "git",
+        "-C",
+        worktree,
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        *parts,
+    ]
 
 
 def _transfer_argv(worktree: str, *parts: str) -> list[str]:
@@ -126,6 +137,90 @@ def verify_git_file(worktree: Path, expected: tuple[bytes, bool]) -> None:
         raise CoordinatorError(f"cannot read repository metadata: {exc}") from exc
     if actual != data:
         raise CoordinatorError("lane changed the repository metadata")
+
+
+def index_fingerprint(runner: Runner, worktree: str) -> str:
+    """Hash the staged entries and the unmerged entries of the index."""
+    staged = require_ok(runner, worktree, "index entries", "ls-files", "--stage", "-z")
+    unmerged = require_ok(runner, worktree, "unmerged index entries", "ls-files", "--unmerged", "-z")
+    digest = hashlib.sha256()
+    for part in (staged.stdout or "", unmerged.stdout or ""):
+        digest.update(part.encode("utf-8", "surrogateescape"))
+        digest.update(b"\0\0")
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class RepositoryState:
+    config: bytes | None
+    config_readable: bool
+    hooks: tuple[tuple[str, int], ...] | None
+    hooks_readable: bool
+
+
+def _read_optional_bytes(path: Path) -> tuple[bytes | None, bool]:
+    try:
+        return path.read_bytes(), True
+    except FileNotFoundError:
+        return None, True
+    except OSError:
+        return None, False
+
+
+def repository_state(git_dir: Path) -> RepositoryState:
+    """Read the configuration bytes and the hook inventory without Git."""
+    config, config_readable = _read_optional_bytes(git_dir / "config")
+    hooks_path = git_dir / "hooks"
+    entries: list[tuple[str, int]] | None = []
+    hooks_readable = True
+    try:
+        children = sorted(hooks_path.iterdir(), key=lambda item: item.name)
+    except FileNotFoundError:
+        children = []
+    except OSError:
+        children = []
+        hooks_readable = False
+    for child in children:
+        try:
+            size = child.lstat().st_size
+        except OSError:
+            hooks_readable = False
+            break
+        entries.append((child.name, size))
+    if not hooks_readable:
+        entries = None
+    return RepositoryState(
+        config=config,
+        config_readable=config_readable,
+        hooks=(tuple(entries) if entries is not None else None),
+        hooks_readable=hooks_readable,
+    )
+
+
+def repository_state_changed(before: RepositoryState, after: RepositoryState) -> bool:
+    """Return whether the config bytes or the hook inventory differ.
+
+    A file that could not be read counts as a change: the comparison then fails
+    closed instead of trusting an unobserved state.
+    """
+    if before.config_readable and after.config_readable:
+        config_changed = before.config != after.config
+    else:
+        config_changed = True
+    if before.hooks_readable and after.hooks_readable:
+        hooks_changed = before.hooks != after.hooks
+    else:
+        hooks_changed = True
+    return config_changed or hooks_changed
+
+
+def remove_repository(path: Path) -> None:
+    """Remove a worktree or Git directory without invoking Git."""
+    target = Path(path)
+    if target.is_symlink() or target.is_file():
+        target.unlink(missing_ok=True)
+        return
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def fetch_branch(
@@ -485,6 +580,7 @@ def remote_head(runner: Runner, worktree: str, *, ref: str) -> str:
 
 
 __all__ = [
+    "RepositoryState",
     "UnmergedPath",
     "base_is_ancestor",
     "branch_ref_valid",
@@ -495,6 +591,7 @@ __all__ = [
     "diff_check",
     "fetch_branch",
     "git_file_snapshot",
+    "index_fingerprint",
     "merge_commits",
     "push_with_lease",
     "range_commits",
@@ -504,6 +601,9 @@ __all__ = [
     "rebase_complete",
     "remote_head",
     "record_git_file",
+    "remove_repository",
+    "repository_state",
+    "repository_state_changed",
     "require_ok",
     "rev_parse",
     "stage_paths",
