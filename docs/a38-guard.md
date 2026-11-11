@@ -43,7 +43,7 @@ agent pr-guard --repo OWNER/NAME --all-open --dry-run
 agent pr-guard --repo OWNER/NAME --all-open
 ```
 
-Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and uses two concurrency groups (`event` versus `sweep`) so PR events cannot starve all-open reconciliation. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
+Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and uses two concurrency groups (`event` versus `sweep`) so PR events cannot starve all-open reconciliation. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents, trees and blobs, and a commit read by SHA when the answer is that commit, are cached within the API client, up to 256 entries; comments, reviews, permissions and PR snapshots are never cached.
 
 ## Trust and policy
 
