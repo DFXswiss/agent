@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,79 @@ COMMENT_LIMIT = 8000
 FAILURE_TAIL_LIMIT = 1500
 NO_CONFLICTS = "no conflicts"
 SESSION_COMPONENT = re.compile(r"[A-Za-z0-9_-]+")
+
+STATE_PHASES = (
+    "discovered",
+    "read",
+    "prepared",
+    "rebasing",
+    "checking",
+    "pushing",
+    "result-pending",
+    "blocker-pending",
+    "transient",
+    "finished",
+    "blocked",
+)
+TERMINAL_PHASES = ("finished", "blocked")
+FACT_LABELS = (
+    "Repository",
+    "Pull request",
+    "Old head",
+    "New head",
+    "Base",
+    "Head",
+    "Replayed commits",
+    "Files resolved by the lane",
+    "Checks",
+    "Mergeable",
+    "Lane note",
+    "Failed verification",
+)
+TIMESTAMP_KEYS = ("created_at", "first_seen", "transient_start", "updated_at")
+SHA_KEYS = ("observed_head", "observed_base", "old_head", "new_head", "base_sha")
+REQUIRED_STATE_KEYS = (
+    "repo",
+    "number",
+    "comment_id",
+    "created_at",
+    "phase",
+    "first_seen",
+    "transient_start",
+    "worker_session_id",
+    "worker_login",
+    "updated_at",
+)
+STATE_KEY_TYPES: dict[str, tuple[type[Any], ...]] = {
+    "repo": (str,),
+    "number": (int,),
+    "comment_id": (int,),
+    "created_at": (str,),
+    "phase": (str,),
+    "first_seen": (str,),
+    "transient_start": (str, type(None)),
+    "worker_session_id": (str,),
+    "worker_login": (str,),
+    "updated_at": (str,),
+    "observed_head": (str,),
+    "observed_base": (str,),
+    "head_ref": (str,),
+    "base_ref": (str,),
+    "conflict_stops": (int,),
+    "rebase_stops": (int,),
+    "old_head": (str,),
+    "new_head": (str,),
+    "base_sha": (str,),
+    "replayed_commits": (int,),
+    "resolved_files": (list,),
+    "check_result": (str,),
+    "mergeable": (str,),
+    "result_body": (str,),
+    "blocker": (str, type(None)),
+    "blocker_facts": (list,),
+    "blocker_skip_git": (bool,),
+    "finished_by": (str,),
+}
 
 
 @dataclass(frozen=True)
@@ -48,9 +122,18 @@ class Context:
 class StateUnreadable(StoreError):
     """A local state file exists but cannot be used safely."""
 
-    def __init__(self, path: Path) -> None:
-        super().__init__(f"state unreadable: {path.name}")
+    def __init__(self, path: Path, reason: str) -> None:
+        super().__init__(f"state unreadable: {path.name} ({reason})")
         self.path = path
+        self.reason = reason
+
+
+def _type_name(value: object) -> str:
+    return type(value).__name__
+
+
+def _has_type(key: str, value: object) -> str:
+    return f"key {key} has type {_type_name(value)}"
 
 
 def parse_time(value: object) -> datetime | None:
@@ -159,10 +242,12 @@ def read_json(path: Path) -> dict[str, Any] | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise StateUnreadable(path) from exc
+    except (OSError, UnicodeError) as exc:
+        raise StateUnreadable(path, "not readable") from exc
+    except ValueError as exc:
+        raise StateUnreadable(path, "not valid JSON") from exc
     if not isinstance(data, dict):
-        raise StateUnreadable(path)
+        raise StateUnreadable(path, "not an object")
     return data
 
 
@@ -175,17 +260,97 @@ def read_state_json(
     data = read_json(path)
     if data is None:
         return None, True
-    recorded_session_id = data.get("worker_session_id")
-    recorded_login = data.get("worker_login")
-    if not isinstance(recorded_session_id, str) or not isinstance(recorded_login, str):
-        raise StateUnreadable(path)
+    if "worker_session_id" not in data:
+        raise StateUnreadable(path, "key worker_session_id is missing")
+    recorded_session_id = data["worker_session_id"]
+    if not isinstance(recorded_session_id, str):
+        raise StateUnreadable(path, _has_type("worker_session_id", recorded_session_id))
+    if "worker_login" not in data:
+        raise StateUnreadable(path, "key worker_login is missing")
+    recorded_login = data["worker_login"]
+    if not isinstance(recorded_login, str):
+        raise StateUnreadable(path, _has_type("worker_login", recorded_login))
     if recorded_session_id != worker_session_id or not _same_login(
         recorded_login, worker_login
     ):
         return data, False
-    if "phase" in data and not isinstance(data["phase"], str):
-        raise StateUnreadable(path)
+    _validate_owned_state(path, data)
     return data, True
+
+
+def _matches_state_type(value: object, allowed: tuple[type[Any], ...]) -> bool:
+    if value is None:
+        return type(None) in allowed
+    return any(type(value) is candidate for candidate in allowed)
+
+
+def _state_identity(path: Path, data: dict[str, Any]) -> tuple[str, int, int]:
+    repository_dir = path.parent.parent.name
+    request_dir = path.parent.name
+    repo = data.get("repo")
+    number = data.get("number")
+    comment_id = data.get("comment_id")
+    if (
+        not isinstance(repo, str)
+        or repo.count("/") != 1
+        or not all(repo.split("/"))
+        or repository_dir != repo.replace("/", "__", 1)
+    ):
+        raise StateUnreadable(path, "key repo does not match the request directory")
+    match = re.fullmatch(r"pr-(\d+)-c(\d+)", request_dir)
+    if match is None or number != int(match.group(1)):
+        raise StateUnreadable(path, "key number does not match the request directory")
+    if comment_id != int(match.group(2)):
+        raise StateUnreadable(path, "key comment_id does not match the request directory")
+    return repo, number, comment_id
+
+
+def _validate_owned_state(path: Path, data: dict[str, Any]) -> None:
+    for key, value in data.items():
+        allowed = STATE_KEY_TYPES.get(key)
+        if allowed is None:
+            raise StateUnreadable(path, f"unknown key {key}")
+        if not _matches_state_type(value, allowed):
+            raise StateUnreadable(path, _has_type(key, value))
+    missing = next((key for key in REQUIRED_STATE_KEYS if key not in data), None)
+    if missing is not None:
+        raise StateUnreadable(path, f"key {missing} is missing")
+    _state_identity(path, data)
+    phase = data["phase"]
+    if phase not in STATE_PHASES:
+        raise StateUnreadable(path, "phase is not known")
+    if "blocker" in data and data["blocker"] is None and phase != "finished":
+        raise StateUnreadable(path, _has_type("blocker", data["blocker"]))
+    for key in TIMESTAMP_KEYS:
+        value = data.get(key)
+        if value is not None and parse_time(value) is None:
+            raise StateUnreadable(path, _has_type(key, value))
+    for key in SHA_KEYS:
+        value = data.get(key)
+        if value is not None and (
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
+        ):
+            raise StateUnreadable(path, _has_type(key, value))
+    for key in ("conflict_stops", "rebase_stops", "replayed_commits"):
+        value = data.get(key)
+        if value is not None and value < 0:
+            raise StateUnreadable(path, _has_type(key, value))
+    resolved_files = data.get("resolved_files")
+    if resolved_files is not None:
+        for item in resolved_files:
+            if not isinstance(item, str):
+                raise StateUnreadable(path, _has_type("resolved_files", item))
+    blocker_facts = data.get("blocker_facts")
+    if blocker_facts is not None:
+        for item in blocker_facts:
+            if not isinstance(item, list) or len(item) != 2:
+                raise StateUnreadable(path, _has_type("blocker_facts", item))
+            for value in item:
+                if not isinstance(value, str):
+                    raise StateUnreadable(path, _has_type("blocker_facts", value))
+            if item[0] not in FACT_LABELS:
+                raise StateUnreadable(path, "key blocker_facts has an unknown label")
 
 
 def session_component(worker: ConflictWorker) -> str:
@@ -274,13 +439,11 @@ def checkpoint_path(worker: ConflictWorker) -> Path:
 def read_checkpoint(worker: ConflictWorker) -> dict[str, str]:
     path = checkpoint_path(worker)
     data = read_json(path) or {}
-    if any(
-        not isinstance(key, str)
-        or not isinstance(value, str)
-        or parse_time(value) is None
-        for key, value in data.items()
-    ):
-        raise StateUnreadable(path)
+    for key, value in data.items():
+        if not isinstance(key, str):
+            raise StateUnreadable(path, f"unknown key {key}")
+        if not isinstance(value, str) or parse_time(value) is None:
+            raise StateUnreadable(path, _has_type(key, value))
     return dict(data)
 
 
@@ -329,6 +492,8 @@ def request_from_state(
 def unfinished_requests(
     worker: ConflictWorker,
     worker_login: str,
+    *,
+    clean_terminal: bool = True,
 ) -> list[tuple[Request, dict[str, Any]]]:
     root = worker.workspace_root / CONTROL_DIR / session_component(worker)
     if not root.is_dir():
@@ -340,7 +505,18 @@ def unfinished_requests(
             worker_session_id=worker.session_id,
             worker_login=worker_login,
         )
-        if not owned or data is None or data.get("phase") in ("finished", "blocked"):
+        if not owned or data is None:
+            continue
+        if data.get("phase") in TERMINAL_PHASES:
+            if clean_terminal:
+                request = Request(
+                    repo=data["repo"],
+                    number=data["number"],
+                    comment_id=data["comment_id"],
+                    created_at=data["created_at"],
+                )
+                _remove_repository_direct(worktree_path(worker, request))
+                _remove_repository_direct(path.parent / "git")
             continue
         request = request_from_state(worker, data, worker_login)
         if request is None:
@@ -349,6 +525,14 @@ def unfinished_requests(
         candidates.append((first, request, data))
     candidates.sort(key=lambda item: item[0])
     return [(request, data) for _, request, data in candidates]
+
+
+def _remove_repository_direct(path: Path) -> None:
+    target = Path(path)
+    if target.is_symlink() or target.is_file():
+        target.unlink(missing_ok=True)
+        return
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def comment_body(
@@ -381,6 +565,8 @@ def comment_body(
     else:
         lines.append(_comment_line(worker, "- Result:", reason, limit=500))
     for label, value in facts:
+        if label not in FACT_LABELS:
+            raise ValueError("fact label is not known")
         lines.append(_comment_line(worker, f"- {label}:", value, limit=1000))
     lines.extend(["", "</details>"])
     return "\n".join(lines)
@@ -391,10 +577,14 @@ __all__ = [
     "COMMENT_LIMIT",
     "CONTROL_DIR",
     "Context",
+    "FACT_LABELS",
     "FAILURE_TAIL_LIMIT",
     "INITIAL_LOOKBACK",
     "NO_CONFLICTS",
+    "REQUIRED_STATE_KEYS",
     "Request",
+    "STATE_KEY_TYPES",
+    "STATE_PHASES",
     "TRANSIENT_BLOCK_AFTER",
     "advance_checkpoint",
     "advance_checkpoint_time",

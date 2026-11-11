@@ -20,7 +20,7 @@ opt-in skill named `conflicts`; installation enables no worker.
 | Runtime (`conflict_mandate.py`, `conflict_mandate_git.py`, `conflict_mandate_github.py`) | Implemented in this repository: discovery, mandate check, isolated worktree, rebase loop, lane verification, checks, push, and comments. |
 | CLI | `agent conflicts --session ID` runs one tick; `--follow` is the script-owned loop; `--dry-run` is read-only. |
 | GitHub and Git accounts | Taken only from the worker session's explicit `github-accounts.json` binding through the existing account runner. No ambient login or fallback. |
-| Model provider | The device implementer selection from `ai-accounts.json`. Missing configuration or `codex` starts no lane. The binding must be `workspace-write`. |
+| Model provider | The device implementer selection from `ai-accounts.json` must be a provider the lane launcher can start (`grok`, `claude`, or `openrouter`). Missing configuration, `codex`, and a provider without a lane adapter such as `deepseek` start no lane. The binding must be `workspace-write`. |
 | Operator workspace, repositories, logins, checks, and timeouts | **Never installed automatically.** The operator adds them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
 | Universal sandbox / forced model isolation | **Not claimed.** The lane provider's process argv is the available hardening, not a universal sandbox. |
@@ -68,7 +68,12 @@ these fields; unknown keys and default selections are rejected.
 GitHub and Git use the worker session's configured account and require a git
 identity with signing configuration. The private key and trusted signer setup
 stay in that account executor, never in this file. The model lane uses the
-device's implementer selection; `codex` is refused because it can run commands.
+device's implementer selection from `ai-accounts.json`. The implementer
+provider must be one the lane launcher can start: `grok`, `claude`, or
+`openrouter`. `codex` is refused because it can run commands, and an
+implementer selection without a lane adapter, such as `deepseek`, is refused as
+well. The provider is resolved before discovery, so a refused provider starts
+no lane and performs no discovery, clone, GitHub read or write, or check run.
 
 ### Operator requirements
 
@@ -87,12 +92,35 @@ worktree and separate Git directory are removed directly. The operator
 must therefore keep those drivers out of the worker account's system, global,
 and repository configuration.
 
+Configure at most one conflicts worker per repository on a device and across
+devices; mandating two different worker accounts on the same pull request at
+the same time is not supported — the pinned lease then makes the later push
+fail as a moved head and that request restarts from the new head.
+
 An operator must repair or remove an unreadable `state.json` or
-`checkpoint.json`. When one exists but cannot be read, is not valid JSON, or is
-not a JSON object with the expected types, the tick reports
-`state unreadable: <masked file name>` for that request, or for that worker's
-checkpoint, and does nothing else for it in that tick: no discovery restart, no
-clone, no comment, and no overwrite of the file.
+`checkpoint.json`. A state file owned by this worker is validated completely
+against one table of every key this feature writes and its allowed type. Every
+present key must be in that table; unknown keys and wrong types make the state
+unreadable. The identity keys `repo`, `number`, and `comment_id` must match the
+control directory that contains the file. The only required keys are those
+identity keys, `created_at`, `phase`, `first_seen`, `transient_start`,
+`worker_session_id`, `worker_login`, and `updated_at`; every other key is
+optional and validated when present. A `phase` must be one this feature
+writes, every sha field must be a
+40-hex string, and timestamps must parse. When one of these files exists but
+cannot be read, is not valid JSON, or fails that validation, the tick reports
+`state unreadable: <masked file name> (<reason>)`, where the reason names the
+failed check without printing the value. The reason is one of `not readable`,
+`not valid JSON`, `not an object`, `key <name> is missing`, `unknown key
+<name>`, `key <name> has type <type>`, `key <name> does not match the request
+directory`, or `phase is not known`. A reason may name a key and a Python type
+name, never a value read from the file. In that tick the worker does nothing
+else for that request or for that worker's checkpoint: no discovery restart,
+no clone, no comment, and no overwrite of the file.
+
+A state file of another worker, identified by its recorded worker session id
+or login, is ignored silently and left untouched. A missing state file is no
+state.
 
 ## Mandate
 
@@ -361,9 +389,14 @@ there is no new table or activity type.
 
 Each conflict stop has its own lane artifacts:
 `lane-s<stop>-a<attempt>.md` and the matching
-`lane-s<stop>-a<attempt>.log`. `stop` counts from 1 across the whole request
-and is persisted as `conflict_stops` in `state.json`, so a resumed request
-continues the sequence. No earlier artifact is overwritten.
+`lane-s<stop>-a<attempt>.log`. `stop` is the monotonically increasing artifact
+sequence persisted as `conflict_stops` in `state.json`; it counts across the
+whole request, is never reset, and makes a resumed request continue the
+sequence, so no earlier artifact is overwritten. Separately, `rebase_stops`
+counts conflict stops of the current rebase attempt. It starts at zero whenever
+a rebase starts from scratch, including a new tick after a transient failure
+that re-clones and rebases again, and only that number is compared with
+`max_rebase_steps`.
 
 Every blocker pushes nothing, posts exactly one blocker, and finishes that
 request. A blocker aborts an in-progress rebase unless Git metadata was found
@@ -412,7 +445,11 @@ skipped. A malformed
 comment listing is unreadable for the whole tick and likewise advances no
 checkpoint.
 
-A finished request removes its worktree and keeps its control directory.
+A finished request removes its worktree and keeps its control directory. When
+the scan of unfinished requests meets an owned state in a terminal phase
+(`finished` or `blocked`) whose worktree directory or separate Git directory
+still exists, it removes both directly without Git and continues. That
+bookkeeping posts no comment and leaves the state file unchanged.
 When the clone, or any step before the first successful checkout, fails, the
 worktree and the separate Git directory are removed directly. A blocker runs
 `git rebase --abort` only when the worktree's `.git` file exists and metadata
@@ -467,5 +504,9 @@ blocker. This includes a reStructuredText or Markdown underline of `=`.
 - conflicted files whose names Git prints C-quoted (tab, newline, double quote, backslash)
 - Branches containing merge commits
 - Repositories without a check command
+- Configure at most one conflicts worker per repository on a device and across
+  devices; mandating two different worker accounts on the same pull request at
+  the same time is not supported — the pinned lease then makes the later push
+  fail as a moved head and that request restarts from the new head.
 - A conflicts worker GitHub account with `command_prefix` or `worktree_paths`
   in `github-accounts.json`; preflight refuses it in this revision
