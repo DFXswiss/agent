@@ -1144,9 +1144,11 @@ def _apply_implementer_outcome(
             kind="change-summary",
             reply_checkpoint=True,
         )
-    task["change_summary_en"] = redact(summaries[0], limit=800)
-    task["change_summary_de"] = redact(summaries[1], limit=800)
-    if review_rules_bound(store, worker, runner, task):
+    summary_en = redact(summaries[0], limit=800)
+    summary_de = redact(summaries[1], limit=800)
+    listed: tuple[list[str], list[str]] | None = None
+    rules_bound = review_rules_bound(store, worker, runner, task)
+    if rules_bound:
         # Structured checkpoint data and a held list both outlive the prefix.
         if _held_surface_list(task) is None:
             listed = _replayed_surface_list(replay) or parse_surface_list(stdout)
@@ -1168,25 +1170,39 @@ def _apply_implementer_outcome(
                     kind="surface-list",
                     reply_checkpoint=True,
                 )
-            task["reused_lines"] = listed[0]
-            task["added_lines"] = listed[1]
-        refresh_draft_body(store, worker, task, runner)
-        coord(task).pop("surface_list_held", None)
-    tr["implementer_verdict"] = "done"
-    store.write("task_round", "update", tr["id"], strip_row(tr))
-    task["state"] = "reviewing"
-    c["phase"] = "inner_review"
-    set_checklist(
-        store,
-        task,
-        "implementer_done",
-        "ja",
-        f"round {round_num} implementer done",
-        source="script",
-    )
-    _mark_applied()
-    c.pop("lane_outcome", None)
-    save_task(store, task)
+
+    committed_task = copy.deepcopy(task)
+    committed_tr = copy.deepcopy(tr)
+    committed_c = coord(committed_task)
+    committed_task["change_summary_en"] = summary_en
+    committed_task["change_summary_de"] = summary_de
+    if listed is not None:
+        committed_task["reused_lines"] = listed[0]
+        committed_task["added_lines"] = listed[1]
+    if rules_bound:
+        refresh_draft_body(store, worker, committed_task, runner)
+        committed_c.pop("surface_list_held", None)
+    committed_tr["implementer_verdict"] = "done"
+    committed_task["state"] = "reviewing"
+    committed_c["phase"] = "inner_review"
+    committed_c.pop("lane_outcome", None)
+    with store.conn.transaction():
+        store.write(
+            "task_round", "update", committed_tr["id"], strip_row(committed_tr)
+        )
+        set_checklist(
+            store,
+            committed_task,
+            "implementer_done",
+            "ja",
+            f"round {round_num} implementer done",
+            source="script",
+        )
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    tr.clear()
+    tr.update(committed_tr)
     return [f"implementer done round={round_num}"] + draft_lines
 
 
@@ -1304,6 +1320,7 @@ def phase_implement(
         runner=runner,
         lane_runner=lane_runner,
     )
+    c = coord(task)
     status, model_result = parse_model_result(result.stdout, result.returncode)
     # Keep the launch checkpoint intact while supporting mocked/external launch
     # implementations that return without writing it themselves.
@@ -1593,6 +1610,8 @@ def phase_inner_review(
         runner=runner,
         lane_runner=lane_runner,
     )
+    c = coord(task)
+    head = str(c.get("head_sha") or "")
     replay = reviewer_replay_outcomes(
         store,
         task,
@@ -1985,6 +2004,7 @@ def advance_one(
             *(intake_lines or []),
             *handler(),
         ]
+        c = coord(task)
         lane_observations = c.pop("lane_observations", [])
         if isinstance(lane_observations, list) and lane_observations:
             save_task(store, task)
