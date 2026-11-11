@@ -74,7 +74,8 @@ from .local_ci import LocalCiError, parse_comment
 from .readme_only import (
     GITHUB_PR_FILES_CAP,
     github_file_paths,
-    markdown_and_guard_docs_only,
+    github_is_guard_docs_only,
+    github_is_markdown_only,
 )
 from .store import Store, utcnow
 
@@ -303,8 +304,8 @@ def _pull_a38_context(
     number: int,
     expected_head: str,
     expected_base: str,
-) -> tuple[str, list[str]]:
-    """Return metadata and inventory from one stable PR head/base snapshot."""
+) -> tuple[str, list[str], bool, bool]:
+    """Return metadata and waiver classification from one stable PR snapshot."""
     metadata_argv = [
         "gh",
         "pr",
@@ -348,12 +349,16 @@ def _pull_a38_context(
         # GitHub caps this endpoint without an explicit truncation marker.
         if len(entries) >= GITHUB_PR_FILES_CAP:
             raise CoordinatorError("A38 pull request file inventory is incomplete")
+        # Waiver helpers apply MAX_FILES to GitHub entries before rename/copy
+        # expansion. The expanded paths remain necessary for policy detection.
+        markdown_only = github_is_markdown_only(entries, truncated=False)
+        guard_docs_only = github_is_guard_docs_only(entries, truncated=False)
         paths = github_file_paths(entries)
         if paths is None:
             raise CoordinatorError("A38 pull request file inventory is invalid")
         after = metadata()
         if after == before:
-            return before[1], paths
+            return before[1], paths, markdown_only, guard_docs_only
     if last_before is not None and last_before[0] != expected_head:
         raise CoordinatorError(
             "A38 pull request head differs from the clean signed head"
@@ -400,7 +405,7 @@ def phase_tests(
         raise CoordinatorError("A38 measurement requires a pull request number")
     api = scoped(store, worker.session_id, runner)
     try:
-        base_sha, changed_paths = _pull_a38_context(
+        base_sha, changed_paths, markdown_only, guard_docs_only = _pull_a38_context(
             api,
             repo=cfg.repo,
             number=number,
@@ -447,7 +452,6 @@ def phase_tests(
         f"{base_sha}^{{commit}}",
     )
     require_git_ok(exact_base, "verify observed A38 base")
-    markdown_only, guard_docs_only = markdown_and_guard_docs_only(changed_paths)
     waiver_reason = (
         "markdown-only change set"
         if markdown_only

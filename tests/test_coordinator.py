@@ -6849,7 +6849,7 @@ def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
     monkeypatch.setattr(
         coordinator_a38,
         "_pull_a38_context",
-        lambda *_a, **_k: (fake.base, ["src/app.py"]),
+        lambda *_a, **_k: (fake.base, ["src/app.py"], False, False),
     )
     activity_id = coordinator_a38._report_activity_id(
         task_id,
@@ -8553,7 +8553,7 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
     verify_checkout_identity(store, worker, fake, str(worktree))
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *args, **kwargs: (moved_base, ["README.md"]),
+        lambda *args, **kwargs: (moved_base, ["README.md"], True, True),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *args: [])
 
@@ -8697,7 +8697,7 @@ def test_a38_pending_base_reconciles_when_live_base_returns_before_remeasurement
     fake.remotes["origin"] = "https://github.com/example/project.git"
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *args, **kwargs: (original_base, ["README.md"]),
+        lambda *args, **kwargs: (original_base, ["README.md"], True, True),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *args: [])
 
@@ -9138,7 +9138,7 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: ("b" * 40, ["src/app.py"]),
+        lambda *a, **k: ("b" * 40, ["src/app.py"], False, False),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
     monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
@@ -9223,7 +9223,7 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: ("b" * 40, ["src/app.py"]),
+        lambda *a, **k: ("b" * 40, ["src/app.py"], False, False),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
     monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
@@ -9368,7 +9368,12 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: (base, paths),
+        lambda *a, **k: (
+            base,
+            paths,
+            reason == "markdown-only change set",
+            True,
+        ),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.scoped",
@@ -9441,7 +9446,12 @@ def test_a38_policy_change_fails_before_old_base_evidence_is_run(
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: ("b" * 40, [".github/a38.json", "src/app.py"]),
+        lambda *a, **k: (
+            "b" * 40,
+            [".github/a38.json", "src/app.py"],
+            False,
+            False,
+        ),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.scoped",
@@ -9476,7 +9486,12 @@ def test_a38_policy_change_is_a_final_blocker_without_reply_checkpoint(
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: (fake.base, [".github/a38.json", "src/app.py"]),
+        lambda *a, **k: (
+            fake.base,
+            [".github/a38.json", "src/app.py"],
+            False,
+            False,
+        ),
     )
 
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
@@ -9555,7 +9570,7 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
             )
         raise AssertionError(argv)
 
-    observed_base, paths = _pull_a38_context(
+    observed_base, paths, markdown_only, guard_docs_only = _pull_a38_context(
         runner,
         repo="example/project",
         number=42,
@@ -9565,7 +9580,58 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
 
     assert observed_base == base
     assert paths == ["docs/guide.md", ".github/workflows/a38-guard.yml"]
+    assert markdown_only is False
+    assert guard_docs_only is True
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize("status", ["renamed", "copied"])
+@pytest.mark.parametrize(("entry_count", "expected"), [(500, True), (501, False)])
+def test_a38_context_applies_waiver_limit_to_github_entries_before_path_expansion(
+    status: str, entry_count: int, expected: bool
+) -> None:
+    from agent_cli.coordinator_a38 import _pull_a38_context
+
+    head = "a" * 40
+    base = "b" * 40
+    entries = [
+        {
+            "status": status,
+            "previous_filename": f"docs/old-{index}.md",
+            "filename": f"docs/new-{index}.md",
+        }
+        for index in range(entry_count)
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "headRefOid": head,
+                        "baseRefOid": base,
+                        "baseRefName": "develop",
+                    }
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"]:
+            return Completed(0, json.dumps([entries]), "")
+        raise AssertionError(argv)
+
+    observed_base, paths, markdown_only, guard_docs_only = _pull_a38_context(
+        runner,
+        repo="example/project",
+        number=42,
+        expected_head=head,
+        expected_base="develop",
+    )
+
+    assert observed_base == base
+    assert len(paths) == entry_count * 2
+    assert markdown_only is expected
+    assert guard_docs_only is expected
 
 
 def test_a38_context_retries_when_base_moves_during_file_inventory() -> None:
@@ -9597,7 +9663,7 @@ def test_a38_context_retries_when_base_moves_during_file_inventory() -> None:
             return Completed(0, json.dumps([inventories.pop(0)]), "")
         raise AssertionError(argv)
 
-    observed_base, paths = _pull_a38_context(
+    observed_base, paths, markdown_only, guard_docs_only = _pull_a38_context(
         runner,
         repo="example/project",
         number=42,
@@ -9607,6 +9673,8 @@ def test_a38_context_retries_when_base_moves_during_file_inventory() -> None:
 
     assert observed_base == base_two
     assert paths == ["src/agent_cli/lane.py"]
+    assert markdown_only is False
+    assert guard_docs_only is False
     assert metadata == []
     assert inventories == []
 
@@ -9702,7 +9770,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
-        lambda *a, **k: (base, ["src/app.py"]),
+        lambda *a, **k: (base, ["src/app.py"], False, False),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
     monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
@@ -9960,14 +10028,19 @@ def test_sequential_openrouter_lane_hides_its_config_dir(
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=lambda argv, stdin: Completed(
-            2, "", "cannot read /opt/profiles/router/openrouter-api-key"
+            2, "", "cannot read /opt/profi\x1b[31mles/router/openrouter-api-key"
         ),
     )
 
     assert "/opt/profiles/router" not in result.stderr
+    assert "\x1b" not in result.stderr
     assert "<config_dir>/openrouter-api-key" in result.stderr
     runs = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
     assert runs and "/opt/profiles/router" not in runs[0]["payload"]["final_text"]
+    assert runs[0]["payload"]["final_text"] == (
+        "cannot read <config_dir>/openrouter-api-key"
+    )
+    assert agent["note"] == "cannot read <config_dir>/openrouter-api-key"
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])

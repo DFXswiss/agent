@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
 
 from .coordinator_common import redact
 from .hub import Hub
-from .text_sanitize import redact_terminal_interleaved_secret
+from .text_sanitize import redact_terminal_interleaved_urlencoded_secret
 
 _ASSIGNMENT_TEXT_LIMIT = 2000
 
@@ -16,26 +15,20 @@ def _bearer_forms(token: str | None) -> tuple[str, ...]:
     if not token:
         return ()
     header = f"Bearer {token}"
-    return tuple(
-        sorted(
-            {token, header, quote(token, safe=""), quote(header, safe="")},
-            key=len,
-            reverse=True,
-        )
-    )
+    return header, token
 
 
 def _without_bearer(text: str, token: str | None) -> str:
-    """Remove the device bearer (raw, header form and URL-encoded) from hub text."""
+    """Remove raw, encoded, or mixed device bearer representations."""
     for form in _bearer_forms(token):
-        text = text.replace(form, "[redacted]")
+        text = redact_terminal_interleaved_urlencoded_secret(text, form)
     return text
 
 
 def _without_interleaved_bearer(text: str, token: str | None) -> str:
-    """Remove bearer forms even when terminal controls split their characters."""
+    """Remove encoded bearer forms even when terminal controls split characters."""
     for form in _bearer_forms(token):
-        text = redact_terminal_interleaved_secret(text, form)
+        text = redact_terminal_interleaved_urlencoded_secret(text, form)
     return text
 
 

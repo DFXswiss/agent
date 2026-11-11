@@ -718,6 +718,54 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
     assert "[redacted]" in note
 
 
+def test_run_failed_lane_hides_control_interleaved_config_path_in_note_and_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    config_dir = "/opt/profiles/router"
+    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="openrouter",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["claude"],
+            returncode=2,
+            stdout="",
+            stderr=f"provider output {split_path}\n",
+            config_dir=config_dir,
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(spec),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "/opt/profiles/router" not in captured.out + captured.err
+    assert "\x1b" not in captured.out + captured.err
+    assert "<config_dir>/openrouter-api-key" in captured.err
+    implementers = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert implementers
+    assert implementers[0]["note"] == (
+        "aborted incomplete lane: provider output <config_dir>/openrouter-api-key"
+    )
+
+
 def test_run_only_parsed_implementer_blocked_result_fails_the_task(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

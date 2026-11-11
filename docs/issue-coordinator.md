@@ -622,7 +622,9 @@ Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
 first applies control-tolerant secret matching to raw text, then removes terminal
 escapes and controls, redacts again, and finally applies its length bound.
 Configured paths
-are hidden before the diagnostic length bound is applied, and an unreadable
+are matched in both raw and resolved form despite interleaved terminal controls,
+then hidden again after sanitization and before the diagnostic length bound is
+applied. An unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
 Live terminal frames join tmux soft-wrapped lines before using the same
 sanitizer and secret redaction without the diagnostic length bound, so frame
@@ -631,9 +633,11 @@ tabs and newlines, and terminal publication otherwise preserves captured
 whitespace. Tmux-backed lane
 diagnostics likewise join soft-wrapped lines before redaction and before their
 bounded text may be printed or stored as `lane.run` evidence. Hub assignment
-failures first remove every exact raw, header, or URL-encoded device bearer with
-an escape- and control-tolerant matcher and then use that same generic pipeline;
-exact bearer removal is repeated after sanitization.
+failures first remove the raw or header device bearer with an escape- and
+control-tolerant matcher that accepts every bearer character literally or as a
+case-insensitive percent-encoded byte, including mixed representations. They
+then use that same generic pipeline; exact bearer removal is repeated after
+sanitization.
 Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. GitHub activity failures replace the exact
@@ -842,6 +846,8 @@ commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
+The 500-file waiver ceiling counts GitHub file entries before rename/copy
+entries expand into their old and new paths.
 Coordinator A38 mode does not implement policy migrations; a changed
 `.github/a38.json` fails loudly instead of publishing evidence against the old
 base policy. This blocker is non-recoverable and has no reply checkpoint. A

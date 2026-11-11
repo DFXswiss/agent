@@ -3397,7 +3397,7 @@ _IMPLEMENTER_VERDICTS = {"done": "done", "no-change": "done", "blocked": "blocke
 def _lane_diagnostic_note(result: LaneResult) -> str:
     """Bounded, secret-redacted lane diagnostic for notes, evidence and stderr."""
     raw = result.stderr.strip() or result.stdout.strip() or f"lane STATUS={result.status}"
-    return redact_diagnostic(_sanitize_lane_output(raw))
+    return redact_diagnostic(raw, config_dir=result.config_dir)
 
 
 def _agent_handoff_exit(
@@ -4067,10 +4067,16 @@ def _print_lane_result(result: LaneResult) -> None:
     # Vendor output can echo a provider credential; every printed diagnostic is
     # bounded and passed through the shared redaction, like the stored notes.
     if result.stdout.strip():
-        print(redact_diagnostic(_sanitize_lane_output(result.stdout.rstrip())))
+        print(
+            redact_diagnostic(
+                result.stdout.rstrip(), config_dir=result.config_dir
+            )
+        )
     if result.stderr.strip():
         print(
-            redact_diagnostic(_sanitize_lane_output(result.stderr.rstrip())),
+            redact_diagnostic(
+                result.stderr.rstrip(), config_dir=result.config_dir
+            ),
             file=sys.stderr,
         )
     print(
