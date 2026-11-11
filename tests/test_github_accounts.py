@@ -13,6 +13,7 @@ from agent_cli.github_accounts import (
     Account,
     AccountError,
     GitHubHttpsRemoteError,
+    _network_remote_targets,
     ensure_github_https_remote,
     load_accounts,
     resolve_effective_github_https_url,
@@ -30,6 +31,19 @@ IDENTITY = {
     'signing_format': 'ssh',
 }
 SAFE_ORIGIN = 'https://github.com/owner/repo.git'
+
+
+@pytest.mark.no_pg
+def test_network_remote_targets_accepts_clone_separate_git_dir_and_rejects_global_config():
+    clone = [
+        'clone', '--no-checkout', '--separate-git-dir', '/tmp/metadata/git',
+        SAFE_ORIGIN, '/tmp/worktree',
+    ]
+    assert _network_remote_targets(clone) == [SAFE_ORIGIN]
+    with pytest.raises(GitHubHttpsRemoteError, match='network configuration'):
+        _network_remote_targets([
+            '-c', 'core.hooksPath=/dev/null', 'fetch', 'origin',
+        ])
 
 
 def _git_payload(argv: list[str]) -> list[str]:
