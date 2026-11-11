@@ -87,6 +87,13 @@ worktree and separate Git directory are removed directly. The operator
 must therefore keep those drivers out of the worker account's system, global,
 and repository configuration.
 
+An operator must repair or remove an unreadable `state.json` or
+`checkpoint.json`. When one exists but cannot be read, is not valid JSON, or is
+not a JSON object with the expected types, the tick reports
+`state unreadable: <masked file name>` for that request, or for that worker's
+checkpoint, and does nothing else for it in that tick: no discovery restart, no
+clone, no comment, and no overwrite of the file.
+
 ## Mandate
 
 A request is one pull-request issue comment in a configured repository where:
@@ -104,6 +111,10 @@ first scan and then from a persisted checkpoint minus a small overlap. The
 oldest qualifying request is handled in a tick. A marker for another request
 does not block a newer one, and requests for the same pull request are
 serialized by the source lock.
+
+A tick processes at most one request through the workflow. Before that it may
+close the local bookkeeping of earlier requests whose result marker already
+exists on GitHub, without Git, a lane, or a comment.
 
 ## Workflow
 
@@ -145,7 +156,9 @@ serialized by the source lock.
    `-`, or `.`; no component starting with `.` or ending with `.lock`; no
    trailing `/` or `.`; not `@`). Valid names such as `feature@2` and non-ASCII
    names pass. The same validator applies to the base ref and to the lease push.
-   Anything else finishes with the blocker `unsupported head branch name`.
+   An invalid head ref finishes with the blocker
+   `unsupported head branch name`; an invalid base ref finishes with
+   `unsupported base branch name`.
 4. If GitHub reports `mergeable == true`, it posts a no-conflict result and does
    not clone or start a lane.
 5. Otherwise it creates a fresh worktree, sets the head repository as
@@ -199,6 +212,13 @@ serialized by the source lock.
    raises or returns a non-`complete` status, the script still takes the
    post-run index fingerprint and the `.git` file check before deciding. A
    changed index or `.git` file is the corresponding final blocker. With an
+   unchanged index and `.git` file, the lane status and result come from one
+   `parse_model_result(stdout, returncode)` call; the launcher's own status is
+   never trusted over it. A non-zero exit is never `complete`, even when the
+   output contains `STATUS: complete`; exit code 124 is `timeout`, another
+   non-zero exit is `unavailable`, and a missing or duplicated `STATUS:` or
+   `RESULT:` line is `partial`. That one status drives the index handling, the
+   `.git` handling, the transient/retry decision, and the returned value. With an
    unchanged index and `.git` file, a lane status of `partial` or `timeout`
    receives exactly one retry of the same stop with that failure stated in the
    spec. A second such failure aborts the rebase and posts the blocker `lane
@@ -338,6 +358,12 @@ checkpoint suppress reprocessing of terminal requests. GitHub markers
 additionally finish a request whose local state is missing. Deleting a marker
 comment does not restart a request. Lane runs are recorded through `lane.run`;
 there is no new table or activity type.
+
+Each conflict stop has its own lane artifacts:
+`lane-s<stop>-a<attempt>.md` and the matching
+`lane-s<stop>-a<attempt>.log`. `stop` counts from 1 across the whole request
+and is persisted as `conflict_stops` in `state.json`, so a resumed request
+continues the sequence. No earlier artifact is overwritten.
 
 Every blocker pushes nothing, posts exactly one blocker, and finishes that
 request. A blocker aborts an in-progress rebase unless Git metadata was found
