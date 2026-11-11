@@ -70,6 +70,23 @@ identity with signing configuration. The private key and trusted signer setup
 stay in that account executor, never in this file. The model lane uses the
 device's implementer selection; `codex` is refused because it can run commands.
 
+### Operator requirements
+
+Checkout and rebase honour the pull request's `.gitattributes`, so Git would run
+`filter.*` and `merge.*.driver` programs; the query below also refuses
+`diff.*` drivers because the worker runs Git commands that honour them. The
+preflight therefore reads the system and global Git configuration with the
+account Git runner (`git config --system --get-regexp` and `git config --global
+--get-regexp` with the pattern
+`^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|diff\..*\.(textconv|command))$`).
+Any hit is `preflight blocked: the worker Git configuration defines filter,
+merge or diff drivers (<names>); the conflicts worker refuses to run
+with them`. Directly after the clone the same query runs with `--local`; a hit
+there is the blocker `repository configuration defines Git drivers`, and the
+worktree and separate Git directory are removed directly. The operator
+must therefore keep those drivers out of the worker account's system, global,
+and repository configuration.
+
 ## Mandate
 
 A request is one pull-request issue comment in a configured repository where:
@@ -301,10 +318,11 @@ paths never appear.
 
 The session control directory holds lane specs, lane logs, the separate Git
 directory, and `state.json`; the session checkpoint holds the newest processed
-comment timestamp per repository. State
-writes are atomic and are only an optimization: GitHub markers and the live
-pull request are the source of truth. Lane runs are recorded through
-`lane.run`; there is no new table or activity type.
+comment timestamp per repository. State writes are atomic. Local state and the
+checkpoint suppress reprocessing of terminal requests. GitHub markers
+additionally finish a request whose local state is missing. Deleting a marker
+comment does not restart a request. Lane runs are recorded through `lane.run`;
+there is no new table or activity type.
 
 Every blocker pushes nothing, posts exactly one blocker, and finishes that
 request. A blocker aborts an in-progress rebase unless Git metadata was found
@@ -354,6 +372,10 @@ comment listing is unreadable for the whole tick and likewise advances no
 checkpoint.
 
 A finished request removes its worktree and keeps its control directory.
+When the clone, or any step before the first successful checkout, fails, the
+worktree and the separate Git directory are removed directly. A blocker runs
+`git rebase --abort` only when the worktree's `.git` file exists and metadata
+verification has not failed; otherwise it removes both directories directly.
 
 ## Trust boundary of checks
 
@@ -377,6 +399,11 @@ Local state is an optimization. If the control directory of a request is lost
 after a successful push and before the result comment was posted, the next tick
 finds a mergeable pull request without a marker and reports that there are no
 conflicts instead of the facts of the push.
+
+An absolute path that contains whitespace is masked up to the first whitespace
+when it appears inside free text such as check output. The configured
+`workspace_root`, the control directory, and the home directory are replaced
+verbatim wherever they appear.
 
 The Git runner API used by this worker does not expose a child-environment
 override. The rebase commands pass `-c core.editor=true` and

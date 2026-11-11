@@ -44,6 +44,7 @@ from .coordinator_common import (
     is_sha,
     redact,
     reopen_base_bound_checklist,
+    repository_push_permission,
     save_task,
     scoped,
     strip_row,
@@ -391,15 +392,11 @@ def _owner_repository_config(
         ["gh", "api", f"repos/{repo}", "--jq", ".default_branch"],
         "default branch lookup",
     ))
-    can_push = _gh_jq_text(
-        runner,
-        ["gh", "api", f"repos/{repo}", "--jq", ".permissions.push"],
-        "push permission lookup",
-    ).casefold()
-    if can_push not in {"true", "false"}:
+    can_push = repository_push_permission(runner, repo)
+    if can_push is None:
         raise CoordinatorError("push permission lookup returned neither true nor false")
     publication = repo
-    if can_push == "false":
+    if not can_push:
         publication = f"{login}/{repo.split('/', 1)[1]}"
         if not _fork_repository(
             runner,
