@@ -54,6 +54,7 @@ from .lane import (
     redact_lane_text,
     record_lane_run,
     replace_path_roots,
+    sanitized_lane_argv,
     unreadable_output_result,
 )
 from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, SECOND_REVIEW_KEYS
@@ -700,6 +701,30 @@ def _cleanup_reviewer_spool(
             pass
 
 
+def _discard_failed_reviewer_spool(
+    store: Store,
+    worker: WorkerConfig,
+    task_id: str,
+    agent_id: str,
+    output_file: str | None,
+) -> None:
+    """Remove raw and uncommitted spool files after a spool write failure."""
+    if output_file:
+        try:
+            Path(output_file).unlink()
+        except OSError:
+            pass
+    try:
+        path = _reviewer_spool_path(store, worker, task_id, agent_id)
+    except CoordinatorError:
+        return
+    for candidate in (path.with_suffix(".tmp"), path):
+        try:
+            candidate.unlink()
+        except OSError:
+            pass
+
+
 def _retry_reviewer_checkpoint(
     store: Store,
     worker: WorkerConfig,
@@ -1037,15 +1062,17 @@ def launch_lane(
         save_task(store, task)
 
         try:
-            if lane_runner is not None:
-                completed = lane_runner(argv, stdin_text)
-            else:
-                completed = run_bounded(
-                    argv,
-                    timeout=worker.lane_timeout,
-                    cwd=worktree,
-                    stdin_text=stdin_text,
-                )
+            with sanitized_lane_argv(argv) as run_argv:
+                argv = run_argv
+                if lane_runner is not None:
+                    completed = lane_runner(argv, stdin_text)
+                else:
+                    completed = run_bounded(
+                        argv,
+                        timeout=worker.lane_timeout,
+                        cwd=worktree,
+                        stdin_text=stdin_text,
+                    )
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
             stderr = _redact_coordinator_lane_text(
@@ -2012,12 +2039,14 @@ def _run_prepared(
     worktree = prepared["worktree"]
     output_file = prepared.get("output_file")
     try:
-        if lane_runner is not None:
-            completed = lane_runner(argv, stdin_text)
-        else:
-            completed = run_bounded(
-                argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
-            )
+        with sanitized_lane_argv(argv) as run_argv:
+            argv = run_argv
+            if lane_runner is not None:
+                completed = lane_runner(argv, stdin_text)
+            else:
+                completed = run_bounded(
+                    argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
+                )
     except Exception as exc:  # noqa: BLE001
         if output_file:
             try:
@@ -2636,6 +2665,15 @@ def phase_pr_gates(
                         ),
                     )
                 except Exception as exc:  # noqa: BLE001
+                    _discard_failed_reviewer_spool(
+                        store,
+                        worker,
+                        str(task["id"]),
+                        agent_id,
+                        str(prep["output_file"])
+                        if prep.get("output_file")
+                        else None,
+                    )
                     outcome = exc
             with lock:
                 results[agent_id] = outcome

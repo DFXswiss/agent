@@ -47,9 +47,9 @@ and each bounded A38 command; there is no separate A38 timeout setting.
 GitHub organization or user logins (no leading, trailing, or consecutive
 hyphens). Each owner is first resolved through `users/<owner>` to determine its
 GitHub account type, then gets its own owner-qualified, paginated issue search
-with `org:<owner>` or `user:<owner>` per tick. An empty page set,
-`incomplete_results`, a missing or negative result count, changing
-`total_count` values across pages, a malformed or duplicate
+with `org:<owner>` or `user:<owner>` per tick. An empty page set, an
+`incomplete_results` value other than the boolean `false`, a missing or negative
+result count, changing `total_count` values across pages, a malformed or duplicate
 issue identity, or a common `total_count` that differs from the unique fetched
 issue count fails that owner's discovery loudly instead of silently accepting
 an incomplete result set. An explicit `repositories` entry wins for the same
@@ -427,9 +427,10 @@ for worker in workers.values():
    inventory run uncovered. The report does not waive a missing check. Failed,
    `cancelled`, and pending checks still block. Hard
    protocol faults
-   (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
-   pagination truncation, or any workflow-run entry that is not an object or
-   lacks a valid exact head, workflow path, event, positive id, status,
+   (malformed rollup, unexpected inventory shape, missing `workflow_runs`, an
+   invalid or inconsistent nonnegative integer `total_count`, a short page,
+   excess or duplicate run identities, pagination truncation, or any workflow-run
+   entry that is not an object or lacks a valid exact head, workflow path, event, positive id, status,
    conclusion, or positive attempt — typed `CiObservationProtocolError` /
    `CiInventoryProtocolError`) enter recoverable blocked + `resume_phase=ci` +
    checkpoint; an authorized reply resumes CI once valid evidence is restored.
@@ -770,6 +771,10 @@ uncertain-lane stop: the agent note alone says `PR review lane execution failed`
 while the task blocker and issue comment publish only the fixed uncertain-outcome
 text. Raw exception text, worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
+A parallel reviewer spool write failure removes the provider's raw output and
+any partial `.tmp` or uncommitted final spool before the execution failure is
+recorded. Raw output is retained only alongside a successfully committed
+recovery spool.
 For a sequential lane execution exception, the finished agent and the task's
 terminal uncertain-lane state commit in one transaction. A rollback leaves the
 agent working and the task in its prior runnable phase.

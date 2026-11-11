@@ -640,7 +640,7 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
             identities: set[str] = set()
             total_count: int | None = None
             for page in pages:
-                if page.get("incomplete_results") is True:
+                if page.get("incomplete_results") is not False:
                     raise CoordinatorError("owner issue search returned incomplete results")
                 page_total = page.get("total_count")
                 if isinstance(page_total, bool) or not isinstance(page_total, int):

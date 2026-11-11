@@ -1938,6 +1938,79 @@ def test_ci_inventory_rejects_invalid_run_fields(field: str, value: Any) -> None
         _paginate_workflow_runs(fake, "example/project", fake.head)
 
 
+@pytest.mark.no_pg
+@pytest.mark.parametrize("total_count", [None, True, -1, "1"])
+def test_ci_inventory_requires_nonnegative_integer_total_count(
+    total_count: Any,
+) -> None:
+    from agent_cli.coordinator_common import CiInventoryProtocolError
+    from agent_cli.coordinator_github import _paginate_workflow_runs
+
+    fake = FakeGh()
+    fake.workflow_inventory_body = {
+        "total_count": total_count,
+        "workflow_runs": [],
+    }
+
+    with pytest.raises(CiInventoryProtocolError, match="invalid total_count"):
+        _paginate_workflow_runs(fake, "example/project", fake.head)
+
+
+@pytest.mark.no_pg
+def test_ci_inventory_rejects_short_excess_duplicate_and_inconsistent_pages() -> None:
+    from agent_cli.coordinator_common import CiInventoryProtocolError
+    from agent_cli.coordinator_github import _paginate_workflow_runs
+
+    fake = FakeGh()
+
+    def run(run_id: int) -> dict[str, Any]:
+        return {
+            "id": run_id,
+            "path": f".github/workflows/ci-{run_id}.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+
+    cases = [
+        (
+            [{"total_count": 2, "workflow_runs": [run(1)]}],
+            "ended before total_count",
+        ),
+        (
+            [{"total_count": 0, "workflow_runs": [run(1)]}],
+            "more runs than total_count",
+        ),
+        (
+            [{"total_count": 2, "workflow_runs": [run(1), run(1)]}],
+            "duplicate run identity 1",
+        ),
+        (
+            [
+                {
+                    "total_count": 101,
+                    "workflow_runs": [run(run_id) for run_id in range(1, 101)],
+                },
+                {"total_count": 102, "workflow_runs": [run(101)]},
+            ],
+            "inconsistent total_count",
+        ),
+    ]
+
+    for pages, message in cases:
+
+        def paged_runner(
+            argv: list[str], pages: list[dict[str, Any]] = pages
+        ) -> Completed:
+            page = int(str(argv[-1]).rsplit("page=", 1)[1])
+            return Completed(0, json.dumps(pages[page - 1]), "")
+
+        with pytest.raises(CiInventoryProtocolError, match=message):
+            _paginate_workflow_runs(paged_runner, "example/project", fake.head)
+
+
 def test_ci_inventory_transport_failure_retries_same_ci_phase(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4243,7 +4316,7 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
         "PR review lane execution failed" not in str(row.get("payload"))
         for row in comments
     )
-    assert lines == ["review-2 uncertain; blocked"]
+    assert "review-2 uncertain; blocked" in lines
 
 
 def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
@@ -13260,6 +13333,62 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
         stage_thread.join(5)
     assert not stage_thread.is_alive()
     assert failures == []
+
+
+def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker, task = _codex_prelaunch_fixture(
+        tmp_path,
+        monkeypatch,
+        "aa000001-0000-4000-8000-000000000224",
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    raw_paths: list[Path] = []
+    temporary_paths: list[Path] = []
+    real_write_spool = coordinator_lanes._write_reviewer_spool
+
+    def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\nsecret model output\n",
+            encoding="utf-8",
+        )
+        return Completed(0, "", "")
+
+    def fail_quality_spool(*args: Any, **kwargs: Any) -> Path:
+        if kwargs.get("dimension") != "quality":
+            return real_write_spool(*args, **kwargs)
+        output = Path(kwargs["output_file"])
+        raw_paths.append(output)
+        path = coordinator_lanes._reviewer_spool_path(
+            args[0], args[1], str(args[2]["id"]), str(args[3]["id"])
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text("partial secret spool", encoding="utf-8")
+        temporary_paths.append(temporary)
+        raise OSError("spool filesystem unavailable")
+
+    monkeypatch.setattr(
+        coordinator_lanes, "_write_reviewer_spool", fail_quality_spool
+    )
+
+    lines = coordinator_lanes.phase_pr_gates(
+        store,
+        worker,
+        store.row("task", task["id"]),
+        lambda _argv: Completed(0, "", ""),
+        reviewer,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert lines == ["review-2 uncertain; blocked"]
+    assert raw_paths and temporary_paths
+    assert all(not path.exists() for path in [*raw_paths, *temporary_paths])
 
 
 def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(

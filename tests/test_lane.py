@@ -13,6 +13,7 @@ import pytest
 
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
 from agent_cli.lane import (
+    LANE_GITHUB_TOKEN_ENV,
     LANE_STRIP_ENV,
     LANE_VENDORS,
     OPENROUTER_BASE_URL,
@@ -170,7 +171,12 @@ def _assert_nested_role_env_prefix(
     inner = _lane_inner(argv)
     assert inner[0] == "env"
     home_key = "GROK_HOME" if provider == "grok" else "CODEX_HOME"
-    assert f"{home_key}={config_dir}" in inner
+    home_assignment = f"{home_key}={config_dir}"
+    assert home_assignment in inner
+    home_index = inner.index(home_assignment)
+    role_env = max(
+        index for index, value in enumerate(inner[:home_index]) if value == "env"
+    )
     for key in (
         "XAI_API_KEY",
         "GROK_API_KEY",
@@ -183,12 +189,12 @@ def _assert_nested_role_env_prefix(
         "CODEX_HOME",
     ):
         assert key in inner
-        assert inner[inner.index(key) - 1] == "-u"
+        key_index = inner.index(key, role_env)
+        assert inner[key_index - 1] == "-u"
     # Role env_prefix precedes the existing provider argv (which itself starts with env).
-    second_env = inner.index("env", 1)
-    assert second_env > inner.index(f"{home_key}={config_dir}")
+    provider_env = inner.index("env", home_index + 1)
     provider_bin = "grok" if provider == "grok" else "codex"
-    assert provider_bin in inner[second_env:]
+    assert provider_bin in inner[provider_env:]
 
 
 def test_grok_implementer_argv_requires_explicit_model() -> None:
@@ -1945,6 +1951,107 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert output_paths
     assert not Path(output_paths[0]).exists()
+
+
+@pytest.mark.parametrize("vendor", ["codex", "claude"])
+@pytest.mark.parametrize("tmux", [False, True])
+def test_launch_sanitizes_github_environment_for_injected_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    vendor: str,
+    tmux: bool,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement without GitHub credentials\n", encoding="utf-8")
+    for key in LANE_GITHUB_TOKEN_ENV:
+        monkeypatch.setenv(key, f"ambient-{key.lower()}")
+    monkeypatch.setenv("GH_CONFIG_DIR", "/ambient/github-profile")
+    profiles: list[Path] = []
+
+    def fake(argv: list[str], _stdin_text: str | None) -> object:
+        assignments = [
+            item for item in argv if item.startswith("GH_CONFIG_DIR=")
+        ]
+        assert len(assignments) == 1
+        profile = Path(assignments[0].split("=", 1)[1])
+        profiles.append(profile)
+        assert profile.is_dir()
+        assert list(profile.iterdir()) == []
+        for key in LANE_GITHUB_TOKEN_ENV:
+            assert any(
+                argv[index : index + 2] == ["-u", key]
+                for index in range(len(argv) - 1)
+            )
+        assert "/ambient/github-profile" not in argv
+        if vendor == "codex":
+            output = Path(argv[argv.index("--output-last-message") + 1])
+            output.write_text(
+                "STATUS: complete\nRESULT: done\n", encoding="utf-8"
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    launch(
+        role="implementer",
+        vendor=vendor,
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=tmux,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert len(profiles) == 1
+    assert not profiles[0].exists()
+    for key in LANE_GITHUB_TOKEN_ENV:
+        assert os.environ[key] == f"ambient-{key.lower()}"
+    assert os.environ["GH_CONFIG_DIR"] == "/ambient/github-profile"
+
+
+def test_launch_sanitizes_github_environment_for_default_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement without GitHub credentials\n", encoding="utf-8")
+    for key in LANE_GITHUB_TOKEN_ENV:
+        monkeypatch.setenv(key, f"ambient-{key.lower()}")
+    monkeypatch.setenv("GH_CONFIG_DIR", "/ambient/github-profile")
+    profiles: list[Path] = []
+
+    def fake_default(
+        argv: list[str], _stdin_text: str | None, _cwd: str | None
+    ) -> object:
+        assignment = next(
+            item for item in argv if item.startswith("GH_CONFIG_DIR=")
+        )
+        profile = Path(assignment.split("=", 1)[1])
+        profiles.append(profile)
+        assert profile.is_dir()
+        assert list(profile.iterdir()) == []
+        for key in LANE_GITHUB_TOKEN_ENV:
+            assert any(
+                argv[index : index + 2] == ["-u", key]
+                for index in range(len(argv) - 1)
+            )
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text("STATUS: complete\nRESULT: done\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
+    launch(
+        role="implementer",
+        vendor="codex",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert len(profiles) == 1
+    assert not profiles[0].exists()
 
 
 def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> None:
