@@ -68,12 +68,19 @@ def iso(value: datetime) -> str:
 
 
 def safe(worker: ConflictWorker, value: object) -> str:
-    cleaned = redact(str(value), limit=COMMENT_LIMIT)
-    for path, replacement in (
+    cleaned = str(value)
+    replacements = (
         (str(worker.workspace_root / CONTROL_DIR), "<control>"),
         (str(worker.workspace_root), "<workspace>"),
+        (str(Path.home()), "<home>"),
+    )
+    for path, replacement in sorted(
+        replacements, key=lambda item: len(item[0]), reverse=True
     ):
+        if path in ("", ".", "/"):
+            continue
         cleaned = cleaned.replace(path, replacement)
+    cleaned = redact(cleaned, limit=COMMENT_LIMIT)
     cleaned = re.sub(
         r'(?<![\w./:-])/(?:[^\s/"\']+/)+[^\s/"\']+',
         "[local path]",
@@ -94,11 +101,6 @@ def bounded_tail(value: str, *, limit: int = FAILURE_TAIL_LIMIT) -> str:
     return cleaned if len(cleaned) <= limit else "…" + cleaned[-(limit - 1):]
 
 
-_FORMATTING_CHARACTERS = re.compile(
-    "[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]"
-)
-
-
 def _comment_text(value: str) -> str:
     characters: list[str] = []
     for character in value:
@@ -106,9 +108,7 @@ def _comment_text(value: str) -> str:
             characters.append(character)
         elif character == "\t":
             characters.append(" ")
-        elif unicodedata.category(character) == "Cc":
-            continue
-        elif _FORMATTING_CHARACTERS.fullmatch(character):
+        elif unicodedata.category(character) in ("Cc", "Cf"):
             continue
         else:
             characters.append(character)

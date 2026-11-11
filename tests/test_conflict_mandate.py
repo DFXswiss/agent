@@ -20,6 +20,7 @@ from agent_cli.conflict_mandate_config import load_conflict_config
 from agent_cli.conflict_mandate_github import ConflictTransientError, read_remote_head
 from agent_cli.conflict_mandate_state import (
     Request,
+    comment_body,
     context,
     parse_time,
     safe,
@@ -27,10 +28,10 @@ from agent_cli.conflict_mandate_state import (
     unfinished_requests,
 )
 from agent_cli.coordinator_common import prompt_prohibitions
-from agent_cli.github_accounts import _network_remote_targets
+from agent_cli.github_accounts import GitHubHttpsRemoteError, _network_remote_targets
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
-from test_coordinator_support import make_session, patch_account_runners, write_accounts
+from test_coordinator_support import make_session, write_accounts
 
 
 def config(root: Path) -> dict[str, Any]:
@@ -85,6 +86,7 @@ class FakeConflictTransport:
         self.remote_base_sha = "b" * 40
         self.rev_parse_head = "a" * 40
         self.remote_read_fails = False
+        self.runner_capabilities: list[dict[str, bool]] = []
         self.signed_ok = True
         self.merge_commits = False
         self.unmerged_state = "UU"
@@ -114,12 +116,21 @@ class FakeConflictTransport:
         self.remote_read_body: Any = None
         self.lane_changes_index = False
         self.lane_index_writes = 0
+        self.driver_config: dict[str, str] = {}
+        self.driver_config_reads: list[str] = []
+        self.clone_fails = False
 
     def _git(self, argv: list[str]) -> Completed:
-        args = argv[argv.index("git") + 1 :]
+        args = argv[argv.index("git") + 1 :] if "git" in argv else list(argv)
         while args and args[0] in {"-C", "-c"}:
             args = args[2:]
         self.calls.append(["git", *args])
+        if args[:1] == ["config"] and "--get-regexp" in args:
+            scopes = [scope for scope in ("--system", "--global", "--local") if scope in args]
+            scope = scopes[0] if scopes else "--local"
+            self.driver_config_reads.append(scope)
+            output = self.driver_config.get(scope, "")
+            return Completed(0 if output else 1, output, "")
         if args[:1] == ["rebase"]:
             if "--abort" in args:
                 self.rebase_in_progress = False
@@ -132,6 +143,8 @@ class FakeConflictTransport:
             self.rebase_in_progress = True
             return Completed(self.rebase_rc, "", "conflict")
         if args[:1] == ["clone"]:
+            if self.clone_fails:
+                return Completed(128, "", "fatal: unable to access the remote")
             dest = Path(args[-1])
             self.clone_path = dest
             conflict_path = dest / self.conflict_file
@@ -348,6 +361,19 @@ class FakeConflictTransport:
     def check(self, argv: list[str], **kwargs: Any) -> Completed:
         self.check_calls.append({"argv": argv, **kwargs})
         return Completed(self.check_rc, "ok" if self.check_rc == 0 else "", "")
+
+
+def patch_account_runners(monkeypatch: pytest.MonkeyPatch, fake: FakeConflictTransport) -> None:
+    from agent_cli import github_accounts
+
+    def runner(self, base, *, require_git=False, allow_force_with_lease=False):  # noqa: ANN001
+        fake.runner_capabilities.append({
+            "require_git": require_git,
+            "allow_force_with_lease": allow_force_with_lease,
+        })
+        return fake.account_runner(base, login=self.login)
+
+    monkeypatch.setattr(github_accounts.Account, "runner", runner)
 
 
 @pytest.mark.parametrize("payload", [None, {}, {"workers": None}, {"workers": {}}])
@@ -821,6 +847,10 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
     monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any("pushed" in line for line in lines)
+    assert any(
+        capability == {"require_git": True, "allow_force_with_lease": True}
+        for capability in fake.runner_capabilities
+    )
     assert any("--force-with-lease=refs/heads/feature:" + "a" * 40 in " ".join(call) for call in fake.calls)
     assert len(fake.pr_comments) == 1
     assert len(fake.lanes) == 1
@@ -855,11 +885,17 @@ def test_network_git_argv_uses_account_runner_allowlist_and_sets_hooks_after_clo
         if verb not in {"clone", "fetch", "push"}:
             continue
         checked.append(call)
-        targets = _network_remote_targets(args)
+        targets = _network_remote_targets(
+            args,
+            allow_force_with_lease=verb == "push",
+        )
         assert targets
         assert "-c" not in call
         if verb in {"fetch", "push"}:
             assert "-C" in call
+        if verb == "push":
+            with pytest.raises(GitHubHttpsRemoteError, match="unsupported git network option"):
+                _network_remote_targets(args)
     assert any(
         call[1:2] == ["clone"] or call[3:4] == ["clone"] for call in checked
     )
@@ -3222,6 +3258,7 @@ def test_all_local_git_commands_disable_the_fsmonitor(
         call
         for call in fake.raw_calls
         if "git" in call and not {"clone", "fetch", "push"} & set(call)
+        and not ("config" in call and {"--system", "--global"} & set(call))
     ]
     assert local
     for call in local:
@@ -3533,3 +3570,200 @@ def test_lane_output_with_foreign_absolute_path_is_masked(
     blocker = fake.pr_comments[0]["body"]
     assert "Lane note:" in blocker
     assert "/srv/private" not in blocker
+
+
+def test_comment_formatter_removes_every_formatting_character(
+    tmp_path: Path,
+) -> None:
+    worker_cfg = worker(tmp_path)
+    body = comment_body(
+        worker_cfg,
+        "blocker",
+        "reason \u061c\u00ad visible text",
+        [("Note", "frame \u061c\u00ad text")],
+    )
+    assert "\u061c" not in body
+    assert "\u00ad" not in body
+    assert "reason" in body and "visible text" in body
+    assert "frame" in body and "text" in body
+
+
+def test_safe_replaces_whitespace_roots_verbatim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "work dir"
+    home = tmp_path / "Users" / "home dir"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    data = config(tmp_path)
+    data["workers"]["worker-session"]["workspace_root"] = str(root)
+    (tmp_path / "conflicts.json").write_text(json.dumps(data), encoding="utf-8")
+    worker_cfg = load_conflict_config(tmp_path)["worker-session"]
+    configured = worker_cfg.workspace_root
+    control = configured / ".conflicts-control"
+    text = safe(worker_cfg, f"{control}/state.json {configured}/session {home}/config")
+    assert "<control>/state.json" in text
+    assert "<workspace>/session" in text
+    assert "<home>/config" in text
+    assert str(configured) not in text
+    assert str(home) not in text
+
+
+def test_global_git_driver_blocks_preflight_without_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.driver_config["--global"] = "filter.lfs.smudge cat\n"
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == [
+        "preflight blocked: the worker Git configuration defines filter, merge "
+        "or diff drivers (filter.lfs.smudge); the conflicts worker refuses to "
+        "run with them"
+    ]
+    assert fake.pr_comments == []
+    assert fake.lanes == []
+    assert not any(any(part.startswith("repos/") for part in call) for call in fake.raw_calls)
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_driver_free_global_configuration_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.pull["mergeable"] = True
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("no conflicts reported" in line for line in lines)
+    assert fake.driver_config_reads[:2] == ["--system", "--global"]
+    assert fake.lanes == []
+
+
+def test_local_git_driver_after_clone_blocks_and_removes_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.driver_config["--local"] = "merge.custom.driver true\n"
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert "repository configuration defines Git drivers" in fake.pr_comments[0]["body"]
+    assert not _control_git_dir(tmp_path).exists()
+    assert not (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    ).exists()
+    assert not any(
+        call[:1] == ["rebase"] and "--abort" not in call for call in fake.calls
+    )
+
+
+def test_blocked_request_without_marker_is_not_rediscovered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    request = Request(
+        repo="example/project",
+        number=42,
+        comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(ctx, "blocked", blocker="previous blocker", blocker_facts=[])
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["idle"]
+    assert fake.pull_reads == 0
+    assert fake.pr_comments == []
+    assert fake.reactions == []
+    assert fake.lanes == []
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
+def test_failed_clone_removes_both_directories_and_a_later_blocker_runs_no_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.clone_fails = True
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("transient:") and "unable to access" in line for line in lines)
+    worktree = (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    )
+    assert not worktree.exists()
+    assert not _control_git_dir(tmp_path).exists()
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project"
+        / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["phase"] = "transient"
+    state["transient_start"] = "2026-09-01T00:00:00Z"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    fake.calls.clear()
+    fake.raw_calls.clear()
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("blocker posted") for line in lines)
+    assert not any("rebase" in call for call in fake.calls)
+    assert not any(str(worktree) in " ".join(call) for call in fake.raw_calls)
+    assert len(fake.pr_comments) == 1
+
+
+def test_lane_system_exit_propagates_out_of_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def terminating(*args: Any, **kwargs: Any) -> Any:
+        raise SystemExit(130)
+
+    with pytest.raises(SystemExit) as raised:
+        tick(store, worker_cfg, runner=fake, lane_runner=terminating)
+    assert raised.value.code == 130
+    assert fake.pr_comments == []
+
+
+def test_record_writer_system_exit_propagates_out_of_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def terminating(*args: Any, **kwargs: Any) -> Any:
+        raise SystemExit(130)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", terminating)
+    with pytest.raises(SystemExit) as raised:
+        tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert raised.value.code == 130
+
+
+def test_lane_store_error_is_handled_as_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError(1, "lane store unavailable")
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=unavailable)
+    assert any(line.startswith("transient: ") for line in lines)
+    assert fake.pr_comments == []
+
+
+def test_failed_record_store_error_is_still_reported_without_changing_the_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def failed(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError(1, "audit store unavailable")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", failed)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("lane record not written: ") for line in lines)
+    assert any(line.startswith("pushed") for line in lines)
+    assert len(fake.pr_comments) == 1

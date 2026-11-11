@@ -12,6 +12,11 @@ from .runtime import Completed
 
 
 _CONFLICT_MARKER = re.compile(r"^(?:<{7}|={7}|>{7}|\|{7})(?=\s|$)")
+_DRIVER_PATTERN = (
+    r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|"
+    r"diff\..*\.(textconv|command))$"
+)
+_DRIVER_LINE = re.compile(r"^(\S+)(?:\s|$)")
 _UNMERGED_STATES = frozenset({"UU", "AA"})
 _FORBIDDEN_REF_CHARS = frozenset(
     " ~^:?*[\\\x7f" + "".join(chr(code) for code in range(0x20))
@@ -62,6 +67,43 @@ def require_ok(
     return completed
 
 
+def _driver_names(completed: Completed, label: str) -> tuple[str, ...]:
+    """Return the driver names from ``git config --get-regexp`` output."""
+    if completed.returncode == 1 and not (completed.stdout or "").strip():
+        return ()
+    if completed.returncode != 0:
+        _fail(completed, label)
+    names: list[str] = []
+    for line in (completed.stdout or "").splitlines():
+        match = _DRIVER_LINE.match(line.strip())
+        if match is None:
+            raise CoordinatorError(f"{label} returned an unexpected entry")
+        name = match.group(1)
+        if re.fullmatch(_DRIVER_PATTERN, name) is None:
+            raise CoordinatorError(f"{label} returned an unexpected entry")
+        names.append(name)
+    return tuple(names)
+
+
+def ambient_driver_names(runner: Runner) -> tuple[str, ...]:
+    """Return system and global filter, merge, and diff driver names."""
+    names: list[str] = []
+    for scope in ("--system", "--global"):
+        completed = runner([
+            "git", "config", scope, "--get-regexp", _DRIVER_PATTERN,
+        ])
+        names.extend(_driver_names(completed, f"read {scope.lstrip('-')} Git configuration"))
+    return tuple(names)
+
+
+def local_driver_names(runner: Runner, worktree: str) -> tuple[str, ...]:
+    """Return the driver names defined by the cloned repository configuration."""
+    completed = runner(_argv(
+        worktree, "config", "--local", "--get-regexp", _DRIVER_PATTERN,
+    ))
+    return _driver_names(completed, "read repository Git configuration")
+
+
 def clone(
     runner: Runner,
     *,
@@ -82,26 +124,33 @@ def clone(
         str(dest),
     ])
     if completed.returncode != 0:
+        remove_repository(git_dir)
+        remove_repository(dest)
         _fail(completed, "clone head repository")
-    require_ok(
-        runner,
-        str(dest),
-        "disable hooks",
-        "config",
-        "core.hooksPath",
-        "/dev/null",
-    )
-    require_ok(runner, str(dest), "rename publication remote", "remote", "rename", "origin", "publication")
-    require_ok(
-        runner,
-        str(dest),
-        "add origin remote",
-        "remote",
-        "add",
-        "origin",
-        f"https://github.com/{target_repo}.git",
-    )
-    record_git_file(dest)
+    try:
+        require_ok(
+            runner,
+            str(dest),
+            "disable hooks",
+            "config",
+            "core.hooksPath",
+            "/dev/null",
+        )
+        require_ok(runner, str(dest), "rename publication remote", "remote", "rename", "origin", "publication")
+        require_ok(
+            runner,
+            str(dest),
+            "add origin remote",
+            "remote",
+            "add",
+            "origin",
+            f"https://github.com/{target_repo}.git",
+        )
+        record_git_file(dest)
+    except (OSError, CoordinatorError):
+        remove_repository(git_dir)
+        remove_repository(dest)
+        raise
 
 
 def record_git_file(worktree: Path) -> bytes:
@@ -554,6 +603,7 @@ def push_with_lease(
 __all__ = [
     "RepositoryState",
     "UnmergedPath",
+    "ambient_driver_names",
     "base_is_ancestor",
     "branch_ref_valid",
     "changed_paths",
@@ -564,6 +614,7 @@ __all__ = [
     "fetch_branch",
     "git_file_snapshot",
     "index_fingerprint",
+    "local_driver_names",
     "merge_commits",
     "push_with_lease",
     "range_commits",

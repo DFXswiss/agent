@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.coordinator_common import CoordinatorError, repository_push_permission
 from agent_cli.git_act import measure_mergeable
 from agent_cli.github_accounts import (
     Account,
@@ -53,7 +54,17 @@ def test_network_remote_targets_accepts_lease_for_branch_name_with_equals():
         'push', f'--force-with-lease=refs/heads/feature=x:{sha}',
         'origin', 'HEAD:refs/heads/feature=x',
     ]
-    assert _network_remote_targets(argv) == ['origin']
+    assert _network_remote_targets(argv, allow_force_with_lease=True) == ['origin']
+
+
+@pytest.mark.no_pg
+def test_network_remote_targets_requires_lease_capability():
+    argv = [
+        'push', '--force-with-lease=refs/heads/feature:' + 'a' * 40,
+        'origin', 'HEAD:refs/heads/feature',
+    ]
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported git network option'):
+        _network_remote_targets(argv)
 
 
 @pytest.mark.no_pg
@@ -61,11 +72,116 @@ def test_network_remote_targets_accepts_lease_for_branch_name_with_equals():
     '--force-with-lease=refs/tags/v1:' + 'a' * 40,
     '--force-with-lease=refs/heads/a b:' + 'a' * 40,
     '--force-with-lease=refs/heads/feature:' + 'a' * 39,
+    '--force-with-lease=refs/heads/feature:',
 ])
 def test_network_remote_targets_rejects_other_lease_forms(lease):
     argv = ['push', lease, 'origin', 'HEAD:refs/heads/feature']
     with pytest.raises(GitHubHttpsRemoteError, match='force-with-lease'):
-        _network_remote_targets(argv)
+        _network_remote_targets(argv, allow_force_with_lease=True)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('lease', [
+    '--force-with-lease',
+    '--force',
+    '-f',
+])
+def test_network_remote_targets_rejects_plain_force_forms(lease):
+    argv = ['push', lease, 'origin', 'HEAD:refs/heads/feature']
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported git network option'):
+        _network_remote_targets(argv, allow_force_with_lease=True)
+
+
+@pytest.mark.no_pg
+def test_account_runner_requires_explicit_lease_capability():
+    remotes = _remote_script()
+
+    def runner(argv):
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        return Completed(0, '', '')
+
+    push = [
+        'git', '-C', '/work', 'push',
+        '--force-with-lease=refs/heads/feature:' + 'a' * 40,
+        'origin', 'HEAD:refs/heads/feature',
+    ]
+    default = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(
+        runner, require_git=True
+    )
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported git network option'):
+        default(push)
+    capable = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(
+        runner, require_git=True, allow_force_with_lease=True
+    )
+    capable(push)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('lease', [
+    '--force-with-lease=refs/tags/v1:' + 'a' * 40,
+    '--force-with-lease=refs/heads/feature:' + 'a' * 39,
+    '--force-with-lease=refs/heads/feature:',
+    '--force-with-lease',
+    '--force',
+    '-f',
+])
+def test_account_runner_with_lease_capability_rejects_other_force_forms(lease):
+    remotes = _remote_script()
+
+    def runner(argv):
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        return Completed(0, '', '')
+
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(
+        runner, require_git=True, allow_force_with_lease=True
+    )
+    with pytest.raises(GitHubHttpsRemoteError):
+        scoped([
+            'git', '-C', '/work', 'push', lease,
+            'origin', 'HEAD:refs/heads/feature',
+        ])
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('body,expected', [
+    ({'permissions': {'push': True}}, True),
+    ({'permissions': {'push': False}}, False),
+    ({}, None),
+    ({'permissions': {}}, None),
+    ({'permissions': {'push': 'true'}}, None),
+])
+def test_repository_push_permission_reads_strict_boolean(body, expected):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(argv)
+        return Completed(0, json.dumps(body), '')
+
+    assert repository_push_permission(runner, 'owner/repo') is expected
+    assert calls == [['gh', 'api', 'repos/owner/repo']]
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('body', ['', 'not json'])
+def test_repository_push_permission_unreadable_body_returns_none(body):
+    assert repository_push_permission(lambda _argv: Completed(0, body, ''), 'owner/repo') is None
+
+
+@pytest.mark.no_pg
+def test_repository_push_permission_nonzero_exit_is_an_error():
+    with pytest.raises(CoordinatorError):
+        repository_push_permission(
+            lambda _argv: Completed(1, '', 'push permission lookup failed'),
+            'owner/repo',
+        )
 
 
 def _git_payload(argv: list[str]) -> list[str]:

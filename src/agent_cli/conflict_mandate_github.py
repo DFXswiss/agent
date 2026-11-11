@@ -7,7 +7,13 @@ from typing import Any
 from urllib.parse import quote
 
 from .conflict_mandate_state import parse_time
-from .coordinator_common import CoordinatorError, Runner, gh_json, redact
+from .coordinator_common import (
+    CoordinatorError,
+    Runner,
+    gh_json,
+    redact,
+    repository_push_permission,
+)
 
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
@@ -191,14 +197,11 @@ def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any]
 
 
 def has_push_permission(runner: Runner, repo: str) -> bool:
-    data = _api(runner, ["gh", "api", f"repos/{repo}"], "repository")
-    if not isinstance(data, dict):
-        raise ConflictTransientError("repository lookup did not return an object")
-    permissions = data.get("permissions")
-    if not isinstance(permissions, dict):
-        raise ConflictTransientError("repository permissions are unreadable")
-    push = permissions.get("push")
-    if not isinstance(push, bool):
+    try:
+        push = repository_push_permission(runner, repo)
+    except (CoordinatorError, OSError) as exc:
+        raise ConflictTransientError(redact(str(exc))) from exc
+    if push is None:
         raise ConflictTransientError("repository permissions are unreadable")
     return push
 

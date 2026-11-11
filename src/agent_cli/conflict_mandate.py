@@ -55,6 +55,7 @@ from .conflict_mandate_state import (
     unfinished_requests,
 )
 from .conflict_mandate_git import (
+    ambient_driver_names,
     base_is_ancestor,
     branch_ref_valid,
     changed_paths,
@@ -65,6 +66,7 @@ from .conflict_mandate_git import (
     fetch_branch,
     git_file_snapshot,
     index_fingerprint,
+    local_driver_names,
     merge_commits,
     push_with_lease,
     range_commits,
@@ -199,7 +201,9 @@ def _preflight(
             )
         if account.git_identity is None:
             raise ConflictsError("worker GitHub account requires git identity for signed commits")
-        account_runner = account.runner(runner, require_git=True)
+        account_runner = account.runner(
+            runner, require_git=True, allow_force_with_lease=True
+        )
     except AccountError as exc:
         raise ConflictsError(str(exc)) from exc
     try:
@@ -222,6 +226,15 @@ def _preflight(
         ai.require_lane_execution()
     except (AIAccountError, AccountError) as exc:
         raise ConflictsError(str(exc)) from exc
+    try:
+        drivers = ambient_driver_names(account_runner)
+    except CoordinatorError as exc:
+        raise ConflictsError(str(exc)) from exc
+    if drivers:
+        raise ConflictsError(
+            "the worker Git configuration defines filter, merge or diff drivers "
+            f"({', '.join(drivers)}); the conflicts worker refuses to run with them"
+        )
     return _Runtime(
         account=account,
         ai=ai,
@@ -362,7 +375,7 @@ def _discover(
             request_ctx = context(
                 worker, request, worker_login=runtime.account.login
             )
-            if request_ctx.state.get("phase") == "finished":
+            if request_ctx.state.get("phase") in ("finished", "blocked"):
                 continue
             try:
                 pull = read_optional_pull(scoped_runner, repo, number)
@@ -748,7 +761,7 @@ def _run_lane_attempt(
     paths: list[str],
     expected_git_file: tuple[bytes, bool],
     failed_verification: str | None,
-) -> tuple[str, str, str, str, str]:
+) -> tuple[str, str, str]:
     spec_path = ctx.control / f"lane-{attempt}.md"
     spec = _lane_spec(
         base=safe(ctx.worker, base),
@@ -777,12 +790,22 @@ def _run_lane_attempt(
             session_id=ctx.worker.session_id,
             binding=runtime.binding,
         )
-    except (Exception, SystemExit) as exc:
+    except (StoreError, Exception) as exc:
         _verify_metadata(ctx, expected_git_file)
         index_after = index_fingerprint(git_runner, str(ctx.worktree))
         if index_before != index_after:
             raise _Blocker("lane changed the index") from exc
         raise ConflictTransientError(redact(str(exc))) from exc
+    except BaseException:
+        try:
+            try:
+                verify_git_file(ctx.worktree, expected_git_file)
+            except CoordinatorError:
+                remove_repository(ctx.worktree)
+                remove_repository(ctx.control / "git")
+        except BaseException:
+            pass
+        raise
     stdout = safe(ctx.worker, result.stdout or "")
     stderr = safe(ctx.worker, result.stderr or "")
     parsed_result = parse_model_result(result.stdout, result.returncode)[1]
@@ -812,17 +835,11 @@ def _run_lane_attempt(
             session_id=ctx.worker.session_id,
             result=replace(result, stdout=stdout, stderr=stderr),
         )
-    except (Exception, SystemExit) as exc:  # noqa: BLE001 — audit failure never changes the verdict
+    except (StoreError, Exception) as exc:  # noqa: BLE001 — audit failure never changes the verdict
         observations.append(
             safe(ctx.worker, f"lane record not written: {exc}")
         )
-    return (
-        result.status,
-        stdout,
-        parsed_result,
-        index_before,
-        index_after,
-    )
+    return result.status, stdout, parsed_result
 
 
 def _finish_marker(
@@ -948,6 +965,12 @@ def _finish_blocker(
         if skip_git:
             remove_repository(ctx.worktree)
             remove_repository(ctx.control / "git")
+        elif not (
+            (ctx.worktree / ".git").is_file()
+            and not (ctx.worktree / ".git").is_symlink()
+        ):
+            remove_repository(ctx.worktree)
+            remove_repository(ctx.control / "git")
         else:
             rebase_abort(request_runtime.git, str(ctx.worktree))
         body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
@@ -1058,11 +1081,28 @@ def _prepare_worktree(
             dest=ctx.worktree,
             git_dir=ctx.control / "git",
         )
+        drivers = local_driver_names(git_runner, str(ctx.worktree))
+        if drivers:
+            raise _Blocker(
+                "repository configuration defines Git drivers",
+                skip_git=True,
+            )
         expected_git_file = git_file_snapshot(ctx.worktree)
         fetch_branch(git_runner, str(ctx.worktree), remote="publication", branch=head_ref)
         fetch_branch(git_runner, str(ctx.worktree), remote="origin", branch=base_ref)
         checkout_head(git_runner, str(ctx.worktree), branch=head_ref)
-        fetched = rev_parse(git_runner, str(ctx.worktree), f"refs/remotes/publication/{head_ref}")
+    except CoordinatorError as exc:
+        remove_repository(ctx.worktree)
+        remove_repository(ctx.control / "git")
+        raise ConflictTransientError(str(exc)) from exc
+    except BaseException:
+        remove_repository(ctx.worktree)
+        remove_repository(ctx.control / "git")
+        raise
+    try:
+        fetched = rev_parse(
+            git_runner, str(ctx.worktree), f"refs/remotes/publication/{head_ref}"
+        )
     except CoordinatorError as exc:
         raise ConflictTransientError(str(exc)) from exc
     if fetched != head_sha:
@@ -1582,8 +1622,6 @@ def _run_request(
                         status,
                         output,
                         result,
-                        index_before,
-                        index_after,
                     ) = _run_lane_attempt(
                         store,
                         ctx,
@@ -1773,7 +1811,11 @@ def tick(
     lane_runner: LaneRunner | None = None,
     dry_run: bool = False,
 ) -> list[str]:
-    """One bounded, resumable advancement for one worker. Never raises into the caller."""
+    """One bounded, resumable advancement for one worker.
+
+    Errors become observation lines; only a termination (a SystemExit that is not
+    a StoreError, or KeyboardInterrupt) propagates to the caller.
+    """
     lock_key = f"{WORKER_LOCK_PREFIX}{worker.session_id}"
     if runner is default_run_argv:
         runner = lambda argv: run_bounded(argv, timeout=worker.lane_timeout)
