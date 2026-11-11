@@ -18,7 +18,7 @@ from .coordinator_common import (
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_SLEEP_SECONDS = 1.0
-_COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/([1-9]\d*)(?:$|[?#])"
+_COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/([+-]?\d+)(?:$|[?#])"
 
 
 class ConflictTransientError(CoordinatorError):
@@ -37,7 +37,11 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
     if not isinstance(comment, dict):
         raise ConflictTransientError(f"{label} returned an unexpected item")
     comment_id = comment.get("id")
-    if isinstance(comment_id, bool) or not isinstance(comment_id, int):
+    if (
+        isinstance(comment_id, bool)
+        or not isinstance(comment_id, int)
+        or comment_id <= 0
+    ):
         raise ConflictTransientError(f"{label} returned an unreadable comment id")
     if not isinstance(comment.get("body"), str):
         raise ConflictTransientError(f"{label} returned an unreadable comment body")
@@ -62,7 +66,10 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
         match = re.search(_COMMENT_NUMBER_PATTERN, value)
         if match is None:
             raise ConflictTransientError(f"{label} returned an unreadable comment URL")
-        numbers[key] = int(match.group(1))
+        number = int(match.group(1))
+        if number <= 0:
+            raise ConflictTransientError(f"{label} returned an unreadable comment URL")
+        numbers[key] = number
     if not numbers:
         raise ConflictTransientError(f"{label} returned an unreadable comment URL")
     if len(set(numbers.values())) > 1:
@@ -159,7 +166,10 @@ def pull_number_from_comment(comment: dict[str, Any]) -> int | None:
         match = re.search(_COMMENT_NUMBER_PATTERN, value)
         if match is None:
             return None
-        numbers.append(int(match.group(1)))
+        number = int(match.group(1))
+        if number <= 0:
+            return None
+        numbers.append(number)
     if not numbers or len(set(numbers)) > 1:
         return None
     return numbers[0]

@@ -115,17 +115,38 @@ MERGE_COMMIT_BLOCKER = "branch contains merge commits"
 CHECKS_CHANGED_STATE = "checks changed the repository state"
 LOCK_REFUSED = "cannot push to the head branch"
 BOUNDED_TIMEOUT_RETURNCODE = 124
+MARKER_LOOKUP_BLOCKER_EXEMPT_PHASES = frozenset(
+    {"blocker-pending", "result-pending", "pushing"}
+)
 # Unknown push failures are deliberately transient; like every transient
-# failure they become a blocker after 24 hours.
+# failure before the outcome is decided they become a blocker after 24 hours.
+REPOSITORY_SELECTING_GIT_ENV_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_EXEC_PATH",
+    "GIT_TEMPLATE_DIR",
+    "GIT_SSH",
+    "GIT_ASKPASS",
+)
 PUSH_REFUSAL_SIGNS = (
-    "remote:",
     "! [remote rejected]",
     "! [rejected]",
     "pre-receive hook declined",
     "protected branch",
-    "GH0",
-    "Permission to",
-    "403",
+    "remote: error:",
+)
+PUSH_REFUSAL_PATTERNS = (
+    re.compile(r"GH0\d{2}(?!\d)", re.IGNORECASE),
+    re.compile(r"(?:error: 403|HTTP 403)(?!\d)", re.IGNORECASE),
 )
 
 
@@ -189,6 +210,12 @@ def _preflight(
         session_component(worker)
     except StoreError as exc:
         raise ConflictsError(str(exc)) from exc
+    for name in REPOSITORY_SELECTING_GIT_ENV_VARS:
+        if os.environ.get(name) is not None:
+            raise ConflictsError(
+                f"the environment variable {name} is set; the conflicts worker "
+                "refuses to run with it"
+            )
     if os.environ.get("GIT_EXTERNAL_DIFF") is not None:
         raise ConflictsError(
             "GIT_EXTERNAL_DIFF is set; the conflicts worker refuses to run "
@@ -692,15 +719,13 @@ def _rebase_failed(completed: Any) -> str:
 
 def _push_was_refused(output: str) -> bool:
     for line in output.splitlines():
-        for sign in PUSH_REFUSAL_SIGNS:
-            if sign == "remote:":
-                if line.startswith(sign):
-                    return True
-            elif sign == "Permission to":
-                if sign in line and "denied" in line:
-                    return True
-            elif sign in line:
-                return True
+        lowered = line.casefold()
+        if any(sign in lowered for sign in PUSH_REFUSAL_SIGNS):
+            return True
+        if "permission to" in lowered and "denied" in lowered:
+            return True
+        if any(pattern.search(line) for pattern in PUSH_REFUSAL_PATTERNS):
+            return True
     return False
 
 
@@ -847,21 +872,20 @@ def _run_lane_attempt(
         output=stdout,
         result=(parsed_result if status == "complete" else ""),
     )
-    if metadata_failure is not None:
-        raise metadata_failure
-    index_after = index_fingerprint(git_runner, str(ctx.worktree))
-    note = (
-        _blocked_sentence(stdout)
-        if status == "complete" and parsed_result == "blocked"
+    index_after = (
+        index_fingerprint(git_runner, str(ctx.worktree))
+        if metadata_failure is None
         else None
     )
-    lane_facts = (("Lane note", note),) if note is not None else ()
-    if index_before != index_after:
-        raise _Blocker("lane changed the index", facts=lane_facts)
-    atomic_write(
-        ctx.control / f"lane-s{stop}-a{attempt}.log",
-        redact(stdout or stderr or "", limit=COMMENT_LIMIT),
-    )
+    try:
+        atomic_write(
+            ctx.control / f"lane-s{stop}-a{attempt}.log",
+            redact(stdout or stderr or "", limit=COMMENT_LIMIT),
+        )
+    except OSError as exc:
+        observations.append(
+            safe(ctx.worker, f"lane log not written: {exc}")
+        )
     try:
         record_lane_run(
             store,
@@ -872,6 +896,17 @@ def _run_lane_attempt(
         observations.append(
             safe(ctx.worker, f"lane record not written: {exc}")
         )
+    if metadata_failure is not None:
+        raise metadata_failure
+    assert index_after is not None
+    note = (
+        _blocked_sentence(stdout)
+        if status == "complete" and parsed_result == "blocked"
+        else None
+    )
+    lane_facts = (("Lane note", note),) if note is not None else ()
+    if index_before != index_after:
+        raise _Blocker("lane changed the index", facts=lane_facts)
     return status, stdout, parsed_result
 
 
@@ -1452,15 +1487,6 @@ def _run_request(
                     dry_run=False,
                     observation=f"finished request {ctx.request.comment_id}: result marker exists",
                 )
-            if timed_out:
-                return _finish_blocker(
-                    ctx,
-                    request_runtime,
-                    runtime.account.login,
-                    reason="transient failures persisted for 24 hours",
-                    facts=[],
-                    dry_run=False,
-                )
             return _post_stored_result(
                 ctx,
                 request_runtime,
@@ -1841,6 +1867,8 @@ def _run_request(
             save_state(ctx, "transient", transient_start=ctx.state["transient_start"])
         if current_phase == "blocker-pending":
             return [f"transient: {safe(ctx.worker, exc)}"]
+        if current_phase == "result-pending":
+            return [f"result comment not posted yet: {safe(ctx.worker, exc)}"]
         if current - start >= TRANSIENT_BLOCK_AFTER:
             return _finish_blocker(
                 ctx,
@@ -1883,7 +1911,9 @@ def tick(
                 return [f"preflight blocked: {safe(worker, exc)}"]
             try:
                 worker_login = runtime.account.login
-                unfinished = unfinished_requests(worker, worker_login)
+                unfinished = unfinished_requests(
+                    worker, worker_login, clean_terminal=not dry_run
+                )
                 if unfinished:
                     request = None
                     ctx = None
@@ -1892,18 +1922,30 @@ def tick(
                             worker, candidate, worker_login=worker_login
                         )
                         marker_failed = False
+                        marker_error = ""
                         try:
                             marker = _marker_exists(
                                 runtime.request.github, runtime.account.login, candidate
                             )
-                        except ConflictTransientError:
+                        except ConflictTransientError as exc:
                             marker_failed = True
                             marker = False
+                            marker_error = str(exc)
                         if marker_failed:
                             if not dry_run:
                                 _record_transient(candidate_ctx)
                                 started = parse_time(candidate_ctx.state.get("transient_start"))
-                                if started is not None and _now() - started >= TRANSIENT_BLOCK_AFTER:
+                                phase = candidate_ctx.state.get("phase")
+                                if phase == "result-pending":
+                                    return [
+                                        "result comment not posted yet: "
+                                        + safe(candidate_ctx.worker, marker_error)
+                                    ]
+                                if (
+                                    phase not in MARKER_LOOKUP_BLOCKER_EXEMPT_PHASES
+                                    and started is not None
+                                    and _now() - started >= TRANSIENT_BLOCK_AFTER
+                                ):
                                     return _finish_blocker(
                                         candidate_ctx,
                                         runtime.request,
