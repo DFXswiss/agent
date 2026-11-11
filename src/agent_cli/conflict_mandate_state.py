@@ -42,6 +42,15 @@ class Context:
     state_path: Path
     state: dict[str, Any] = field(default_factory=dict)
     git_runner: Any = None
+    foreign_state: bool = False
+
+
+class StateUnreadable(StoreError):
+    """A local state file exists but cannot be used safely."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"state unreadable: {path.name}")
+        self.path = path
 
 
 def parse_time(value: object) -> datetime | None:
@@ -61,6 +70,13 @@ def parse_time(value: object) -> datetime | None:
 
 def iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_ceiling(value: datetime) -> str:
+    """Whole-second timestamp that is not earlier than value."""
+    if value.microsecond:
+        value = value.replace(microsecond=0) + timedelta(seconds=1)
+    return iso(value)
 
 
 def safe(worker: ConflictWorker, value: object) -> str:
@@ -141,9 +157,35 @@ def atomic_write(path: Path, text: str) -> None:
 def read_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+    except FileNotFoundError:
         return None
-    return data if isinstance(data, dict) else None
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise StateUnreadable(path) from exc
+    if not isinstance(data, dict):
+        raise StateUnreadable(path)
+    return data
+
+
+def read_state_json(
+    path: Path,
+    *,
+    worker_session_id: str,
+    worker_login: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    data = read_json(path)
+    if data is None:
+        return None, True
+    recorded_session_id = data.get("worker_session_id")
+    recorded_login = data.get("worker_login")
+    if not isinstance(recorded_session_id, str) or not isinstance(recorded_login, str):
+        raise StateUnreadable(path)
+    if recorded_session_id != worker_session_id or not _same_login(
+        recorded_login, worker_login
+    ):
+        return data, False
+    if "phase" in data and not isinstance(data["phase"], str):
+        raise StateUnreadable(path)
+    return data, True
 
 
 def session_component(worker: ConflictWorker) -> str:
@@ -189,12 +231,12 @@ def context(
 ) -> Context:
     control = control_dir(worker, request)
     state_path = control / "state.json"
-    state = read_json(state_path) or {}
-    if state:
-        if state.get("worker_session_id") != worker.session_id or not _same_login(
-            state.get("worker_login"), worker_login
-        ):
-            state = {}
+    stored, owned = read_state_json(
+        state_path,
+        worker_session_id=worker.session_id,
+        worker_login=worker_login,
+    )
+    state = stored if stored is not None and owned else {}
     state.setdefault("repo", request.repo)
     state.setdefault("number", request.number)
     state.setdefault("comment_id", request.comment_id)
@@ -211,10 +253,13 @@ def context(
         worktree=worktree_path(worker, request),
         state_path=state_path,
         state=state,
+        foreign_state=not owned,
     )
 
 
 def save_state(ctx: Context, phase: str | None = None, **extra: Any) -> None:
+    if ctx.foreign_state:
+        return
     if phase is not None:
         ctx.state["phase"] = phase
     ctx.state.update(extra)
@@ -227,12 +272,16 @@ def checkpoint_path(worker: ConflictWorker) -> Path:
 
 
 def read_checkpoint(worker: ConflictWorker) -> dict[str, str]:
-    data = read_json(checkpoint_path(worker)) or {}
-    return {
-        key: value
+    path = checkpoint_path(worker)
+    data = read_json(path) or {}
+    if any(
+        not isinstance(key, str)
+        or not isinstance(value, str)
+        or parse_time(value) is None
         for key, value in data.items()
-        if isinstance(key, str) and isinstance(value, str)
-    }
+    ):
+        raise StateUnreadable(path)
+    return dict(data)
 
 
 def advance_checkpoint_time(worker: ConflictWorker, repo: str, created_at: str) -> None:
@@ -286,8 +335,12 @@ def unfinished_requests(
         return []
     candidates: list[tuple[datetime, Request, dict[str, Any]]] = []
     for path in root.glob("*/*/state.json"):
-        data = read_json(path)
-        if data is None or data.get("phase") in ("finished", "blocked"):
+        data, owned = read_state_json(
+            path,
+            worker_session_id=worker.session_id,
+            worker_login=worker_login,
+        )
+        if not owned or data is None or data.get("phase") in ("finished", "blocked"):
             continue
         request = request_from_state(worker, data, worker_login)
         if request is None:
@@ -350,6 +403,7 @@ __all__ = [
     "comment_body",
     "context",
     "iso",
+    "iso_ceiling",
     "parse_time",
     "read_checkpoint",
     "read_json",
