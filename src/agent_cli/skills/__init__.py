@@ -35,6 +35,11 @@ SKILLS = {
         "tables": (),
         "commands": (),
     },
+    "conflicts": {
+        "version": "1",
+        "tables": (),
+        "commands": ("conflicts",),
+    },
 }
 
 SKILL_NAMES = tuple(SKILLS)

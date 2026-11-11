@@ -145,9 +145,9 @@ its outer object has `to_session`, and its `payload` is the strict
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
-This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`). `agent skills path` prints that directory, or `AGENT_SKILLS_DIR` when set. Operator-specific git or deploy rules stay outside this package.
+This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`, `conflicts`). `agent skills path` prints that directory, or `AGENT_SKILLS_DIR` when set. Operator-specific git or deploy rules stay outside this package.
 
-Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` ships in the packaged tree; an override need not copy it. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print the packaged directory.
+Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`, `conflicts`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. Without `conflicts`, `agent conflicts` refuses. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` and `conflicts` ship in the packaged tree; an override need not copy them. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print the packaged directory.
 
 Session mail, `pr.merged`, and `error.seen` notify channel `agent_inbox`. `issue.assigned` does not: `agent watch assigned` knocks the queue head after writing `MANDATE.md` / `QUEUE.md`. The knock text is only `da ist Post id <uuid>`:
 
@@ -159,6 +159,7 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
+agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
@@ -177,6 +178,14 @@ Workers may select explicit repositories, approved GitHub owners, or both;
 explicit entries win. They may require matching hub-issued assignments before
 acceptance.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
+
+The optional [comment mandate `conflicts`](docs/conflict-mandate.md) worker is
+separately configured in `$AGENT_HOME/conflicts.json`. A human comment
+`@<worker-login> conflicts` on an open pull request makes the static script rebase
+the branch, start a confined implementer lane only for content conflicts, run
+the configured checks, and push with `--force-with-lease`. Absent or empty
+configuration enables no worker; installation selects no account, provider,
+repository, or check command.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 

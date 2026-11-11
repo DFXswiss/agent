@@ -47,7 +47,7 @@ _TRANSFER_VALUE_FLAGS = {
     "fetch": frozenset({"--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--filter"}),
     "push": frozenset(),
     "pull": frozenset({"--depth"}),
-    "clone": frozenset({"--depth", "--branch", "-b", "--filter"}),
+    "clone": frozenset({"--depth", "--branch", "-b", "--filter", "--separate-git-dir"}),
 }
 
 
@@ -312,6 +312,16 @@ def _network_remote_targets(git_args: list[str]) -> list[str] | None:
             index += 1
             continue
         if arg in _TRANSFER_FLAGS[verb]:
+            index += 1
+            continue
+        if verb == "push" and arg.startswith("--force-with-lease="):
+            # The worker owns this exact lease form; the value is a ref and SHA,
+            # never a command or credentials.
+            if not re.fullmatch(
+                r'--force-with-lease=refs/[^:=\s]+:[0-9a-fA-F]{40}',
+                arg,
+            ):
+                raise GitHubHttpsRemoteError("invalid force-with-lease argument")
             index += 1
             continue
         name, equal, value = arg.partition("=")
