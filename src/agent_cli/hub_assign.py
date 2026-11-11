@@ -7,10 +7,7 @@ from urllib.parse import quote
 
 from .coordinator_common import redact
 from .hub import Hub
-from .text_sanitize import (
-    redact_terminal_interleaved_secret,
-    sanitize_terminal_text,
-)
+from .text_sanitize import redact_terminal_interleaved_secret
 
 _ASSIGNMENT_TEXT_LIMIT = 2000
 
@@ -45,7 +42,7 @@ def _without_interleaved_bearer(text: str, token: str | None) -> str:
 def sanitized_assignment_text(text: str, token: str | None, *, limit: int) -> str:
     """Bounded, redacted, control-character-free hub text without the bearer."""
     cleaned = _without_interleaved_bearer(str(text or ""), token)
-    cleaned = sanitize_terminal_text(cleaned)
+    cleaned = redact(cleaned, limit=None)
     cleaned = _without_bearer(cleaned, token)
     return redact(cleaned, limit=limit)
 

@@ -193,6 +193,17 @@ def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing
     ) == "retry [redacted]"
 
 
+def test_assignment_failure_redacts_generic_token_before_terminal_sanitizing() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    split_token = "github_\x1b[31pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    emitted = sanitized_assignment_text(
+        f"hub rejected {split_token}", None, limit=2000
+    )
+
+    assert emitted == "hub rejected [redacted]"
+
+
 _ISSUE_URL = "https://github.com/Example/Project/issues/{number}"
 
 

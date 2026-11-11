@@ -60,7 +60,6 @@ from .model_slots import (
     models_from_snapshot,
 )
 from .store import Store, StoreError, utcnow
-from .text_sanitize import sanitize_terminal_text
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
@@ -310,9 +309,7 @@ def launch_lane(
             if agent is not None and agent.get("status") == "working":
                 agent["status"] = "done"
                 agent["finished_at"] = utcnow()
-                agent["note"] = redact(
-                    sanitize_terminal_text(f"interrupted: {exc}")
-                )
+                agent["note"] = redact(f"interrupted: {exc}")
                 store.write("agent", "update", aid, strip_row(agent))
             c["lane"] = {"agent_id": aid, "state": "uncertain"}
             c["phase"] = "blocked"
@@ -358,7 +355,7 @@ def launch_lane(
     # its unavailable status even though there is no status line to parse.
     _, model_result = parse_model_result(result.stdout, result.returncode)
     status = result.status
-    note = redact(sanitize_terminal_text(result.stdout or result.stderr or ""))
+    note = redact(result.stdout or result.stderr or "")
     agent = store.row("agent", aid)
     assert agent is not None
     agent["status"] = "done"
@@ -1564,18 +1561,14 @@ def phase_pr_gates(
         if isinstance(outcome, Exception) or outcome is None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = redact(
-                sanitize_terminal_text(f"uncertain: {outcome}")
-            )
+            agent["note"] = redact(f"uncertain: {outcome}")
             store.write("agent", "update", agent["id"], strip_row(agent))
             failed_agents.append(str(agent["id"]))
         else:
             assert isinstance(outcome, LaneResult)
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = redact(
-                sanitize_terminal_text(outcome.stdout or outcome.stderr or "")
-            )
+            agent["note"] = redact(outcome.stdout or outcome.stderr or "")
             store.write("agent", "update", agent["id"], strip_row(agent))
             _record_lane_audit(
                 store,

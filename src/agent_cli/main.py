@@ -97,7 +97,6 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreConnectionError, StoreError, utcnow
-from .text_sanitize import sanitize_terminal_text
 from .usage import (
     AuthStale,
     OpenRouterUsageError,
@@ -1331,7 +1330,7 @@ def cmd_agent(args: list[str]) -> None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
             if note is not None:
-                agent["note"] = redact_secrets(sanitize_terminal_text(note))
+                agent["note"] = redact_secrets(note)
             store.write("agent", "update", aid, _strip(agent))
             print(f"agent {aid} verdict={verdict}")
             return
@@ -2723,9 +2722,7 @@ def _publish_terminals(
             continue
         sid = session["id"]
         try:
-            text = redact_secrets(
-                sanitize_terminal_text(runtime.capture(sid)), limit=None
-            )
+            text = redact_secrets(runtime.capture(sid), limit=None)
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:
@@ -3387,9 +3384,7 @@ def _abort_incomplete_agent(store: Store, agent: dict, note: str) -> None:
     """
     agent["status"] = "done"
     agent["finished_at"] = utcnow()
-    agent["note"] = redact_secrets(
-        sanitize_terminal_text(f"aborted incomplete lane: {note}")
-    )
+    agent["note"] = redact_secrets(f"aborted incomplete lane: {note}")
     store.write("agent", "update", str(agent["id"]), _strip(agent))
 
 
@@ -4061,7 +4056,7 @@ def cmd_mail(args: list[str]) -> None:
 
 def _sanitize_lane_output(text: str) -> str:
     """Compatibility wrapper for the shared persisted/displayed-text sanitizer."""
-    return sanitize_terminal_text(text)
+    return redact_secrets(text, limit=None)
 
 
 def _print_lane_result(result: LaneResult) -> None:

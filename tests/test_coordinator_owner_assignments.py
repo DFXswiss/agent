@@ -1574,8 +1574,10 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
 
 def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
     from agent_cli.allow import CHECKLIST_KEYS
+    from agent_cli.coordinator_a38 import merged_base_evidence_satisfied
 
     head = "a" * 40
+    base = "b" * 40
     task_id = "55555555-5555-4555-8555-555555555555"
     source = {
         "repo": "Example/owned",
@@ -1613,12 +1615,22 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
         "payload": {"coordinator": {
             "phase": "await_merge",
             "head_sha": head,
-            "base_sha": "b" * 40,
+            "base_sha": base,
             "worktree": str(worker.workspace_root / task_id),
             "pr_number": 42,
             "source": source,
             "a38": {
                 "enabled": True,
+                # These early-merge cases start after the suite and report were
+                # measured on the same head and base that GitHub reports below.
+                "base_sha": base,
+                "policy_revision": base,
+                "report": {
+                    "head": head,
+                    "base_sha": base,
+                    "policy_revision": base,
+                    "activity_id": "owner-early-merge-report",
+                },
                 "second_review": {
                     "head": head,
                     "status": "posted",
@@ -1661,6 +1673,27 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
             "head_sha": head,
             "recorded_at": "2026-01-01T00:00:00Z",
         },
+    )
+    store.write(
+        "local_check",
+        "insert",
+        f"{task_id}-a38-local",
+        {
+            "id": f"{task_id}-a38-local",
+            "task_id": task_id,
+            "name": "a38",
+            "command": "agent a38 run",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": head,
+        },
+    )
+    assert merged_base_evidence_satisfied(
+        store,
+        store.row("task", task_id),
+        head=head,
+        base_sha=base,
     )
     return task_id, head
 

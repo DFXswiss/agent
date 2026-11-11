@@ -289,7 +289,9 @@ for worker in workers.values():
    checkout. Interrupted clones are refused without deleting unrelated content.
    The checkout marker and `coordinator.base_sha` remain the immutable checkout
    identity. In A38 mode, the current pull-request evidence base is stored
-   separately as `coordinator.a38.base_sha`.
+   separately as `coordinator.a38.base_sha`. A newly observed moved base stays
+   in `coordinator.a38.pending_base_sha` until a report or inventory waiver and
+   its local gate are recorded against that base.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
    and config home. No round cap. Rejection routes findings to a fresh
    implementer. Outcome distinction (review-loop preserved, not waived):
@@ -481,8 +483,10 @@ for worker in workers.values():
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
     require merge SHA, timestamp, and base/target. An A38 merge must also expose
-    a valid base SHA equal to the persisted evidence base. If the base moved
-    after evidence and the pull request is already merged, the coordinator
+    a valid base SHA equal to the persisted evidence base, with a report or
+    waiver and local gate bound to that exact base. If a pending base exists or
+    the base moved after evidence and the pull request is already merged, the
+    coordinator
     keeps the old base as the last trusted base, records both old and observed
     bases, reopens `local_check_pass` and the readiness checklist keys, and
     stops with a non-recoverable `task-done` blocker. It cannot remeasure a
@@ -609,17 +613,22 @@ evidence human spec input; the script never invents human grants.
 
 ## Evidence hygiene
 
-Persisted outputs and diagnostics are redacted and bounded. Configured paths
+Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
+first applies control-tolerant secret matching to raw text, then removes terminal
+escapes and controls, redacts again, and finally applies its length bound.
+Configured paths
 are hidden before the diagnostic length bound is applied, and an unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
 Live terminal frames join tmux soft-wrapped lines before using the same
 sanitizer and secret redaction without the diagnostic length bound, so frame
-deduplication compares the complete sanitized capture. Tmux-backed lane
+deduplication compares the complete sanitized capture. The sanitizer preserves
+tabs and newlines, and terminal publication otherwise preserves captured
+whitespace. Tmux-backed lane
 diagnostics likewise join soft-wrapped lines before redaction and before their
 bounded text may be printed or stored as `lane.run` evidence. Hub assignment
 failures first remove every exact raw, header, or URL-encoded device bearer with
-an escape- and control-tolerant matcher, then apply terminal sanitization,
-repeat exact bearer removal, and finish with generic redaction and bounding.
+an escape- and control-tolerant matcher and then use that same generic pipeline;
+exact bearer removal is repeated after sanitization.
 Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. User-facing blockers and questions are
@@ -632,9 +641,10 @@ No silent failure.
 Every lane process writes script-owned `lane.run` evidence with the configured
 and provider-reported model (both bounded and redacted), token usage when
 supplied, a bounded redacted file-tool transcript, and bounded final text.
-One shared sanitizer removes complete CSI, OSC, other ESC sequences, and
-remaining C0/C1 controls except newline and tab before secret redaction of final
-text, models, diagnostics, agent notes, terminal output, and tool targets.
+One shared redaction pipeline handles final text, models, diagnostics, agent
+notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
+a CSI/ESC final byte as a possible token character, so the terminal sanitizer
+cannot assemble an unredacted token by deleting that byte.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
 `ESC \`; an unterminated string control is removed through the end of the text.
 Failure to read or decode the lane output file (`OSError`,
@@ -650,6 +660,8 @@ or an absolute/UNC fragment at the start or after any character outside
 followed by `:` at that same boundary, whether the following path is absolute or
 drive-relative. Any numeric or named escape (`\x`, `\u`, `\U`, `\N{`, octal
 `\0` through `\7`, or `\c`) also redacts the complete target without decoding.
+Any raw ESC or C0/C1 control byte redacts the complete target before
+normalization or outside-path classification.
 The only exception is a single plain whole absolute path under
 the worktree whose relative remainder passes the same checks; it is stored
 worktree-relative and may contain glob `*`, `?`, `[` and `]` characters.
@@ -667,7 +679,7 @@ worktree-relative and may contain glob `*`, `?`, `[` and `]` characters.
 | `coordinator_common.py` | Shared helpers / constants |
 | `gate_order.py` | Durable canonical gate ordering shared by every gate reader |
 | `timestamps.py` | Shared aware ISO-8601 parsing and UTC normalization |
-| `text_sanitize.py` | Shared terminal escape/control sanitization before redaction |
+| `text_sanitize.py` | Shared terminal escape/control matching and sanitization between redaction passes |
 | `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
 | `hub_assign.py` | Paired-device client for operator assignment creation |
 | `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |
@@ -795,10 +807,14 @@ the coordinator renders and checkpoints `body` and `passes` before publication.
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
-The tests phase reads the authoritative pull-request base SHA and one
-fail-closed file inventory. Its report publication identity includes the head,
+The tests phase reads pull-request metadata, the paginated file inventory, and
+the metadata again. Head SHA, base SHA, and base name must match across both
+metadata reads; a race is retried a bounded number of times and then blocks
+recoverably. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
-new comment. The live value updates `coordinator.a38.base_sha`, while the
+new comment. A moved live value first updates
+`coordinator.a38.pending_base_sha`; only bound report-or-waiver evidence plus
+the recorded local gate promotes it to `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,
 report validation, and review diffs use the live evidence value. The script
 fetches the configured base ref and verifies that this exact observed base
@@ -812,7 +828,9 @@ base policy. This blocker is non-recoverable and has no reply checkpoint. A
 legacy same-head report without `base_sha` or `policy_revision` is invalidated
 at readiness and routes the task back to `tests` for current base-bound
 measurement and publication.
-An open pull request can therefore be remeasured after a base move. A base move
+The movement immediately reopens `local_check_pass` and the readiness checklist
+keys. An open pull request can therefore be remeasured after a base move. A base
+move
 first observed after merge is different: the new base is never recorded as
 verified, the old/new pair is retained in `base_moved_after_evidence`, and the
 task stops at the non-recoverable completion boundary described above.

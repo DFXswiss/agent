@@ -9,10 +9,16 @@ from typing import Any
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .github_accounts import Account, AccountError, load_accounts
-from .model_slots import SLOT_KEY_PREFIXES, STAGE_SLOTS, ModelSlots, canonical_stage
+from .model_slots import (
+    SLOT_KEY_PREFIXES,
+    STAGE_SLOTS,
+    ModelSlots,
+    canonical_key,
+    canonical_stage,
+)
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
-from .text_sanitize import sanitize_terminal_text
+from .text_sanitize import TERMINAL_INTERLEAVE_PATTERN, sanitize_terminal_text
 
 Runner = Callable[[list[str]], Completed]
 LaneRunner = Callable[[list[str], str | None], Any]
@@ -64,6 +70,101 @@ _KNOWN_TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+
 _PRIVATE_KEY = re.compile(r'-----BEGIN ((?:[A-Z]+ )*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----.*?(?:-----END \1-----|\Z)', re.S)
 _PRIVATE_PATH = re.compile(r'(?:/Users/|/home/)[^\s"\']+')
 _URL_AUTH = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@')
+
+
+def _interleaved_atoms(*atoms: str) -> str:
+    return TERMINAL_INTERLEAVE_PATTERN.join(atoms)
+
+
+def _interleaved_literal(value: str) -> str:
+    return _interleaved_atoms(*(re.escape(char) for char in value))
+
+
+def _interleaved_units(atom: str, quantifier: str) -> str:
+    return f"(?:{atom}{TERMINAL_INTERLEAVE_PATTERN}){quantifier}"
+
+
+_RAW_NAME_UNIT = _interleaved_units(r"[A-Za-z0-9_-]", "*")
+_RAW_ALPHA_UNIT = r"[A-Za-z]"
+_RAW_SCHEME_UNIT = r"[A-Za-z0-9+.-]"
+_RAW_UPPER_UNIT = r"[A-Z]"
+_RAW_SECRET_WORD = "(?:" + "|".join(
+    _interleaved_literal(word)
+    for word in (
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "api-key",
+        "authorization",
+        "gh_config",
+        "config_dir",
+        "signing_key",
+    )
+) + ")"
+_RAW_SECRETISH = re.compile(
+    rf"(?i)(?:[\"']?{_RAW_NAME_UNIT}{_RAW_SECRET_WORD}{_RAW_NAME_UNIT}[\"']?"
+    rf"{TERMINAL_INTERLEAVE_PATTERN}\s*[:=]\s*)"
+    r'(?:"[^"\n]*"|\'[^\'\n]*\'|[^\s,;]+)'
+)
+_RAW_AUTH_HEADER = re.compile(
+    rf"(?im)(?:{_interleaved_literal('authorization')}|"
+    rf"(?:{_interleaved_literal('set-')})?{_interleaved_literal('cookie')})"
+    rf"{TERMINAL_INTERLEAVE_PATTERN}\s*:\s*[^\n]*"
+)
+_RAW_BEARER = re.compile(
+    rf"(?i){_interleaved_literal('bearer')}"
+    rf"{TERMINAL_INTERLEAVE_PATTERN}\s+[^\s\"']+"
+)
+_RAW_KNOWN_TOKEN = re.compile(
+    "(?:"
+    + _interleaved_atoms(
+        re.escape("g"),
+        re.escape("h"),
+        r"[pousr]",
+        re.escape("_"),
+        _interleaved_units(r"[A-Za-z0-9]", "+"),
+    )
+    + "|"
+    + _interleaved_atoms(
+        *[re.escape(char) for char in "github_pat_"],
+        _interleaved_units(r"[A-Za-z0-9_]", "+"),
+    )
+    + "|"
+    + _interleaved_atoms(
+        *[re.escape(char) for char in "sk-"],
+        _interleaved_units(r"[A-Za-z0-9_-]", "{16,}"),
+    )
+    + ")"
+)
+_RAW_PRIVATE_PATH = re.compile(
+    rf"(?:{_interleaved_literal('/Users/')}|{_interleaved_literal('/home/')})"
+    r"[^\s\"']+"
+)
+_RAW_URL_AUTH = re.compile(
+    rf"{_interleaved_units(_RAW_ALPHA_UNIT, '')}"
+    rf"{_interleaved_units(_RAW_SCHEME_UNIT, '*')}"
+    rf"{_interleaved_literal('://')}[^/@\s]+:[^/@\s]+@"
+)
+_RAW_PRIVATE_KEY = re.compile(
+    rf"{_interleaved_literal('-----BEGIN ')}"
+    rf"(?:{_interleaved_units(_RAW_UPPER_UNIT, '+')}\s+)*"
+    rf"(?:{_interleaved_literal('PRIVATE KEY')}|"
+    rf"{_interleaved_literal('PGP PRIVATE KEY BLOCK')})"
+    rf"{_interleaved_literal('-----')}[\s\S]*?"
+    rf"(?:{_interleaved_literal('-----END ')}[\s\S]*?"
+    rf"{_interleaved_literal('-----')}|\Z)"
+)
+_RAW_SECRET_PATTERNS = (
+    _RAW_PRIVATE_KEY,
+    _RAW_AUTH_HEADER,
+    _RAW_BEARER,
+    _RAW_SECRETISH,
+    _RAW_KNOWN_TOKEN,
+    _RAW_PRIVATE_PATH,
+    _RAW_URL_AUTH,
+)
+_RAW_REMOVED_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _STATUS_RE = re.compile(
     r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
@@ -104,19 +205,50 @@ class CiObservedFailureError(CoordinatorError):
     """Observed actual failed CI on a Ready-side recheck; route to phase_ci."""
 
 
-def redact(text: str, *, limit: int | None = OUTPUT_BOUND) -> str:
-    cleaned = sanitize_terminal_text(text or '')
-    cleaned = _PRIVATE_KEY.sub('[redacted]', cleaned)
+def _redact_standard_patterns(text: str) -> str:
+    cleaned = _PRIVATE_KEY.sub('[redacted]', text)
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)
     cleaned = _BEARER.sub('[redacted]', cleaned)
     cleaned = SECRETISH.sub('[redacted]', cleaned)
     cleaned = _KNOWN_TOKEN.sub('[redacted]', cleaned)
     cleaned = _PRIVATE_PATH.sub('[redacted]', cleaned)
-    cleaned = _URL_AUTH.sub(r'\1[redacted]@', cleaned)
+    return _URL_AUTH.sub(r'\1[redacted]@', cleaned)
+
+
+def redact(text: str, *, limit: int | None = OUTPUT_BOUND) -> str:
+    cleaned = _redact_standard_patterns(text or "")
+    # Redact on raw bytes first.  The tolerant expressions accept complete
+    # controls between token characters and CSI/ESC prefixes whose final byte
+    # is itself the next token character.
+    if _RAW_REMOVED_CONTROL.search(cleaned) is not None:
+        for pattern in _RAW_SECRET_PATTERNS:
+            cleaned = pattern.sub("[redacted]", cleaned)
+    cleaned = sanitize_terminal_text(cleaned)
+    cleaned = _redact_standard_patterns(cleaned)
     cleaned = cleaned.replace("\x00", "")
     if limit is not None and len(cleaned) > limit:
         return cleaned[: limit - 20] + "\n…[truncated]"
     return cleaned
+
+
+def reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:
+    """Reopen local-test and readiness keys as soon as an A38 base moves."""
+    keys = {
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    }
+    for item in store.rows("checklist_item"):
+        if item.get("task_id") != task["id"] or canonical_key(
+            str(item.get("key") or "")
+        ) not in keys:
+            continue
+        item["status"] = "pending"
+        item["evidence"] = None
+        item["source"] = "script"
+        item["updated_at"] = utcnow()
+        store.write("checklist_item", "update", item["id"], strip_row(item))
 
 
 def strip_row(row: dict[str, Any]) -> dict[str, Any]:

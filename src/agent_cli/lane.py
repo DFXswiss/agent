@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
-from .text_sanitize import sanitize_terminal_text
+from .text_sanitize import (
+    redact_terminal_interleaved_secret,
+    sanitize_terminal_text,
+)
 
 if TYPE_CHECKING:
     from .ai_accounts import AIRole
@@ -358,6 +361,7 @@ _ENCODED_ESCAPE_RE = re.compile(r"\\(?:x|u|U|N\{|[0-7]|c)")
 _PLAIN_PATH_REGEX_META_RE = re.compile(r"[\^$+{}|()]")
 _DRIVE_PREFIX_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))[A-Za-z]:")
 _ABSOLUTE_FRAGMENT_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))/")
+_CONTROL_BYTE_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _normalize_tool_target(value: str) -> str:
@@ -397,7 +401,9 @@ def _tool_target(
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
-    raw = sanitize_terminal_text(str(target))
+    raw = str(target)
+    if _CONTROL_BYTE_RE.search(raw) is not None:
+        return "[redacted]"
     if raw == "":
         return ""
     if kind not in ("file_path", "path", "pattern"):
@@ -431,13 +437,27 @@ def _tool_target(
 DIAGNOSTIC_LIMIT = 4000
 
 
-def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
-    """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
+def _redact_lane_text(
+    text: str, *, config_dir: str | None = None, limit: int | None
+) -> str:
+    """Apply raw redaction, terminal sanitization and config-path hiding."""
     from .coordinator_common import redact
 
-    safe = sanitize_terminal_text(text or "")
+    safe = text or ""
+    if config_dir:
+        safe = redact_terminal_interleaved_secret(
+            safe, config_dir, replacement="<config_dir>"
+        )
+    safe = redact(safe, limit=None)
     safe = hide_config_dir(safe, config_dir)
-    return redact(safe, limit=DIAGNOSTIC_LIMIT)
+    return redact(safe, limit=limit)
+
+
+def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
+    """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
+    return _redact_lane_text(
+        text, config_dir=config_dir, limit=DIAGNOSTIC_LIMIT
+    )
 
 
 def output_read_failure(exc: BaseException) -> str:
@@ -493,10 +513,15 @@ def finalize_lane_output(
     )
     usage = out.usage
     if usage is not None and usage.model is not None:
-        usage = replace(usage, model=sanitize_terminal_text(usage.model))
+        usage = replace(
+            usage,
+            model=_redact_lane_text(
+                usage.model, config_dir=config_dir, limit=None
+            ),
+        )
     return replace(
         out,
-        text=hide_config_dir(sanitize_terminal_text(out.text), config_dir),
+        text=_redact_lane_text(out.text, config_dir=config_dir, limit=None),
         usage=usage,
     )
 
@@ -646,12 +671,11 @@ def record_lane_run(
             continue
         safe_tools.append(
             {
-                "tool": redact(
-                    sanitize_terminal_text(str(item.get("tool") or "")), limit=100
-                ),
-                "target": redact(
-                    sanitize_terminal_text(str(item.get("target") or ""))[:300],
-                    limit=300,
+                "tool": redact(str(item.get("tool") or ""), limit=100),
+                "target": (
+                    "[redacted]"
+                    if _CONTROL_BYTE_RE.search(str(item.get("target") or ""))
+                    else redact(str(item.get("target") or ""), limit=300)
                 ),
                 "error": item.get("error") is True,
             }
@@ -663,11 +687,9 @@ def record_lane_run(
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": redact(
-            sanitize_terminal_text(result.model), limit=LANE_MODEL_LIMIT
-        ),
+        "model": redact(result.model, limit=LANE_MODEL_LIMIT),
         "reported_model": (
-            redact(sanitize_terminal_text(usage.model), limit=LANE_MODEL_LIMIT)
+            redact(usage.model, limit=LANE_MODEL_LIMIT)
             if usage is not None and usage.model is not None
             else None
         ),
@@ -679,7 +701,7 @@ def record_lane_run(
         "usage": usage_payload,
         "tools": safe_tools,
         "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact(sanitize_terminal_text(final_text), limit=4000),
+        "final_text": redact(final_text, limit=4000),
     }
     store.write(  # type: ignore[attr-defined]
         "activity",

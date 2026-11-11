@@ -23,13 +23,15 @@ _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 # Before ordinary terminal sanitization, a known secret needs a stricter path:
 # a CSI final byte may itself be the next secret character. The first two
 # alternatives therefore also accept a sequence prefix whose final byte is
-# supplied by the following literal secret character.
-_TERMINAL_INTERLEAVE = (
+# supplied by the following literal secret character. Only controls removed by
+# the sanitizer may interleave a secret; preserved tabs and newlines remain
+# frame content instead of being consumed by a redaction match.
+TERMINAL_INTERLEAVE_PATTERN = (
     r"(?:"
     r"(?:\x1b\[|\x9b)[0-?]*[ -/]*"
     r"|\x1b[ -/]*"
     rf"|{_TERMINAL_ESCAPE_RE.pattern}"
-    r"|[\x00-\x1f\x7f-\x9f]"
+    rf"|{_TERMINAL_CONTROL_RE.pattern}"
     r")*"
 )
 
@@ -41,7 +43,7 @@ def redact_terminal_interleaved_secret(
     if not secret:
         return text
     pattern = re.compile(
-        _TERMINAL_INTERLEAVE.join(re.escape(char) for char in secret)
+        TERMINAL_INTERLEAVE_PATTERN.join(re.escape(char) for char in secret)
     )
     return pattern.sub(replacement, text)
 

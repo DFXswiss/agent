@@ -227,12 +227,15 @@ exception is a single plain whole target with no whitespace or regex
 metacharacters other than glob `*`, `?`, `[` and `]`, starting with the absolute
 worktree plus `/`; its relative remainder must pass the same checks and is then
 stored worktree-relative.
+Any raw ESC or C0/C1 control byte instead redacts the complete target before
+terminal sanitization or path classification.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
-terminal output, and tool targets all use one shared sanitizer before secret
-redaction. It removes complete CSI, OSC, and other ESC sequences, then remaining
-C0/C1 controls except newline and tab, so terminal formatting cannot split a
-credential and evade redaction. Seven-bit DCS, PM, APC, and SOS strings accept
+terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
+control-tolerant secret redaction on raw text, terminal sanitization, a second
+redaction pass, then bounding. The raw pass allows a CSI/ESC final byte to be a
+token character, so sanitization cannot assemble a credential that evades the
+matcher. Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is removed
 through the end of the text.
 
