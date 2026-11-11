@@ -36,7 +36,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Session | No work without a `session` row. The start hook inserts it. |
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
-| Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, and `error-fix` exist as skills. They are **not** on by default. |
+| Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, `error-fix`, and `conflicts` exist as skills. They are **not** on by default. |
 | Initial configuration | GitHub accounts, AI accounts, roles, and their selections start unconfigured (`NULL`). Add them explicitly through configuration; no fixed account or role count. See §19.8. |
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
@@ -380,6 +380,7 @@ Skills this client ships:
 - **review-loop** — run implement / review rounds until the catalog shows zero open findings
 - **pr-review** — record quality/logic gates on a head SHA
 - **error-fix** — production log errors on this device → analysis → optional draft pull request (§21)
+- **conflicts** — an exact pull-request comment mandates a static rebase, checks, and lease push, with a confined lane only for conflicted files (§19.9)
 
 The packaged `SKILL.md` files next to the client **are** the skill contracts; `agent skills path` prints their directory.
 
@@ -401,7 +402,7 @@ agent init [--no-service]                       # --no-service skips the user se
 agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
-agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix
+agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix|conflicts
 agent session skill list --id ID
 agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID

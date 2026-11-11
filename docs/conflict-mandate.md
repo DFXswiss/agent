@@ -96,6 +96,13 @@ serialized by the source lock.
 3. It verifies the push route. A fork owned by the worker is accepted. A
    same-repository branch requires `permissions.push`. A protected head ref is
    refused. Other forks and protected refs receive one blocker comment. The
+   local protected-name list covers `develop`, `main`, and `master`; after the
+   pull-request read and the branch-name checks, and before any clone, the
+   script also reads `repos/<head-repo>/branches/<url-encoded head ref>` with
+   the worker account. `protected: true` finishes with the same blocker,
+   `refusing to push protected head ref <head-ref>`, so a non-standard
+   protected branch such as `release/2026.11` is refused too. An unreadable
+   response is transient. The
    head ref is validated directly after the pull-request read and before any
    clone with Git's documented branch rules (no control characters, space,
    `~`, `^`, `:`, `?`, `*`, `[`, `\`; no `..`, `@{`, `//`; no leading `/`,
@@ -117,13 +124,17 @@ serialized by the source lock.
    between the checks and the push. A change removes the worktree
    and finishes with the blocker `lane changed the repository metadata`
    without running Git in it. Local Git commands of this worker pass
-   `-c core.hooksPath=/dev/null`.
+   `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false`.
    Network `clone`, `fetch`, `push`, and `ls-remote` commands pass no global
    `-c` override. Directly after the clone writes `core.hooksPath=/dev/null`
    into the repository configuration with a local command, so later transfers
    use the same setting from the separate Git directory outside the worktree.
 6. It refuses merge commits. It rebases the feature branch onto
-   `origin/<base>` with the account's signed-commit configuration.
+   `origin/<base>` with the account's signed-commit configuration. If the
+   starting rebase or a later `git rebase --continue` fails and no unmerged
+   path exists, it aborts the rebase and finishes with the blocker
+   `rebase failed` plus the masked, bounded tail of Git's output. That is a
+   blocker, not a transient failure.
 7. For only `UU` and `AA` regular text conflicts, it writes a lane spec outside
    the worktree, starts the configured implementer lane, and verifies the
    change set, conflict markers, and `git diff --check`. The allowed change set
@@ -133,17 +144,42 @@ serialized by the source lock.
    replaying the commit are equal in the worktree and the index and are not
    reported. The same measurement runs immediately before the lane; a path
    outside the conflicted set there finishes with the blocker
-   `unexpected worktree state before the lane`. The base branch and commit
-   subject are redacted before they enter the spec. Unsupported head or base
+   `unexpected worktree state before the lane`. Beyond that measurement, the
+   script hashes the index directly before the lane starts and directly after
+   it with `git ls-files --stage -z` plus `git ls-files --unmerged -z`. A
+   difference finishes without a retry: it aborts the rebase and posts one
+   blocker, `lane changed the index`, with no push. The index comparison runs
+   directly after the lane attempt and before its `RESULT:` line,
+   conflict-marker verification, or change-set measurement, so an index change
+   cannot be replaced by another lane verdict. If starting or running the lane
+   raises, times out, or returns a timeout status, the script still takes the
+   post-run index fingerprint and the `.git` file check before deciding: a
+   changed index or `.git` file is the corresponding final blocker, and only an
+   unchanged state may be reported as a transient lane failure. Every attempt
+   takes its own fingerprints directly before and after that attempt's lane
+   run. Lane stdout and stderr pass through the worker-aware masking
+   before they reach the lane log in the control directory, the lane-run record,
+   or any returned line. The base branch and commit subject are redacted before
+   they enter the spec. Unsupported head or base
    branch names finish the request with a blocker before any clone. A failed
-   first result is retried once with the exact failure in the spec. Other
-   unmerged states, a second failure, a blocked lane result, or too many stops
-   abort the rebase and post one blocker.
+   first result for another verification failure is retried once with the exact
+   failure in the spec. Other unmerged states, a second failure, a blocked lane
+   result, or too many stops abort the rebase and post one blocker.
 8. It verifies the clean signed head, base ancestry, and every commit in
-   `origin/<base>..HEAD`, then runs `check_argv` with a bounded timeout. After
-   the checks it recomputes that range, requires the same commit list and the
-   same `origin/<base>` sha as before the checks, and verifies every commit in
-   the recomputed range as signed. A failing check's redacted output tail is
+   `origin/<base>..HEAD`, then runs `check_argv` with a bounded timeout. The
+   checks run repository code with file-system access to the request's control
+   directory, so directly before they start the script records the bytes of
+   `<git-dir>/config` and the sorted list of entries in `<git-dir>/hooks` with
+   their sizes. Directly after the checks, before any Git command runs in the
+   worktree again, it compares both by reading those files directly, without a
+   Git invocation. A difference finishes with the blocker `checks changed the
+   repository state`; the worktree and Git directory are removed without
+   running Git in them, and nothing is pushed. The hook comparison records the
+   entry names and their sizes and does not hash a hook's content. After the
+   checks it recomputes
+   the reviewed range, requires the same commit list and the same
+   `origin/<base>` sha as before the checks, and verifies every commit in the
+   recomputed range as signed. A failing check's redacted output tail is
    bounded before publication. The check child inherits the device environment
    without the ambient GitHub token variables and with an empty unconfigured
    GitHub profile, plus the
@@ -151,7 +187,11 @@ serialized by the source lock.
    `AGENT_CONFLICTS_PR`, `AGENT_CONFLICTS_SESSION`, and
    `AGENT_CONFLICTS_WORKTREE` variables.
 9. It pushes only with
-   `--force-with-lease=refs/heads/<head-ref>:<old-head>`. Before the push it
+   `--force-with-lease=refs/heads/<head-ref>:<old-head>`. The account runner
+   accepts exactly that lease form: the value is split at the last colon, the
+   ref part must start with `refs/heads/` and contain no whitespace or colon,
+   and the expected value must be 40 hexadecimal characters. A branch name may
+   contain `=`. Any other `refs/...` namespace is rejected. Before the push it
    verifies again that `HEAD` equals the verified sha, the worktree is clean by
    the index measurement and `git status`, the `.git` file is unchanged, every
    commit of the range still verifies as signed, and the `origin` and
@@ -166,7 +206,11 @@ serialized by the source lock.
    posts the result with `Mergeable: unknown`. A resumed `pushing` request
    whose pull-request head equals the stored new head, and a resumed
    `result-pending` request, do the same read before posting rather than
-   posting a body rendered before the push.
+   posting a body rendered before the push. On the resume path of a request in
+   phase `pushing`, an unreadable pull request is a transient failure like any
+   other of a known request: `transient_start` is recorded once, the tick
+   returns a transient line, and after 24 hours the request finishes with a
+   blocker instead of posting the stored result.
 
 `--dry-run` performs discovery and pull-request reads and prints
 `would accept ...`, `would rebase <head> onto <base>`, and the push route. A
@@ -202,16 +246,17 @@ blocker, and finishes that request. A new comment is needed to try again.
 Unreadable GitHub or network state, unknown `mergeable`, and a rejected push
 lease post nothing and retry later from the pull-request read. After a failed
 push, the worker reads `refs/heads/<head-ref>` through `git ls-remote
-publication`. If that read fails, the failure is transient. If the remote head
-differs from the observed old head for this request, the lease was rejected,
-so it is transient and the next tick starts from the pull-request read. If the
-remote head still equals the observed old head, the push was refused for
-another reason (authentication, hook, or policy): the request finishes with a
-blocker comment saying `push was refused by the remote` and includes the
-masked, bounded tail of the push output. After 24 hours
-of transient failures in any other phase, including `result-pending` and a
-failing marker lookup before resumption, they
-finish with a blocker. A blocker comment that cannot be posted remains in
+publication`. A push that ended because the bounded runner timed out is
+transient; it does not become a blocker even when the remote head is unchanged.
+If that read fails, the failure is transient. If the remote head differs from
+the observed old head for this request, the lease was rejected, so it is
+transient and the next tick starts from the pull-request read. Only a push that
+returned on its own with a non-zero exit code, followed by a successful
+remote-head read that still shows the observed old head, is the blocker
+`push was refused by the remote`; it includes the masked, bounded tail of the
+push output. After 24 hours of transient failures in any other phase,
+including `result-pending` and a failing marker lookup before resumption,
+they finish with a blocker. A blocker comment that cannot be posted remains in
 `blocker-pending` and is retried on every tick without a time limit; the
 24-hour limit applies to every other transient failure. Aborting a rebase is a
 local Git operation and uses the request's already-created Git runner; it does
@@ -230,6 +275,22 @@ cased configuration for one GitHub repository still shares the same lock.
 
 A finished request removes its worktree and keeps its control directory.
 
+## Trust boundary of checks
+
+`check_argv` is trusted operator configuration. It lives in
+`$AGENT_HOME/conflicts.json`, which only the operator writes, and the script
+runs that command as written. It is not, however, a command of this feature:
+it executes code of the pull request under review with the worker's
+environment minus the ambient GitHub token variables and with an empty
+unconfigured GitHub profile. Isolating that execution (container, sandbox,
+separate user) is the operator's responsibility, and this feature does not
+provide it. The repository-state comparison of step 8 detects Git metadata
+that the checks changed, and the pre-push verification in step 9 rejects a
+changed worktree or a moved head with the same blocker; neither is a sandbox
+boundary for anything else the checks do on the device. Configure the worker
+only for repositories and `request_logins` whose pull requests may run code on
+that device, and only where the operator accepts that execution.
+
 ## Known limits
 
 The Git runner API used by this worker does not expose a child-environment
@@ -246,5 +307,6 @@ child environment.
 - Daemon auto-start of conflict workers
 - Hub-issued mandates
 - Non-content conflicts
+- conflicted files whose names Git prints C-quoted (tab, newline, double quote, backslash)
 - Branches containing merge commits
 - Repositories without a check command

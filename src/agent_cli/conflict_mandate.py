@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,7 @@ from .conflict_mandate_github import (
     list_repository_comments,
     post_comment_once,
     pull_number_from_comment,
+    read_branch_protection,
     read_optional_pull,
     read_pull,
     result_marker,
@@ -62,6 +63,7 @@ from .conflict_mandate_git import (
     diff_check,
     fetch_branch,
     git_file_snapshot,
+    index_fingerprint,
     merge_commits,
     push_with_lease,
     range_commits,
@@ -70,6 +72,9 @@ from .conflict_mandate_git import (
     rebase_complete,
     rebase_continue,
     remote_head,
+    remove_repository,
+    repository_state,
+    repository_state_changed,
     require_ok,
     rev_parse,
     run as git_run,
@@ -102,7 +107,9 @@ from .store import Store, StoreError
 WORKER_LOCK_PREFIX = "conflicts-worker:"
 SOURCE_LOCK_PREFIX = "conflicts-source:"
 MERGE_COMMIT_BLOCKER = "branch contains merge commits"
+CHECKS_CHANGED_STATE = "checks changed the repository state"
 LOCK_REFUSED = "cannot push to the head branch"
+BOUNDED_TIMEOUT_RETURNCODE = 124
 
 
 class ConflictsError(StoreError):
@@ -524,6 +531,16 @@ def _blocked_sentence(output: str) -> str:
     return "the lane reported a product decision is required"
 
 
+def _rebase_failed(completed: Any) -> str:
+    label = "rebase failed"
+    detail_limit = max(1, FAILURE_TAIL_LIMIT - len(label) - 1)
+    detail = bounded_tail(
+        completed.stderr or completed.stdout or label,
+        limit=detail_limit,
+    )
+    return f"{label}\n{detail}"
+
+
 def _verify_lane(
     git_runner: Runner,
     worktree: Path,
@@ -607,7 +624,7 @@ def _run_lane_attempt(
     paths: list[str],
     expected_git_file: tuple[bytes, bool],
     failed_verification: str | None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str, str]:
     spec_path = ctx.control / f"lane-{attempt}.md"
     spec = _lane_spec(
         base=safe(ctx.worker, base),
@@ -621,7 +638,9 @@ def _run_lane_attempt(
     )
     atomic_write(spec_path, f"# Role: implementer\n\n{spec}")
     selected_runner = _hardened_lane_runner(ctx.worker, ctx.worktree, lane_runner)
+    git_runner = ctx.git_runner or runtime.request.git
     _verify_metadata(ctx, expected_git_file)
+    index_before = index_fingerprint(git_runner, str(ctx.worktree))
     try:
         result = launch_lane_process(
             role="implementer",
@@ -634,19 +653,37 @@ def _run_lane_attempt(
             session_id=ctx.worker.session_id,
             binding=runtime.binding,
         )
-    except (SystemExit, OSError, AIAccountError, AccountError) as exc:
+    except (Exception, SystemExit) as exc:
         _verify_metadata(ctx, expected_git_file)
+        index_after = index_fingerprint(git_runner, str(ctx.worktree))
+        if index_before != index_after:
+            raise _Blocker("lane changed the index") from exc
         raise ConflictTransientError(redact(str(exc))) from exc
     _verify_metadata(ctx, expected_git_file)
+    index_after = index_fingerprint(git_runner, str(ctx.worktree))
+    if index_before != index_after:
+        raise _Blocker("lane changed the index")
+    stdout = safe(ctx.worker, result.stdout or "")
+    stderr = safe(ctx.worker, result.stderr or "")
     atomic_write(
         ctx.control / f"lane-{attempt}.log",
-        redact(result.stdout or result.stderr or "", limit=COMMENT_LIMIT),
+        redact(stdout or stderr or "", limit=COMMENT_LIMIT),
     )
     try:
-        record_lane_run(store, session_id=ctx.worker.session_id, result=result)
+        record_lane_run(
+            store,
+            session_id=ctx.worker.session_id,
+            result=replace(result, stdout=stdout, stderr=stderr),
+        )
     except (Exception, SystemExit):  # noqa: BLE001 — audit failure never changes the verdict
         pass
-    return result.status, result.stdout, parse_model_result(result.stdout, result.returncode)[1]
+    return (
+        result.status,
+        stdout,
+        parse_model_result(result.stdout, result.returncode)[1],
+        index_before,
+        index_after,
+    )
 
 
 def _finish_marker(
@@ -975,6 +1012,7 @@ def _run_checks(
     head_repo: str,
 ) -> tuple[bool, str]:
     argv = list(ctx.worker.repositories[ctx.request.repo].check_argv)
+    expected_state = repository_state(ctx.control / "git")
     env = {
         "AGENT_CONFLICTS_HEAD": head,
         "AGENT_CONFLICTS_BASE": base_sha,
@@ -993,6 +1031,12 @@ def _run_checks(
         )
     except OSError as exc:
         return False, redact(f"check command unavailable: {exc}", limit=FAILURE_TAIL_LIMIT)
+    # Compare the Git directory directly, before any Git command of this
+    # process runs again in the worktree.
+    if repository_state_changed(expected_state, repository_state(ctx.control / "git")):
+        remove_repository(ctx.worktree)
+        remove_repository(ctx.control / "git")
+        return False, CHECKS_CHANGED_STATE
     if completed.returncode != 0:
         tail = bounded_tail(
             completed.stderr or completed.stdout or "check command failed",
@@ -1096,6 +1140,9 @@ def _run_request(
         if not dry_run and phase == "pushing":
             new_head = ctx.state.get("new_head")
             if isinstance(new_head, str):
+                # A transient read enters the shared handler below: it records
+                # transient_start once, returns a transient line, and finishes
+                # the request with a blocker after 24 hours.
                 pull = read_pull(
                     request_runtime.github, ctx.request.repo, ctx.request.number
                 )
@@ -1226,6 +1273,23 @@ def _run_request(
                     save_pending=True,
                     observation=f"pushed {new_head} and finished request {ctx.request.comment_id}",
                 )
+        # Afterwards, a valid head ref reads GitHub's canonical protection flag
+        # so a protected non-standard branch is refused before any clone too.
+        if branch_ref_valid(head_ref) and read_branch_protection(
+            request_runtime.github, head_repo, head_ref
+        ):
+            reason = f"refusing to push protected head ref {head_ref}"
+            if dry_run:
+                return _dry_run_request(
+                    ctx,
+                    head_ref=head_ref,
+                    head_sha=head_sha,
+                    head_repo=head_repo,
+                    base_ref=base_ref,
+                    route=f"would post blocker: {reason}",
+                    mergeable=mergeable,
+                )
+            raise _Blocker(reason)
         if not isinstance(mergeable, (bool, type(None))) and not dry_run:
             raise ConflictTransientError("GitHub mergeable state is unreadable")
         if mergeable is None and not dry_run:
@@ -1286,7 +1350,7 @@ def _run_request(
                 stops += 1
                 unmerged = unmerged_paths(git_runner, str(ctx.worktree))
                 if not unmerged:
-                    raise ConflictTransientError("rebase stopped without unmerged paths")
+                    raise _Blocker(_rebase_failed(rebased))
                 unsupported = [item for item in unmerged if not item.supported]
                 if unsupported:
                     names = ", ".join(f"{item.path} ({item.state})" for item in unsupported)
@@ -1307,7 +1371,13 @@ def _run_request(
                             "unexpected worktree state before the lane: "
                             + ", ".join(outside_before)
                         )
-                    status, output, result = _run_lane_attempt(
+                    (
+                        status,
+                        output,
+                        result,
+                        index_before,
+                        index_after,
+                    ) = _run_lane_attempt(
                         store,
                         ctx,
                         runtime,
@@ -1320,10 +1390,18 @@ def _run_request(
                         expected_git_file=expected_git_file,
                         failed_verification=failed,
                     )
+                    if status == "timeout":
+                        raise ConflictTransientError("lane timed out")
                     if status == "complete" and result == "blocked":
                         raise _Blocker(_blocked_sentence(output))
                     failed = _verify_lane(
-                        git_runner, ctx.worktree, paths, before, output, status, result
+                        git_runner,
+                        ctx.worktree,
+                        paths,
+                        before,
+                        output,
+                        status,
+                        result,
                     )
                     if failed is None:
                         lane_ok = True
@@ -1349,10 +1427,10 @@ def _run_request(
                 continued = rebase_continue(git_runner, str(ctx.worktree))
                 if continued.returncode == 0:
                     break
+                if not unmerged_paths(git_runner, str(ctx.worktree)):
+                    raise _Blocker(_rebase_failed(continued))
                 if rebase_complete(git_runner, str(ctx.worktree), base=base_ref):
                     break
-                if not unmerged_paths(git_runner, str(ctx.worktree)):
-                    raise ConflictTransientError("rebase continue failed without unmerged paths")
         head, commits, verified_base_sha = _verify_final_head(
             ctx, git_runner, base_ref=base_ref
         )
@@ -1369,7 +1447,7 @@ def _run_request(
             head_repo=head_repo,
         )
         if not checks_ok:
-            if check_result.startswith("checks changed the repository state:"):
+            if check_result.startswith(CHECKS_CHANGED_STATE):
                 raise _Blocker(check_result)
             raise _Blocker(f"configured check failed:\n{check_result}")
         save_state(
@@ -1389,6 +1467,8 @@ def _run_request(
             old_sha=head_sha,
         )
         if pushed.returncode != 0:
+            if pushed.returncode == BOUNDED_TIMEOUT_RETURNCODE:
+                raise ConflictTransientError("push timed out")
             refusal = "push was refused by the remote"
             detail_limit = max(1, FAILURE_TAIL_LIMIT - len(refusal) - 1)
             pushed_detail = bounded_tail(
