@@ -857,7 +857,12 @@ def _run_lane_attempt(
         try:
             try:
                 verify_git_file(ctx.worktree, expected_git_file)
-            except CoordinatorError:
+                changed = (
+                    index_fingerprint(git_runner, str(ctx.worktree)) != index_before
+                )
+            except (StoreError, Exception):  # noqa: BLE001 — a failed check means unknown state
+                changed = True
+            if changed:
                 remove_repository(ctx.worktree)
                 remove_repository(ctx.control / "git")
         except BaseException:
@@ -872,11 +877,13 @@ def _run_lane_attempt(
         output=stdout,
         result=(parsed_result if status == "complete" else ""),
     )
-    index_after = (
-        index_fingerprint(git_runner, str(ctx.worktree))
-        if metadata_failure is None
-        else None
-    )
+    index_failure = False
+    index_after = None
+    if metadata_failure is None:
+        try:
+            index_after = index_fingerprint(git_runner, str(ctx.worktree))
+        except (StoreError, OSError):
+            index_failure = True
     try:
         atomic_write(
             ctx.control / f"lane-s{stop}-a{attempt}.log",
@@ -898,13 +905,17 @@ def _run_lane_attempt(
         )
     if metadata_failure is not None:
         raise metadata_failure
-    assert index_after is not None
     note = (
         _blocked_sentence(stdout)
         if status == "complete" and parsed_result == "blocked"
         else None
     )
     lane_facts = (("Lane note", note),) if note is not None else ()
+    if index_failure:
+        raise _Blocker(
+            "index could not be read after the lane run", facts=lane_facts
+        )
+    assert index_after is not None
     if index_before != index_after:
         raise _Blocker("lane changed the index", facts=lane_facts)
     return status, stdout, parsed_result
@@ -1026,6 +1037,14 @@ def _finish_blocker(
     safe_reason = safe(ctx.worker, reason)[:1500]
     safe_facts = [(label, safe(ctx.worker, value)) for label, value in facts]
     if not dry_run:
+        save_state(
+            ctx,
+            "blocker-pending",
+            blocker=safe_reason,
+            blocker_facts=safe_facts,
+            blocker_skip_git=skip_git,
+            transient_start=None,
+        )
         if skip_git:
             remove_repository(ctx.worktree)
             remove_repository(ctx.control / "git")
@@ -1038,19 +1057,13 @@ def _finish_blocker(
         else:
             try:
                 rebase_abort(request_runtime.git, str(ctx.worktree))
-            except (CoordinatorError, OSError):
+            except (StoreError, OSError):
                 remove_repository(ctx.worktree)
                 remove_repository(ctx.control / "git")
                 skip_git = True
+        if skip_git and ctx.state.get("blocker_skip_git") is not True:
+            save_state(ctx, None, blocker_skip_git=True)
         body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
-        save_state(
-            ctx,
-            "blocker-pending",
-            blocker=safe_reason,
-            blocker_facts=safe_facts,
-            blocker_skip_git=skip_git,
-            transient_start=None,
-        )
         try:
             post_comment_once(
                 request_runtime.github,
@@ -1453,12 +1466,16 @@ def _run_request(
         if not dry_run and phase == "pushing":
             new_head = ctx.state.get("new_head")
             if isinstance(new_head, str):
-                # A transient read enters the shared handler below: it records
-                # transient_start once, returns a transient line, and finishes
-                # the request with a blocker after 24 hours.
-                pull = _read_pull_or_blocker(
-                    request_runtime.github, ctx.request.repo, ctx.request.number
-                )
+                # The push may already have updated the branch, so only the
+                # pull-request head can decide the outcome. An unreadable pull
+                # request is therefore transient without the 24-hour limit and
+                # never becomes a blocker while the phase stays `pushing`.
+                try:
+                    pull = _read_pull_or_blocker(
+                        request_runtime.github, ctx.request.repo, ctx.request.number
+                    )
+                except ConflictTransientError as exc:
+                    return [f"transient: {safe(ctx.worker, exc)}"]
                 head = pull.get("head")
                 if isinstance(head, dict) and head.get("sha") == new_head:
                     return _post_stored_result(
