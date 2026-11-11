@@ -386,7 +386,10 @@ for worker in workers.values():
    representations as the same instant. Conflicting rows at one instant, and
    histories with a missing or invalid timestamp whose order cannot be
    established, yield an unavailable verdict before a checklist close or review
-   publication. Legacy stage aliases are canonicalized before grouping or
+   publication. The gate phase stops before preparing either reviewer when a
+   needed dimension has that synthetic empty-head verdict, and rechecks the
+   shared ordering after each new verdict before closing a checklist key or
+   queuing a rejection comment. Legacy stage aliases are canonicalized before grouping or
    comparison. All completed and unavailable parallel gates, their checklist
    reconciliation, every rejection intent, the combined findings, and the task
    transition share one local transaction. For an approved A38 first review,
@@ -514,13 +517,16 @@ for worker in workers.values():
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
     require merge SHA, timestamp, and base/target. An A38 merge must also expose
-    a valid base SHA equal to the persisted evidence base, with a report or
+    a valid base SHA equal to the promoted `coordinator.a38.base_sha` evidence
+    base (the checkout pin is not a completion fallback), with a report or
     waiver and local gate bound to that exact base. If a pending base exists or
     the base moved after evidence and the pull request is already merged, the
     coordinator
     keeps the old base as the last trusted base, records both old and observed
     bases, reopens `local_check_pass` and the readiness checklist keys, and
-    stops with a non-recoverable `task-done` blocker. It cannot remeasure a
+    stops with a non-recoverable `task-done` blocker. A missing promoted base or
+    a merged head different from the reviewed head is the same final boundary;
+    stale reply recovery is cleared. It cannot remeasure a
     merged pull request; a human decides the outcome. Then existing `task-done`
     checklist / summary guard (summaries must already describe the actual
     result — no boilerplate invented at merge), then `issue.assigned.ack`. A
@@ -774,7 +780,14 @@ enter task blockers, issue comments, or agent notes.
 A reviewer spool write failure, in either the sequential inner-review path or
 the parallel PR-review path, removes the provider's raw output and any partial
 `.tmp` or uncommitted final spool before the execution failure is recorded.
-Raw output is retained only alongside a successfully committed recovery spool.
+For output-file providers, each reviewer uses an agent-bound deterministic raw
+path in the managed reviewer-spool directory. A path-free ownership marker is
+committed on the working agent before the provider starts. On restart, raw
+output without a valid committed recovery spool is removed before the uncertain
+lane stop; raw output is retained only alongside such a spool. Spool-write
+failures expose only fixed categories (the sequential checkpoint-failure
+category or the parallel uncertain-lane text), never filesystem exception text
+or its local path.
 For a sequential lane execution exception, the finished agent and the task's
 terminal uncertain-lane state commit in one transaction. A rollback leaves the
 agent working and the task in its prior runnable phase.
@@ -1006,7 +1019,10 @@ verification, and publication, and continue to both required review comments.
 After a successful suite, a pull request that merged on the measured head skips
 draft reconciliation but still receives the verified report and records the
 same report, local-test, and promoted-base bindings before merge verification.
-Failed suites and results whose live head no longer matches remain unbound.
+An unreadable follow-up head keeps the task in `tests` for retry without report
+publication or base promotion. A confirmed different merged head is a
+non-recoverable completion boundary rather than an `await_merge` retry. Failed
+suites and results whose live head no longer matches remain unbound.
 When a trusted coordinator precheck is configured, the waiver records a
 current-head `coordinator-check` skip so an older failure cannot remain the
 selected result.

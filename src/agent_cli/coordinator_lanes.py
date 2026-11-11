@@ -78,9 +78,11 @@ PR_REVIEW_PROMPT_LIMIT = 20_000
 A38_REVIEW_PROMPT_LIMIT = 14_000
 PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
+REVIEWER_SPOOL_WRITE_ERROR = "reviewer result checkpoint failed"
 _CHECKPOINT_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
 _REVIEWER_SPOOL_VERSION = 2
 _REVIEWER_SPOOL_BYTES_LIMIT = 16_384
+_REVIEWER_OUTPUT_CHECKPOINT_VERSION = 1
 
 
 def _coordinator_path_replacements(
@@ -444,6 +446,36 @@ def _reviewer_spool_path(
     return path
 
 
+def _reviewer_raw_output_path(
+    store: Store, worker: WorkerConfig, task_id: str, agent_id: str
+) -> Path:
+    """Return the deterministic provider-output path owned by one reviewer."""
+    return _reviewer_spool_path(store, worker, task_id, agent_id).with_suffix(
+        ".output"
+    )
+
+
+def _reviewer_output_checkpoint(agent_id: str) -> dict[str, Any]:
+    """Path-free durable ownership marker stored on the replicated agent row."""
+    return {
+        "version": _REVIEWER_OUTPUT_CHECKPOINT_VERSION,
+        "name": f"{agent_id}.output",
+    }
+
+
+def _owned_reviewer_output(
+    store: Store,
+    worker: WorkerConfig,
+    task_id: str,
+    agent: dict[str, Any],
+) -> str | None:
+    """Resolve only a raw output durably assigned to this exact agent."""
+    agent_id = str(agent.get("id") or "")
+    if agent.get("reviewer_output") != _reviewer_output_checkpoint(agent_id):
+        return None
+    return str(_reviewer_raw_output_path(store, worker, task_id, agent_id))
+
+
 def _legacy_reviewer_spool_path(
     worker: WorkerConfig, task_id: str, agent_id: str
 ) -> Path:
@@ -677,6 +709,11 @@ def _read_reviewer_spool(
         return None
     output_file = payload.get("output_file")
     if output_file is not None and not isinstance(output_file, str):
+        return None
+    owned_output = _owned_reviewer_output(
+        store, worker, str(task["id"]), agent
+    )
+    if owned_output is not None and output_file != owned_output:
         return None
     return result, output_file
 
@@ -945,9 +982,27 @@ def launch_lane(
                 )
                 if pending is not None:
                     return existing, pending[0]
+                _discard_failed_reviewer_spool(
+                    store,
+                    worker,
+                    str(task["id"]),
+                    str(existing["id"]),
+                    _owned_reviewer_output(
+                        store, worker, str(task["id"]), existing
+                    ),
+                )
                 raise
             if recovered is not None:
                 return existing, recovered
+            _discard_failed_reviewer_spool(
+                store,
+                worker,
+                str(task["id"]),
+                str(existing["id"]),
+                _owned_reviewer_output(
+                    store, worker, str(task["id"]), existing
+                ),
+            )
         committed_task = copy.deepcopy(task)
         committed_c = coord(committed_task)
         committed_c["phase"] = "blocked"
@@ -1000,10 +1055,18 @@ def launch_lane(
         except AIAccountError as exc:
             raise CoordinatorError(str(exc)) from exc
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, lane_output = tempfile.mkstemp(
-                prefix=f"agent-coord-{vendor}-", suffix=".txt"
-            )
-            os.close(fd)
+            if role == "reviewer":
+                lane_output = str(
+                    _reviewer_raw_output_path(
+                        store, worker, str(task["id"]), aid
+                    )
+                )
+                Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
+            else:
+                fd, lane_output = tempfile.mkstemp(
+                    prefix=f"agent-coord-{vendor}-", suffix=".txt"
+                )
+                os.close(fd)
         argv = [
             *selected.env_prefix(),
             *provider_argv(
@@ -1051,6 +1114,11 @@ def launch_lane(
                 "started_at": utcnow(),
                 "finished_at": None,
                 "note": None,
+                **(
+                    {"reviewer_output": _reviewer_output_checkpoint(aid)}
+                    if role == "reviewer" and lane_output is not None
+                    else {}
+                ),
             },
         )
         c["lane"] = {
@@ -1144,6 +1212,14 @@ def launch_lane(
             if agent is not None and committed_agent is not None:
                 agent.clear()
                 agent.update(committed_agent)
+            if role == "reviewer":
+                _discard_failed_reviewer_spool(
+                    store,
+                    worker,
+                    str(task["id"]),
+                    aid,
+                    lane_output,
+                )
             _post_issue_status(
                 store,
                 worker,
@@ -1292,7 +1368,7 @@ def launch_lane(
                 stage="inner-review",
                 output_file=lane_output,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _discard_failed_reviewer_spool(
                 store,
                 worker,
@@ -1300,7 +1376,7 @@ def launch_lane(
                 str(agent["id"]),
                 lane_output,
             )
-            raise
+            raise CoordinatorError(REVIEWER_SPOOL_WRITE_ERROR) from exc
         try:
             _checkpoint_reviewer_outcome(
                 store,
@@ -1971,10 +2047,12 @@ def _prepare_pr_review_agent(
         raise CoordinatorError(str(exc)) from exc
     try:
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, lane_output = tempfile.mkstemp(
-                prefix=f"agent-coord-{vendor}-", suffix=".txt"
+            lane_output = str(
+                _reviewer_raw_output_path(
+                    store, worker, str(task["id"]), aid
+                )
             )
-            os.close(fd)
+            Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
         argv = [
             *selected.env_prefix(),
             *provider_argv(
@@ -2013,6 +2091,11 @@ def _prepare_pr_review_agent(
                 "started_at": utcnow(),
                 "finished_at": None,
                 "note": None,
+                **(
+                    {"reviewer_output": _reviewer_output_checkpoint(aid)}
+                    if lane_output is not None
+                    else {}
+                ),
             },
         )
     except BaseException:
@@ -2378,6 +2461,15 @@ def phase_pr_gates(
         committed_c.pop("resume_phase", None)
         committed_agents = []
         for pending_agent in missing_spool:
+            _discard_failed_reviewer_spool(
+                store,
+                worker,
+                str(task["id"]),
+                str(pending_agent["id"]),
+                _owned_reviewer_output(
+                    store, worker, str(task["id"]), pending_agent
+                ),
+            )
             committed_agent = copy.deepcopy(pending_agent)
             committed_agent["status"] = "done"
             committed_agent["finished_at"] = utcnow()
@@ -2434,6 +2526,21 @@ def phase_pr_gates(
         "a38_first_comment" if worker.a38 else "pr_gates_codex"
     )
     first_vendor = _task_models(task).first
+
+    def _ordering_unavailable(gate: dict[str, Any] | None) -> bool:
+        return bool(
+            gate is not None
+            and gate.get("verdict") == "unavailable"
+            and gate.get("head_sha") == ""
+        )
+
+    for dimension in ("quality", "logic"):
+        if _ordering_unavailable(
+            latest.get((canonical_stage(stage), dimension))
+        ):
+            raise CoordinatorError(
+                f"{stage}/{dimension} gate history ordering is unavailable"
+            )
 
     def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
         # A gate counts only from the provider pinned on the task for that slot.
@@ -2928,6 +3035,13 @@ def phase_pr_gates(
                 agent_id=str(prep["agent_id"]),
                 evidence=evidence,
             )
+            ordered_gate = latest_gates(store, committed_task["id"]).get(
+                (canonical_stage(stage), dimension)
+            )
+            if _ordering_unavailable(ordered_gate):
+                raise CoordinatorError(
+                    f"{stage}/{dimension} gate history ordering is unavailable"
+                )
             if approved:
                 if not rejection_evidence:
                     blocker = _reconcile_approved_gate_checklist(
@@ -2971,6 +3085,13 @@ def phase_pr_gates(
                 agent_id=str(prep["agent_id"]),
                 evidence=evidence,
             )
+            ordered_gate = latest_gates(store, committed_task["id"]).get(
+                (canonical_stage(stage), dimension)
+            )
+            if _ordering_unavailable(ordered_gate):
+                raise CoordinatorError(
+                    f"{stage}/{dimension} gate history ordering is unavailable"
+                )
             key = checklist_key_for_stage(stage, dimension)
             denial = _try_set_checklist(
                 store,
