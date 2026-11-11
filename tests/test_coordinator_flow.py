@@ -966,6 +966,161 @@ def test_parallel_pr_review_rejection_wins_over_other_incomplete_dimension(
     assert "implementer" not in fake.launched
 
 
+def test_parallel_pr_review_persists_both_rejections_before_github_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_git import _write_marker
+    from agent_cli.coordinator_lanes import (
+        phase_pr_gates,
+        reconcile_rejection_review_intents,
+    )
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    fake.model_outputs["pr-reviewer-quality"] = (
+        "STATUS: complete\nRESULT: rejected\nquality defect"
+    )
+    fake.model_outputs["pr-reviewer-logic"] = (
+        "STATUS: complete\nRESULT: rejected\nlogic defect"
+    )
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    tid = "99999999-9999-4999-8999-999999999997"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "models": {"first": "grok", "second": "codex"},
+            "payload": {
+                "coordinator": {
+                    "phase": "pr_gates_grok",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-99999999",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                    "evidence": {"tests_pass": True, "tests_head": fake.head},
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    branch = "task-99999999"
+    fake.remotes = {
+        "origin": "https://github.com/example/project.git",
+        "publication": "https://github.com/example/project.git",
+    }
+    fake.branch = branch
+    fake.branches.add(branch)
+    _write_marker(
+        worker,
+        tid,
+        {
+            "phase": "ready",
+            "task_id": tid,
+            "session_id": worker.session_id,
+            "target_repo": "example/project",
+            "publication_repo": "example/project",
+            "branch": branch,
+            "base": "develop",
+            "base_sha": fake.base,
+            "worktree": str(wt),
+            "worker_login": "worker-bot",
+        },
+    )
+
+    def crash_on_first_github_call(store_, _runner, *, activity_ids):  # noqa: ANN001
+        assert len(activity_ids) == 2
+        assert all(
+            store_.row("activity", activity_id)["execution_status"] == "pending"
+            for activity_id in activity_ids
+        )
+        raise RuntimeError("injected GitHub crash")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github", crash_on_first_github_call
+    )
+    with pytest.raises(RuntimeError, match="injected GitHub crash"):
+        phase_pr_gates(
+            store,
+            worker,
+            store.row("task", tid),
+            fake,
+            lane_runner(fake),
+            vendor="grok",
+            stage="review-1",
+        )
+
+    saved = store.row("task", tid)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] == "implementing"
+    assert checkpoint["phase"] == "implement"
+    assert "quality defect" in checkpoint["findings"]
+    assert "logic defect" in checkpoint["findings"]
+    gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("verdict") == "rejected"
+    ]
+    assert {gate["dimension"] for gate in gates} == {"quality", "logic"}
+    activity_ids = checkpoint["rejection_review_activity_ids"]
+    assert len(activity_ids) == 2
+
+    published: list[str] = []
+
+    def complete_saved_intents(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            updated["execution_status"] = "done"
+            store_.write("activity", "update", activity_id, updated)
+            published.append(activity_id)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github", complete_saved_intents
+    )
+    lines = reconcile_rejection_review_intents(store, worker, saved, fake)
+
+    assert published == activity_ids
+    restarted = store.row("task", tid)
+    assert restarted["payload"]["coordinator"]["phase"] == "implement"
+    assert "quality defect" in restarted["payload"]["coordinator"]["findings"]
+    assert "logic defect" in restarted["payload"]["coordinator"]["findings"]
+    assert "rejection_review_activity_ids" not in restarted["payload"]["coordinator"]
+    assert len([line for line in lines if "published" in line]) == 2
+
+
 def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

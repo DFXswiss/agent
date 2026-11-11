@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -674,6 +675,53 @@ def test_publish_terminals_does_not_record_state_for_a_failed_send(
         main_mod._publish_terminals(store, _FakeRuntime(), ws, terminal_seq, last_capture)
         assert len(ws.sent) == 1, "the retried publish must actually resend the frame, not skip it"
         assert last_capture == {"s1": "some output"}
+    finally:
+        store.close()
+
+
+def test_publish_terminals_keeps_capture_beyond_diagnostic_limit(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        capture = "start-" + ("x" * 4500) + "\x1b[31mend\x1b[0m token=secret-value tail"
+
+        class _LongRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        capture if argv[:2] == ["tmux", "capture-pane"] else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _LongRuntime(), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert len(published) > 4000
+        assert published.startswith("start-" + ("x" * 4500))
+        assert published.endswith("end [redacted] tail")
+        assert "secret-value" not in published
+        assert "[truncated]" not in published
+        assert "\x1b" not in published
     finally:
         store.close()
 

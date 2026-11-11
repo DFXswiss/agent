@@ -354,6 +354,7 @@ def _int_or_none(value: object) -> int | None:
 
 
 _REGEX_ESCAPE_RE = re.compile(r"\\([^A-Za-z0-9])")
+_ENCODED_ESCAPE_RE = re.compile(r"\\(?:x|u|U|N\{|[0-7]|c)")
 _PLAIN_PATH_REGEX_META_RE = re.compile(r"[\^$+{}|()]")
 _DRIVE_PREFIX_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))[A-Za-z]:")
 _ABSOLUTE_FRAGMENT_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))/")
@@ -401,6 +402,8 @@ def _tool_target(
         return ""
     if kind not in ("file_path", "path", "pattern"):
         return redact(raw[:300], limit=300)
+    if _ENCODED_ESCAPE_RE.search(raw) is not None:
+        return "[redacted]"
     try:
         root = Path(cwd).expanduser().resolve()
     except (OSError, RuntimeError, ValueError):

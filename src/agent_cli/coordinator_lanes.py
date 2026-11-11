@@ -1621,99 +1621,129 @@ def phase_pr_gates(
         if not isinstance(a38, dict):
             a38 = {}
             c["a38"] = a38
-        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
-        # The approved gates below are durable writes of their own. Persist the
-        # completed-pass count first so a crash after either gate cannot leave
-        # the subsequently posted review comment with a stale pass count.
+        pending_pass = a38.get("first_review_pass_pending")
+        pass_already_counted = (
+            isinstance(pending_pass, dict)
+            and pending_pass.get("head") == head
+            and pending_pass.get("stage") == stage
+        )
+        if not pass_already_counted:
+            a38["first_review_passes"] = (
+                int(a38.get("first_review_passes") or 0) + 1
+            )
+            a38["first_review_pass_pending"] = {
+                "head": head,
+                "stage": stage,
+            }
+        # Persist the completed-pass count and its recovery marker before the
+        # separate atomic gate/checklist transaction below, so a crash in that
+        # transaction neither loses nor double-counts the completed pass.
         save_task(store, task)
 
-    rejection_evidence: list[str] = []
-    for prep, outcome, status, model_result in parsed_outcomes:
-        dimension = str(prep["dimension"])
-        if not review_is_approved(status, model_result):
-            evidence = redact(outcome.stdout or f"{status}/{model_result}")
-            rejection_evidence.append(evidence)
-            # Persist the rejection, route, and deterministic publication intent
-            # atomically. The GitHub executor runs only after that commit.
-            with store.conn.transaction():
-                record_gate(
-                    store,
-                    task,
-                    stage=stage,
-                    dimension=dimension,
-                    vendor=vendor,
-                    verdict="rejected",
-                    head=head,
-                    agent_id=str(prep["agent_id"]),
-                    evidence=evidence,
-                )
-                _apply_rejected_gate_transition(
-                    task, head=head, evidence=rejection_evidence
-                )
-                activity_id = queue_comment_review(
-                    store,
-                    worker,
-                    task,
-                    body=(
-                        f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
-                        f"{evidence}"
-                    ),
-                )
-                _remember_rejection_review(task, activity_id)
-                save_task(store, task)
-            execute_github(store, runner, activity_ids=(activity_id,))
-            lines.extend(_checkpoint_rejection_reviews(store, worker, task))
+    rejection_evidence = [
+        redact(outcome.stdout or f"{status}/{model_result}")
+        for _prep, outcome, status, model_result in rejected_outcomes
+    ]
+    rejection_activity_ids: list[str] = []
+
+    # Complete both dimensions' durable work before the first external call.
+    # A crash in GitHub publication must leave every parallel verdict, every
+    # rejection intent, the combined findings, and the implementation route
+    # available to the next coordinator tick.
+    with store.conn.transaction():
+        rejection_index = 0
+        for prep, _outcome, status, model_result in parsed_outcomes:
+            dimension = str(prep["dimension"])
+            approved = review_is_approved(status, model_result)
+            evidence = None
+            if not approved:
+                evidence = rejection_evidence[rejection_index]
+                rejection_index += 1
+            record_gate(
+                store,
+                task,
+                stage=stage,
+                dimension=dimension,
+                vendor=vendor,
+                verdict="approved" if approved else "rejected",
+                head=head,
+                agent_id=str(prep["agent_id"]),
+                evidence=evidence,
+            )
+            if approved:
+                if not rejection_evidence:
+                    blocker = _reconcile_approved_gate_checklist(
+                        store, task, stage=stage, head=head, dimension=dimension
+                    )
+                    if blocker is not None:
+                        reconciliation_blockers[blocker[0]] = blocker[1]
+                lines.append(f"{stage}/{dimension}=approved")
+                continue
+            activity_id = queue_comment_review(
+                store,
+                worker,
+                task,
+                body=(
+                    f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
+                    f"{evidence}"
+                ),
+            )
+            rejection_activity_ids.append(activity_id)
+            _remember_rejection_review(task, activity_id)
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
-            continue
-        record_gate(
-            store,
-            task,
-            stage=stage,
-            dimension=dimension,
-            vendor=vendor,
-            verdict="approved",
-            head=head,
-            agent_id=str(prep["agent_id"]),
-            evidence=None,
-        )
-        blocker = _reconcile_approved_gate_checklist(
-            store, task, stage=stage, head=head, dimension=dimension
-        )
-        if blocker is not None:
-            reconciliation_blockers[blocker[0]] = blocker[1]
-        lines.append(f"{stage}/{dimension}=approved")
 
-    # Persist incomplete dimensions only after every complete result.  This
-    # prevents an unavailable peer from hiding a completed rejection.
-    for prep, _outcome, _status, _model_result, evidence in incomplete_outcomes:
-        dimension = str(prep["dimension"])
-        record_gate(
-            store,
-            task,
-            stage=stage,
-            dimension=dimension,
-            vendor=vendor,
-            verdict="unavailable",
-            head=head,
-            agent_id=str(prep["agent_id"]),
-            evidence=evidence,
-        )
-        key = checklist_key_for_stage(stage, dimension)
-        denial = _try_set_checklist(
-            store,
-            task,
-            key=key,
-            status="unavailable",
-            evidence=evidence,
-        )
-        if denial is not None:
-            lines.append(f"{stage} checklist unchanged for {key}: {denial}")
+        # Persist incomplete dimensions only after every complete result. This
+        # prevents an unavailable peer from hiding a completed rejection.
+        for prep, _outcome, _status, _model_result, evidence in incomplete_outcomes:
+            dimension = str(prep["dimension"])
+            record_gate(
+                store,
+                task,
+                stage=stage,
+                dimension=dimension,
+                vendor=vendor,
+                verdict="unavailable",
+                head=head,
+                agent_id=str(prep["agent_id"]),
+                evidence=evidence,
+            )
+            key = checklist_key_for_stage(stage, dimension)
+            denial = _try_set_checklist(
+                store,
+                task,
+                key=key,
+                status="unavailable",
+                evidence=evidence,
+            )
+            if denial is not None:
+                lines.append(f"{stage} checklist unchanged for {key}: {denial}")
 
+        if rejection_evidence:
+            _apply_rejected_gate_transition(
+                task, head=head, evidence=rejection_evidence
+            )
+            save_task(store, task)
+        elif (
+            worker.a38
+            and not second_stage
+            and not incomplete_outcomes
+            and isinstance(c.get("a38"), dict)
+        ):
+            pending_pass = c["a38"].get("first_review_pass_pending")
+            if (
+                isinstance(pending_pass, dict)
+                and pending_pass.get("head") == head
+                and pending_pass.get("stage") == stage
+            ):
+                c["a38"].pop("first_review_pass_pending", None)
+                save_task(store, task)
+
+    if rejection_activity_ids:
+        execute_github(
+            store, runner, activity_ids=tuple(rejection_activity_ids)
+        )
+        lines.extend(_checkpoint_rejection_reviews(store, worker, task))
     if rejection_evidence:
-        _apply_rejected_gate_transition(
-            task, head=head, evidence=rejection_evidence
-        )
-        save_task(store, task)
         return lines
 
     if incomplete_outcomes:

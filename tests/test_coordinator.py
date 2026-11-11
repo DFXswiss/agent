@@ -158,6 +158,17 @@ def test_invalid_review_never_approved() -> None:
     assert status == "complete" and result == "approved"
 
 
+@pytest.mark.parametrize(
+    "output",
+    [
+        "STATUS: complete\nRESULT: unknown\nRESULT: done\n",
+        "STATUS: unknown\nSTATUS: complete\nRESULT: done\n",
+    ],
+)
+def test_model_result_rejects_malformed_extra_records(output: str) -> None:
+    assert parse_model_result(output, 0) == ("partial", "")
+
+
 def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
     tmp_path: Path,
 ) -> None:
@@ -4669,6 +4680,12 @@ def test_a38_preflight_requires_null_second_and_excludes_worker_login(
 def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The pass count is checkpointed before the atomic gate/checklist write.
+
+    A crash during checklist reconciliation must roll back the new quality gate
+    and its checklist close. Recovery therefore reruns only quality, while the
+    durable pass checkpoint prevents the successful retry from counting twice.
+    """
     from dataclasses import replace
 
     from agent_cli.allow import CHECKLIST_KEYS
@@ -4776,6 +4793,15 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_grok"
 
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
+    quality_gate_ids_before_crash = {
+        gate["id"]
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("dimension") == "quality"
+    }
+    checklist_before_crash = {
+        key: store.row("checklist_item", f"{tid}-{key}")["status"]
+        for key in ("review_1_quality", "review_1_logic")
+    }
 
     def crash_after_gate_rows(*args: Any, **kwargs: Any) -> tuple[str, str] | None:
         approved_dimensions = {
@@ -4812,35 +4838,65 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
 
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    assert approved["payload"]["coordinator"]["a38"][
+        "first_review_pass_pending"
+    ] == {"head": _POSTED_HEAD, "stage": "review-1"}
     assert approved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
     approved_gates = [
         gate
         for gate in store.rows("review_gate")
         if gate.get("task_id") == tid and gate.get("verdict") == "approved"
     ]
-    assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
+    assert {gate.get("dimension") for gate in approved_gates} == {"logic"}
+    quality_gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("dimension") == "quality"
+    ]
+    assert {gate["id"] for gate in quality_gates} == quality_gate_ids_before_crash
+    assert [gate.get("verdict") for gate in quality_gates] == ["unavailable"]
     checklist_before_recovery = {
         key: store.row("checklist_item", f"{tid}-{key}")["status"]
         for key in ("review_1_quality", "review_1_logic")
     }
-    # The pre-outage lane already closed logic; only quality remains unreconciled.
-    assert checklist_before_recovery == {
+    assert checklist_before_recovery == checklist_before_crash == {
         "review_1_quality": "unavailable",
         "review_1_logic": "ja",
     }
+
+    recovery_dimensions: list[str] = []
+
+    def recovery_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        invocation = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
+        if "pr-reviewer-quality" in invocation or "Quality:" in invocation:
+            recovery_dimensions.append("quality")
+        elif "pr-reviewer-logic" in invocation or "Logic:" in invocation:
+            recovery_dimensions.append("logic")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     recovery_lines = phase_pr_gates(
         store,
         worker,
         approved,
         fake,
-        lane_runner(fake),
+        recovery_lane,
         vendor="grok",
         stage="review-1",
     )
-    assert any("review-1 already complete" in line for line in recovery_lines)
+    assert recovery_dimensions == ["quality"]
+    assert any("review-1/quality=approved" in line for line in recovery_lines)
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    assert (
+        "first_review_pass_pending"
+        not in approved["payload"]["coordinator"]["a38"]
+    )
+    approved_gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("verdict") == "approved"
+    ]
+    assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
     checklist_after_recovery = {
         key: store.row("checklist_item", f"{tid}-{key}")["status"]
         for key in ("review_1_quality", "review_1_logic")

@@ -583,6 +583,8 @@ def test_run_exposes_only_the_shared_model_result_parser() -> None:
         "STATUS: complete\n",
         "STATUS: complete\nRESULT: done\nRESULT: done\n",
         "STATUS: partial\nSTATUS: complete\nRESULT: done\n",
+        "STATUS: complete\nRESULT: unknown\nRESULT: done\n",
+        "STATUS: unknown\nSTATUS: complete\nRESULT: done\n",
         "STATUS: complete\nRESULT: ask\nWhich error text?\n",
         "STATUS: complete\nRESULT: approved\n",
         "STATUS: complete\nRESULT: rejected\n",

@@ -68,10 +68,12 @@ _STATUS_RE = re.compile(
     r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
 )
+_STATUS_RECORD_RE = re.compile(r"(?m)^STATUS:[^\r\n]*\r?$", re.IGNORECASE)
 _RESULT_RE = re.compile(
     r"(?m)^RESULT:[ \t]*(done|blocked|ask|approved|rejected|no-change)[ \t]*\r?$",
     re.IGNORECASE,
 )
+_RESULT_RECORD_RE = re.compile(r"(?m)^RESULT:[^\r\n]*\r?$", re.IGNORECASE)
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CI_SUCCESS = frozenset({"success"})
 CI_PENDING = frozenset({"pending", "queued", "in_progress", "expected", "waiting", "requested"})
@@ -102,7 +104,7 @@ class CiObservedFailureError(CoordinatorError):
     """Observed actual failed CI on a Ready-side recheck; route to phase_ci."""
 
 
-def redact(text: str, *, limit: int = OUTPUT_BOUND) -> str:
+def redact(text: str, *, limit: int | None = OUTPUT_BOUND) -> str:
     cleaned = sanitize_terminal_text(text or '')
     cleaned = _PRIVATE_KEY.sub('[redacted]', cleaned)
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)
@@ -112,7 +114,7 @@ def redact(text: str, *, limit: int = OUTPUT_BOUND) -> str:
     cleaned = _PRIVATE_PATH.sub('[redacted]', cleaned)
     cleaned = _URL_AUTH.sub(r'\1[redacted]@', cleaned)
     cleaned = cleaned.replace("\x00", "")
-    if len(cleaned) > limit:
+    if limit is not None and len(cleaned) > limit:
         return cleaned[: limit - 20] + "\n…[truncated]"
     return cleaned
 
@@ -250,11 +252,16 @@ def harden_grok_write_argv(argv: list[str]) -> list[str]:
 
 
 def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
-    """Return (status, result). Approval requires complete+approved only."""
+    """Return the only valid STATUS/RESULT records, failing closed on extras."""
     if returncode != 0:
         return ('timeout' if returncode == 124 else 'unavailable'), ''
-    status_matches = list(_STATUS_RE.finditer(output or ""))
-    result_matches = list(_RESULT_RE.finditer(output or ""))
+    text = output or ""
+    status_records = list(_STATUS_RECORD_RE.finditer(text))
+    result_records = list(_RESULT_RECORD_RE.finditer(text))
+    if len(status_records) != 1 or len(result_records) != 1:
+        return 'partial', ''
+    status_matches = list(_STATUS_RE.finditer(text))
+    result_matches = list(_RESULT_RE.finditer(text))
     if len(status_matches) != 1 or len(result_matches) != 1:
         return 'partial', ''
     return status_matches[0].group(1).lower(), result_matches[0].group(1).lower()
