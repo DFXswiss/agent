@@ -5,6 +5,7 @@ from urllib.parse import urlparse, parse_qs
 
 import pytest
 
+from agent_cli import a38_guard
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from test_a38_guard import FakeAPI, HEAD, BASE, BASE2, DEFAULT_TIP, REPO, _report_comment, _pr_guard_config
@@ -229,6 +230,48 @@ def test_one_shot_change_before_write_is_reassessed():
     assert result.config_revision == BASE2
     assert result.workflow_approvals == []
     assert not fake.posts
+
+
+def test_change_after_first_workflow_approval_is_not_retried(monkeypatch):
+    fake = ApprovalAPI()
+    other_path = ".github/workflows/other.yml"
+    fake.runs.append(
+        fake.run(
+            id=102,
+            path=other_path,
+            workflow_id=11,
+            created_at="2026-09-05T11:01:00Z",
+        )
+    )
+    assessment_runs = 0
+    original_assess_pull = a38_guard.assess_pull
+
+    def count_assessment_runs(*args, **kwargs):
+        nonlocal assessment_runs
+        if kwargs.get("pull") is not None:
+            assessment_runs += 1
+        return original_assess_pull(*args, **kwargs)
+
+    monkeypatch.setattr(a38_guard, "assess_pull", count_assessment_runs)
+
+    def arm_evidence_change(f):
+        f.before_run_read = lambda current: current.comments[0].__setitem__(
+            "body", current.comments[0]["body"] + "\nChanged author evidence"
+        )
+
+    fake.before_run_read = arm_evidence_change
+
+    with pytest.raises(GuardError, match="changed before workflow approval"):
+        reconcile_pull(fake.api(), REPO, 1)
+
+    auth_comments = [
+        comment for comment in fake.comments
+        if str(comment.get("body", "")).startswith("<!-- PR-GUARD:CI-AUTH:v1 -->\n")
+    ]
+    assert fake.posts == [101]
+    assert len(auth_comments) == 1
+    assert fake.runs[1]["conclusion"] == "action_required"
+    assert assessment_runs == 1
 
 
 @pytest.mark.parametrize("what", ["ambiguous", "retargeted", "reopened", "older"])

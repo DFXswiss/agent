@@ -3652,6 +3652,8 @@ def reconcile_pull(
     snap: PullSnapshot | None = None
     for _ in range(ASSESS_RETRIES):
         assessment: Assessment | None = None
+        effects_on: Assessment | None = None
+        effects_from = 0
         try:
             snap = fetch_pull(api, repo, number)
             assessment = assess_pull(
@@ -3673,6 +3675,8 @@ def reconcile_pull(
                     _apply_guard_side_effects(api, assessment, dry_run=True)
                 return assessment
             published = publish_assessment(api, assessment)
+            effects_on = published
+            effects_from = len(published.writes)
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
         except Exception as exc:  # noqa: BLE001 — invalidate after any publish-path failure
@@ -3685,7 +3689,11 @@ def reconcile_pull(
                     if _assessment_exit_code(assessment) != 0:
                         setattr(exc, "failed_before", True)
                 raise
-            if _is_retryable_race(exc):
+            # Retrying after a write would drop it from the new report and can
+            # duplicate the CI authorization record created by this invocation.
+            if _is_retryable_race(exc) and (
+                effects_on is None or len(effects_on.writes) == effects_from
+            ):
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
