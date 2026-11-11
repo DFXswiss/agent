@@ -2725,6 +2725,51 @@ def test_rebase_start_failure_without_unmerged_paths_blocks(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_failed_rebase_abort_still_removes_repositories_and_posts_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.rebase_rc = 128
+    fake.unmerged = False
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    def runner(argv: list[str]) -> Completed:
+        if "git" in argv and "rebase" in argv and "--abort" in argv:
+            fake(argv)
+            fake.rebase_in_progress = True
+            return Completed(1, "", "error: could not abort the rebase")
+        if (
+            "git" in argv
+            and "rebase" in argv
+            and "--continue" not in argv
+            and "rev-parse" not in argv
+        ):
+            return Completed(
+                128, "", "fatal: invalid upstream 'origin/develop'"
+            )
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=runner)
+    assert any("blocker" in line for line in lines)
+    assert fake.clone_path is not None
+    assert fake.git_dir is not None
+    assert not fake.clone_path.exists()
+    assert not fake.git_dir.exists()
+    state_path = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "blocked"
+    assert state["blocker"].startswith("rebase failed\n")
+    assert state["blocker_skip_git"] is True
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "rebase failed" in body
+    assert "invalid upstream" in body
+    assert "rebase abort failed" not in body
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_rebase_continue_failure_without_unmerged_paths_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
