@@ -1,6 +1,7 @@
 """Account-scoped GitHub transport for the comment-mandated conflict worker."""
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 from urllib.parse import quote
@@ -10,13 +11,69 @@ from .coordinator_common import CoordinatorError, Runner, gh_json, redact
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_SLEEP_SECONDS = 1.0
+_COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/(\d+)(?:$|[?#])"
 
 
 class ConflictTransientError(CoordinatorError):
     """An outside read or write failed; retry on a later tick."""
 
 
-def _pages(data: Any, label: str) -> list[dict[str, Any]]:
+class ConflictHeadRepositoryGone(CoordinatorError):
+    """The pull request head repository was deleted."""
+
+    def __init__(self, state: str) -> None:
+        super().__init__("head repository is gone")
+        self.state = state
+
+
+def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
+    if not isinstance(comment, dict):
+        raise ConflictTransientError(f"{label} returned an unexpected item")
+    comment_id = comment.get("id")
+    if isinstance(comment_id, bool) or not isinstance(comment_id, int):
+        raise ConflictTransientError(f"{label} returned an unreadable comment id")
+    if not isinstance(comment.get("body"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable comment body")
+    user = comment.get("user")
+    if not isinstance(user, dict) or not isinstance(user.get("login"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable comment author")
+    if not isinstance(user.get("type"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable comment author")
+    if not isinstance(comment.get("created_at"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable comment creation time")
+    if not isinstance(comment.get("updated_at"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable comment update time")
+    urls: list[str] = []
+    for key in ("html_url", "issue_url"):
+        if key not in comment:
+            continue
+        value = comment[key]
+        if not isinstance(value, str):
+            raise ConflictTransientError(f"{label} returned an unreadable comment URL")
+        urls.append(value)
+    if not any(re.search(_COMMENT_NUMBER_PATTERN, value) for value in urls):
+        raise ConflictTransientError(f"{label} returned an unreadable comment URL")
+    return comment
+
+
+def _validate_reaction(reaction: Any, label: str) -> dict[str, Any]:
+    if not isinstance(reaction, dict):
+        raise ConflictTransientError(f"{label} returned an unexpected item")
+    user = reaction.get("user")
+    if not isinstance(user, dict) or not isinstance(user.get("login"), str):
+        raise ConflictTransientError(f"{label} returned an unreadable reaction author")
+    if not isinstance(reaction.get("content"), str):
+        raise ConflictTransientError(f"{label} returned unreadable reaction content")
+    return reaction
+
+
+def _pages(
+    data: Any,
+    label: str,
+    *,
+    comments: bool = False,
+    reactions: bool = False,
+) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         raise ConflictTransientError(f"{label} did not return an array")
     if data and all(isinstance(page, list) for page in data):
@@ -25,7 +82,44 @@ def _pages(data: Any, label: str) -> list[dict[str, Any]]:
         flat = list(data)
     if not all(isinstance(item, dict) for item in flat):
         raise ConflictTransientError(f"{label} returned an unexpected item")
+    if comments:
+        return [_validate_comment(item, label) for item in flat]
+    if reactions:
+        return [_validate_reaction(item, label) for item in flat]
     return flat
+
+
+def _validate_pull(data: Any, label: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ConflictTransientError(f"{label} lookup did not return an object")
+    state = data.get("state")
+    if not isinstance(state, str) or state not in {"open", "closed"}:
+        raise ConflictTransientError(f"{label} state is unreadable")
+    head = data.get("head")
+    base = data.get("base")
+    if not isinstance(head, dict) or not isinstance(base, dict):
+        raise ConflictTransientError(f"{label} branch fields are unreadable")
+    for field, value in (
+        ("head.sha", head.get("sha")),
+        ("head.ref", head.get("ref")),
+        ("base.ref", base.get("ref")),
+        ("base.sha", base.get("sha")),
+    ):
+        if not isinstance(value, str):
+            raise ConflictTransientError(f"{label} {field} is unreadable")
+    if "repo" not in head:
+        raise ConflictTransientError(f"{label} head repository is unreadable")
+    head_repo = head.get("repo")
+    if head_repo is None:
+        raise ConflictHeadRepositoryGone(state)
+    if not isinstance(head_repo, dict) or not isinstance(head_repo.get("full_name"), str):
+        raise ConflictTransientError(f"{label} head repository is unreadable")
+    if "mergeable" not in data:
+        raise ConflictTransientError(f"{label} mergeable state is unreadable")
+    mergeable = data.get("mergeable")
+    if mergeable is not None and not isinstance(mergeable, bool):
+        raise ConflictTransientError(f"{label} mergeable state is unreadable")
+    return data
 
 
 def _api(runner: Runner, argv: list[str], label: str) -> Any:
@@ -41,13 +135,11 @@ def result_marker(comment_id: int) -> str:
 
 def pull_number_from_comment(comment: dict[str, Any]) -> int | None:
     """Return the pull/issue number encoded in a GitHub comment URL."""
-    import re
-
     for key in ("issue_url", "html_url"):
         value = comment.get(key)
         if not isinstance(value, str):
             continue
-        match = re.search(r"/(?:issues|pull|pulls)/(\d+)(?:$|[?#])", value)
+        match = re.search(_COMMENT_NUMBER_PATTERN, value)
         if match is not None:
             return int(match.group(1))
     return None
@@ -60,7 +152,7 @@ def list_repository_comments(runner: Runner, repo: str, *, since: str) -> list[d
         ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/issues/comments?since={since}"],
         "repository comments",
     )
-    return _pages(data, "repository comments")
+    return _pages(data, "repository comments", comments=True)
 
 
 def list_pull_comments(runner: Runner, repo: str, number: int) -> list[dict[str, Any]]:
@@ -69,7 +161,7 @@ def list_pull_comments(runner: Runner, repo: str, number: int) -> list[dict[str,
         ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/issues/{number}/comments"],
         "pull request comments",
     )
-    return _pages(data, "pull request comments")
+    return _pages(data, "pull request comments", comments=True)
 
 
 def read_pull(runner: Runner, repo: str, number: int, *, sleep=time.sleep) -> dict[str, Any]:
@@ -77,8 +169,7 @@ def read_pull(runner: Runner, repo: str, number: int, *, sleep=time.sleep) -> di
     last: dict[str, Any] | None = None
     for attempt in range(MERGEABLE_ATTEMPTS):
         data = _api(runner, ["gh", "api", f"repos/{repo}/pulls/{number}"], "pull request")
-        if not isinstance(data, dict):
-            raise ConflictTransientError("pull request lookup did not return an object")
+        _validate_pull(data, "pull request")
         last = data
         if data.get("mergeable") is not None:
             return data
@@ -96,9 +187,7 @@ def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any]
         if "404" in text or "not found" in text:
             return None
         raise ConflictTransientError(redact(str(exc))) from exc
-    if not isinstance(data, dict):
-        raise ConflictTransientError("pull request lookup did not return an object")
-    return data
+    return _validate_pull(data, "pull request")
 
 
 def has_push_permission(runner: Runner, repo: str) -> bool:
@@ -106,7 +195,12 @@ def has_push_permission(runner: Runner, repo: str) -> bool:
     if not isinstance(data, dict):
         raise ConflictTransientError("repository lookup did not return an object")
     permissions = data.get("permissions")
-    return permissions.get("push") is True if isinstance(permissions, dict) else False
+    if not isinstance(permissions, dict):
+        raise ConflictTransientError("repository permissions are unreadable")
+    push = permissions.get("push")
+    if not isinstance(push, bool):
+        raise ConflictTransientError("repository permissions are unreadable")
+    return push
 
 
 def read_branch_protection(runner: Runner, head_repo: str, head_ref: str) -> bool:
@@ -123,6 +217,23 @@ def read_branch_protection(runner: Runner, head_repo: str, head_ref: str) -> boo
     if not isinstance(protected, bool):
         raise ConflictTransientError("branch protection lookup is unreadable")
     return protected
+
+
+def read_remote_head(runner: Runner, head_repo: str, head_ref: str) -> str:
+    """Return the publication branch head sha through the GitHub API."""
+    encoded = quote(head_ref, safe="")
+    data = _api(
+        runner,
+        ["gh", "api", f"repos/{head_repo}/git/ref/heads/{encoded}"],
+        "publication branch",
+    )
+    if not isinstance(data, dict):
+        raise ConflictTransientError("publication branch lookup did not return an object")
+    obj = data.get("object")
+    sha = obj.get("sha") if isinstance(obj, dict) else None
+    if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+        raise ConflictTransientError("publication branch head is unreadable")
+    return sha.lower()
 
 
 def _comment_author(comment: dict[str, Any]) -> str | None:
@@ -161,7 +272,7 @@ def add_eyes(runner: Runner, repo: str, comment_id: int, *, login: str) -> None:
         )
     except CoordinatorError as exc:
         raise ConflictTransientError(redact(str(exc))) from exc
-    reactions = _pages(data, "comment reactions")
+    reactions = _pages(data, "comment reactions", reactions=True)
     for reaction in reactions:
         if (
             _comment_author(reaction) is not None
@@ -200,6 +311,7 @@ def post_comment_once(
 
 
 __all__ = [
+    "ConflictHeadRepositoryGone",
     "ConflictTransientError",
     "RESULT_MARKER_PREFIX",
     "add_eyes",
@@ -212,5 +324,6 @@ __all__ = [
     "read_branch_protection",
     "read_optional_pull",
     "read_pull",
+    "read_remote_head",
     "result_marker",
 ]
