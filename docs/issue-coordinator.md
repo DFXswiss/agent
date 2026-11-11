@@ -599,7 +599,7 @@ retained. The sanitized
 checkpoint is parsed by the same summary and surface validators before it is
 committed. If that cannot produce a safe valid checkpoint, the lane is not
 checkpointed as finished and the implementation step remains retryable. Gate
-transactions, reviewer checkpoints, and inner-review replay transactions stage
+transactions, lane checkpoints, and outcome replay transactions stage
 task, agent, and task-round mutations on copies and adopt them only after
 commit, so a database rollback cannot leave live state pointing at rolled-back
 agents, verdicts, gates, or publication intents. Reviewer replay routes by the

@@ -1045,21 +1045,33 @@ def _apply_implementer_outcome(
                 kind="ask-publish",
                 reply_checkpoint=True,
             ) + draft_lines
-        c.pop("pending_question", None)
-        c["phase"] = "ask"
-        if c.get("question_activity_id") != qid:
-            c["replies_consumed_through"] = None
-        c["question_activity_id"] = qid
-        c["resume_phase"] = "implement"
-        _mark_applied()
-        task["state"] = "open"
+        committed_task = copy.deepcopy(task)
+        committed_tr = copy.deepcopy(tr)
+        committed_c = coord(committed_task)
+        committed_c.pop("pending_question", None)
+        committed_c["phase"] = "ask"
+        if committed_c.get("question_activity_id") != qid:
+            committed_c["replies_consumed_through"] = None
+        committed_c["question_activity_id"] = qid
+        committed_c["resume_phase"] = "implement"
+        outcome = committed_c.get("lane_outcome")
+        if isinstance(outcome, dict):
+            outcome["applied"] = True
+            committed_c["lane_outcome"] = outcome
+        committed_task["state"] = "open"
         # Keep the round open while publication is uncertain. Its occurrence ID
         # must remain stable if the process stops after GitHub posts the question.
-        tr["implementer_verdict"] = "blocked"
-        tr["finished_at"] = utcnow()
+        committed_tr["implementer_verdict"] = "blocked"
+        committed_tr["finished_at"] = utcnow()
         with store.conn.transaction():
-            store.write("task_round", "update", tr["id"], strip_row(tr))
-            save_task(store, task)
+            store.write(
+                "task_round", "update", committed_tr["id"], strip_row(committed_tr)
+            )
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        tr.clear()
+        tr.update(committed_tr)
         return [f"ask posted on {source['repo']}#{source['number']}"] + draft_lines
 
     if model_result == "blocked":
