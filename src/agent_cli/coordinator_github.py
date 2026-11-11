@@ -1220,7 +1220,7 @@ def _observe_exact_head_ci(
 
 
 def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dict[str, Any]]:
-    """Disambiguate by workflow path + event; keep highest attempt/id per key."""
+    """Keep the newest run id per path/event and the newest attempt of that run."""
     latest: dict[str, dict[str, Any]] = {}
     for item in runs:
         run = _validate_workflow_run(item, head)
@@ -1235,7 +1235,7 @@ def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dic
             continue
         prev_attempt = prev["run_attempt"]
         prev_id = prev["id"]
-        if run_attempt > prev_attempt or (run_attempt == prev_attempt and run_id > prev_id):
+        if run_id > prev_id or (run_id == prev_id and run_attempt > prev_attempt):
             latest[key] = run
     return latest
 

@@ -1939,6 +1939,40 @@ def test_ci_inventory_rejects_invalid_run_fields(field: str, value: Any) -> None
 
 
 @pytest.mark.no_pg
+def test_ci_inventory_newer_run_id_beats_older_higher_attempt() -> None:
+    from agent_cli.coordinator_github import _latest_run_attempts
+
+    head = "a" * 40
+    common = {
+        "path": ".github/workflows/ci.yml",
+        "event": "pull_request",
+        "head_sha": head,
+        "status": "completed",
+    }
+    latest = _latest_run_attempts(
+        [
+            {
+                **common,
+                "id": 100,
+                "conclusion": "success",
+                "run_attempt": 2,
+            },
+            {
+                **common,
+                "id": 200,
+                "conclusion": "failure",
+                "run_attempt": 1,
+            },
+        ],
+        head,
+    )
+
+    selected = latest[".github/workflows/ci.yml|pull_request"]
+    assert selected["id"] == 200
+    assert selected["conclusion"] == "failure"
+
+
+@pytest.mark.no_pg
 @pytest.mark.parametrize("total_count", [None, True, -1, "1"])
 def test_ci_inventory_requires_nonnegative_integer_total_count(
     total_count: Any,
@@ -10555,6 +10589,7 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
                         "headRefOid": head,
                         "baseRefOid": base,
                         "baseRefName": "develop",
+                        "state": "OPEN",
                     }
                 ),
                 "",
@@ -10588,6 +10623,41 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
     assert markdown_only is False
     assert guard_docs_only is True
     assert len(calls) == 3
+    assert calls[0][-1] == "headRefOid,baseRefOid,baseRefName,state"
+    assert calls[2][-1] == "headRefOid,baseRefOid,baseRefName,state"
+
+
+def test_a38_merge_and_base_move_before_context_skips_new_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "tests"
+    trusted_base = checkpoint["a38"]["base_sha"]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    checks_before = store.rows("local_check")
+    activities_before = store.rows("activity")
+    fake.pr["baseRefOid"] = "c" * 40
+    fake.pr["state"] = "MERGED"
+
+    lines = phase_tests(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert lines == ["PR merged before A38 measurement; verifying the merge"]
+    assert saved["phase"] == "await_merge"
+    assert saved["a38"]["base_sha"] == trusted_base
+    assert saved["a38"]["report"]["base_sha"] == trusted_base
+    assert "pending_base_sha" not in saved["a38"]
+    assert store.rows("local_check") == checks_before
+    assert store.rows("activity") == activities_before
 
 
 @pytest.mark.parametrize("status", ["renamed", "copied"])
@@ -10620,6 +10690,7 @@ def test_a38_context_applies_guard_waiver_limit_after_path_expansion(
                         "headRefOid": head,
                         "baseRefOid": base,
                         "baseRefName": "develop",
+                        "state": "OPEN",
                     }
                 ),
                 "",
@@ -10663,6 +10734,7 @@ def test_a38_context_retries_when_base_moves_during_file_inventory() -> None:
                         "headRefOid": head,
                         "baseRefOid": metadata.pop(0),
                         "baseRefName": "develop",
+                        "state": "OPEN",
                     }
                 ),
                 "",
@@ -10707,6 +10779,7 @@ def test_a38_context_bounds_repeated_inventory_races() -> None:
                         "headRefOid": head,
                         "baseRefOid": next(bases),
                         "baseRefName": "develop",
+                        "state": "OPEN",
                     }
                 ),
                 "",
@@ -13389,6 +13462,90 @@ def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
     assert lines == ["review-2 uncertain; blocked"]
     assert raw_paths and temporary_paths
     assert all(not path.exists() for path in [*raw_paths, *temporary_paths])
+
+
+def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
+        "codex-rev"
+    )
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "sequential-reviewer-spool-failure"
+    worktree.mkdir()
+    task_id = "aa000001-0000-4000-8000-000000000225"
+    task = {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "head_sha": "a" * 40,
+            }
+        },
+    }
+    store.write("task", "insert", task_id, task)
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_args, **_kwargs: {}
+    )
+    raw_paths: list[Path] = []
+    temporary_paths: list[Path] = []
+    final_paths: list[Path] = []
+
+    def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\nsecret model output\n",
+            encoding="utf-8",
+        )
+        raw_paths.append(output)
+        return Completed(0, "", "")
+
+    def fail_spool(*args: Any, **kwargs: Any) -> Path:
+        path = coordinator_lanes._reviewer_spool_path(
+            args[0], args[1], str(args[2]["id"]), str(args[3]["id"])
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text("partial secret spool", encoding="utf-8")
+        path.write_text("uncommitted secret spool", encoding="utf-8")
+        temporary_paths.append(temporary)
+        final_paths.append(path)
+        raise OSError("spool filesystem unavailable")
+
+    monkeypatch.setattr(coordinator_lanes, "_write_reviewer_spool", fail_spool)
+
+    with pytest.raises(OSError, match="spool filesystem unavailable"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            store.row("task", task_id),
+            role="reviewer",
+            vendor="codex",
+            round_num=1,
+            spec_body="Review.",
+            runner=lambda _argv: Completed(0, "", ""),
+            lane_runner=reviewer,
+        )
+
+    assert raw_paths and temporary_paths and final_paths
+    assert all(
+        not path.exists()
+        for path in [*raw_paths, *temporary_paths, *final_paths]
+    )
 
 
 def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(

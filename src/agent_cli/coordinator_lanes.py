@@ -1279,18 +1279,28 @@ def launch_lane(
         agent.update(committed_agent)
         return agent, result
     elif role == "reviewer":
-        _write_reviewer_spool(
-            store,
-            worker,
-            task,
-            agent,
-            result,
-            round_num=round_num,
-            head=str(c.get("head_sha") or ""),
-            dimension="inner",
-            stage="inner-review",
-            output_file=lane_output,
-        )
+        try:
+            _write_reviewer_spool(
+                store,
+                worker,
+                task,
+                agent,
+                result,
+                round_num=round_num,
+                head=str(c.get("head_sha") or ""),
+                dimension="inner",
+                stage="inner-review",
+                output_file=lane_output,
+            )
+        except Exception:  # noqa: BLE001
+            _discard_failed_reviewer_spool(
+                store,
+                worker,
+                str(task["id"]),
+                str(agent["id"]),
+                lane_output,
+            )
+            raise
         try:
             _checkpoint_reviewer_outcome(
                 store,

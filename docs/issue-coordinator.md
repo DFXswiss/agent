@@ -408,9 +408,9 @@ for worker in workers.values():
    key, or an empty list keeps two reviews required. An entry that exists
    only on the pull request head does not count.
 8. **CI**: exact-head PR check rollup **and** paginated head workflow inventory
-   (path+event+attempt), classified by one shared observer used by both
-   ordinary `phase_ci` and Ready-side fresh rechecks. `success` counts without
-   an exception.
+   (path+event, newest run id, then attempt within that run), classified by one
+   shared observer used by both ordinary `phase_ci` and Ready-side fresh
+   rechecks. `success` counts without an exception.
    An absent `statusCheckRollup` is normalized to `[]` and inventory is still
    inspected — `action_required` (and actual failures) may be present only in
    inventory; absent rollup prevents green but must not hide those facts.
@@ -771,10 +771,10 @@ uncertain-lane stop: the agent note alone says `PR review lane execution failed`
 while the task blocker and issue comment publish only the fixed uncertain-outcome
 text. Raw exception text, worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
-A parallel reviewer spool write failure removes the provider's raw output and
-any partial `.tmp` or uncommitted final spool before the execution failure is
-recorded. Raw output is retained only alongside a successfully committed
-recovery spool.
+A reviewer spool write failure, in either the sequential inner-review path or
+the parallel PR-review path, removes the provider's raw output and any partial
+`.tmp` or uncommitted final spool before the execution failure is recorded.
+Raw output is retained only alongside a successfully committed recovery spool.
 For a sequential lane execution exception, the finished agent and the task's
 terminal uncertain-lane state commit in one transaction. A rollback leaves the
 agent working and the task in its prior runnable phase.
@@ -944,12 +944,15 @@ The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
 The tests phase reads pull-request metadata, the paginated file inventory, and
-the metadata again. Head SHA, base SHA, and base name must match across both
-metadata reads; a race is retried a bounded number of times and then blocks
-recoverably. Before publication is queued, the task checkpoints the exact
-verified report-body digest, visibility, head, base, policy revision, and
-activity id. Recovery requires full payload equality and revalidates the v2
-schema, repository, head, live inventory facts, and trusted policy jobs; a row
+the metadata again. Head SHA, base SHA, base name, and open state must match
+across both metadata reads; a race is retried a bounded number of times and
+then blocks recoverably. A merged or closed state in either metadata read
+rejects the measurement context and routes directly to merge verification,
+without checkpointing, running or waiving the suite, publishing a report, or
+promoting base evidence. Before publication is queued, the task checkpoints
+the exact verified report-body digest, visibility, head, base, policy revision,
+and activity id. Recovery requires full payload equality and revalidates the
+v2 schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
 evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
