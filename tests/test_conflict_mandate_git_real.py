@@ -141,7 +141,7 @@ def test_rebase_conflict_reports_real_uu_and_incomplete(tmp_path: Path) -> None:
     paths = unmerged_paths(_runner, str(worktree))
     assert [(item.path, item.state) for item in paths] == [("file.txt", "UU")]
     assert paths[0].supported is True
-    assert rebase_complete(_runner, str(worktree), base="main") is False
+    assert rebase_complete(_runner, str(worktree)) is False
 
 
 def test_rebase_continue_without_editor_finishes_signed_range(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_rebase_continue_without_editor_finishes_signed_range(tmp_path: Path) ->
     stage_paths(_runner, str(worktree), ["file.txt"])
     continued = rebase_continue(_runner, str(worktree))
     assert continued.returncode == 0, continued.stderr
-    assert rebase_complete(_runner, str(worktree), base="main") is True
+    assert rebase_complete(_runner, str(worktree)) is True
     assert base_is_ancestor(_runner, str(worktree), base="main") is True
     commits = range_commits(_runner, str(worktree), base="main")
     assert len(commits) == 2
@@ -175,6 +175,29 @@ def test_rebase_continue_without_editor_finishes_signed_range(tmp_path: Path) ->
 def test_conflict_markers_report_leftover_markers(tmp_path: Path) -> None:
     _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
     assert conflict_markers(str(worktree), ["file.txt"])
+
+
+def test_enlarged_conflict_markers_from_gitattributes_are_detected(
+    tmp_path: Path,
+) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    (upstream / ".gitattributes").write_text(
+        "* conflict-marker-size=12\n", encoding="utf-8"
+    )
+    _git(upstream, "add", "-A")
+    _commit(upstream, "marker size")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "reset", "--hard", "origin/main")
+    _feature_with_two_commits(worktree)
+    _move_base(upstream, worktree)
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    text = (worktree / "file.txt").read_text(encoding="utf-8")
+    assert "<<<<<<<<<<<<" in text
+    assert "============" in text
+    assert ">>>>>>>>>>>>" in text
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -203,13 +226,15 @@ def test_labelled_conflict_markers_are_detected(tmp_path: Path, line: str) -> No
     ]
 
 
-def test_eight_character_marker_prefix_is_not_a_marker(tmp_path: Path) -> None:
+def test_eight_character_marker_prefix_is_a_marker(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "file.txt").write_text(
         "<<<<<<<<\n========\n>>>>>>>>\n||||||||\n", encoding="utf-8"
     )
-    assert conflict_markers(str(worktree), ["file.txt"]) == []
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
 
 
 def test_non_ascii_path_with_space_is_returned_exactly(tmp_path: Path) -> None:
@@ -288,7 +313,7 @@ def test_rebase_abort_restores_head_and_clears_markers(tmp_path: Path) -> None:
     _upstream, worktree, original = _start_conflicted_rebase(tmp_path)
     rebase_abort(_runner, str(worktree))
     assert rev_parse(_runner, str(worktree), "HEAD") == original
-    assert rebase_complete(_runner, str(worktree), base="main") is True
+    assert rebase_complete(_runner, str(worktree)) is True
 
 
 def test_changed_paths_reports_edit_outside_conflict_set(tmp_path: Path) -> None:
