@@ -29,14 +29,14 @@ _JSON_SECRET = re.compile(
 )
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
 _OTEL_TRACE_ID = re.compile(
-    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*\b'
+    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])'
 )
 _OTEL_SPAN_ID = re.compile(
     r'(?i)(\b(?:parent_?)?span_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
-    r"[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*\b"
+    r"[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])"
 )
 _OTEL_TRACEPARENT = re.compile(
-    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+\b'
+    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+(?![-\w])'
 )
 _SECRET = re.compile(
     r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9_-]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[A-Za-z0-9_-]*\s*[:=]\s*\S+"

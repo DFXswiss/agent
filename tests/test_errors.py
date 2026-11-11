@@ -304,6 +304,21 @@ def test_redact_strips_hyphenated_otel_trace_id() -> None:
         assert segment not in cleaned
 
 
+def test_redact_keeps_partial_non_otel_values() -> None:
+    for raw in (
+        "trace_id=deadbeef-cafe-x",
+        "span_id=deadbeef-cafe-x",
+        "traceparent=00-aaaa-bbbb-01x",
+        "trace_id=deadbeefzz",
+    ):
+        assert redact(raw) == raw
+
+
+def test_redact_strips_hyphenated_otel_span_id() -> None:
+    span_id = "550e8400-e29b-41d4-a716-446655440000"
+    assert redact(f"span_id={span_id}") == "span_id=[redacted]"
+
+
 def test_redact_keeps_non_otel_span_keys() -> None:
     span_id = "b" * 16
     cleaned = redact(f"myspan_id={span_id}")
