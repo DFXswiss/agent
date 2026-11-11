@@ -575,7 +575,10 @@ def phase_tests(
             list(cfg.check_argv),
             timeout=worker.check_timeout,
             cwd=worktree,
-            env=coordinator_env(c, worker, cfg),
+            env={
+                **coordinator_env(c, worker, cfg),
+                "AGENT_COORDINATOR_BASE": base_sha,
+            },
             clear_ambient_github=True,
         )
         pre_output = (precheck.stdout or "") + "\n" + (precheck.stderr or "")

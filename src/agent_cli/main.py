@@ -4505,8 +4505,8 @@ def cmd_lane(args: list[str]) -> None:
             session_id=session_id,
             result=result,
         )
-    except (Exception, SystemExit) as exc:  # audit failure cannot change verdict
-        print(f"lane.run write failed: {exc}", file=sys.stderr)
+    except (Exception, SystemExit):  # audit failure cannot change verdict
+        print("lane.run audit write failed", file=sys.stderr)
     finally:
         if lane_store is not None:
             lane_store.close()
