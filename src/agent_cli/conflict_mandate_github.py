@@ -57,8 +57,10 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
     if not isinstance(updated_at, str) or parse_time(updated_at) is None:
         raise ConflictTransientError(f"{label} returned an unreadable comment update time")
     numbers: dict[str, int] = {}
+    if "html_url" not in comment:
+        raise ConflictTransientError(f"{label} returned an unreadable comment URL")
     for key in ("html_url", "issue_url"):
-        if key not in comment:
+        if key == "issue_url" and key not in comment:
             continue
         value = comment[key]
         if not isinstance(value, str):
@@ -70,8 +72,6 @@ def _validate_comment(comment: Any, label: str) -> dict[str, Any]:
         if number <= 0:
             raise ConflictTransientError(f"{label} returned an unreadable comment URL")
         numbers[key] = number
-    if not numbers:
-        raise ConflictTransientError(f"{label} returned an unreadable comment URL")
     if len(set(numbers.values())) > 1:
         raise ConflictTransientError(f"{label} returned inconsistent comment URLs")
     return comment
@@ -155,11 +155,13 @@ def result_marker(comment_id: int) -> str:
 
 
 def pull_number_from_comment(comment: dict[str, Any]) -> int | None:
-    """Return the pull/issue number encoded in a GitHub comment URL."""
+    """Return the pull/issue number encoded in the comment's HTML URL."""
     numbers: list[int] = []
-    for key in ("issue_url", "html_url"):
-        if key not in comment:
+    for key in ("html_url", "issue_url"):
+        if key == "issue_url" and key not in comment:
             continue
+        if key not in comment:
+            return None
         value = comment[key]
         if not isinstance(value, str):
             return None
