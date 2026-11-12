@@ -5,8 +5,19 @@ pull-request comment. The static script on the execution device finds the
 comment, verifies the mandate, rebases the feature branch onto its base, starts
 a confined model lane only for conflicted files, verifies the result, runs the
 configured checks, pushes the rebased signed branch, and reports in the pull
-request. The model never searches, touches Git or GitHub, runs tests, or decides
-a transition. When Git rebases without a conflict, no model lane starts.
+request. The lane specification contains only the conflicted paths, the replayed
+commit subject, the base branch, and fixed rules. The lane runs in the worktree
+and can read the repository; the script confines the result: after a completed
+lane run it verifies that exactly the conflicted paths changed and that their
+final content passes the deterministic checks. An attempt that did not complete
+counts as a failed verification and is retried once; changes outside the
+conflicted paths are restored before the retry, while edits inside the
+conflicted files stay for the retry. Staging happens only after a lane run that
+completed and passed the verification. Nothing is pushed without a passing
+verification. The lane is given the files to edit and does not need to search
+for the task. It does not touch Git or GitHub, run tests, or decide a
+transition. When Git rebases without a conflict,
+no model lane starts.
 
 The responsibility boundary is [DESIGN.md §19.1](../DESIGN.md#191-responsibility-split)
 and [§19.9](../DESIGN.md#199-comment-mandate-conflicts). The feature is an
@@ -181,10 +192,12 @@ exists on GitHub, without Git, a lane, or a comment.
    protected branch such as `release/2026.11` is refused too. An unreadable
    response is transient. Repository permissions are readable only when
    `permissions.push` is a boolean. Pull-request reads require `state` to be
-   the string `open` or `closed`; string `head.sha`, `head.ref`, `base.ref`,
-   and `base.sha`; a string `head.repo.full_name`, except that `head.repo: null`
-   is the blocker `head repository is gone`; and `mergeable` true, false, or
-   null. Comment listings require a list of objects with an integer `id`
+   the string `open` or `closed`; `head.sha` and `base.sha` to be 40 hexadecimal
+   characters; `head.ref` and `base.ref` to be non-empty strings; and
+   `head.repo.full_name` to have the form `<owner>/<name>`; anything else is
+   unreadable data, except that `head.repo: null` is the blocker
+   `head repository is gone`; and `mergeable` must be true, false, or null.
+   Comment listings require a list of objects with an integer `id`
    greater than zero, string `body`, string `user.login`, string `user.type`,
    GitHub-parsable string `created_at` and `updated_at`, and a string
    `html_url` that contains a parsable pull-request or issue number greater
@@ -326,14 +339,16 @@ exists on GitHub, without Git, a lane, or a comment.
    running Git in them, and nothing is pushed. Those two direct verifications
    run after every check return, including a non-zero exit, a timeout, and a
    raised error; a metadata difference keeps this blocker ahead of the check
-   result. An exception raised while running the check command, other than a
-   termination, finishes after metadata verification as the blocker
-   `check command could not be evaluated`, with the masked exception type
-   name, and nothing is pushed; it is neither a generic tick error nor
-   transient. A termination (`KeyboardInterrupt`, or a `SystemExit` that is
-   not a `StoreError`) is not turned into a blocker: it propagates out of
-   the tick. The same direct cleanup and
-   no-Git rule applies when the pre-push `.git` file verification fails. The
+   result. An exception raised while running the check command, other than
+   invalid UTF-8 output or a termination, finishes after metadata verification
+   as the blocker `check command could not be evaluated`, with the masked
+   exception type name. Invalid UTF-8 output uses the blocker `command output is
+   not valid UTF-8` after the same metadata verification. Nothing is pushed;
+   either blocker is neither a generic tick error nor transient. A termination
+   (`KeyboardInterrupt`, or a `SystemExit` that is not a `StoreError`) is not
+   turned into a blocker: it propagates out of the tick. The same direct
+   cleanup and no-Git rule applies when the pre-push `.git` file verification
+   fails. The
    hook comparison records the
    entry names and their sizes and does not hash a hook's content. After the
    checks it recomputes
@@ -530,6 +545,9 @@ only for repositories and `request_logins` whose pull requests may run code on
 that device, and only where the operator accepts that execution.
 
 ## Known limits
+
+A file name or command output that is not valid UTF-8 ends the request with the
+blocker `command output is not valid UTF-8`.
 
 Local state is an optimization. If the control directory of a request is lost
 after a successful push and before the result comment was posted, the next tick

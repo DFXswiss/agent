@@ -128,12 +128,23 @@ def _validate_pull(data: Any, label: str) -> dict[str, Any]:
     ):
         if not isinstance(value, str):
             raise ConflictTransientError(f"{label} {field} is unreadable")
+        if (
+            field.endswith(".sha")
+            and re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
+        ):
+            raise ConflictTransientError(f"{label} {field} is unreadable")
+        if field.endswith(".ref") and not value:
+            raise ConflictTransientError(f"{label} {field} is unreadable")
     if "repo" not in head:
         raise ConflictTransientError(f"{label} head repository is unreadable")
     head_repo = head.get("repo")
     if head_repo is None:
         raise ConflictHeadRepositoryGone(state)
-    if not isinstance(head_repo, dict) or not isinstance(head_repo.get("full_name"), str):
+    full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    if (
+        not isinstance(full_name, str)
+        or re.fullmatch(r"[^/]+/[^/]+", full_name) is None
+    ):
         raise ConflictTransientError(f"{label} head repository is unreadable")
     if "mergeable" not in data:
         raise ConflictTransientError(f"{label} mergeable state is unreadable")
