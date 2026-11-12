@@ -236,19 +236,22 @@ terminal sanitization or path classification.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
-before terminal sanitization, a whitespace-delimited raw token containing any
-ESC or C1 sequence is redacted in place, including when the sequence is at a
-token boundary. Token separators, including tabs and newlines, stay unchanged.
-The only exemption is a token whose sequences are exclusively one leading
-and/or one trailing `ESC [` SGR wrapper containing only digits and semicolons
-before `m`, around otherwise escape-free text, and whose SGR parameter bytes
-joined to that text do not match any applicable secret pattern. SGR styling
-with bytes glued outside that wrapper and every other escape sequence redact
-the whole token. Credential assignments are classified on the full raw text,
-where complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque to
-the key, operator, and value scan and payload whitespace is not a value
-delimiter. The spans are then visibly redacted before whitespace tokenization,
-including their payload.
+credential assignments are first classified on the full raw text, where
+complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque and
+payload whitespace is not a value delimiter. Before a complete secret keyword,
+payload operators stay opaque so visible key fragments still join. After a
+complete keyword, a terminal control ends an unquoted key only when, after
+skipping whitespace and controls, a visible operator or, when none is visible,
+a valid complete string-control payload operator occurs before any further key
+character. Otherwise the control stays as an opaque key interleave, preserving
+sticky keys such as `password` + control + `_file`. A raw whitespace token that
+contained a string-control span and contains a secret keyword is redacted whole
+as a fail-closed defence. The spans are then visibly redacted before whitespace
+tokenization, including their payload. Every remaining raw token containing an
+ESC or C1 sequence is redacted in place, including at a token boundary, while
+tabs and newlines stay unchanged. The only exemption is one leading and/or one
+trailing strict SGR wrapper whose parameter bytes joined to the visible text do
+not match a secret pattern.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. Credential assignments use a linear lexical scan of complete,
@@ -263,7 +266,8 @@ allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the
 matcher. Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
-through the end of the text.
+through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
+continue through BEL until an ST spelling.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;

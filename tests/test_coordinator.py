@@ -15358,6 +15358,163 @@ def test_parallel_reviewer_restart_removes_unspooled_managed_output(
     assert not raw_path.exists()
 
 
+@pytest.mark.parametrize(
+    ("role", "entrypoint"),
+    (
+        pytest.param("reviewer", "inner", id="sequential-inner-review"),
+        pytest.param(
+            "pr-reviewer-quality", "parallel", id="parallel-pr-review"
+        ),
+    ),
+)
+def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    entrypoint: str,
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import phase_inner_review
+
+    store = Store(tmp_path)
+    worker = make_worker(tmp_path)
+    tid = (
+        "aa000001-0000-4000-8000-000000000230"
+        if entrypoint == "inner"
+        else "aa000001-0000-4000-8000-000000000231"
+    )
+    agent_id = (
+        "aa000001-0000-4000-8000-000000000232"
+        if entrypoint == "inner"
+        else "aa000001-0000-4000-8000-000000000233"
+    )
+    worktree = worker.workspace_root / f"{entrypoint}-cleanup-recovery"
+    worktree.mkdir(parents=True)
+    coordinator = {
+        "phase": "inner_review" if entrypoint == "inner" else "review-2",
+        "worktree": str(worktree),
+    }
+    if entrypoint == "inner":
+        coordinator.update(
+            {
+                "pr_number": 5,
+                "head_sha": "a" * 40,
+                "lane_outcome": {
+                    "role": "reviewer-results",
+                    "outcomes": [
+                        {
+                            "role": "reviewer",
+                            "vendor": "grok",
+                            "model": "test-model",
+                            "round": 1,
+                            "head": "a" * 40,
+                            "dimension": "inner",
+                            "stage": "inner-review",
+                            "agent_id": agent_id,
+                            "status": "complete",
+                            "result": "rejected",
+                            "returncode": 0,
+                            "stdout": "STATUS: complete\nRESULT: rejected\n",
+                            "stderr": "",
+                        }
+                    ],
+                },
+            }
+        )
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {"coordinator": coordinator},
+    }
+    store.write("task", "insert", tid, task)
+    if entrypoint == "inner":
+        store.write(
+            "task_round",
+            "insert",
+            "aa000001-0000-4000-8000-000000000234",
+            {
+                "id": "aa000001-0000-4000-8000-000000000234",
+                "task_id": tid,
+                "round": 1,
+                "implementer_verdict": "done",
+                "reviewer_verdict": None,
+                "started_at": "2026-01-01T00:00:00Z",
+                "finished_at": None,
+            },
+        )
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "session_id": worker.session_id,
+            "task_id": tid,
+            "round": 1 if entrypoint == "inner" else None,
+            "role": role,
+            "vendor": "grok" if entrypoint == "inner" else "codex",
+            "provider": "grok" if entrypoint == "inner" else "codex",
+            "model": "test-model",
+            "head_sha": "a" * 40,
+            "dimension": "inner" if entrypoint == "inner" else "quality",
+            "stage": "inner-review" if entrypoint == "inner" else "review-2",
+            "status": "done",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:01Z",
+            "note": None,
+            "reviewer_output": coordinator_lanes._reviewer_output_checkpoint(
+                agent_id
+            ),
+        },
+    )
+    raw_path = coordinator_lanes._reviewer_raw_output_path(
+        store, worker, tid, agent_id
+    )
+    spool_path = coordinator_lanes._reviewer_spool_path(
+        store, worker, tid, agent_id
+    )
+    spool_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text("unredacted provider output", encoding="utf-8")
+    spool_path.write_text("unredacted checkpoint", encoding="utf-8")
+
+    if entrypoint == "inner":
+        phase_inner_review(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+            None,
+        )
+    else:
+        monkeypatch.setattr(
+            coordinator_lanes,
+            "verify_checkout_identity",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("stop after startup recovery")
+            ),
+        )
+        with pytest.raises(RuntimeError, match="stop after startup recovery"):
+            coordinator_lanes.phase_pr_gates(
+                store,
+                worker,
+                store.row("task", tid),
+                lambda _argv: Completed(0, "", ""),
+                None,
+                vendor="codex",
+                stage="review-2",
+            )
+
+    assert not raw_path.exists()
+    assert not spool_path.exists()
+    coordinator_lanes.cleanup_finished_reviewer_spools(
+        store, worker, store.row("task", tid)
+    )
+
+
 @pytest.mark.parametrize("ambiguous_stage", ["review-1", "review-2"])
 def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguous_stage: str

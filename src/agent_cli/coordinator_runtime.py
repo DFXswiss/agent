@@ -99,6 +99,7 @@ from .coordinator_lanes import (
     _IMPLEMENTER_RESULTS,
     _REVIEWER_RESULTS,
     _coordinator_path_replacements,
+    cleanup_finished_reviewer_spools,
     clear_reviewer_replay_outcomes,
     implementer_replay_fields,
     invalidate_head_evidence,
@@ -1638,6 +1639,7 @@ def phase_inner_review(
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
+    cleanup_finished_reviewer_spools(store, worker, task)
     c = coord(task)
     if not c.get("pr_number"):
         # Must not skip publication.

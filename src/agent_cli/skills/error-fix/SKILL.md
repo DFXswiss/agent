@@ -50,12 +50,13 @@ subsequent notification that provides useful model work belong to the script.
    controls, and applies ordinary error redaction again.
    Secret-key assignments use a complete, unbounded scanner over alphanumeric,
    underscore, and hyphen key tokens, including quoted JSON keys.
-   Only CSI/ESC prefixes may stop before a visible `=` or `:` operator.
-   After the key contains a complete secret keyword, the scanner skips any
-   following whitespace and terminal controls. A visible `=` or `:` after that
-   sequence wins. Only if none follows may either byte inside a skipped,
-   complete string control supply the operator; the value begins after the
-   entire skipped sequence. While the key is incomplete, that payload remains
+   After the key contains a complete secret keyword, a terminal control ends an
+   unquoted key only if a visible `=` or `:`, or otherwise an operator inside a
+   valid complete string control, occurs before another key character. Without
+   that operator the control remains an opaque interleave in the sticky key.
+   Any raw whitespace token that contained a string-control span and contains a
+   secret keyword is redacted whole before that span is replaced. While the key
+   is incomplete, the payload remains
    opaque so later key fragments still join. BEL terminates OSC only; DCS, PM,
    APC, and SOS require `ESC \` or the eight-bit ST byte.
    Fixed matching
