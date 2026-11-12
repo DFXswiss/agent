@@ -1849,6 +1849,12 @@ A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness",
 A38_PUBLISHED_RERUN_PHASES = frozenset(
     {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment"}
 )
+NON_REPEATABLE_REJECTION_CHECKPOINT_ERRORS = frozenset(
+    {
+        "rejection review checkpoint is invalid",
+        "rejection review intent is missing or foreign",
+    }
+)
 
 
 def _second_review_intake_allowed(
@@ -1923,13 +1929,17 @@ def advance_one(
             store, worker, task, runner
         )
     except (CoordinatorError, StoreError) as exc:
-        if (
-            not c.get("resume_phase")
-            and phase not in ("await_merge", "done", "blocked", "ask")
-        ):
+        message = str(exc)
+        if message in NON_REPEATABLE_REJECTION_CHECKPOINT_ERRORS:
+            c["rejection_review_checkpoint_audit"] = {
+                "checkpoint": copy.deepcopy(c.get("rejection_review_activity_ids")),
+                "error": message,
+            }
+            c.pop("rejection_review_activity_ids", None)
+        if not c.get("resume_phase") and phase not in ("done", "blocked", "ask"):
             c["resume_phase"] = phase
-        c["blocker"] = str(exc)
-        if phase not in ("await_merge", "done"):
+        c["blocker"] = message
+        if phase != "done":
             c["phase"] = "blocked"
             phase = "blocked"
         save_task(store, task)
@@ -1938,7 +1948,7 @@ def advance_one(
             worker,
             task,
             runner,
-            str(exc),
+            message,
             kind="phase-error",
             reply_checkpoint=True,
         )
@@ -2191,12 +2201,16 @@ def advance_one(
                     return intake_lines or [
                         "blocking external second review; routing to implementer"
                     ]
+        handler_lines = handler()
+        c = coord(task)
+        if pending_post_suite and c.get("phase") == "await_merge":
+            clear_reply_recovery(c)
+            save_task(store, task)
         lines = [
             *rejection_publication_lines,
             *(intake_lines or []),
-            *handler(),
+            *handler_lines,
         ]
-        c = coord(task)
         lane_observations = c.pop("lane_observations", [])
         if isinstance(lane_observations, list) and lane_observations:
             save_task(store, task)

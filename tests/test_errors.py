@@ -243,11 +243,17 @@ def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> No
             "password=\x1b[31m correct-horse visible=keep",
             "correct-horse",
         ),
+        ("password\x1b[=m hunter2 visible=keep", "hunter2"),
+        ("password\x1b= hunter2 visible=keep", "hunter2"),
+        ("password\x1b[:m hunter2 visible=keep", "hunter2"),
     ],
     ids=(
         "control-before-operator",
         "control-before-quoted",
         "control-before-unquoted",
+        "csi-equals-parameter-is-operator",
+        "esc-equals-final-is-operator",
+        "csi-colon-parameter-is-operator",
     ),
 )
 def test_error_redaction_consumes_terminal_controls_around_assignment_operator(
@@ -528,6 +534,58 @@ def test_redact_replaces_unterminated_string_control_before_tokenization(
 ) -> None:
     raw = f"before {introducer}title opaque-credential-123"
     assert redact_shared(raw) == "before [redacted]"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+)
+def test_redact_replaces_complete_string_control_inside_secret_assignment(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"token=x{introducer}0;opaque credential{terminator} visible=keep"
+    cleaned = redact_shared(raw)
+
+    assert "opaque" not in cleaned
+    assert "credential" not in cleaned
+    assert "visible=keep" in cleaned
+    assert "\x1b" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+)
+def test_redact_replaces_unterminated_string_control_inside_secret_assignment(
+    introducer: str,
+) -> None:
+    cleaned = redact_shared(f"token=x{introducer}0;opaque credential")
+
+    assert "opaque" not in cleaned
+    assert "credential" not in cleaned
+    assert "\x1b" not in cleaned
 
 
 def test_issue_coordinator_documents_terminal_redaction_order() -> None:

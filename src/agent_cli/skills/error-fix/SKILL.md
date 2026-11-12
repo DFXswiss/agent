@@ -47,7 +47,9 @@ subsequent notification that provides useful model work belong to the script.
    splitting, and applies control-tolerant secret redaction to the raw line,
    removes terminal controls, and applies the ordinary error redaction again.
    Secret-key assignments use a complete, unbounded scanner over alphanumeric,
-   underscore, and hyphen key tokens, including quoted JSON keys. Fixed matching
+   underscore, and hyphen key tokens, including quoted JSON keys. Assignment
+   operators remain visible even when a preceding terminal-control prefix would
+   otherwise consume `=` or `:`. Fixed matching
    windows apply only to URL schemes, terminal escape parameters, and removable
    terminal-control interleaves so separatorless log text is handled in linear
    time. The script then fingerprints and inserts or enriches
