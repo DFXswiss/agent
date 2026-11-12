@@ -26,6 +26,7 @@ def test_allowed_store_and_spine() -> None:
 
 @pytest.mark.no_pg
 def test_denied_control_git_hub() -> None:
+    assert allowed(["task", "close-from-pr", "--id", "t1"]) is False
     assert allowed(["session", "start", "--id", "s1"]) is False
     assert allowed(["session", "input", "--id", "s1", "--data", "x"]) is False
     assert allowed(["session", "keep-working", "--id", "s1"]) is False

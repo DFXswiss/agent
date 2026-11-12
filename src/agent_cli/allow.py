@@ -105,7 +105,7 @@ JA_EVIDENCE_REQUIRED: frozenset[str] = frozenset(
     key for keys in CHECKLIST_KEYS.values() for key in keys
 )
 
-TERMINAL_STATES: frozenset[str] = frozenset({"done", "failed", "superseded"})
+TERMINAL_STATES: frozenset[str] = frozenset({"done", "failed", "merged", "superseded"})
 
 
 @dataclass(frozen=True)

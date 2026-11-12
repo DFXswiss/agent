@@ -589,6 +589,597 @@ def test_task_pr_refuses_a_non_numeric_ref(
     assert json.loads(capsys.readouterr().out)["ref"] == "develop"
 
 
+def test_task_state_refuses_merged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="only be set by task close-from-pr"):
+        run(tmp_path, ["task", "state", tid, "merged"])
+
+
+def test_task_pr_refuses_terminal_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    run(tmp_path, ["task", "state", tid, "superseded"])
+    with pytest.raises(SystemExit, match="terminal task"):
+        run(
+            tmp_path,
+            ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+        )
+
+
+def test_task_close_from_pr_unmerged_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_cli.runtime import Completed
+    from github_support import configure_accounts, transport
+
+    tid = _create_task_for_pr(tmp_path, capsys)
+    run(
+        tmp_path,
+        ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+    )
+    capsys.readouterr()
+    configure_accounts(tmp_path, ["s"])
+
+    def gh(argv: list[str]) -> Completed:
+        if argv == ["gh", "api", "repos/DFXswiss/agent/pulls/149"]:
+            return Completed(0, json.dumps({"merged": False}), "")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", transport(gh))
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["task", "close-from-pr", "--id", tid])
+    assert f"task {tid} not closed: pull request is not merged" in capsys.readouterr().out
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "open"
+
+
+_CLOSE_HEAD = "1234567890abcdef1234567890abcdef12345678"
+_CLOSE_MERGE = "abcdef1234567890abcdef1234567890abcdef12"
+
+
+def _close_from_pr_fixture(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    local_check: bool = True,
+    review_2: bool = True,
+    pr_number: int = 149,
+    first_dimensions: tuple[str, ...] = ("quality", "logic"),
+) -> str:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    run(tmp_path, ["session", "skill", "attach", "--id", "s", "--skill", "review-loop"])
+    run(tmp_path, ["session", "skill", "attach", "--id", "s", "--skill", "pr-review"])
+    run(
+        tmp_path,
+        ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", str(pr_number)],
+    )
+    run(
+        tmp_path,
+        [
+            "task", "summary", "--id", tid,
+            "--en", "Adds close-from-pr coverage.",
+            "--de", "Ergaenzt Tests fuer close-from-pr.",
+        ],
+    )
+    store = Store(tmp_path)
+    try:
+        keys = [
+            row["key"]
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+    gate_keys = {
+        "review_1_quality", "review_1_logic", "review_2_quality", "review_2_logic"
+    }
+    for key in keys:
+        if key in gate_keys or (key in ("local_check_pass", "pushed") and not local_check):
+            continue
+        argv = [
+            "checklist", "set", "--task", tid, "--key", key,
+            "--status", "ja", "--source", "human", "--evidence", "fixture",
+        ]
+        if key == "deviation_granted":
+            argv += [
+                "--deviation-granted", "true", "--granted-by", "reviewer",
+                "--actor-session", "s",
+            ]
+        run(tmp_path, argv)
+    if local_check:
+        run(
+            tmp_path,
+            [
+                "check", "record", "--task", tid, "--name", "pytest",
+                "--command", "pytest", "--result", "pass",
+            ],
+        )
+    stages = [("review-1", "grok")]
+    if review_2:
+        stages.append(("review-2", "codex"))
+    for stage, vendor in stages:
+        dimensions = first_dimensions if stage == "review-1" else ("quality", "logic")
+        for dimension in dimensions:
+            role = f"pr-reviewer-{dimension}"
+            run(
+                tmp_path,
+                [
+                    "agent", "start", "--session", "s", "--task", tid,
+                    "--role", role, "--vendor", vendor,
+                ],
+            )
+            aid = _last_agent_id(capsys.readouterr().out)
+            run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+            run(
+                tmp_path,
+                [
+                    "gate", "record", "--task", tid, "--stage", stage,
+                    "--dimension", dimension, "--vendor", vendor,
+                    "--verdict", "approved", "--head", _CLOSE_HEAD,
+                    "--agent", aid,
+                ],
+            )
+            if stage == "review-2":
+                run(
+                    tmp_path,
+                    [
+                        "checklist", "set", "--task", tid,
+                        "--key", f"review_2_{dimension}", "--status", "ja",
+                        "--source", "script", "--evidence",
+                        f"gate review-2/{dimension} approved at {_CLOSE_HEAD}",
+                    ],
+                )
+    capsys.readouterr()
+    return tid
+
+
+def _close_rows(tmp_path: Path, tid: str) -> tuple[dict, list[dict], list[dict]]:
+    store = Store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        checklist = [
+            row for row in store.rows("checklist_item") if row.get("task_id") == tid
+        ]
+        agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+        return task, checklist, agents
+    finally:
+        store.close()
+
+
+def _make_pr_reviewers_working(tmp_path: Path, tid: str) -> list[str]:
+    """Recreate an interrupted lane; the CLI cannot reopen a finished lane."""
+    store = Store(tmp_path)
+    try:
+        agents = [
+            row for row in store.rows("agent")
+            if row.get("task_id") == tid
+            and str(row.get("role", "")).startswith("pr-reviewer-")
+        ][-2:]
+        for agent in agents:
+            agent["status"] = "working"
+            agent["finished_at"] = None
+            agent["verdict"] = None
+            store.write("agent", "update", agent["id"], agent)
+        return [str(agent["id"]) for agent in agents]
+    finally:
+        store.close()
+
+
+def _close_pull(**changes: object) -> dict:
+    pull: dict = {
+        "merged": True,
+        "state": "closed",
+        "merged_by": {"login": "alice", "type": "User"},
+        "merged_at": "2026-11-11T10:00:00Z",
+        "merge_commit_sha": _CLOSE_MERGE,
+        "head": {"sha": _CLOSE_HEAD},
+        "user": {"login": "alice"},
+    }
+    pull.update(changes)
+    return pull
+
+
+def _close_gh(pull: dict, *, trusted: list[str] | None = None):
+    from agent_cli.runtime import Completed
+
+    def gh(argv: list[str]) -> Completed:
+        if argv == ["gh", "api", "repos/DFXswiss/agent/pulls/149"]:
+            return Completed(0, json.dumps(pull), "")
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(0, json.dumps({"author": pull.get("user", {})}), "")
+        if argv == ["gh", "api", "repos/DFXswiss/agent"]:
+            return Completed(0, json.dumps({"default_branch": "develop"}), "")
+        if argv == ["gh", "api", "repos/DFXswiss/agent/commits/develop"]:
+            return Completed(0, json.dumps({"sha": _CLOSE_HEAD}), "")
+        if argv[:2] == ["gh", "api"] and "contents/.github/pr-guard.json" in argv[-1]:
+            return Completed(
+                0,
+                json.dumps({
+                    "schema": "pr-guard/v1",
+                    "a38": {"enforce": [], "exclude": [], "default": "enforce"},
+                    "one_review_authors": trusted or [],
+                }),
+                "",
+            )
+        raise AssertionError(argv)
+
+    return gh
+
+
+def _run_close(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tid: str,
+    pull: dict,
+    *,
+    trusted: list[str] | None = None,
+    session: bool = False,
+) -> None:
+    from github_support import configure_accounts, transport
+
+    configure_accounts(tmp_path, ["s"])
+    monkeypatch.setattr(
+        "agent_cli.main._exec_argv", transport(_close_gh(pull, trusted=trusted))
+    )
+    selector = ["--session", "s"] if session else ["--id", tid]
+    run(tmp_path, ["task", "close-from-pr", *selector])
+
+
+def _assert_close_no_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    tid: str,
+    pull: dict,
+) -> None:
+    before = _close_rows(tmp_path, tid)
+    with pytest.raises(SystemExit):
+        _run_close(monkeypatch, tmp_path, tid, pull)
+    assert f"task {tid} not closed:" in capsys.readouterr().out
+    assert _close_rows(tmp_path, tid) == before
+
+
+def test_task_close_from_pr_human_merge_completes_ready_task_and_aborts_agents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    working = _make_pr_reviewers_working(tmp_path, tid)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    task, checklist, agents = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+    assert "merge_close" not in dict(task.get("payload") or {})
+    assert all(row["status"] in ("ja", "n_a") for row in checklist)
+    for dimension in ("quality", "logic"):
+        item = next(row for row in checklist if row["key"] == f"review_1_{dimension}")
+        assert item["status"] == "ja"
+        assert item["evidence"] == f"gate review-1/{dimension} approved at {_CLOSE_HEAD}"
+    closed = {row["id"]: row for row in agents}
+    for aid in working:
+        assert closed[aid]["status"] == "done"
+        assert closed[aid]["note"].startswith(
+            "aborted incomplete lane: task closed from merged PR DFXswiss/agent#149"
+        )
+
+
+def test_task_close_from_pr_human_merge_records_remaining_blockers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, local_check=False)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    out = capsys.readouterr().out
+    task, checklist, _agents = _close_rows(tmp_path, tid)
+    assert out.startswith(f"task {tid} merged from DFXswiss/agent#149")
+    assert task["state"] == "merged"
+    merge_close = task["payload"]["merge_close"]
+    assert {key: merge_close[key] for key in (
+        "repo", "pr", "head_sha", "merge_commit_sha", "merged_by", "merged_at"
+    )} == {
+        "repo": "DFXswiss/agent", "pr": 149, "head_sha": _CLOSE_HEAD,
+        "merge_commit_sha": _CLOSE_MERGE, "merged_by": "alice",
+        "merged_at": "2026-11-11T10:00:00Z",
+    }
+    assert any("local_check_pass" in blocker for blocker in merge_close["unbooked"])
+    assert all(not blocker.startswith(f"{tid}:") for blocker in merge_close["unbooked"])
+    assert f"{tid}:" not in out.split("unbooked: ", 1)[1]
+    pushed = next(row for row in checklist if row["key"] == "pushed")
+    assert pushed["status"] == "pending"
+    assert all(
+        row["status"] == "pending"
+        for row in checklist if row["key"].startswith("review_1_")
+    )
+    assert all(row["status"] == "done" for row in _agents)
+
+
+def test_task_close_from_pr_trusted_opener_marks_second_review_not_applicable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, review_2=False)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull(), trusted=["alice"])
+    task, checklist, agents = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+    assert "merge_close" not in dict(task.get("payload") or {})
+    assert all(row["status"] == "done" for row in agents)
+    second = {row["key"]: row for row in checklist if row["key"].startswith("review_2_")}
+    assert {row["status"] for row in second.values()} == {"n_a"}
+    assert {row["evidence"] for row in second.values()} == {"second review not posted"}
+
+
+def test_task_close_from_pr_existing_second_gate_preserves_second_review_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    before = {row["key"]: row for row in _close_rows(tmp_path, tid)[1] if row["key"].startswith("review_2_")}
+    _run_close(monkeypatch, tmp_path, tid, _close_pull(), trusted=["alice"])
+    task, checklist, agents = _close_rows(tmp_path, tid)
+    after = {row["key"]: row for row in checklist if row["key"].startswith("review_2_")}
+    assert after == before
+    assert task["state"] == "done"
+    assert "merge_close" not in dict(task.get("payload") or {})
+    assert all(row["status"] == "done" for row in agents)
+
+
+def test_task_close_from_pr_untrusted_opener_preserves_second_review_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, review_2=False)
+    before = {row["key"]: row for row in _close_rows(tmp_path, tid)[1] if row["key"].startswith("review_2_")}
+    _run_close(monkeypatch, tmp_path, tid, _close_pull(), trusted=["bob"])
+    task, checklist, agents = _close_rows(tmp_path, tid)
+    after = {row["key"]: row for row in checklist if row["key"].startswith("review_2_")}
+    assert after == before
+    assert task["state"] == "merged"
+    assert task["payload"]["merge_close"]["repo"] == "DFXswiss/agent"
+    first = {row["key"]: row for row in checklist if row["key"].startswith("review_1_")}
+    for dimension in ("quality", "logic"):
+        assert first[f"review_1_{dimension}"]["status"] == "ja"
+        assert first[f"review_1_{dimension}"]["evidence"] == (
+            f"gate review-1/{dimension} approved at {_CLOSE_HEAD}"
+        )
+    assert all(
+        not blocker.startswith(f"{tid}:")
+        for blocker in task["payload"]["merge_close"]["unbooked"]
+    )
+    assert all(row["status"] == "done" for row in agents)
+
+
+def test_task_close_from_pr_open_pull_request_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(merged=False, state="open"))
+
+
+def test_task_close_from_pr_closed_unmerged_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(merged=False, state="closed"))
+
+
+def test_task_close_from_pr_bot_merge_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(merged_by={"login": "bot", "type": "Bot"}))
+
+
+def test_task_close_from_pr_merger_without_type_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(merged_by={"login": "alice"}))
+
+
+def test_task_close_from_pr_missing_merge_commit_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(merge_commit_sha=None))
+
+
+def test_task_close_from_pr_mismatched_gate_head_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(head={"sha": "f" * 40}))
+
+
+def test_task_close_from_pr_single_first_review_gate_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(
+        tmp_path, capsys, review_2=False, first_dimensions=("quality",)
+    )
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull())
+
+
+def test_task_close_from_pr_wrong_first_vendor_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        gate = next(row for row in store.rows("review_gate") if row.get("task_id") == tid and row.get("stage") == "review-1")
+        gate["vendor"] = "codex"
+        store.write("review_gate", "update", gate["id"], gate)
+    finally:
+        store.close()
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull())
+
+
+def test_task_close_from_pr_coordinator_task_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {
+            **dict(task.get("payload") or {}),
+            "coordinator": {"publication_repo": "DFXswiss/agent"},
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull())
+
+
+def test_task_close_from_pr_without_attached_pull_request_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    before = _close_rows(tmp_path, tid)
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["task", "close-from-pr", "--id", tid])
+    assert f"task {tid} not closed: no pull request attached" in capsys.readouterr().out
+    assert _close_rows(tmp_path, tid) == before
+
+
+def test_task_close_from_pr_without_bound_github_account_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    before = _close_rows(tmp_path, tid)
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["task", "close-from-pr", "--id", tid])
+    assert f"task {tid} not closed:" in capsys.readouterr().out
+    assert _close_rows(tmp_path, tid) == before
+
+
+def test_task_close_from_pr_session_recloses_working_agents_without_changing_done_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    before_task, before_checklist, _ = _close_rows(tmp_path, tid)
+    aid = _make_pr_reviewers_working(tmp_path, tid)[0]
+    _run_close(monkeypatch, tmp_path, tid, _close_pull(), session=True)
+    after_task, after_checklist, agents = _close_rows(tmp_path, tid)
+    assert after_task == before_task
+    assert after_checklist == before_checklist
+    assert next(row for row in agents if row["id"] == aid)["status"] == "done"
+
+
+@pytest.mark.parametrize("state", ["done", "superseded"])
+def test_task_state_refuses_changes_to_merged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], state: str,
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, local_check=False)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    before = _close_rows(tmp_path, tid)
+    assert before[0]["state"] == "merged"
+    with pytest.raises(SystemExit, match="cannot change state of a merged task"):
+        run(tmp_path, ["task", "state", tid, state])
+    assert _close_rows(tmp_path, tid) == before
+
+
+def test_gate_record_refuses_rejected_on_merged_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, local_check=False)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    before = _close_rows(tmp_path, tid)
+    assert before[0]["state"] == "merged"
+    store = Store(tmp_path)
+    try:
+        gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+        gate = next(row for row in gates if row["stage"] == "review-1")
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="cannot reject a gate on a merged task"):
+        run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", gate["stage"],
+                "--dimension", gate["dimension"], "--vendor", gate["vendor"],
+                "--verdict", "rejected", "--head", _CLOSE_HEAD,
+                "--agent", gate["agent_id"],
+                "--evidence", "Review findings require changes.",
+            ],
+        )
+    assert _close_rows(tmp_path, tid) == before
+    store = Store(tmp_path)
+    try:
+        assert [row for row in store.rows("review_gate") if row.get("task_id") == tid] == gates
+    finally:
+        store.close()
+
+
+def test_check_record_fail_preserves_merged_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, local_check=False)
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    before = _close_rows(tmp_path, tid)
+    assert before[0]["state"] == "merged"
+    run(
+        tmp_path,
+        [
+            "check", "record", "--task", tid, "--name", "pytest",
+            "--command", "pytest", "--result", "fail",
+        ],
+    )
+    assert _close_rows(tmp_path, tid) == before
+    store = Store(tmp_path)
+    try:
+        checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
+        assert len(checks) == 1
+        assert checks[0]["result"] == "fail"
+    finally:
+        store.close()
+
+
+def test_task_close_from_pr_session_keeps_successes_when_one_pr_is_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from github_support import configure_accounts, transport
+    from agent_cli.runtime import Completed
+
+    tids = [
+        _close_from_pr_fixture(tmp_path, capsys, pr_number=pr_number)
+        for pr_number in (149, 150, 149)
+    ]
+    open_tid = tids[1]
+    before_open = _close_rows(tmp_path, open_tid)
+    capsys.readouterr()
+    configure_accounts(tmp_path, ["s"])
+    merged_gh = _close_gh(_close_pull())
+
+    def gh(argv: list[str]) -> Completed:
+        if argv == ["gh", "api", "repos/DFXswiss/agent/pulls/150"]:
+            return Completed(0, json.dumps(_close_pull(merged=False, state="open")), "")
+        return merged_gh(argv)
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", transport(gh))
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["task", "close-from-pr", "--session", "s"])
+    assert exc.value.code == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3
+    assert [line for line in lines if "not closed:" in line] == [
+        f"task {open_tid} not closed: pull request is not merged"
+    ]
+    for tid in (tids[0], tids[2]):
+        assert _close_rows(tmp_path, tid)[0]["state"] == "done"
+        assert any(line.startswith(f"task {tid} done from ") for line in lines)
+    assert _close_rows(tmp_path, open_tid) == before_open
+
+
+def test_task_close_from_pr_requires_exactly_one_selector(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="Usage: agent task close-from-pr"):
+        run(tmp_path, ["task", "close-from-pr"])
+    with pytest.raises(SystemExit, match="Usage: agent task close-from-pr"):
+        run(tmp_path, ["task", "close-from-pr", "--id", "x", "--session", "s"])
+
+
 def test_task_pr_refuses_error_fix_task(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

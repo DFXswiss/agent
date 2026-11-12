@@ -50,6 +50,7 @@ agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--t
 ```
 
 Once the draft pull request exists, attach it with `agent task pr --id <task-id> --repo <owner/name> --pr <number>`; the one-review path and queued gate findings read it from there.
+After a verified human merge, close the attached task with `agent task close-from-pr --id <task-id>`, or close eligible tasks in one session with `agent task close-from-pr --session <session-id>`.
 
 `run` git-pushes (no force) when `pushed` is open and measures mergeability when `mergeable` is open. Protected branches stay refused.
 
@@ -71,6 +72,10 @@ blocks `done`. Unavailable is not allowed for other keys.
 `superseded` is the terminal state for obsolete or never-started work. It is
 not `failed`, does not require `spec_written` / `pushed`, and `session close`
 treats it like `done` / `failed`. Cannot supersede a `done` task.
+
+`merged` is the terminal state for a task whose attached pull request has a
+verified human merge but whose remaining checklist evidence does not satisfy
+`task-done`. Only `task close-from-pr` writes it.
 
 `failed` stays proven failure. Do not reuse it for obsolete tasks.
 

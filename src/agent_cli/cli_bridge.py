@@ -40,6 +40,8 @@ def allowed(argv: list[str]) -> bool:
     """True when argv is a store/spine command. Control, git, and hub stay local."""
     if not argv:
         return False
+    if argv[:2] == ["task", "close-from-pr"]:
+        return False
     cmd = argv[0]
     if cmd in _STORE_COMMANDS:
         return True
