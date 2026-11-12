@@ -2697,6 +2697,167 @@ def test_assignment_activity_uses_device_scoped_id_when_primary_is_foreign(
     )
 
 
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    (
+        pytest.param("assigned_at", "not-a-timestamp", id="assigned-at"),
+        pytest.param(
+            "assignment_observed_at",
+            "2026-01-01T00:00:00",
+            id="assignment-observed-at-naive",
+        ),
+    ),
+)
+def test_assignment_activity_invalid_primary_timestamp_uses_fallback(
+    tmp_path: Path, invalid_field: str, invalid_value: str
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    primary_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:example/project:7:worker-bot",
+        )
+    )
+    timestamps = {
+        "assigned_at": "2026-01-01T00:00:00Z",
+        "assignment_observed_at": "2026-01-01T00:00:00Z",
+    }
+    timestamps[invalid_field] = invalid_value
+    store.write(
+        "activity",
+        "insert",
+        primary_id,
+        {
+            "id": primary_id,
+            "session_id": worker.session_id,
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "example/project",
+                "number": 7,
+                "url": "https://github.com/example/project/issues/7",
+                "title": "Fix it",
+                "body": "Please fix",
+                **timestamps,
+                "assignee": "worker-bot",
+                "mandate": "github-assignment",
+                "source": "coordinator",
+            },
+            "execution_status": "done",
+        },
+    )
+
+    selected = coordinator_runtime._insert_assigned_activity(
+        store,
+        worker,
+        repo="example/project",
+        number=7,
+        title="Fix it",
+        body="Please fix",
+        url="https://github.com/example/project/issues/7",
+        assignee="worker-bot",
+        assigned_at="2026-01-02T00:00:00Z",
+    )
+
+    fallback_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:"
+            f"{store.device_id()}:example/project:7:worker-bot",
+        )
+    )
+    assert selected == fallback_id
+    assert store.row("activity", fallback_id) is not None
+
+
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    (
+        pytest.param("assigned_at", "not-a-timestamp", id="assigned-at"),
+        pytest.param(
+            "assignment_observed_at",
+            "2026-01-01T00:00:00",
+            id="assignment-observed-at-naive",
+        ),
+    ),
+)
+def test_assignment_activity_invalid_fallback_timestamp_is_hard_mismatch(
+    tmp_path: Path, invalid_field: str, invalid_value: str
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    primary_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:example/project:7:worker-bot",
+        )
+    )
+    fallback_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:"
+            f"{store.device_id()}:example/project:7:worker-bot",
+        )
+    )
+    common_payload = {
+        "repo": "example/project",
+        "number": 7,
+        "url": "https://github.com/example/project/issues/7",
+        "title": "Fix it",
+        "body": "Please fix",
+        "assigned_at": "2026-01-01T00:00:00Z",
+        "assignment_observed_at": "2026-01-01T00:00:00Z",
+        "assignee": "worker-bot",
+        "mandate": "github-assignment",
+        "source": "coordinator",
+    }
+    for activity_id, payload in (
+        (primary_id, {**common_payload, "title": "Occupied"}),
+        (
+            fallback_id,
+            {**common_payload, invalid_field: invalid_value},
+        ),
+    ):
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "issue.assigned",
+                "payload": payload,
+                "execution_status": "done",
+            },
+        )
+
+    with pytest.raises(
+        CoordinatorError,
+        match="device-scoped assignment activity id is occupied by a mismatched row",
+    ):
+        coordinator_runtime._insert_assigned_activity(
+            store,
+            worker,
+            repo="example/project",
+            number=7,
+            title="Fix it",
+            body="Please fix",
+            url="https://github.com/example/project/issues/7",
+            assignee="worker-bot",
+            assigned_at="2026-01-02T00:00:00Z",
+        )
+
+
 def test_assignment_activity_keeps_same_device_crash_replay_idempotent(
     tmp_path: Path,
 ) -> None:

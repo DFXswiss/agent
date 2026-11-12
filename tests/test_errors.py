@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.coordinator_common import redact as redact_shared
+from agent_cli.coordinator_common import (
+    _SECRET_ASSIGNMENT_KEYWORDS,
+    _redact_secret_assignments,
+    redact as redact_shared,
+)
 from agent_cli.errors import (
     config_path,
     cursor_path,
@@ -290,6 +294,73 @@ def test_controlled_secret_keyword_lines_fail_closed_across_shared_sinks(
     ):
         assert cleaned == "prefix [redacted]\nvisible line"
         assert "hunter2" not in cleaned
+
+
+def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
+    string_controls = [
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x9c"),
+        ("\x1bP", "\x1b\\"),
+        ("\x90", "\x9c"),
+        ("\x1b^", "\x1b\\"),
+        ("\x9e", "\x9c"),
+        ("\x1b_", "\x1b\\"),
+        ("\x9f", "\x9c"),
+        ("\x1bX", "\x1b\\"),
+        ("\x98", "\x9c"),
+    ]
+    suffixes = (" hunter2", "=hunter2", " = hunter2", ": hunter2")
+    lines: list[str] = []
+    for keyword in _SECRET_ASSIGNMENT_KEYWORDS:
+        for intermediate in ("", "!", " ", "$", "-"):
+            if intermediate == "-" and "-" in keyword:
+                split = keyword.index("-")
+                controlled = (
+                    keyword[:split]
+                    + "\x1b[31-"
+                    + keyword[split + 1]
+                    + keyword[split + 2 :]
+                )
+            elif intermediate == "-":
+                controlled = keyword + "\x1b[31-m"
+            else:
+                controlled = keyword[:-1] + f"\x1b[31{intermediate}{keyword[-1]}"
+            lines.extend(controlled + suffix for suffix in suffixes)
+
+        esc_final = keyword[:-1] + "\x1b" + keyword[-1]
+        lines.extend(esc_final + suffix for suffix in suffixes)
+
+        split = max(1, len(keyword) // 2)
+        for introducer, terminator in string_controls:
+            for payload in ("opaque", "0;=", "0;:"):
+                controlled = (
+                    keyword[:split]
+                    + introducer
+                    + payload
+                    + terminator
+                    + keyword[split:]
+                )
+                lines.extend(controlled + suffix for suffix in suffixes)
+
+    lines.append("passwor\x1b[31!d\x1b]0;=\x07 hunter2")
+    raw = "\n".join(lines)
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert "hunter2" not in cleaned
+
+
+def test_assignment_scanner_rechecks_operator_after_control_completes_key(
+) -> None:
+    raw = "passwor\x1b[31!d\x1b]0;=\x07 hunter2"
+
+    cleaned = _redact_secret_assignments(raw)
+
+    assert "hunter2" not in cleaned
+    assert "[redacted]" in cleaned
 
 
 def test_controlled_line_without_secret_keyword_keeps_existing_handling() -> None:
@@ -883,23 +954,27 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         Path(__file__).parents[1] / "docs" / "ai-accounts.md"
     ).read_text(encoding="utf-8")
     readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    skill = (
+        Path(__file__).parents[1]
+        / "src"
+        / "agent_cli"
+        / "skills"
+        / "error-fix"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
 
-    assert (
-        "control-stripped view that removes complete or\nunterminated controls"
-        in documented
-    )
-    assert (
-        "payload-kept view that removes\nonly control introducers"
-        in documented
-    )
-    assert (
-        "through the end of that line. A following line remains independent"
-        in documented
-    )
-    assert "On each controlled raw line, a control-stripped view" in ai_accounts
-    assert "through line end. Other lines remain independent" in ai_accounts
-    assert "it builds both a control-stripped view" in readme
-    assert "Following lines\nremain unchanged, lines without controls" in readme
+    for text in (documented, ai_accounts, readme, skill):
+        normalized = " ".join(text.split())
+        assert "control-stripped view" in normalized
+        assert "payload-kept view" in normalized
+        assert "key-join view" in normalized
+        assert (
+            "A whitespace token exactly `<config_dir>/` followed only by "
+            "`[A-Za-z0-9._-]+` is the one structural exception"
+            in normalized
+        )
+        assert "Any other byte in that token" in normalized
+        assert "keyword elsewhere on the line, still triggers it" in normalized
 
     assert (
         "then classifies secret assignments on the full\nraw text. During that scan,\n"
@@ -1002,8 +1077,11 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
     )
     assert "shared controlled-line structural rule" in documented
     assert (
-        "every controlled raw line gets a control-stripped view" in documented
+        "each controlled raw line gets a compiled case-insensitive candidate check"
+        in documented
     )
+    assert "Only candidate lines build the three" in documented
+    assert "a key-join view" in documented
     assert "mapped whitespace token through line end" in documented
     assert "classifies secret assignments on the raw line" in documented
     assert (

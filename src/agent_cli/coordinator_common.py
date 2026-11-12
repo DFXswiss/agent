@@ -110,6 +110,22 @@ _TERMINAL_STRING_CONTROL_INTRODUCER = re.compile(
     r"\x1b(?:\]|P|\^|_|X)|[\x90\x98\x9d\x9e\x9f]"
 )
 _TERMINAL_STRUCTURAL_TRIGGER = re.compile(r"\x1b|[\x80-\x9f]")
+_CONTROLLED_LINE_CANDIDATE = re.compile(
+    "["
+    + re.escape(
+        "".join(sorted({key[0] for key in _SECRET_ASSIGNMENT_KEYWORDS}))
+    )
+    + "]",
+    re.IGNORECASE,
+)
+_CONTROLLED_LINE_CANDIDATE_TRANSLATION = str.maketrans(
+    "",
+    "",
+    "".join(
+        chr(value) for value in (*range(0x20), *range(0x7F, 0xA0))
+    ),
+)
+_CONFIG_DIR_PLACEHOLDER_TOKEN = re.compile(r"<config_dir>/[A-Za-z0-9._-]+\Z")
 _RAW_LINE_BREAK = re.compile(r"\r\n|\r|\n")
 _AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*+')
 _BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']++')
@@ -369,6 +385,31 @@ def _is_assignment_key_char(char: str) -> bool:
     return char.isascii() and (char.isalnum() or char in "_-")
 
 
+def _terminal_control_key_chars(
+    text: str, index: int, control_end: int
+) -> tuple[tuple[int, str], ...]:
+    """Return control bytes that the assignment scanner can join into a key."""
+    if control_end <= index or _is_terminal_string_control(text, index):
+        return ()
+    if text[index] == "\x1b":
+        cursor = index + 1
+        if cursor < control_end and text[cursor] == "[":
+            cursor += 1
+            while cursor < control_end and "0" <= text[cursor] <= "?":
+                cursor += 1
+    elif ord(text[index]) == 0x9B:
+        cursor = index + 1
+        while cursor < control_end and "0" <= text[cursor] <= "?":
+            cursor += 1
+    else:
+        return ()
+    return tuple(
+        (offset, text[offset])
+        for offset in range(cursor, control_end)
+        if _is_assignment_key_char(text[offset])
+    )
+
+
 def _extend_secret_assignment_key_tail(tail: str, char: str) -> tuple[str, bool]:
     lowered = char.lower()
     tail = (tail + lowered)[-_SECRET_ASSIGNMENT_KEYWORD_MAX:]
@@ -418,79 +459,77 @@ def _append_control_view(
     return view_length + length
 
 
+def _is_config_dir_placeholder_token(line: str, raw_offset: int) -> bool:
+    """Return whether an offset belongs to one exact config-dir placeholder."""
+    token_start = raw_offset
+    while token_start > 0 and not line[token_start - 1].isspace():
+        token_start -= 1
+    token_end = raw_offset
+    while token_end < len(line) and not line[token_end].isspace():
+        token_end += 1
+    return _CONFIG_DIR_PLACEHOLDER_TOKEN.fullmatch(
+        line[token_start:token_end]
+    ) is not None
+
+
 def _mapped_secret_keyword_start(
-    view: str, spans: list[tuple[int, int, int]]
+    line: str, view: str, spans: list[tuple[int, int, int]]
 ) -> int | None:
-    match = _SECRET_ASSIGNMENT_KEYWORD.search(view)
-    if match is None:
-        return None
-    offset = match.start()
-    for view_start, view_end, raw_start in spans:
+    span_index = 0
+    for match in _SECRET_ASSIGNMENT_KEYWORD.finditer(view):
+        offset = match.start()
+        while span_index < len(spans) and spans[span_index][1] <= offset:
+            span_index += 1
+        if span_index >= len(spans):
+            return None
+        view_start, view_end, raw_start = spans[span_index]
         if view_start <= offset < view_end:
-            return raw_start + offset - view_start
+            mapped = raw_start + offset - view_start
+            if not _is_config_dir_placeholder_token(line, mapped):
+                return mapped
     return None
 
 
-def _terminal_keyword_views(
-    line: str,
-) -> tuple[
-    str,
-    list[tuple[int, int, int]],
-    str,
-    list[tuple[int, int, int]],
-]:
-    """Build control-stripped and payload-kept views with raw mappings."""
-    stripped_pieces: list[str] = []
-    stripped_spans: list[tuple[int, int, int]] = []
-    payload_pieces: list[str] = []
-    payload_spans: list[tuple[int, int, int]] = []
-    stripped_length = 0
-    payload_length = 0
+def _terminal_keyword_view(
+    line: str, kind: str
+) -> tuple[str, list[tuple[int, int, int]]]:
+    """Build one structural keyword view with its raw mapping."""
+    pieces: list[str] = []
+    spans: list[tuple[int, int, int]] = []
+    view_length = 0
     cursor = 0
     while True:
         control = _TERMINAL_STRUCTURAL_TRIGGER.search(line, cursor)
         if control is None:
-            stripped_length = _append_control_view(
-                line,
-                stripped_pieces,
-                stripped_spans,
-                stripped_length,
-                cursor,
-                len(line),
-            )
-            payload_length = _append_control_view(
-                line,
-                payload_pieces,
-                payload_spans,
-                payload_length,
-                cursor,
-                len(line),
+            _append_control_view(
+                line, pieces, spans, view_length, cursor, len(line)
             )
             break
 
         control_start = control.start()
-        stripped_length = _append_control_view(
-            line,
-            stripped_pieces,
-            stripped_spans,
-            stripped_length,
-            cursor,
-            control_start,
-        )
-        payload_length = _append_control_view(
-            line,
-            payload_pieces,
-            payload_spans,
-            payload_length,
-            cursor,
-            control_start,
+        view_length = _append_control_view(
+            line, pieces, spans, view_length, cursor, control_start
         )
         control_end, _ = _terminal_control_span(line, control_start)
         if control_end <= control_start:
             # The trigger is itself a removable control, so this is defensive.
             control_end = control_start + 1
 
-        if _is_terminal_string_control(line, control_start):
+        if kind == "key-join":
+            for raw_offset, _key_char in _terminal_control_key_chars(
+                line, control_start, control_end
+            ):
+                view_length = _append_control_view(
+                    line,
+                    pieces,
+                    spans,
+                    view_length,
+                    raw_offset,
+                    raw_offset + 1,
+                )
+        elif kind == "payload" and _is_terminal_string_control(
+            line, control_start
+        ):
             payload_start = control_start + (
                 2 if line[control_start] == "\x1b" else 1
             )
@@ -499,15 +538,15 @@ def _terminal_keyword_views(
                 payload_end = control_end - 2
             elif control_end > payload_start and line[control_end - 1] in "\x07\x9c":
                 payload_end = control_end - 1
-            payload_length = _append_control_view(
+            view_length = _append_control_view(
                 line,
-                payload_pieces,
-                payload_spans,
-                payload_length,
+                pieces,
+                spans,
+                view_length,
                 payload_start,
                 payload_end,
             )
-        elif line[control_start] == "\x1b":
+        elif kind == "payload" and line[control_start] == "\x1b":
             payload_start = control_start + 1
             if payload_start < control_end and line[payload_start] == "[":
                 payload_start += 1
@@ -516,57 +555,58 @@ def _terminal_keyword_views(
                     and "0" <= line[payload_start] <= "?"
                 ):
                     payload_start += 1
-            payload_length = _append_control_view(
+            view_length = _append_control_view(
                 line,
-                payload_pieces,
-                payload_spans,
-                payload_length,
+                pieces,
+                spans,
+                view_length,
                 payload_start,
                 control_end,
             )
-        elif ord(line[control_start]) == 0x9B:
+        elif kind == "payload" and ord(line[control_start]) == 0x9B:
             payload_start = control_start + 1
             while (
                 payload_start < control_end
                 and "0" <= line[payload_start] <= "?"
             ):
                 payload_start += 1
-            payload_length = _append_control_view(
+            view_length = _append_control_view(
                 line,
-                payload_pieces,
-                payload_spans,
-                payload_length,
+                pieces,
+                spans,
+                view_length,
                 payload_start,
                 control_end,
             )
         cursor = control_end
 
-    return (
-        "".join(stripped_pieces),
-        stripped_spans,
-        "".join(payload_pieces),
-        payload_spans,
-    )
+    return "".join(pieces), spans
 
 
 def _redact_controlled_secret_line(line: str) -> str:
     """Fail closed from the first controlled-line secret token to line end."""
     if _TERMINAL_STRUCTURAL_TRIGGER.search(line) is None:
         return line
-    stripped, stripped_spans, payload, payload_spans = _terminal_keyword_views(line)
-    starts = tuple(
-        start
-        for start in (
-            _mapped_secret_keyword_start(stripped, stripped_spans),
-            _mapped_secret_keyword_start(payload, payload_spans),
-        )
-        if start is not None
-    )
-    if not starts:
+    # This C-level translation and compiled regex cheaply reject controlled
+    # lines that cannot begin any shared secret keyword. Only candidate lines
+    # pay for the mapped security views below.
+    candidate_view = line.translate(_CONTROLLED_LINE_CANDIDATE_TRANSLATION)
+    if _CONTROLLED_LINE_CANDIDATE.search(candidate_view) is None:
         return line
-    token_start = min(starts)
-    while token_start > 0 and not line[token_start - 1].isspace():
-        token_start -= 1
+
+    token_start: int | None = None
+    for kind in ("stripped", "payload", "key-join"):
+        view, spans = _terminal_keyword_view(line, kind)
+        start = _mapped_secret_keyword_start(line, view, spans)
+        if start is None:
+            continue
+        while start > 0 and not line[start - 1].isspace():
+            start -= 1
+        token_start = start if token_start is None else min(token_start, start)
+        if token_start == 0:
+            break
+    if token_start is None:
+        return line
     return line[:token_start] + "[redacted]"
 
 
@@ -813,7 +853,7 @@ def _redact_secret_assignments(text: str) -> str:
                 secret_key = secret_key or matched or ambiguous_matched
                 cursor = run_end
                 continue
-            control_end, final = _terminal_control_span(
+            control_end, _final = _terminal_control_span(
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
@@ -833,21 +873,37 @@ def _redact_secret_assignments(text: str) -> str:
                 # adjacent control run as an opaque key interleave in one pass
                 # so adversarial runs remain linear.
                 while control_end > cursor:
-                    if final is not None and _is_assignment_key_char(final):
+                    for _raw_offset, key_char in _terminal_control_key_chars(
+                        text, cursor, control_end
+                    ):
                         if ambiguous_tail is None:
                             ambiguous_tail = key_tail
                         ambiguous_tail, matched = (
                             _extend_secret_assignment_key_tail(
-                                ambiguous_tail, final
+                                ambiguous_tail, key_char
                             )
                         )
                         secret_key = secret_key or matched
                     cursor = control_end
+                    if (
+                        secret_key
+                        and quote is None
+                        and _assignment_operator_after_key(
+                            text,
+                            cursor,
+                            allow_string_control_operator=True,
+                        )
+                        is not None
+                    ):
+                        key_end = cursor
+                        break
                     if cursor >= length:
                         break
-                    control_end, final = _terminal_control_span(
+                    control_end, _final = _terminal_control_span(
                         text, cursor, stop_at_assignment_operator=True
                     )
+                if key_end is not None:
+                    break
                 continue
             break
         if key_length == 0:
@@ -984,6 +1040,7 @@ def redact(
     *,
     limit: int | None = OUTPUT_BOUND,
     token_secret_matcher: Callable[[str], bool] | None = None,
+    controlled_lines_redacted: bool = False,
 ) -> str:
     def matches_applicable_secret(candidate: str) -> bool:
         if _redact_standard_patterns(candidate) != candidate:
@@ -996,10 +1053,13 @@ def redact(
 
     raw_source = text or ""
     source, source_was_cut = _prebound_redaction_input(raw_source, limit)
-    # A controlled line is structurally ambiguous. Build both security views
-    # before the precise assignment scanner and fail closed when either view
+    # A controlled line is structurally ambiguous. Apply its three-view rule
+    # once before the precise assignment scanner and fail closed when any view
     # contains one of the shared assignment-key keywords.
-    if _TERMINAL_STRUCTURAL_TRIGGER.search(raw_source) is not None:
+    if (
+        not controlled_lines_redacted
+        and _TERMINAL_STRUCTURAL_TRIGGER.search(raw_source) is not None
+    ):
         source = _redact_controlled_secret_lines(
             raw_source, control_present=True
         )

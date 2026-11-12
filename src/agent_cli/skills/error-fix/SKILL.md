@@ -42,13 +42,25 @@ subsequent notification that provides useful model work belong to the script.
 
 1. A **script** on this device queries a configured log source, applies the
    shared controlled-line structural rule: after one initial ESC/C1 search,
-   every controlled raw line gets a control-stripped view (controls and their
-   payloads removed) and a payload-kept view (only introducers, terminators,
-   and CSI parameter bytes removed). If either view contains a shared secret
-   keyword, case-insensitively, the raw line is redacted from the start of the
+   each controlled raw line gets a compiled case-insensitive candidate check
+   over a control-byte-translated view. Only candidate lines build the three
+   views, one at a time: a control-stripped view (controls and their
+   payloads removed), a payload-kept view (only introducers, terminators, and
+   CSI parameter bytes removed), and a key-join view. The key-join view uses the
+   assignment scanner's own classifier to retain only control-sequence bytes
+   that the scanner may join into a key, including a key-character CSI/ESC
+   final and a `-` intermediate, while dropping string-control payloads and all
+   other control bytes. If any view contains a shared secret keyword,
+   case-insensitively, the raw line is redacted from the start of the
    mapped whitespace token through line end. Following lines remain independent;
    lines without controls skip this rule, and controlled lines without a keyword
-   retain the existing control handling. The script then applies the
+   retain the existing control handling. A whitespace token exactly
+   `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
+   exception: keywords inside that placeholder do not trigger the line rule.
+   Any other byte in that token, or a keyword elsewhere on the line, still
+   triggers it. Lane sinks replace raw and control-interleaved config-directory
+   paths on the complete source before this structural rule, apply their length
+   bound next, and run precise redaction last. The script then applies the
    shared fail-closed ESC/C1 token rule (with only strict leading/trailing SGR
    wrappers exempt after their parameter bytes are checked with the visible
    text), and classifies secret assignments on the raw line while complete or

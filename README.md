@@ -203,14 +203,26 @@ Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
 path or pattern target also redacts the complete target before normalization,
 without decoding. Any raw ESC or C0/C1
 control byte does the same before path classification.
-The shared text redactor performs one initial ESC/C1 search. On every raw line
-that contains a terminal control, it builds both a control-stripped view
-(complete or unterminated controls and payloads removed) and a payload-kept view
-(only introducers, terminators, and CSI parameter bytes removed). If either view
-contains a shared secret keyword, case-insensitively, the raw line is redacted
+The shared text redactor performs one initial ESC/C1 search. For a raw line
+that contains a terminal control, a compiled case-insensitive candidate check
+runs over a control-byte-translated view. Only candidate lines build three views,
+one at a time: a control-stripped view
+(complete or unterminated controls and payloads removed), a payload-kept view
+(only introducers, terminators, and CSI parameter bytes removed), and a key-join
+view. The key-join view uses the assignment scanner's own classifier to retain
+only control-sequence bytes that the scanner may join into a key, including a
+key-character CSI/ESC final and a `-` intermediate, while dropping string-control
+payloads and all other control bytes. If any view contains a shared secret
+keyword, case-insensitively, the raw line is redacted
 from the start of the mapped whitespace token through line end. Following lines
 remain unchanged, lines without controls keep the precise scanner unchanged,
 and controlled lines without a keyword retain the existing control handling.
+A whitespace token exactly `<config_dir>/` followed only by
+`[A-Za-z0-9._-]+` is the one structural exception: keywords inside that
+placeholder do not trigger the line rule. Any other byte in that token, or a
+keyword elsewhere on the line, still triggers it. Lane sinks replace raw and
+control-interleaved config-directory paths on the complete source before this
+structural rule, apply their length bound next, and run precise redaction last.
 Credential assignments use one linear scanner over complete, unbounded key
 tokens, including quoted JSON keys; quoted values are consumed through their
 closing quote or the bounded input end. The scanner recognizes the legacy
@@ -228,8 +240,9 @@ the key is complete, payload operators stay opaque so split key fragments still
 join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
 `ESC \` or the eight-bit ST byte.
 URL schemes, escape parameters, and removable-control interleaves use fixed
-matching windows. Bounded lane fields are cut to their limit plus a small
-fail-closed inspection margin before redaction.
+matching windows. For bounded lane fields, the controlled-line structural rule
+first sees the complete raw source; the result is then cut to the limit plus a
+small fail-closed inspection margin before the remaining precise redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage

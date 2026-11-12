@@ -239,13 +239,25 @@ terminal sanitization or path classification.
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
 one initial ESC/C1 search skips the structural rule entirely when the input has
-no terminal controls. On each controlled raw line, a control-stripped view
-removes complete or unterminated controls and their payloads, while a
-payload-kept view removes only introducers, terminators, and CSI parameter
-bytes. If either view contains a shared secret keyword, case-insensitively, the
-raw line is replaced from the start of that keyword's mapped whitespace token
+no terminal controls. For each controlled raw line, a compiled case-insensitive
+candidate check runs over a control-byte-translated view. Only candidate lines
+build the three views, one at a time: a control-stripped view
+removes complete or unterminated controls and their payloads, a payload-kept
+view removes only introducers, terminators, and CSI parameter bytes, and a
+key-join view uses the assignment scanner's own classifier to retain only
+control-sequence bytes that the scanner may join into a key. Those bytes include
+a key-character CSI/ESC final and a `-` intermediate; string-control payloads
+and all other control bytes are dropped. If any view contains a shared secret
+keyword, case-insensitively, the raw line is replaced from the start of that
+keyword's mapped whitespace token
 through line end. Other lines remain independent, and controlled lines without
-a keyword retain the existing control handling. Credential assignments are
+a keyword retain the existing control handling. A whitespace token exactly
+`<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
+exception: keywords inside that placeholder do not trigger the line rule. Any
+other byte in that token, or a keyword elsewhere on the line, still triggers
+it. Lane sinks replace raw and control-interleaved config-directory paths on
+the complete source before this structural rule, apply their length bound next,
+and run precise redaction last. Credential assignments are
 then classified on the full raw text, where
 complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque and
 payload whitespace is not a value delimiter. Before a complete secret keyword,
@@ -267,10 +279,11 @@ redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. Credential assignments use a linear lexical scan of complete,
 unbounded key tokens, including quoted JSON keys. URL schemes, terminal escape
 parameters, and removable-control interleaves have fixed matching windows so
-long separatorless text remains linear to process. Already bounded lane fields
-are cut to their limit plus a small inspection margin before matching; a token
-split by that cut is redacted in full before the ordinary truncation marker is
-added.
+long separatorless text remains linear to process. For bounded lane fields, the
+controlled-line structural rule first sees the complete raw source. Its result
+is then cut to the limit plus a small inspection margin before the remaining
+matching; a token split by that cut is redacted in full before the ordinary
+truncation marker is added.
 The known-secret raw pass
 allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the

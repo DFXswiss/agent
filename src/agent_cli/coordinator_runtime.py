@@ -117,6 +117,7 @@ from .coordinator_lanes import (
 from .github_accounts import AccountError, load_accounts
 from .skills import has_skill
 from .store import Store, StoreError, utcnow
+from .timestamps import parse_utc_timestamp
 
 # Re-exports for coordinator.py and tests.
 __all__ = [
@@ -584,10 +585,8 @@ def _insert_assigned_activity(
             and row.get("session_id") == worker.session_id
             and row.get("type") == "issue.assigned"
             and row.get("execution_status") == "done"
-            and isinstance(stored_assigned_at, str)
-            and bool(stored_assigned_at)
-            and isinstance(observed_at, str)
-            and bool(observed_at)
+            and parse_utc_timestamp(stored_assigned_at) is not None
+            and parse_utc_timestamp(observed_at) is not None
             and payload == expected_payload
         )
 
