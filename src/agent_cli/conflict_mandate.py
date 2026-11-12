@@ -114,6 +114,7 @@ SOURCE_LOCK_PREFIX = "conflicts-source:"
 MERGE_COMMIT_BLOCKER = "branch contains merge commits"
 CHECKS_CHANGED_STATE = "checks changed the repository state"
 LOCK_REFUSED = "cannot push to the head branch"
+INVALID_UTF8_OUTPUT = "command output is not valid UTF-8"
 BOUNDED_TIMEOUT_RETURNCODE = 124
 MARKER_LOOKUP_BLOCKER_EXEMPT_PHASES = frozenset(
     {"blocker-pending", "result-pending", "pushing"}
@@ -187,6 +188,16 @@ class _Runtime:
     vendor: str
     binding: Any
     request: _RequestRuntime
+
+
+def _request_git_runner(runner: Runner) -> Runner:
+    def run(argv: list[str]) -> Any:
+        try:
+            return runner(argv)
+        except UnicodeDecodeError as exc:
+            raise _Blocker(INVALID_UTF8_OUTPUT) from exc
+
+    return run
 
 
 def _now() -> datetime:
@@ -380,6 +391,7 @@ def _discover(
         repo_candidates: list[tuple[datetime, _Request]] = []
         repo_transient = False
         repo_transient_time: datetime | None = None
+        transient_pull_numbers: set[int] = set()
         for comment in comments:
             number = pull_number_from_comment(comment)
             if number is None:
@@ -405,6 +417,8 @@ def _discover(
                 pull_open=True,
             ):
                 continue
+            if number in transient_pull_numbers:
+                continue
             request = _Request(
                 repo=repo,
                 number=number,
@@ -427,6 +441,7 @@ def _discover(
             except ConflictTransientError as exc:
                 if dry_run:
                     raise
+                transient_pull_numbers.add(number)
                 _record_transient(request_ctx)
                 repo_transient = True
                 if repo_transient_time is None or created < repo_transient_time:
@@ -551,11 +566,6 @@ def _push_route(
     *,
     dry_run: bool = False,
 ) -> str:
-    if not branch_ref_valid(head_ref):
-        reason = "unsupported head branch name"
-        if dry_run:
-            return f"would post blocker: {reason}"
-        raise _Blocker(reason)
     if head_ref.casefold() in {name.casefold() for name in PROTECTED_BRANCHES}:
         reason = f"refusing to push protected head ref {head_ref}"
         if dry_run:
@@ -1058,7 +1068,7 @@ def _finish_blocker(
         else:
             try:
                 rebase_abort(request_runtime.git, str(ctx.worktree))
-            except (StoreError, OSError):
+            except (_Blocker, StoreError, OSError):
                 remove_repository(ctx.worktree)
                 remove_repository(ctx.control / "git")
                 skip_git = True
@@ -1313,6 +1323,7 @@ def _run_checks(
         "AGENT_CONFLICTS_SESSION": ctx.worker.session_id,
         "AGENT_CONFLICTS_WORKTREE": str(ctx.worktree),
     }
+
     def metadata_failure() -> str | None:
         reason: str | None = None
         try:
@@ -1344,9 +1355,13 @@ def _run_checks(
         if reason is not None:
             return False, reason, True
         completed = None
-        unavailable = redact(
-            f"check command could not be evaluated: {type(exc).__name__}",
-            limit=FAILURE_TAIL_LIMIT,
+        unavailable = (
+            INVALID_UTF8_OUTPUT
+            if isinstance(exc, UnicodeDecodeError)
+            else redact(
+                f"check command could not be evaluated: {type(exc).__name__}",
+                limit=FAILURE_TAIL_LIMIT,
+            )
         )
     else:
         unavailable = None
@@ -1455,7 +1470,10 @@ def _run_request(
     observations = observations if observations is not None else []
     if not dry_run:
         save_state(ctx)
-    request_runtime = runtime.request
+    request_runtime = _RequestRuntime(
+        git=_request_git_runner(runtime.request.git),
+        github=runtime.request.github,
+    )
     ctx.git_runner = request_runtime.git
     try:
         phase = ctx.state.get("phase")
@@ -1550,6 +1568,22 @@ def _run_request(
             base_sha,
             mergeable,
         ) = _pull_fields(pull)
+        for branch_ref, reason in (
+            (head_ref, "unsupported head branch name"),
+            (base_ref, "unsupported base branch name"),
+        ):
+            if not branch_ref_valid(branch_ref):
+                if dry_run:
+                    return _dry_run_request(
+                        ctx,
+                        head_ref=head_ref,
+                        head_sha=head_sha,
+                        head_repo=head_repo,
+                        base_ref=base_ref,
+                        route=f"would post blocker: {reason}",
+                        mergeable=mergeable,
+                    )
+                raise _Blocker(reason)
         try:
             route = _push_route(
                 runtime,
@@ -1563,19 +1597,6 @@ def _run_request(
             if not dry_run:
                 raise
             route = f"would post blocker: {exc}"
-        if not branch_ref_valid(base_ref):
-            reason = "unsupported base branch name"
-            if dry_run:
-                return _dry_run_request(
-                    ctx,
-                    head_ref=head_ref,
-                    head_sha=head_sha,
-                    head_repo=head_repo,
-                    base_ref=base_ref,
-                    route=f"would post blocker: {reason}",
-                    mergeable=mergeable,
-                )
-            raise _Blocker(reason)
         if not dry_run:
             save_state(
                 ctx,

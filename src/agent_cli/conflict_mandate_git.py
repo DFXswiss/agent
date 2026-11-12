@@ -579,6 +579,12 @@ def branch_ref_valid(ref: object) -> bool:
     """Mirror the documented ``git check-ref-format`` branch rules in Python."""
     if not isinstance(ref, str) or not ref or ref == "@":
         return False
+    if any(
+        character.isspace()
+        or unicodedata.category(character).startswith("C")
+        for character in ref
+    ):
+        return False
     if any(ch in _FORBIDDEN_REF_CHARS for ch in ref):
         return False
     if ".." in ref or "@{" in ref or "//" in ref:

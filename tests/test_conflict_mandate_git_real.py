@@ -241,6 +241,48 @@ def test_rebase_conflict_reports_real_uu_and_incomplete(tmp_path: Path) -> None:
     assert rebase_complete(_runner, str(worktree)) is False
 
 
+def test_non_utf8_conflicted_name_is_never_reported_as_supported(
+    tmp_path: Path,
+) -> None:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    raw_name = b"caf\xe9.txt"
+    _init_repo(upstream)
+
+    def write_raw(root: Path, content: bytes) -> None:
+        raw_path = os.path.join(os.fsencode(root), raw_name)
+        with open(raw_path, "wb") as stream:
+            stream.write(content)
+
+    try:
+        write_raw(upstream, b"base\n")
+    except OSError:
+        pytest.skip("filesystem refuses a non-UTF-8 file name")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(["git", "clone", str(upstream), str(worktree)]).returncode == 0
+    _git(worktree, "config", "user.name", "Conflict Test")
+    _git(worktree, "config", "user.email", "conflict@example.com")
+    _git(worktree, "config", "commit.gpgsign", "false")
+    _git(worktree, "config", "core.hooksPath", "/dev/null")
+    _git(worktree, "checkout", "-b", "feature")
+    write_raw(worktree, b"feature\n")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature")
+    write_raw(upstream, b"base change\n")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base change")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+
+    try:
+        paths = unmerged_paths(_runner, str(worktree))
+    except UnicodeDecodeError:
+        return
+    assert len(paths) == 1
+    assert paths[0].supported is False
+
+
 def test_rebase_continue_without_editor_finishes_signed_range(tmp_path: Path) -> None:
     if shutil.which("ssh-keygen") is None:
         pytest.skip("ssh-keygen is required for signing assertions")
