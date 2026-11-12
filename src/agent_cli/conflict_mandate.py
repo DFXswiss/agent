@@ -134,6 +134,8 @@ REPOSITORY_SELECTING_GIT_ENV_VARS = (
     "GIT_CONFIG_PARAMETERS",
     "GIT_EXEC_PATH",
     "GIT_TEMPLATE_DIR",
+    "GIT_EDITOR",
+    "GIT_SEQUENCE_EDITOR",
     "GIT_SSH",
     "GIT_ASKPASS",
 )
@@ -432,8 +434,6 @@ def _discover(
                 if transient_error is None:
                     transient_error = exc
                 continue
-            if pull is None:
-                raise ConflictTransientError("pull request was not found")
             if pull.get("state") != "open":
                 continue
             repo_candidates.append((created, request))
@@ -1799,6 +1799,16 @@ def _run_request(
             if check_result.startswith(CHECKS_CHANGED_STATE):
                 raise _Blocker(check_result, skip_git=checks_skip_git)
             raise _Blocker(f"configured check failed:\n{check_result}")
+        _verify_push_target(
+            request_runtime,
+            repo=ctx.request.repo,
+            number=ctx.request.number,
+            observed_head_sha=head_sha,
+            verified_base_sha=verified_base_sha,
+            head_repo=head_repo,
+            head_ref=head_ref,
+            base_ref=base_ref,
+        )
         save_state(
             ctx,
             "pushing",
@@ -1810,16 +1820,6 @@ def _run_request(
             resolved_files=resolved_files,
             check_result=check_result,
             mergeable=_mergeable_fact(mergeable),
-        )
-        _verify_push_target(
-            request_runtime,
-            repo=ctx.request.repo,
-            number=ctx.request.number,
-            observed_head_sha=head_sha,
-            verified_base_sha=verified_base_sha,
-            head_repo=head_repo,
-            head_ref=head_ref,
-            base_ref=base_ref,
         )
         pushed = push_with_lease(
             git_runner,

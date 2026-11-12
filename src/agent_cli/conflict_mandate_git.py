@@ -338,9 +338,9 @@ def merge_commits(runner: Runner, worktree: str, *, base: str) -> list[str]:
 
 
 def rebase(runner: Runner, worktree: str, *, base: str) -> Completed:
-    # The account Git runner is responsible for the child environment. Ambient
-    # GIT_EDITOR, GIT_SEQUENCE_EDITOR, VISUAL, and EDITOR can still override
-    # these configuration values; see the known limits in the operator guide.
+    # Preflight refuses to run when GIT_EDITOR or GIT_SEQUENCE_EDITOR is set.
+    # VISUAL and EDITOR rank below core.editor in Git's order, so they cannot
+    # override the -c core.editor=true and -c sequence.editor=true options here.
     return run(
         runner,
         worktree,
