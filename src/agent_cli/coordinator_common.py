@@ -480,6 +480,26 @@ def _append_control_view(
     return view_length + length
 
 
+def _append_string_control_payload_view(
+    text: str,
+    pieces: list[str],
+    spans: list[tuple[int, int, int]],
+    view_length: int,
+    raw_start: int,
+    raw_end: int,
+) -> int:
+    """Append payload bytes while omitting removable controls and mapping gaps."""
+    cursor = raw_start
+    for control in _RAW_REMOVED_CONTROL.finditer(text, raw_start, raw_end):
+        view_length = _append_control_view(
+            text, pieces, spans, view_length, cursor, control.start()
+        )
+        cursor = control.end()
+    return _append_control_view(
+        text, pieces, spans, view_length, cursor, raw_end
+    )
+
+
 def _is_config_dir_placeholder_token(line: str, raw_offset: int) -> bool:
     """Return whether an offset belongs to one exact config-dir placeholder."""
     token_start = raw_offset
@@ -547,7 +567,7 @@ def _terminal_keyword_view(
                 payload_end = control_end - 2
             elif control_end > payload_start and line[control_end - 1] in "\x07\x9c":
                 payload_end = control_end - 1
-            view_length = _append_control_view(
+            view_length = _append_string_control_payload_view(
                 line,
                 pieces,
                 spans,

@@ -2787,6 +2787,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     )
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
+        second_review_wait: list[str] | None = None
         sha = str(info.get("merge_commit_sha") or "")
         merged_at = str(info.get("merged_at") or "")
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
@@ -2890,6 +2891,18 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR has no report or waiver evidence "
                     f"bound to base {observed_base}; a merged PR cannot be remeasured"
                 )
+            second_review = _a38_second_review_outcome(c, expected_head)
+            if second_review != "passed":
+                second_review_wait = _await_second_review_after_merge(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    expected_head,
+                    blocking=second_review == "blocking",
+                )
+                if c.get("phase") == "blocked":
+                    return second_review_wait
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -2925,6 +2938,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     head=expected_head,
                     observation=ci_observation,
                 )
+        if second_review_wait is not None:
+            return second_review_wait
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -2944,16 +2959,6 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             )
             return ["trusted review list could not be read; retrying await_merge"]
         if worker.a38:
-            second_review = _a38_second_review_outcome(c, expected_head)
-            if second_review != "passed":
-                return _await_second_review_after_merge(
-                    store,
-                    worker,
-                    task,
-                    runner,
-                    expected_head,
-                    blocking=second_review == "blocking",
-                )
             if not _readiness_keys_closed(store, task, expected_head):
                 try:
                     _close_readiness_after_merge(

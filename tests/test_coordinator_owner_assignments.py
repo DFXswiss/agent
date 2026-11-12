@@ -2112,6 +2112,125 @@ def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
     assert store.rows("activity") == []
 
 
+def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
+    monkeypatch, tmp_path
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        second_review_timeout_seconds=600,
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    del task["payload"]["coordinator"]["a38"]["second_review"]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    observations: list[str] = []
+
+    def pending_ci(*_args, **_kwargs):
+        observations.append("pending")
+        return _CiObservation("pending", "checks pending")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci", pending_ci
+    )
+    clock = iter(
+        (
+            "2026-11-05T10:00:00Z",
+            "2026-11-05T10:05:00Z",
+            "2026-11-05T10:11:00Z",
+        )
+    )
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
+    published: list[str] = []
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: (
+            published.append(kind) or [f"blocker {kind}"]
+        ),
+    )
+
+    first = phase_await_merge(store, worker, store.row("task", task_id), object())
+    second = phase_await_merge(store, worker, store.row("task", task_id), object())
+    third = phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    assert "retrying await_merge" in first[0]
+    assert "retrying await_merge" in second[0]
+    assert third == ["blocker merged-without-second-review"]
+    assert observations == ["pending", "pending"]
+    assert published == ["merged-without-second-review"]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["a38"]["merged_waiting_since"] == "2026-11-05T10:00:00Z"
+    assert saved["phase"] == "blocked"
+
+
+def test_a38_merged_task_blocks_second_review_while_ci_is_pending(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["a38"]["second_review"]["reviews"] = [
+        {"blocks_merge": True}
+    ]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    ci_observations: list[str] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: (
+            ci_observations.append("pending")
+            or _CiObservation("pending", "checks pending")
+        ),
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: (
+            published.append(kind) or [f"blocker {kind}"]
+        ),
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["blocker merged-with-blocking-second-review"]
+    assert ci_observations == []
+    assert published == ["merged-with-blocking-second-review"]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+
+
 def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(
     monkeypatch, tmp_path
 ):

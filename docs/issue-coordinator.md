@@ -758,11 +758,13 @@ keyword, case-insensitively, the raw logical line is redacted from the start of 
 whitespace token containing the first mapped keyword
 through the end of that logical line. All three views remove standalone
 removable C0 bytes such as backspace, NUL, DEL, and carriage return; those bytes
-do not activate the rule without ESC/C1. Complete and unterminated string-control
-spans are indexed once on the full raw input before line splitting, so newlines
-inside OSC, DCS, PM, APC, or SOS payloads are not boundaries. If a mapped keyword
-starts inside such a span, redaction starts at its introducer. A following normal
-line outside the span remains independent. An unterminated string control
+do not activate the rule without ESC/C1. Removable control bytes inside retained
+string-control payloads are omitted from every structural view, so they cannot
+split a keyword in the payload-kept view. Complete and unterminated
+string-control spans are indexed once on the full raw input before line
+splitting, so newlines inside OSC, DCS, PM, APC, or SOS payloads are not
+boundaries. If a mapped keyword starts inside such a span, redaction starts at
+its introducer. A following normal line outside the span remains independent. An unterminated string control
 extends through the end of the text and swallows every following physical line
 into its payload. A controlled line without a secret keyword continues through
 the existing control handling. A whitespace token exactly `<config_dir>/`
@@ -1222,13 +1224,20 @@ on that merged head with the same readiness source as the ordinary phase unless
 it already ran on exactly that head (`readiness_head`); keys closed on an earlier
 head do not count. An unreadable pull request state is retried on the
 next tick without taking in mail.
-Before `task-done` is evaluated for a merged A38 head, `await_merge` also
-re-observes the exact-head cumulative GitHub check rollup and Actions workflow
-inventory with the same classifier as `ci`. Pending or transport-unavailable
+Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
+the merged-head second-review outcome and starts or checks its timeout on every
+tick. A blocking review or expired timeout publishes its merge blocker even
+while cumulative CI is pending or temporarily unavailable. A non-expired wait
+may still return the cumulative-CI pending result, but its timer has already
+been persisted and checked. `await_merge` re-observes the exact-head cumulative
+GitHub check rollup and Actions workflow inventory with the same classifier as
+`ci`. Pending or transport-unavailable
 evidence retries without effects. Failed, cancelled, `action_required`,
 malformed, or uncovered `skipped`/`neutral` evidence leaves the merged task at a
 non-recoverable human-intervention blocker; only a verified exact-head author
-report may cover a matching `skipped` or `neutral` check.
+report may cover a matching `skipped` or `neutral` check. This cumulative CI
+gate remains a precondition for `task-done` and its `evaluate_allow` decision;
+it does not defer second-review timeout or blocker handling.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never
 reopens work. After the merge every waiting review is taken in before
