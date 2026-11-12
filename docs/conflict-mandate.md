@@ -122,6 +122,7 @@ worktree and separate Git directory are removed directly. The operator must
 therefore keep those drivers out of the worker account's system, global with
 its conditional includes, and repository configuration. Every `git diff`
 invocation of this feature passes `--no-ext-diff` and `--no-textconv`.
+The query runs again after the checkout and before the rebase.
 
 Configure at most one conflicts worker per repository on a device and across
 devices; mandating two different worker accounts on the same pull request at
