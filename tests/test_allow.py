@@ -63,6 +63,17 @@ def _ready_task(
 
 
 class TestEvaluateAllow(unittest.TestCase):
+    def test_merged_is_terminal_for_claim_done(self) -> None:
+        task = _ready_task(state="merged")
+        task["checklist"]["local_check_pass"] = "pending"
+        result = evaluate_allow(
+            "claim-done",
+            session_id="sess-a",
+            task_id=None,
+            session_tasks=[task],
+        )
+        self.assertTrue(result.allowed)
+
     def test_claim_done_without_tasks_allows(self) -> None:
         r = evaluate_allow(
             "claim-done",

@@ -45,6 +45,60 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_write_many_commits_together_and_rolls_back_second_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Store(tmp_path)
+    try:
+        writes = [
+            ("session", "insert", key, {"id": key, "status": "active"})
+            for key in ("s1", "s2")
+        ]
+        original = store._write_in_txn
+        calls = 0
+
+        def fail_second(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("second write failed")
+            return original(*args)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "_write_in_txn", fail_second)
+            with pytest.raises(RuntimeError, match="second write failed"):
+                store.write_many(writes)
+        assert store.row("session", "s1") is None
+        assert store.row("session", "s2") is None
+        assert store.pending_events() == []
+        events = store.write_many(writes)
+        assert len(events) == 2
+        assert store.row("session", "s1")["status"] == "active"
+        assert store.row("session", "s2")["status"] == "active"
+        assert len(store.pending_events()) == 2
+    finally:
+        store.close()
+
+
+def test_write_many_failing_check_rolls_back_all_writes(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        def check() -> None:
+            # A write through this connection proves the check shares the transaction.
+            store._write_in_txn("session", "insert", "check", {"id": "check"})
+            raise RuntimeError("ledger changed")
+
+        with pytest.raises(RuntimeError, match="ledger changed"):
+            store.write_many(
+                [("session", "insert", "batch", {"id": "batch"})], check=check,
+            )
+        assert store.row("session", "check") is None
+        assert store.row("session", "batch") is None
+        assert store.pending_events() == []
+    finally:
+        store.close()
+
+
 def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None:
     store = Store(tmp_path)
     for row_id in ("a-row", "c-row", "b-row"):

@@ -413,6 +413,7 @@ agent session keep-working --id ID [--once|--follow]
 # default / --once is one tick; --follow polls every 30s.
 agent activity add --session ID --type TYPE --payload-file FILE
 agent task create|list|show|state|summary|pr       # spine skill
+agent task close-from-pr (--id ID | --session ID) # verified human merge; device only
 agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
 agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
@@ -623,6 +624,8 @@ Write owner, hub role, the narrow website-origin exceptions, opt-in skills,
 required session row, and the generic `activity` catalog stay as in §2. Spine
 task states stay the spine skill’s states. They are not replaced by a hub
 machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
+The terminal `merged` state records a verified human merge whose remaining
+checklist evidence still blocks `done`; only `task close-from-pr` writes it.
 
 ### 19.6 Ready for review
 

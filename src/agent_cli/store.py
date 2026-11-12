@@ -283,6 +283,19 @@ class Store:
         with self._lock, self.conn.transaction():
             return self._write_in_txn(table, op, row_id, payload)
 
+    @_wrap_pg_errors
+    def write_many(
+        self, writes: list[tuple[str, str, str, dict[str, Any]]],
+        *, check: Callable[[], None] | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock, self.conn.transaction():
+            if check is not None:
+                # Same lock as next_seq: exclude local writes, including new rows,
+                # throughout validation and the batch, not just existing row updates.
+                self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (self.device_id(),))
+                check()
+            return [self._write_in_txn(*write) for write in writes]
+
     def write_with_advisory(
         self,
         table: str,
