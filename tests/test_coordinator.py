@@ -8268,6 +8268,66 @@ def test_a38_merge_with_blocking_second_review_blocks_at_once(
     assert task["payload"]["coordinator"]["phase"] == "blocked"
 
 
+def test_a38_valid_merge_timestamp_replaces_first_observation_deadline_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_github
+
+    task_id = "abababab-0000-4000-8000-000000000023"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    worker = replace(worker, second_review_timeout_seconds=600)
+    a38 = task["payload"]["coordinator"]["a38"]
+    a38.pop("second_review", None)
+    clock = iter(("2026-11-05T10:30:00Z", "2026-11-05T10:36:00Z"))
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+    )
+
+    first = coordinator_github._await_second_review_after_merge(
+        store,
+        worker,
+        task,
+        fake,
+        fake.head,
+        outcome="missing",
+        merged_at="invalid",
+    )
+
+    assert "awaiting the external second review" in first[0]
+    assert a38["merged_waiting_since"] == "2026-11-05T10:30:00Z"
+    assert a38["merged_waiting_since_source"] == "first_observation"
+
+    a38["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "requirement_satisfied_at": "2026-11-05T10:35:00Z",
+        "reviews": [
+            {"blocks_merge": False, "at": "2026-11-05T10:35:00Z"}
+        ],
+    }
+    second = coordinator_github._await_second_review_after_merge(
+        store,
+        worker,
+        task,
+        fake,
+        fake.head,
+        outcome="passed",
+        merged_at="2026-11-05T10:00:00Z",
+    )
+
+    assert second == ["blocker merged-without-second-review"]
+    assert a38["merged_waiting_since"] == "2026-11-05T10:00:00Z"
+    assert a38["merged_waiting_since_source"] == "merged_at"
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
 def _a38_merged_review_deadline_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -8286,6 +8346,7 @@ def _a38_merged_review_deadline_env(
     checkpoint = task["payload"]["coordinator"]
     checkpoint["phase"] = "await_merge"
     checkpoint["a38"]["merged_waiting_since"] = "2026-01-01T00:00:00Z"
+    checkpoint["a38"]["merged_waiting_since_source"] = "first_observation"
     checkpoint["evidence"]["readiness_head"] = fake.head
     # The timeout is part of the pinned worker configuration. Re-pin this test
     # fixture so advance_one reaches second-review intake instead of correctly
@@ -8325,10 +8386,10 @@ def test_advance_one_blocks_review_ingested_after_merged_deadline(
         tmp_path,
         monkeypatch,
         task_id=task_id,
-        review_second=11,
+        review_second=16,
     )
     monkeypatch.setattr(
-        coordinator_github, "utcnow", lambda: "2026-01-01T00:00:12Z"
+        coordinator_github, "utcnow", lambda: "2026-01-01T00:00:17Z"
     )
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
 
@@ -8338,9 +8399,12 @@ def test_advance_one_blocks_review_ingested_after_merged_deadline(
         "second_review"
     ]
     assert second_review["status"] == "posted"
-    assert second_review["reviews"][-1]["at"] == "2026-01-01T00:00:11Z"
+    assert second_review["reviews"][-1]["at"] == "2026-01-01T00:00:16Z"
     assert second_review["reviews"][-1]["blocks_merge"] is False
-    assert second_review["requirement_satisfied_at"] == "2026-01-01T00:00:11Z"
+    assert second_review["requirement_satisfied_at"] == "2026-01-01T00:00:16Z"
+    assert saved["payload"]["coordinator"]["a38"][
+        "merged_waiting_since_source"
+    ] == "merged_at"
     assert (
         coordinator_github._a38_second_review_outcome(
             saved["payload"]["coordinator"], fake.head
@@ -8523,6 +8587,26 @@ def test_a38_public_prompt_hides_local_paths(tmp_path: Path) -> None:
     assert "~/notes" in published
     assert str(worker.workspace_root) not in published
     assert str(Path.home()) not in published
+
+
+def test_coordinator_checkpoint_roots_hide_nested_string_control_splits(
+    nested_terminal_string_control: str,
+) -> None:
+    from agent_cli.coordinator_lanes import _redact_coordinator_lane_text
+
+    root = "/opt/coordinator/workspace"
+    split_root = (
+        f"/opt/coordinator{nested_terminal_string_control}/workspace"
+    )
+
+    redacted = _redact_coordinator_lane_text(
+        f"checkpoint at {split_root}/private",
+        config_dir=None,
+        path_replacements=((root, "<workspace>"),),
+        limit=None,
+    )
+
+    assert redacted == "checkpoint at <workspace>/private"
 
 
 def test_a38_public_prompt_replaces_resolved_symlinked_paths_whole(tmp_path: Path) -> None:

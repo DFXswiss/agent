@@ -2819,6 +2819,12 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
+        if str((info.get("head") or {}).get("sha") or "") != expected_head:
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
         if worker.a38:
             moved_base = c.get("base_moved_after_evidence")
             if isinstance(moved_base, dict):
@@ -2885,12 +2891,6 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 return second_review_wait or [
                     "blocked: merged-head second-review deadline failed"
                 ]
-        if str((info.get("head") or {}).get("sha") or "") != expected_head:
-            clear_reply_recovery(c)
-            raise NonRecoverableCoordinatorError(
-                "task-done refused: merged PR head differs from reviewed head; "
-                "a merged PR cannot be remeasured"
-            )
         if worker.a38:
             from .coordinator_a38 import (
                 merged_base_evidence_satisfied,
@@ -3099,21 +3099,33 @@ def _await_second_review_after_merge(
     without it). Keep accepting that review for the merged head for one review
     timeout, then stop with a visible, non-recoverable blocker. Every merged
     tick compares that deadline with the deciding review record's timestamp,
-    including when the current outcome passes. A blocking review stops at once.
+    including when the current outcome passes. A valid merge timestamp replaces
+    a first-observation fallback, and the persisted source records that choice.
+    A blocking review stops at once.
     """
     c = coord(task)
     a38 = c.setdefault("a38", {})
     stamp = utcnow()
     now = _parse_coordinator_time(stamp)
-    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
     if now is None:
         raise CoordinatorError("coordinator clock returned an invalid timestamp")
-    if since is None:
-        merged_since = _parse_coordinator_time(merged_at)
-        waiting_since = merged_at if merged_since is not None else stamp
-        a38["merged_waiting_since"] = waiting_since
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    source = str(a38.get("merged_waiting_since_source") or "")
+    merged_since = _parse_coordinator_time(merged_at)
+    if merged_since is not None:
+        if since != merged_since or source != "merged_at":
+            a38["merged_waiting_since"] = merged_at
+            a38["merged_waiting_since_source"] = "merged_at"
+            save_task(store, task)
+        since = merged_since
+    elif since is None:
+        a38["merged_waiting_since"] = stamp
+        a38["merged_waiting_since_source"] = "first_observation"
         save_task(store, task)
-        since = merged_since or now
+        since = now
+    elif source not in ("merged_at", "first_observation"):
+        a38["merged_waiting_since_source"] = "first_observation"
+        save_task(store, task)
     if outcome == "blocking":
         c["phase"] = "blocked"
         c["blocker"] = f"merged although the external second review blocks the merge on {head}"

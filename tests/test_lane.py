@@ -501,9 +501,14 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
     assert hide_config_dir("unchanged", None) == "unchanged"
 
 
-def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() -> None:
+def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
+    nested_terminal_string_control: str,
+) -> None:
     config_dir = "/opt/profiles/router"
-    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    split_path = (
+        f"/opt/profi{nested_terminal_string_control}"
+        "les/router/openrouter-api-key"
+    )
     raw = f"provider failed at {split_path}"
 
     assert hide_config_dir(raw, config_dir) == (
@@ -881,6 +886,34 @@ def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
         elapsed = time.monotonic() - started
         assert elapsed < 2, f"{label} took {elapsed:.3f}s"
         assert cleaned == expected
+
+
+def test_known_secret_scanners_are_linear_across_one_large_nested_string_control(
+) -> None:
+    depth = 100_000
+    control = ("\x1bP" * depth) + "opaque payload" + ("\x1b\\" * depth)
+    raw = f"api_key=model-{control}secret"
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+        (
+            "urlencoded",
+            lambda: redact_terminal_interleaved_urlencoded_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+    )
+
+    for label, call in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == "[redacted]"
 
 
 def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:

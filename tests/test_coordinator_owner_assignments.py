@@ -2338,6 +2338,9 @@ def test_a38_merged_task_retries_unavailable_cumulative_ci_after_deadline_check(
     expected_after_first["payload"]["coordinator"]["a38"][
         "merged_waiting_since"
     ] = "2026-10-01T12:00:00Z"
+    expected_after_first["payload"]["coordinator"]["a38"][
+        "merged_waiting_since_source"
+    ] = "merged_at"
     expected_after_first["updated_at"] = after_first["updated_at"]
 
     assert "retrying await_merge" in first_lines[0]
@@ -2419,7 +2422,76 @@ def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
     assert published == ["merged-without-second-review"]
     saved = store.row("task", task_id)["payload"]["coordinator"]
     assert saved["a38"]["merged_waiting_since"] == "2026-10-01T12:00:00Z"
+    assert saved["a38"]["merged_waiting_since_source"] == "merged_at"
     assert saved["phase"] == "blocked"
+
+
+def test_a38_merged_head_mismatch_precedes_second_review_blocker(
+    monkeypatch, tmp_path
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_common import NonRecoverableCoordinatorError
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, expected_head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["a38"]["second_review"]["reviews"] = [
+        {"blocks_merge": True, "at": "2026-10-01T11:59:00Z"}
+    ]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, expected_head)
+    reported_head = "c" * 40
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"sha": reported_head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_a38_second_review_outcome",
+        lambda *_args: pytest.fail("second review must not be evaluated"),
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, **_kwargs: pytest.fail(
+            "wrong-head blocker must not publish"
+        ),
+    )
+
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match="merged PR head differs from reviewed head",
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "done"
 
 
 def test_a38_review_satisfied_after_merged_deadline_blocks_completion(
@@ -2442,9 +2514,10 @@ def test_a38_review_satisfied_after_merged_deadline_blocks_completion(
     )
     task = store.row("task", task_id)
     a38 = task["payload"]["coordinator"]["a38"]
-    a38["merged_waiting_since"] = "2026-11-05T10:00:00Z"
-    a38["second_review"]["requirement_satisfied_at"] = "2026-11-05T10:11:00Z"
-    a38["second_review"]["reviews"][-1]["at"] = "2026-11-05T10:11:00Z"
+    a38["merged_waiting_since"] = "2026-10-01T12:00:00Z"
+    a38["merged_waiting_since_source"] = "merged_at"
+    a38["second_review"]["requirement_satisfied_at"] = "2026-10-01T12:11:00Z"
+    a38["second_review"]["reviews"][-1]["at"] = "2026-10-01T12:11:00Z"
     store.write(
         "task",
         "update",
@@ -2453,7 +2526,7 @@ def test_a38_review_satisfied_after_merged_deadline_blocks_completion(
     )
     _patch_early_merge_readiness(monkeypatch, head)
     monkeypatch.setattr(
-        coordinator_github, "utcnow", lambda: "2026-11-05T10:12:00Z"
+        coordinator_github, "utcnow", lambda: "2026-10-01T12:12:00Z"
     )
     published: list[str] = []
     monkeypatch.setattr(
@@ -2493,9 +2566,10 @@ def test_a38_review_satisfied_before_merged_deadline_completes_after_green_ci(
     )
     task = store.row("task", task_id)
     a38 = task["payload"]["coordinator"]["a38"]
-    a38["merged_waiting_since"] = "2026-11-05T10:00:00Z"
-    a38["second_review"]["requirement_satisfied_at"] = "2026-11-05T10:09:00Z"
-    a38["second_review"]["reviews"][-1]["at"] = "2026-11-05T10:09:00Z"
+    a38["merged_waiting_since"] = "2026-10-01T12:00:00Z"
+    a38["merged_waiting_since_source"] = "merged_at"
+    a38["second_review"]["requirement_satisfied_at"] = "2026-10-01T12:09:00Z"
+    a38["second_review"]["reviews"][-1]["at"] = "2026-10-01T12:09:00Z"
     store.write(
         "task",
         "update",
@@ -2504,7 +2578,7 @@ def test_a38_review_satisfied_before_merged_deadline_completes_after_green_ci(
     )
     _patch_early_merge_readiness(monkeypatch, head)
     monkeypatch.setattr(
-        coordinator_github, "utcnow", lambda: "2026-11-05T10:12:00Z"
+        coordinator_github, "utcnow", lambda: "2026-10-01T12:12:00Z"
     )
 
     assert phase_await_merge(

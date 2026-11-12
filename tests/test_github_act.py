@@ -608,6 +608,7 @@ def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
 
 def test_github_failure_row_redacts_controls_credentials_and_account_paths(
     tmp_path: Path,
+    nested_terminal_string_control: str,
 ) -> None:
     store = Store(tmp_path)
     _owned_session(store)
@@ -619,7 +620,8 @@ def test_github_failure_row_redacts_controls_credentials_and_account_paths(
         {"repo": "dfxswiss/agent", "title": "T", "head": "feat"},
     )
     raw_error = (
-        "profile /test/\x1b[31mgh and key /test/\x1b[32mkey\n"
+        f"profile /test/{nested_terminal_string_control}gh and "
+        f"key /test/{nested_terminal_string_control}key\n"
         + ("x" * 410)
         + " token=g\x1b[33mh\x1b[0mp_CONTROL_INTERLEAVED_SECRET"
     )

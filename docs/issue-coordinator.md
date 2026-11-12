@@ -881,6 +881,10 @@ errors must not appear
 in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
 sanitization, the second redaction pass, and the replicated-row length bound.
+Exact path and bearer matching use the shared nesting-aware scanner before any
+string-control replacement: a complete or unterminated OSC, DCS, PM, APC, or
+SOS span, including nested payload, is one removable interleave atom and wins
+over the generic ESC alternative.
 User-facing blockers and questions are
 published on the source issue only when `execution_status=done` is verified;
 otherwise they remain locally visible (`CoordinatorError` / `StoreError`
@@ -1267,15 +1271,23 @@ stops at the non-recoverable `task-done` boundary without running readiness. An
 unreadable pull request state is retried on the
 next tick without taking in mail.
 Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
+the reported merge head against the reviewed head first. A mismatch is the
+existing non-recoverable head boundary and cannot publish a second-review
+blocker for that different commit. On a matching head, `await_merge` evaluates
 the merged-head second-review outcome and starts or checks its timeout on every
 tick, including when the newest review is passing. Intake persists the passing
 review record's timestamp as the time the requirement was satisfied; the tick
-time is never substituted. The timeout is anchored at GitHub's valid merge
-timestamp and falls back to the first merged observation only when that
-timestamp is unavailable or invalid, so an observation outage cannot extend
-the review window. If the passing timestamp is later than the persisted merge
-deadline, `await_merge` publishes `merged-without-second-review` and does not
-complete the task. A blocking review or expired timeout publishes its merge
+time is never substituted. The timeout is anchored at GitHub's valid
+`mergedAt` timestamp and falls back to the first merged observation only when
+that timestamp is unavailable or invalid, so an observation outage cannot
+extend the review window. This matching-head second-review evaluation and
+timeout persistence happen before merged-report visibility and cumulative-CI
+lookups. The checkpoint records whether the persisted anchor came
+from `merged_at` or `first_observation`; a later valid merge timestamp always
+replaces a fallback anchor. If the passing timestamp is later than the
+persisted merge deadline, `await_merge` publishes
+`merged-without-second-review` and does not complete the task. A blocking
+review or expired timeout publishes its merge
 blocker even while cumulative CI is pending or temporarily unavailable. A non-expired wait
 may still return the cumulative-CI pending result, but its timer has already
 been persisted and checked. `await_merge` re-observes the exact-head cumulative

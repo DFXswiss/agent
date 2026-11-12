@@ -39,12 +39,13 @@ _SGR_WRAPPER_RE = re.compile(
     rf"\x1b\[([0-9;]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}})m"
 )
 
-# Before ordinary terminal sanitization, a known secret needs a stricter path:
-# a CSI final byte may itself be the next secret character. The first two
-# alternatives therefore also accept a sequence prefix whose final byte is
-# supplied by the following literal secret character. Only controls removed by
-# the sanitizer may interleave a secret; preserved tabs and newlines remain
-# frame content instead of being consumed by a redaction match.
+# Bounded regex consumers need the same CSI-final rule as exact known-secret
+# matching: a CSI final byte may itself be the next secret character. The first
+# two alternatives therefore also accept a sequence prefix whose final byte is
+# supplied by the following literal secret character. Exact secret/path
+# redactors below use the nesting-aware linear walker instead of this regex.
+# Only controls removed by the sanitizer may interleave a secret; preserved
+# tabs and newlines remain frame content instead of being consumed by a match.
 TERMINAL_INTERLEAVE_PATTERN = (
     r"(?:"
     rf"(?:\x1b\[|\x9b)[0-?]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
@@ -156,6 +157,158 @@ def _terminal_string_control_parts(
         wrappers=wrappers,
     )
     return end, terminated, tuple(wrappers), open_depth > 1
+
+
+def _terminal_interleave_positions(
+    text: str,
+    index: int,
+    expected: frozenset[str],
+) -> tuple[int, ...]:
+    """Return positions reachable after bounded removable terminal atoms.
+
+    A complete nesting-aware string control is one atom, including its payload
+    and terminator (or the remainder of the text when unterminated).  For CSI
+    and other ESC sequences, the final byte may instead be the next literal
+    secret byte; both that position and the position after the complete escape
+    remain reachable.  String controls must win before the generic ESC case.
+    """
+    positions = [index]
+    cursor = index
+    for _ in range(_MAX_TERMINAL_INTERLEAVES):
+        if cursor >= len(text):
+            break
+        if _is_terminal_string_control(text, cursor):
+            end, _terminated = _terminal_string_control_end(text, cursor)
+            cursor = max(cursor + 1, end)
+            positions.append(cursor)
+            continue
+
+        if text.startswith("\x1b[", cursor) or text[cursor] == "\x9b":
+            cursor += 2 if text[cursor] == "\x1b" else 1
+            parameter_count = 0
+            while (
+                cursor < len(text)
+                and parameter_count < _MAX_ESCAPE_PARAMETER_BYTES
+                and "0" <= text[cursor] <= "?"
+            ):
+                cursor += 1
+                parameter_count += 1
+            intermediate_count = 0
+            while (
+                cursor < len(text)
+                and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
+                and " " <= text[cursor] <= "/"
+            ):
+                cursor += 1
+                intermediate_count += 1
+            if cursor < len(text) and "@" <= text[cursor] <= "~":
+                if text[cursor] in expected:
+                    positions.append(cursor)
+                cursor += 1
+            positions.append(cursor)
+            continue
+
+        if text[cursor] == "\x1b":
+            cursor += 1
+            intermediate_count = 0
+            while (
+                cursor < len(text)
+                and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
+                and " " <= text[cursor] <= "/"
+            ):
+                cursor += 1
+                intermediate_count += 1
+            if cursor < len(text) and "0" <= text[cursor] <= "~":
+                if text[cursor] in expected:
+                    positions.append(cursor)
+                cursor += 1
+            positions.append(cursor)
+            continue
+
+        if _TERMINAL_CONTROL_RE.match(text, cursor) is not None:
+            cursor += 1
+            positions.append(cursor)
+            continue
+
+        break
+    return tuple(dict.fromkeys(positions))
+
+
+def _match_interleaved_representation(
+    text: str,
+    starts: set[int],
+    representation: tuple[frozenset[str], ...],
+    *,
+    allow_leading_interleave: bool,
+) -> set[int]:
+    """Match one literal or percent-encoded character representation."""
+    positions = starts
+    for offset, expected in enumerate(representation):
+        candidates: set[int] = set()
+        for position in positions:
+            if allow_leading_interleave or offset:
+                candidates.update(
+                    _terminal_interleave_positions(text, position, expected)
+                )
+            else:
+                candidates.add(position)
+        positions = {
+            position + 1
+            for position in candidates
+            if position < len(text) and text[position] in expected
+        }
+        if not positions:
+            break
+    return positions
+
+
+def _redact_terminal_interleaved_representations(
+    text: str,
+    representations: tuple[tuple[tuple[frozenset[str], ...], ...], ...],
+    *,
+    replacement: str,
+) -> str:
+    """Redact non-overlapping known-secret matches with a linear text walk."""
+    if not text or not representations:
+        return text
+    first = frozenset(
+        character
+        for representation in representations[0]
+        for character in representation[0]
+    )
+    pieces: list[str] = []
+    copied_to = 0
+    index = 0
+    while index < len(text):
+        if text[index] not in first:
+            index += 1
+            continue
+        positions = {index}
+        for character_index, alternatives in enumerate(representations):
+            matched: set[int] = set()
+            for alternative in alternatives:
+                matched.update(
+                    _match_interleaved_representation(
+                        text,
+                        positions,
+                        alternative,
+                        allow_leading_interleave=character_index > 0,
+                    )
+                )
+            positions = matched
+            if not positions:
+                break
+        if not positions:
+            index += 1
+            continue
+        end = max(positions)
+        pieces.extend((text[copied_to:index], replacement))
+        copied_to = end
+        index = end
+    if not pieces:
+        return text
+    pieces.append(text[copied_to:])
+    return "".join(pieces)
 
 
 def _is_exempt_sgr_wrapped_token(
@@ -290,13 +443,15 @@ def redact_terminal_string_controls(
 def redact_terminal_interleaved_secret(
     text: str, secret: str, *, replacement: str = "[redacted]"
 ) -> str:
-    """Redact one exact secret even when terminal controls split its characters."""
+    """Redact one exact secret even when terminal atoms split its characters."""
     if not secret:
         return text
-    pattern = re.compile(
-        TERMINAL_INTERLEAVE_PATTERN.join(re.escape(char) for char in secret)
+    representations = tuple(
+        ((frozenset((character,)),),) for character in secret
     )
-    return pattern.sub(replacement, text)
+    return _redact_terminal_interleaved_representations(
+        text, representations, replacement=replacement
+    )
 
 
 def redact_terminal_interleaved_urlencoded_secret(
@@ -311,18 +466,31 @@ def redact_terminal_interleaved_urlencoded_secret(
     if not secret:
         return text
 
-    character_patterns: list[str] = []
+    character_representations: list[
+        tuple[tuple[frozenset[str], ...], ...]
+    ] = []
     for character in secret:
-        encoded_bytes: list[str] = []
+        encoded_symbols: list[frozenset[str]] = []
         for byte in character.encode("utf-8"):
             pair = f"{byte:02x}"
-            encoded_bytes.extend(
-                (re.escape("%"), rf"(?i:{pair[0]})", rf"(?i:{pair[1]})")
+            encoded_symbols.extend(
+                (
+                    frozenset(("%",)),
+                    frozenset((pair[0].lower(), pair[0].upper())),
+                    frozenset((pair[1].lower(), pair[1].upper())),
+                )
             )
-        encoded = TERMINAL_INTERLEAVE_PATTERN.join(encoded_bytes)
-        character_patterns.append(rf"(?:{re.escape(character)}|{encoded})")
-    pattern = re.compile(TERMINAL_INTERLEAVE_PATTERN.join(character_patterns))
-    return pattern.sub(replacement, text)
+        character_representations.append(
+            (
+                (frozenset((character,)),),
+                tuple(encoded_symbols),
+            )
+        )
+    return _redact_terminal_interleaved_representations(
+        text,
+        tuple(character_representations),
+        replacement=replacement,
+    )
 
 
 def sanitize_terminal_text(text: str) -> str:

@@ -307,7 +307,10 @@ truncation marker is added.
 The known-secret raw pass
 allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the
-matcher. Seven-bit DCS, PM, APC, and SOS strings accept
+matcher. It uses the shared nesting-aware scanner before any span replacement;
+each complete or unterminated string-control span, including its payload, is a
+single removable interleave atom that is recognized before a generic ESC
+sequence. Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
 through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
 continue through BEL until an ST spelling.

@@ -1376,11 +1376,24 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST."
         in documented
     )
+    normalized_documented = " ".join(documented.split())
     assert (
-        "Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates\n"
-        "the merged-head second-review outcome and starts or checks its timeout on every\n"
-        "tick, including when the newest review is passing."
-        in documented
+        "Before `task-done` is evaluated for a merged A38 head, `await_merge` "
+        "evaluates the reported merge head against the reviewed head first. "
+        "A mismatch is the existing non-recoverable head boundary and cannot "
+        "publish a second-review blocker for that different commit. On a matching "
+        "head, `await_merge` evaluates the merged-head second-review outcome and "
+        "starts or checks its timeout on every tick, including when the newest "
+        "review is passing."
+        in normalized_documented
+    )
+    assert (
+        "The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls "
+        "back to the first merged observation only when that timestamp is unavailable "
+        "or invalid, so an observation outage cannot extend the review window. This "
+        "matching-head second-review evaluation and timeout persistence happen before "
+        "merged-report visibility and cumulative-CI lookups."
+        in normalized_documented
     )
     assert "review record's timestamp" in documented
     assert "the tick\ntime is never substituted" in documented

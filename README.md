@@ -192,7 +192,11 @@ reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
 redacted, printed, or persisted in that evidence. Raw and resolved provider
 config paths are matched despite interleaved terminal controls before
-sanitization and are hidden again afterward. Both configured and
+sanitization and are hidden again afterward. The known-secret matcher walks
+the raw text with the shared nesting-aware scanner: a complete or unterminated
+OSC, DCS, PM, APC, or SOS span is one removable interleave atom, recognized
+before a generic ESC sequence, so replacing its payload cannot expose secret
+fragments on either side. Both configured and
 provider-reported model strings are bounded and redacted. Neither activity
 stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,

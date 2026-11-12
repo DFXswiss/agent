@@ -172,12 +172,14 @@ def test_assignment_failure_value_removes_echoed_bearer_and_control_chars() -> N
     assert "[redacted]" in failure.detail
 
 
-def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing() -> None:
+def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing(
+    nested_terminal_string_control: str,
+) -> None:
     from agent_cli.hub_assign import sanitized_assignment_text
 
     token = "secret-device-token"
     emitted = sanitized_assignment_text(
-        "hub rejected secret-dev\x1b[31ice-token",
+        f"hub rejected secret-dev{nested_terminal_string_control}ice-token",
         token,
         limit=200,
     )
@@ -186,6 +188,13 @@ def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing
     assert "secret-dev" not in emitted
     assert "ice-token" not in emitted
     assert emitted == "hub rejected [redacted]"
+    encoded = "".join(f"%{byte:02x}" for byte in token.encode("utf-8"))
+    split_encoded = f"%{nested_terminal_string_control}{encoded[1:]}"
+    assert sanitized_assignment_text(
+        f"retry {split_encoded}",
+        token,
+        limit=200,
+    ) == "retry [redacted]"
     assert sanitized_assignment_text(
         "retry Bearer%20secret-device-token",
         token,
