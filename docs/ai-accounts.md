@@ -244,9 +244,11 @@ and/or one trailing `ESC [` SGR wrapper containing only digits and semicolons
 before `m`, around otherwise escape-free text, and whose SGR parameter bytes
 joined to that text do not match any applicable secret pattern. SGR styling
 with bytes glued outside that wrapper and every other escape sequence redact
-the whole token. Complete and unterminated OSC, DCS, PM, APC, and SOS spans are
-redacted on the full raw text before whitespace tokenization, including their
-payload.
+the whole token. Credential assignments are classified on the full raw text,
+where complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque to
+the key, operator, and value scan and payload whitespace is not a value
+delimiter. The spans are then visibly redacted before whitespace tokenization,
+including their payload.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. Credential assignments use a linear lexical scan of complete,

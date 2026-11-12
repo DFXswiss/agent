@@ -258,8 +258,6 @@ def _terminal_control_span(
         if introducer in "]P^_X":
             cursor = index + 2
             while cursor < len(text):
-                if stop_at_assignment_operator and text[cursor] in "=:":
-                    return cursor, None
                 if text[cursor] in ("\x07", "\x9c"):
                     return cursor + 1, None
                 if (
@@ -327,8 +325,6 @@ def _terminal_control_span(
     if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
         cursor = index + 1
         while cursor < len(text):
-            if stop_at_assignment_operator and text[cursor] in "=:":
-                return cursor, None
             if text[cursor] in ("\x07", "\x9c"):
                 return cursor + 1, None
             if (
@@ -356,12 +352,13 @@ def _redact_secret_assignments(text: str) -> str:
     """Redact secret-key assignment values with one linear lexical scan.
 
     Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
-    Removable terminal controls may interleave their bytes.  Quoted values run
-    through their closing quote, or through the bounded input end when no close
-    exists; unquoted values stop at whitespace, comma, or semicolon.  Preserve
-    the established whole-token replacement for a plain, compact
-    ``key=value`` assignment; structured and quoted assignments retain their
-    key and delimiters while only their value is replaced.
+    Removable terminal controls may interleave their bytes, and terminal string
+    controls remain one opaque span even when their payload contains whitespace.
+    Quoted values run through their closing quote, or through the bounded input
+    end when no close exists; unquoted values stop at outside whitespace, comma,
+    or semicolon.  Preserve the established whole-token replacement for a
+    plain, compact ``key=value`` assignment; structured and quoted assignments
+    retain their key and delimiters while only their value is replaced.
     """
     if not text:
         return text
@@ -495,11 +492,15 @@ def _redact_secret_assignments(text: str) -> str:
                 replacements.append((content_start, length, "[redacted]"))
             index = cursor
             continue
-        while (
-            cursor < length
-            and not text[cursor].isspace()
-            and text[cursor] not in ",;"
-        ):
+        while cursor < length:
+            control_end, _final = _terminal_control_span(text, cursor)
+            if control_end > cursor:
+                # A terminal string is one opaque span.  In particular, its
+                # payload whitespace is not an unquoted-value delimiter.
+                cursor = control_end
+                continue
+            if text[cursor].isspace() or text[cursor] in ",;":
+                break
             cursor += 1
         replacement_start = (
             start
@@ -580,8 +581,11 @@ def redact(
         )
 
     source, source_was_cut = _prebound_redaction_input(text or "", limit)
-    source = redact_terminal_string_controls(source)
+    # Classify assignments on the raw text while terminal string controls are
+    # still opaque spans.  Replacing them first can split a secret key from its
+    # operator or turn payload whitespace into a false value delimiter.
     source = _redact_secret_assignments(source)
+    source = redact_terminal_string_controls(source)
     has_removed_control = _RAW_REMOVED_CONTROL.search(source) is not None
     if not has_removed_control:
         return _apply_redaction_bound(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -391,6 +392,18 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
         row = store.row('activity', aid)
         if row is None or row.get('_origin_device_id') != store.device_id():
             raise CoordinatorError('GitHub intent is missing or foreign')
+    bound_report_tasks: dict[str, set[str]] = {}
+    for aid in selected:
+        row = store.row("activity", aid)
+        payload = row.get("payload") if isinstance(row, dict) else None
+        binding = (
+            payload.get(github_act.A38_REPORT_BINDING_KEY)
+            if isinstance(payload, dict)
+            else None
+        )
+        task_id = binding.get("task_id") if isinstance(binding, dict) else None
+        if isinstance(task_id, str) and task_id:
+            bound_report_tasks.setdefault(task_id, set()).add(aid)
     class Scoped:
         def __getattr__(self, name):
             return getattr(store, name)
@@ -400,9 +413,47 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
             rows = store.rows(table)
             return [row for row in rows if row.get('id') in selected] if table == 'activity' else rows
         def write(self, table, operation, row_id, data, **kwargs):
-            if table != 'activity' or row_id not in selected:
-                raise CoordinatorError('GitHub executor attempted an unrelated write')
-            return store.write(table, operation, row_id, data, **kwargs)
+            if table == 'activity' and row_id in selected:
+                return store.write(table, operation, row_id, data, **kwargs)
+            if table == "task" and operation == "update":
+                activity_ids = bound_report_tasks.get(row_id, set())
+                current = store.row("task", row_id)
+                if (
+                    activity_ids
+                    and isinstance(current, dict)
+                    and current.get("_origin_device_id") == store.device_id()
+                ):
+                    expected = {
+                        key: value
+                        for key, value in deepcopy(current).items()
+                        if not key.startswith("_")
+                    }
+                    payload = expected.get("payload")
+                    coordinator = (
+                        payload.get("coordinator")
+                        if isinstance(payload, dict)
+                        else None
+                    )
+                    a38 = (
+                        coordinator.get("a38")
+                        if isinstance(coordinator, dict)
+                        else None
+                    )
+                    intent = (
+                        a38.get("report_intent")
+                        if isinstance(a38, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(intent, dict)
+                        and intent.get("activity_id") in activity_ids
+                    ):
+                        a38.pop("report_intent", None)
+                        if data == expected:
+                            return store.write(
+                                table, operation, row_id, data, **kwargs
+                            )
+            raise CoordinatorError('GitHub executor attempted an unrelated write')
     return github_act.scan_github(Scoped(), runner)
 
 

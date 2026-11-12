@@ -592,10 +592,16 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     documented = (
         Path(__file__).parents[1] / "docs" / "issue-coordinator.md"
     ).read_text(encoding="utf-8")
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
 
     assert (
-        "first replaces every complete or unterminated OSC, DCS, PM, APC, or SOS span\n"
-        "with `[redacted]` on the full raw text, before whitespace tokenization"
+        "first classifies secret assignments on the full raw text. During that scan,\n"
+        "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
+        in documented
+    )
+    assert (
+        "Only after assignment classification does the pipeline replace those\n"
+        "spans with `[redacted]` on the classified text, before whitespace tokenization"
         in documented
     )
     assert (
@@ -605,9 +611,17 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     )
     assert "a match\nredacts the entire token" in documented
     assert (
-        "complete and unterminated string-control spans are replaced with\n"
+        "The assignment scan treats complete and unterminated string-control\n"
+        "spans as opaque; only after that classification are they replaced with\n"
         "`[redacted]` before tokenization"
         in documented
+    )
+    assert (
+        "Secret assignments are first classified on the full raw capture while "
+        "complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque "
+        "to that scan. Only after classification are those spans visibly replaced "
+        "with `[redacted]`, before whitespace tokenization."
+        in readme
     )
 
 
