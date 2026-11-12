@@ -1447,6 +1447,49 @@ def pr_head_ref(branch: str, target: str, publication: str) -> str:
     return f"{owner}:{branch}"
 
 
+ORDER_KIND = "order"
+ISSUE_KIND = "github-issue"
+
+
+def source_kind(c: dict[str, Any]) -> str:
+    """Kind of the task source in checkpoint ``c``; a source without ``kind`` is an issue."""
+    source = c.get("source")
+    if isinstance(source, dict):
+        return str(source.get("kind") or ISSUE_KIND)
+    return ISSUE_KIND
+
+
+def is_order(task: dict[str, Any]) -> bool:
+    return source_kind(coord(task)) == ORDER_KIND
+
+
+def order_id(task: dict[str, Any]) -> str:
+    source = coord(task).get("source")
+    own = source.get("order_id") if isinstance(source, dict) else None
+    return str(own or task.get("id") or "")
+
+
+def source_label(task: dict[str, Any]) -> str:
+    """``order <order id>`` or ``<repo>#<number>``."""
+    if is_order(task):
+        return f"order {order_id(task)}"
+    source = coord(task).get("source")
+    source = source if isinstance(source, dict) else {}
+    return f"{source.get('repo')}#{source.get('number')}"
+
+
+def comment_target(task: dict[str, Any]) -> tuple[str, int, str] | None:
+    """Where the script publishes questions, blockers and status for this task."""
+    c = coord(task)
+    source = c["source"]
+    if source_kind(c) == ORDER_KIND:
+        number = as_int(c.get("pr_number"))
+        if number is None:
+            return None
+        return (target_repo(task), number, "pr")
+    return (str(source["repo"]), int(source["number"]), "issue")
+
+
 def is_sha(value: str) -> bool:
     return bool(_SHA_RE.fullmatch(value))
 

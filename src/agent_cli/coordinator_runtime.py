@@ -32,6 +32,7 @@ from .model_slots import (
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     FINDINGS_SPEC_BOUND,
+    ORDER_KIND,
     TASK_TEXT_BOUND,
     TASK_TEXT_RECORD_BOUND,
     check_label,
@@ -46,12 +47,14 @@ from .coordinator_common import (
     Runner,
     account_for,
     as_int,
+    comment_target,
     coord,
     coordinator_env,
     gh_json,
     gh_list,
     harden_grok_write_argv,
     infra_failure,
+    is_order,
     owned_session,
     parse_change_summaries,
     parse_model_result,
@@ -63,6 +66,7 @@ from .coordinator_common import (
     save_task,
     scoped,
     seconds_since,
+    source_kind,
     source_key,
     strip_row,
     task_text_path,
@@ -941,8 +945,12 @@ def _implementer_instruction(
     runner: Runner,
 ) -> str:
     """Implementer task, plus the surface list when the base has REVIEW.md."""
-    text = (
-        "Implement the assigned issue. Edit files only.\n"
+    prefix = (
+        "Implement the order. Edit files only.\n"
+        if is_order(task)
+        else "Implement the assigned issue. Edit files only.\n"
+    )
+    text = prefix + (
         "Before you write a new one, search this repository for an existing "
         "helper, utility, base class, configuration key, fixture, or nearby "
         "feature built the same way that already does the job. Read and search "
@@ -984,8 +992,12 @@ def _spec_context(
             redact(str(r)) for r in replies[-5:]
         )
     findings = c.get("findings") or ""
-    return (
-        f"Source issue: {source.get('repo')}#{source.get('number')}\n"
+    source_line = (
+        f"Source order: {source.get('order_id')}\n"
+        if source_kind(c) == ORDER_KIND
+        else f"Source issue: {source.get('repo')}#{source.get('number')}\n"
+    )
+    return source_line + (
         f"Title: {redact(str(title))}\n"
         f"Body (untrusted):\n{redact(text, limit=TASK_TEXT_BOUND) if text is not None else redact(str(body), limit=1500)}\n"
         f"{reply_text}\n"
@@ -1200,20 +1212,23 @@ def _apply_implementer_outcome(
 
     if model_result == "ask":
         question = redact(stdout or "Question from implementer.")
-        source = c["source"]
         pending_q = c.get("pending_question")
         if isinstance(pending_q, str) and pending_q:
             question = pending_q
         try:
+            target = comment_target(task)
+            if target is None:
+                raise CoordinatorError("question has no comment target")
             qid = post_issue_comment(
                 store,
                 worker,
                 runner,
-                repo=str(source["repo"]),
-                number=int(source["number"]),
+                repo=target[0],
+                number=target[1],
                 body=f"Question:\n{question}",
                 kind="question",
                 occurrence=f"{task['id']}:{round_num}",
+                target=target[2],
             )
         except (CoordinatorError, StoreError) as exc:
             # Preserve the actual question across draft/publication failures.
@@ -1245,6 +1260,8 @@ def _apply_implementer_outcome(
         if committed_c.get("question_activity_id") != qid:
             committed_c["replies_consumed_through"] = None
         committed_c["question_activity_id"] = qid
+        if is_order(task):
+            committed_c["question_text"] = redact(question, limit=1500)
         committed_c["resume_phase"] = "implement"
         outcome = committed_c.get("lane_outcome")
         if isinstance(outcome, dict):
@@ -1264,7 +1281,7 @@ def _apply_implementer_outcome(
         task.update(committed_task)
         tr.clear()
         tr.update(committed_tr)
-        return [f"ask posted on {source['repo']}#{source['number']}"] + draft_lines
+        return [f"ask posted on {target[0]}#{target[1]}"] + draft_lines
 
     if model_result == "blocked":
         # review-loop: implementer blocked → task failed. Stop.
@@ -1377,6 +1394,10 @@ def _apply_implementer_outcome(
     return [f"implementer done round={round_num}"] + draft_lines
 
 
+def implement_commit_message(task: dict[str, Any]) -> str:
+    return "Implement the order." if is_order(task) else "Implement assigned issue."
+
+
 def phase_implement(
     store: Store,
     worker: WorkerConfig,
@@ -1424,7 +1445,7 @@ def phase_implement(
             worker,
             runner,
             worktree,
-            "Implement assigned issue.",
+            implement_commit_message(task),
         )
         draft_lines: list[str] = []
         if sha:
@@ -1563,7 +1584,7 @@ def phase_implement(
         worker,
         runner,
         worktree,
-        "Implement assigned issue.",
+        implement_commit_message(task),
     )
     draft_lines = []
     if worker.a38 and as_int(c.get("pr_number")) is not None:
@@ -2092,6 +2113,8 @@ def _second_review_intake_allowed(
 def _verify_source_assigned(
     store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
 ) -> None:
+    if source_kind(c) == ORDER_KIND:
+        return
     source = c.get("source")
     if isinstance(source, dict):
         scoped_runner = scoped(store, worker.session_id, runner)

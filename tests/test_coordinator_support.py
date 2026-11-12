@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from agent_cli.coordinator_common import redact, write_task_text
 from agent_cli.coordinator_config import RepositoryConfig, WorkerConfig
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -124,6 +125,71 @@ def make_worker(root: Path) -> WorkerConfig:
         park_poll_seconds=0,
         lane_retries=0,
     )
+
+
+def order_source(order_id: str, **extra) -> dict:
+    source = {
+        "kind": "order",
+        "order_id": order_id,
+        "repo": "example/project",
+        "title": "Add a widget",
+        "body": "Do it",
+        "body_sha256": "0" * 64,
+        "body_chars": 5,
+        "submitted_at": "2026-01-01T00:00:00Z",
+        "submitted_by": "human-owner",
+        "publication_repo": "example/project",
+        "base": "develop",
+    }
+    source.update(extra)
+    return {key: value for key, value in source.items() if value is not None}
+
+
+def seed_order_task(
+    store,
+    worker,
+    order_id: str,
+    *,
+    phase: str,
+    title: str = "Add a widget",
+    text: str = "Do it",
+    **checkpoint,
+) -> dict:
+    from agent_cli.coordinator_runtime import execution_binding
+
+    source = checkpoint.pop("source", None)
+    if source is None:
+        source = order_source(order_id, title=title)
+    sha, chars = write_task_text(worker, order_id, text)
+    source.update(body=redact(text, limit=2000), body_sha256=sha, body_chars=chars)
+    c = {
+        "phase": phase,
+        "source": source,
+        "branch": f"task-{order_id[:8]}",
+        "worker_session": worker.session_id,
+        "worker_login": "worker-bot",
+    }
+    if not source.get("owner_scoped"):
+        c["execution_binding"] = execution_binding(store, worker, source["repo"])
+    c.update(checkpoint)
+    row = {
+        "id": order_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "title": f"{worker.session_id[:8]} - {title[:120]}",
+        "repo": source["repo"],
+        "ref": str(c["pr_number"]) if c.get("pr_number") else None,
+        "payload": {"coordinator": c},
+        "state": "open",
+        "current_round": 0,
+        "models": {"first": "grok", "second": "codex"},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "change_summary_en": None,
+        "change_summary_de": None,
+    }
+    store.write("task", "insert", order_id, row)
+    return store.row("task", order_id)
 
 
 class FakeGh:

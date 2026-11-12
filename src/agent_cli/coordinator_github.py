@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -37,18 +37,22 @@ from .coordinator_common import (
     Runner,
     account_for,
     as_int,
+    comment_target,
     coord,
     coordinator_env,
     evidence_base_sha,
     gh_json,
     gh_list,
     is_sha,
+    is_order,
+    order_id,
     redact,
     redact_tail,
     reopen_base_bound_checklist,
     repository_push_permission,
     save_task,
     scoped,
+    source_label,
     strip_row,
     target_repo,
     text,
@@ -144,6 +148,7 @@ def post_issue_comment(
     body: str,
     kind: str,
     occurrence: str = "",
+    target: str = "issue",
 ) -> str:
     """Publish a deterministic idempotent source-issue status/question comment."""
     activity_id = queue_issue_comment(
@@ -154,6 +159,7 @@ def post_issue_comment(
         body=body,
         kind=kind,
         occurrence=occurrence,
+        target=target,
     )
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
@@ -174,6 +180,7 @@ def queue_issue_comment(
     body: str,
     kind: str,
     occurrence: str = "",
+    target: str = "issue",
 ) -> str:
     """Durably queue a deterministic issue comment without executing GitHub."""
     safe = redact(body, limit=2000)
@@ -191,7 +198,12 @@ def queue_issue_comment(
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="comment.post",
-        payload={"repo": repo, "number": number, "body": f"{safe}\n{marker}", "target": "issue"},
+        payload={
+            "repo": repo,
+            "number": number,
+            "body": f"{safe}\n{marker}",
+            "target": target,
+        },
     )
     return activity_id
 
@@ -269,15 +281,20 @@ def publish_blocker(
             f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
         )
     try:
+        target = comment_target(task)
+        if target is None:
+            lines.append(f"blocker recorded for {source_label(task)}")
+            return lines
         activity_id = post_issue_comment(
             store,
             worker,
             runner,
-            repo=str(source["repo"]),
-            number=int(source["number"]),
+            repo=target[0],
+            number=target[1],
             body=f"Blocked: {redact(message)}",
             kind=kind,
             occurrence=resolved_occurrence,
+            target=target[2],
         )
         changed = False
         if binding_notice:
@@ -296,7 +313,7 @@ def publish_blocker(
             changed = True
         if changed:
             save_task(store, task)
-        lines.append(f"blocker published on {source['repo']}#{source['number']}")
+        lines.append(f"blocker published on {target[0]}#{target[1]}")
     except (CoordinatorError, StoreError) as exc:
         # These subclass SystemExit — must not be treated as successful publication.
         lines.append(f"blocker publish failed locally visible: {redact(str(exc))}")
@@ -504,7 +521,18 @@ def _mandate_provenance(source: Any) -> dict[str, Any]:
     """Only the assignment's provenance goes into team-visible evidence."""
     if not isinstance(source, dict):
         return {}
-    keys = ("repo", "number", "assignment_actor", "assignment_event_id", "assignment_at", "hub_assignment_row_id")
+    keys = (
+        "repo",
+        "number",
+        "assignment_actor",
+        "assignment_event_id",
+        "assignment_at",
+        "hub_assignment_row_id",
+        "kind",
+        "order_id",
+        "submitted_by",
+        "submitted_at",
+    )
     return {key: source[key] for key in keys if key in source}
 
 
@@ -567,6 +595,96 @@ def _hub_assignment_configuration_error(reason: str) -> bool:
         or "http 401" in folded
         or "http 403" in folded
     )
+
+
+def pin_owner_repository(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    scoped_runner: Runner,
+    account: Any,
+    *,
+    base: str | None = None,
+) -> list[str] | None:
+    """Pin the publication route of an owner-scoped source.
+
+    None: the source is not owner-scoped, is already pinned, or was pinned now.
+    A list: the lines the caller returns for this tick.
+    """
+    c = coord(task)
+    source = c["source"]
+    repo = str(source["repo"])
+    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
+        def persist_fork_intent() -> None:
+            if source.get("fork_requested_at") is None:
+                source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+
+        def persist_fork_request_done() -> None:
+            if source.get("fork_request_done_at") is None:
+                source["fork_request_done_at"] = utcnow()
+                save_task(store, task)
+
+        cfg = _owner_repository_config(
+            worker,
+            scoped_runner,
+            repo=repo,
+            login=account.login.casefold(),
+            fork_request_done=source.get("fork_request_done_at") is not None,
+            before_fork_create=persist_fork_intent,
+            after_fork_create=persist_fork_request_done,
+        )
+        if cfg is None:
+            fork_request_done_at = source.get("fork_request_done_at")
+            if fork_request_done_at is None:
+                save_task(store, task)
+                return ["publication fork request not completed; retrying accept"]
+            age = _seconds_since(fork_request_done_at)
+            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
+                save_task(store, task)
+                return ["publication fork not yet visible; retrying accept"]
+            message = (
+                "publication fork did not become visible within "
+                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
+            )
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "publication-fork"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="publication-fork",
+                reply_checkpoint=True,
+            )
+        if base is not None:
+            cfg = replace(cfg, base=validate_base(base))
+        from .coordinator_runtime import execution_binding
+
+        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
+        ai = load_ai_accounts(store.home)
+        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
+        binding = execution_binding(
+            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
+        )
+        source["repository_config"] = {
+            "repo": cfg.repo,
+            "base": cfg.base,
+            "publication_repo": cfg.publication_repo,
+        }
+        source["base"] = cfg.base
+        source["publication_repo"] = cfg.publication_repo
+        c["execution_binding"] = binding
+    return None
 
 
 def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
@@ -736,73 +854,9 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker_publish_kind", None)
         c.pop("blocker_activity_id", None)
         clear_reply_recovery(c)
-    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
-        def persist_fork_intent() -> None:
-            if source.get("fork_requested_at") is None:
-                source["fork_requested_at"] = utcnow()
-                save_task(store, task)
-
-        def persist_fork_request_done() -> None:
-            if source.get("fork_request_done_at") is None:
-                source["fork_request_done_at"] = utcnow()
-                save_task(store, task)
-
-        cfg = _owner_repository_config(
-            worker,
-            scoped_runner,
-            repo=repo,
-            login=account.login.casefold(),
-            fork_request_done=source.get("fork_request_done_at") is not None,
-            before_fork_create=persist_fork_intent,
-            after_fork_create=persist_fork_request_done,
-        )
-        if cfg is None:
-            fork_request_done_at = source.get("fork_request_done_at")
-            if fork_request_done_at is None:
-                save_task(store, task)
-                return ["publication fork request not completed; retrying accept"]
-            age = _seconds_since(fork_request_done_at)
-            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
-                save_task(store, task)
-                return ["publication fork not yet visible; retrying accept"]
-            message = (
-                "publication fork did not become visible within "
-                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
-            )
-            if c.get("blocker") != message:
-                c.pop("blocker_activity_id", None)
-            c["blocker"] = message
-            c["resume_phase"] = "accept"
-            c["phase"] = "blocked"
-            c["blocker_publish_once"] = True
-            c["blocker_publish_kind"] = "publication-fork"
-            save_task(store, task)
-            return publish_blocker(
-                store,
-                worker,
-                task,
-                runner,
-                message,
-                kind="publication-fork",
-                reply_checkpoint=True,
-            )
-        from .coordinator_runtime import execution_binding
-
-        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
-        ai = load_ai_accounts(store.home)
-        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
-            raise CoordinatorError("task model configuration changed before acceptance")
-        binding = execution_binding(
-            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
-        )
-        source["repository_config"] = {
-            "repo": cfg.repo,
-            "base": cfg.base,
-            "publication_repo": cfg.publication_repo,
-        }
-        source["base"] = cfg.base
-        source["publication_repo"] = cfg.publication_repo
-        c["execution_binding"] = binding
+    pinned = pin_owner_repository(store, worker, task, runner, scoped_runner, account)
+    if pinned is not None:
+        return pinned
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))
     body = f"{ACCEPT_BODY}\n{marker}"
@@ -1552,6 +1606,17 @@ def _apply_readiness_checklist(
             )
         source_raw = coord(task).get("source")
         source = source_raw if isinstance(source_raw, dict) else {}
+        if is_order(task):
+            set_checklist(
+                store, task, "contributing_ok", "ja", f"conformity-a approved at {head}", source="script"
+            )
+            evidence = (
+                f"order {order_id(task)} submitted by {source.get('submitted_by')}: "
+                "orders declare no deviation"
+            )
+            set_checklist(store, task, "deviation_declared", "n_a", evidence, source="human")
+            set_checklist(store, task, "deviation_granted", "n_a", evidence, source="human")
+            return
         assignment_actor_raw = text(source.get("assignment_actor"))
         assignment_actor = assignment_actor_raw.strip() if assignment_actor_raw else None
         assignment_event_id = source.get("assignment_event_id")
@@ -3118,6 +3183,36 @@ def _await_second_review_after_merge(
     )
 
 
+def apply_authorized_replies(
+    store: Store,
+    task: dict[str, Any],
+    new_replies: list[str],
+    *,
+    consumed_through: int | None = None,
+) -> list[str]:
+    """Store authorized replies and resume the phase saved at the question or blocker."""
+    c = coord(task)
+    existing = c.get("authorized_replies")
+    if not isinstance(existing, list):
+        existing = []
+    existing.extend(new_replies)
+    c["authorized_replies"] = existing
+    if consumed_through is not None:
+        c["replies_consumed_through"] = consumed_through
+    # Resume the exact safe script phase persisted at the blocker — never blindly
+    # start implement for CI authorization / checkout / acceptance administrative issues.
+    resume = str(c.get("resume_phase") or "")
+    c["phase"] = resume
+    c.pop("resume_phase", None)
+    c.pop("blocker_publish_once", None)
+    c.pop("blocker_publish_kind", None)
+    c.pop("blocker_activity_id", None)
+    if resume == "implement":
+        task["state"] = "implementing"
+    save_task(store, task)
+    return [f"consumed {len(new_replies)} authorized reply(ies); resuming {c['phase']}"]
+
+
 def phase_read_replies(
     store: Store,
     worker: WorkerConfig,
@@ -3144,12 +3239,14 @@ def phase_read_replies(
         source = c.get("source") if isinstance(c.get("source"), dict) else {}
         repo = str(source.get("repo") or "?")
         number = source.get("number") or "?"
+        label = source_label(task) if is_order(task) else f"{repo}#{number}"
         return [
-            f"blocked: no eligible resume_phase for reply recovery on {repo}#{number}"
+            f"blocked: no eligible resume_phase for reply recovery on {label}"
         ]
-    source = c["source"]
-    repo = str(source["repo"])
-    number = int(source["number"])
+    target = comment_target(task)
+    if target is None:
+        return [f"waiting for order reply on {order_id(task)}"]
+    repo, number = target[0], target[1]
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     comments = gh_list(
@@ -3214,24 +3311,9 @@ def phase_read_replies(
 
     if not new_replies:
         return [f"waiting for authorized reply on {repo}#{number}"]
-    existing = c.get("authorized_replies")
-    if not isinstance(existing, list):
-        existing = []
-    existing.extend(new_replies)
-    c["authorized_replies"] = existing
-    c["replies_consumed_through"] = last_id
-    # Resume the exact safe script phase persisted at the blocker — never blindly
-    # start implement for CI authorization / checkout / acceptance administrative issues.
-    resume = str(c.get("resume_phase") or "")
-    c["phase"] = resume
-    c.pop("resume_phase", None)
-    c.pop("blocker_publish_once", None)
-    c.pop("blocker_publish_kind", None)
-    c.pop("blocker_activity_id", None)
-    if resume == "implement":
-        task["state"] = "implementing"
-    save_task(store, task)
-    return [f"consumed {len(new_replies)} authorized reply(ies); resuming {c['phase']}"]
+    return apply_authorized_replies(
+        store, task, new_replies, consumed_through=last_id
+    )
 
 
 def phase_blocked(

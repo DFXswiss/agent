@@ -10,6 +10,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from .coordinator_common import (
+    ORDER_KIND,
     PROTECTED_BRANCHES,
     CoordinatorError,
     Runner,
@@ -469,9 +470,19 @@ def draft_pr_body(
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
     else:
         details = "Reused:\nAdded:\n\n"
-    return (
-        f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+    if source.get("kind") == ORDER_KIND:
+        short = str(source.get("order_id") or "")[:8]
+        title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+        visible = (
+            f"EN:\nDraft for order {short}: {title}.\n\n"
+            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
+        )
+    else:
+        visible = (
+            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        )
+    return visible + (
         "<details>\n<summary>Details</summary>\n\n"
         f"{details}"
         "</details>\n"
@@ -491,7 +502,9 @@ def refresh_draft_body(
     if not isinstance(reused, list) or not isinstance(added, list) or not reused or not added:
         return []
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
-    if not isinstance(source.get("repo"), str) or source.get("number") is None:
+    if not isinstance(source.get("repo"), str) or (
+        source.get("number") is None and source.get("kind") != ORDER_KIND
+    ):
         return []
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
