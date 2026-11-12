@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Mapping
 
@@ -71,6 +72,7 @@ def run_bounded(
     stdin_text: str | None = None,
     env: Mapping[str, str] | None = None,
     clear_ambient_github: bool = True,
+    on_start: Callable[[int], None] | None = None,
 ) -> Completed:
     """Run argv with a hard timeout; kill the process group on expiry.
 
@@ -89,11 +91,18 @@ def run_bounded(
             run_env.pop(key, None)
         with tempfile.TemporaryDirectory(prefix="agent-unconfigured-gh-") as empty_profile:
             run_env["GH_CONFIG_DIR"] = empty_profile
-            return _run_process(argv, timeout, cwd, stdin_text, run_env)
-    return _run_process(argv, timeout, cwd, stdin_text, run_env)
+            return _run_process(argv, timeout, cwd, stdin_text, run_env, on_start)
+    return _run_process(argv, timeout, cwd, stdin_text, run_env, on_start)
 
 
-def _run_process(argv, timeout, cwd, stdin_text, run_env) -> Completed:
+def _run_process(
+    argv,
+    timeout,
+    cwd,
+    stdin_text,
+    run_env,
+    on_start: Callable[[int], None] | None = None,
+) -> Completed:
     # Close the spawn/register signal window, including parallel reviewer starts.
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
     try:
@@ -111,6 +120,11 @@ def _run_process(argv, timeout, cwd, stdin_text, run_env) -> Completed:
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
     try:
+        if on_start is not None:
+            try:
+                on_start(proc.pid)
+            except Exception:  # noqa: BLE001 — bookkeeping must not break the run
+                pass
         stdout, stderr = proc.communicate(input=stdin_text, timeout=timeout)
         return Completed(int(proc.returncode or 0), stdout or "", stderr or "")
     except subprocess.TimeoutExpired:
@@ -142,3 +156,8 @@ def _kill_group(pid: int, sig: signal.Signals) -> None:
             os.kill(pid, sig)
         except ProcessLookupError:
             return
+
+
+def kill_process_group(pid: int) -> None:
+    """Kill the process group led by ``pid``; a missing group is not an error."""
+    _kill_group(pid, signal.SIGKILL)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import os
 import re
@@ -45,7 +46,7 @@ from .coordinator_common import (
     strip_row,
 )
 from .coordinator_config import WorkerConfig
-from .coordinator_exec import run_bounded
+from .coordinator_exec import kill_process_group, run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
 from .gate_order import latest_gates, ordered_snapshot_gates
 from .lane import (
@@ -1137,6 +1138,203 @@ def vendor_stage_has_working_agents(
     return None
 
 
+LANE_PROCESS_DIR = "lanes"
+
+
+def lane_process_path(worker: WorkerConfig, task_id: str, agent_id: str) -> Path:
+    return control_dir(worker, task_id) / LANE_PROCESS_DIR / f"{agent_id}.json"
+
+
+def process_start_time(pid: int, worker: WorkerConfig) -> str:
+    """Start time of a process as printed by ps, or "" when it cannot be read."""
+    completed = run_bounded(
+        ["ps", "-o", "lstart=", "-p", str(pid)],
+        timeout=worker.check_timeout,
+        clear_ambient_github=False,
+    )
+    if completed.returncode != 0:
+        return ""
+    return (completed.stdout or "").strip()
+
+
+def lane_start_recorder(
+    worker: WorkerConfig, task_id: str, agent_id: str
+) -> Callable[[int], None]:
+    """Callback for run_bounded: record the lane's process id and start time."""
+    path = lane_process_path(worker, task_id, agent_id)
+
+    def record(pid: int) -> None:
+        payload = {
+            "pid": pid,
+            "lstart": process_start_time(pid, worker),
+            "started_at": utcnow(),
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            pass
+
+    return record
+
+
+def forget_lane_process(worker: WorkerConfig, task_id: str, agent_id: str) -> None:
+    """Remove the record of a lane that returned."""
+    try:
+        lane_process_path(worker, task_id, agent_id).unlink()
+    except OSError:
+        pass
+
+
+def _read_lane_process(
+    worker: WorkerConfig, task_id: str, agent_id: str
+) -> dict[str, Any] | None:
+    """The record of a lane, or None when it is missing or unusable."""
+    try:
+        value = json.loads(
+            lane_process_path(worker, task_id, agent_id).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    pid = value.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    return value
+
+
+def lane_process_state(worker: WorkerConfig, task_id: str, agent_id: str) -> str:
+    """"dead", "alive" or "expired" for the recorded process of a lane."""
+    data = _read_lane_process(worker, task_id, agent_id)
+    if data is None:
+        return "dead"
+    try:
+        os.kill(data["pid"], 0)
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        pass
+    recorded = str(data.get("lstart") or "")
+    current = process_start_time(data["pid"], worker)
+    if not recorded or not current or recorded != current:
+        return "dead"
+    elapsed = seconds_since(data.get("started_at"))
+    if elapsed is None or elapsed > worker.lane_timeout:
+        return "expired"
+    return "alive"
+
+
+def _saved_reviewer_result(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    row: dict[str, Any],
+) -> bool:
+    """True when the handler of the current phase will replay a saved result for this working row."""
+    c = coord(task)
+    phase = str(c.get("phase") or "")
+    role = str(row.get("role") or "")
+    stage = canonical_stage(str(row.get("stage") or ""))
+    if role == "reviewer":
+        round_num = int(task.get("current_round") or 0)
+        if phase != "inner_review" or row.get("round") != round_num:
+            return False
+    elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
+        round_num = None
+        expected = {
+            "pr_gates_grok": SLOT_STAGES["first"],
+            "pr_gates_codex": SLOT_STAGES["second"],
+        }.get(phase)
+        if expected is None or stage != expected:
+            return False
+    else:
+        return False
+    head = str(c.get("head_sha") or "")
+    if not head or row.get("head_sha") != head:
+        return False
+    return (
+        _read_reviewer_spool(
+            store,
+            worker,
+            task,
+            row,
+            round_num=round_num,
+            head=head,
+            dimension=str(row.get("dimension") or ""),
+            stage=stage,
+        )
+        is not None
+    )
+
+
+def recover_working_lanes(
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
+) -> str:
+    """Close working lane rows without a live process: "none", "waiting" or "recovered"."""
+    task_id = str(task["id"])
+    closed_rows: list[dict[str, Any]] = []
+    lane_alive = False
+    for row in store.rows("agent"):
+        if row.get("task_id") != task["id"] or row.get("status") != "working":
+            continue
+        agent_id = str(row["id"])
+        state = lane_process_state(worker, task_id, agent_id)
+        if state == "expired":
+            data = _read_lane_process(worker, task_id, agent_id)
+            if data is not None:
+                kill_process_group(data["pid"])
+            state = "dead"
+        if state == "alive":
+            lane_alive = True
+            continue
+        if _saved_reviewer_result(store, worker, task, row):
+            continue
+        closed = copy.deepcopy(row)
+        closed["status"] = "done"
+        closed["finished_at"] = utcnow()
+        closed["note"] = "recovered: no live process"
+        closed_rows.append(closed)
+
+    c = coord(task)
+    flag_changed = (lane_alive and c.get("lane_wait") is not True) or (
+        not lane_alive and "lane_wait" in c
+    )
+    committed_task = None
+    if closed_rows or flag_changed:
+        if flag_changed:
+            committed_task = copy.deepcopy(task)
+            committed_c = coord(committed_task)
+            if lane_alive:
+                committed_c["lane_wait"] = True
+            else:
+                committed_c.pop("lane_wait", None)
+        with store.conn.transaction():
+            for closed in closed_rows:
+                store.write(
+                    "agent", "update", str(closed["id"]), strip_row(closed)
+                )
+            if committed_task is not None:
+                save_task(store, committed_task)
+        if committed_task is not None:
+            if lane_alive:
+                c["lane_wait"] = True
+            else:
+                c.pop("lane_wait", None)
+            task["updated_at"] = committed_task["updated_at"]
+
+    for closed in closed_rows:
+        forget_lane_process(worker, task_id, str(closed["id"]))
+
+    if lane_alive:
+        return "waiting"
+    if closed_rows:
+        return "recovered"
+    return "none"
+
+
 def _post_issue_status(
     store: Store,
     worker: WorkerConfig,
@@ -1380,6 +1578,9 @@ def launch_lane(
                         timeout=worker.lane_timeout,
                         cwd=worktree,
                         stdin_text=stdin_text,
+                        on_start=lane_start_recorder(
+                            worker, str(task["id"]), aid
+                        ),
                     )
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
@@ -1493,6 +1694,7 @@ def launch_lane(
                 round_num=round_num,
             )
     finally:
+        forget_lane_process(worker, str(task["id"]), aid)
         if lane_output is not None and role != "reviewer":
             try:
                 os.unlink(lane_output)
@@ -2407,6 +2609,10 @@ def _prepare_pr_review_agent(
         raise
     return {
         "agent_id": aid,
+        "on_start": lane_start_recorder(worker, str(task["id"]), aid),
+        "forget": functools.partial(
+            forget_lane_process, worker, str(task["id"]), aid
+        ),
         "role": role,
         "vendor": vendor,
         "argv": argv,
@@ -2430,80 +2636,89 @@ def _run_prepared(
     lane_runner: LaneRunner | None,
 ) -> tuple[str, Any]:
     """Pure subprocess work for worker threads — no Store access."""
-    argv = list(prepared["argv"])
-    stdin_text = prepared["stdin_text"]
-    worktree = prepared["worktree"]
-    output_file = prepared.get("output_file")
     try:
-        with sanitized_lane_argv(argv) as run_argv:
-            argv = run_argv
-            if lane_runner is not None:
-                completed = lane_runner(argv, stdin_text)
-            else:
-                completed = run_bounded(
-                    argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
-                )
-    except Exception as exc:  # noqa: BLE001
+        argv = list(prepared["argv"])
+        stdin_text = prepared["stdin_text"]
+        worktree = prepared["worktree"]
+        output_file = prepared.get("output_file")
+        try:
+            with sanitized_lane_argv(argv) as run_argv:
+                argv = run_argv
+                if lane_runner is not None:
+                    completed = lane_runner(argv, stdin_text)
+                else:
+                    completed = run_bounded(
+                        argv,
+                        timeout=timeout,
+                        cwd=worktree,
+                        stdin_text=stdin_text,
+                        on_start=prepared.get("on_start"),
+                    )
+        except Exception as exc:  # noqa: BLE001
+            if output_file:
+                try:
+                    os.unlink(str(output_file))
+                except OSError:
+                    pass
+            return prepared["agent_id"], exc
+        stdout = str(getattr(completed, "stdout") or "")
+        path_replacements = tuple(prepared.get("path_replacements") or ())
+        stderr = _redact_coordinator_lane_text(
+            str(getattr(completed, "stderr") or ""),
+            config_dir=prepared.get("config_dir"),
+            path_replacements=path_replacements,
+            limit=None,
+        )
+        returncode = int(getattr(completed, "returncode"))
+        output_file_text = ""
         if output_file:
             try:
-                os.unlink(str(output_file))
-            except OSError:
-                pass
-        return prepared["agent_id"], exc
-    stdout = str(getattr(completed, "stdout") or "")
-    path_replacements = tuple(prepared.get("path_replacements") or ())
-    stderr = _redact_coordinator_lane_text(
-        str(getattr(completed, "stderr") or ""),
-        config_dir=prepared.get("config_dir"),
-        path_replacements=path_replacements,
-        limit=None,
-    )
-    returncode = int(getattr(completed, "returncode"))
-    output_file_text = ""
-    if output_file:
-        try:
-            output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            return prepared["agent_id"], unreadable_output_result(
-                role=str(prepared["role"]),
-                vendor=str(prepared["vendor"]),
-                model=str(prepared["model"]),
-                argv=argv,
-                returncode=returncode,
-                stderr=stderr,
-                exc=exc,
-                config_dir=prepared.get("config_dir"),
-            )
-    finalized = finalize_lane_output(
-        str(prepared["vendor"]),
-        stdout,
-        output_file_text,
-        cwd=str(worktree),
-        stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
-        config_dir=prepared.get("config_dir"),
-    )
-    status, model_result = parse_model_result(finalized.source_text, returncode)
-    safe_stdout = _redact_coordinator_lane_text(
-        finalized.text,
-        config_dir=prepared.get("config_dir"),
-        path_replacements=path_replacements,
-        limit=None,
-    )
-    return prepared["agent_id"], LaneResult(
-        role=str(prepared["role"]),
-        vendor=str(prepared["vendor"]),
-        model=str(prepared["model"]),
-        status=status,
-        argv=argv,
-        returncode=returncode,
-        stdout=safe_stdout,
-        stderr=stderr,
-        config_dir=prepared.get("config_dir"),
-        usage=finalized.usage,
-        tools=finalized.tools,
-        tools_truncated=finalized.tools_truncated,
-        protocol_result=model_result,
-    )
+                output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                return prepared["agent_id"], unreadable_output_result(
+                    role=str(prepared["role"]),
+                    vendor=str(prepared["vendor"]),
+                    model=str(prepared["model"]),
+                    argv=argv,
+                    returncode=returncode,
+                    stderr=stderr,
+                    exc=exc,
+                    config_dir=prepared.get("config_dir"),
+                )
+        finalized = finalize_lane_output(
+            str(prepared["vendor"]),
+            stdout,
+            output_file_text,
+            cwd=str(worktree),
+            stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
+            config_dir=prepared.get("config_dir"),
+        )
+        status, model_result = parse_model_result(finalized.source_text, returncode)
+        safe_stdout = _redact_coordinator_lane_text(
+            finalized.text,
+            config_dir=prepared.get("config_dir"),
+            path_replacements=path_replacements,
+            limit=None,
+        )
+        return prepared["agent_id"], LaneResult(
+            role=str(prepared["role"]),
+            vendor=str(prepared["vendor"]),
+            model=str(prepared["model"]),
+            status=status,
+            argv=argv,
+            returncode=returncode,
+            stdout=safe_stdout,
+            stderr=stderr,
+            config_dir=prepared.get("config_dir"),
+            usage=finalized.usage,
+            tools=finalized.tools,
+            tools_truncated=finalized.tools_truncated,
+            protocol_result=model_result,
+        )
+    finally:
+        forget = prepared.get("forget")
+        if callable(forget):
+            forget()
 
 
 def _abort_prepared_pr_reviews(
