@@ -468,12 +468,22 @@ def redact_lane_text(
     text: str, *, config_dir: str | None = None, limit: int | None
 ) -> str:
     """Hide config paths and secrets before and after terminal sanitization."""
-    from .coordinator_common import redact
+    from .coordinator_common import (
+        _apply_redaction_bound,
+        _prebound_redaction_input,
+        redact,
+    )
 
-    safe = hide_config_dir(text or "", config_dir)
+    bounded, source_was_cut = _prebound_redaction_input(text or "", limit)
+    safe = hide_config_dir(bounded, config_dir)
     safe = redact(safe, limit=None)
     safe = hide_config_dir(safe, config_dir)
-    return redact(safe, limit=limit)
+    safe = redact(safe, limit=None)
+    return _apply_redaction_bound(
+        safe,
+        limit,
+        source_was_cut=source_was_cut,
+    )
 
 
 def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:

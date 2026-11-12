@@ -886,7 +886,7 @@ def _validate_workflow_run(item: Any, head: str) -> dict[str, Any]:
             raise CiInventoryProtocolError(
                 "workflow inventory entry has invalid conclusion"
             )
-    elif conclusion is not None:
+    elif conclusion not in (None, ""):
         raise CiInventoryProtocolError("workflow inventory entry has invalid conclusion")
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
         raise CiInventoryProtocolError("workflow inventory entry has invalid run_attempt")

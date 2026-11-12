@@ -63,18 +63,32 @@ ACCEPT_BODY = (
 QUESTION_MARKER_PREFIX = "<!-- agent-coordinator:question:v1:"
 STATUS_MARKER_PREFIX = "<!-- agent-coordinator:status:v1:"
 OUTPUT_BOUND = 4000
+SECRET_NAME_AFFIX_LIMIT = 64
+URL_SCHEME_LIMIT = 64
+REDACTION_BOUND_MARGIN = 256
+_TRUNCATION_MARKER = "\n…[truncated]"
 SECRETISH = re.compile(
-    r'(?i)(?:["\']?[\w-]*(?:token|password|secret|api[_-]?key|authorization|'
-    r'gh_config|config_dir|signing_key)[\w-]*["\']?\s*[:=]\s*)'
-    r'(?:"[^"\n]*"|\'[^\'\n]*\'|[^\s,;]+)'
+    rf'(?i)(?<![\w-])(?:["\']?[\w-]{{0,{SECRET_NAME_AFFIX_LIMIT}}}'
+    r'(?:token|password|secret|api[_-]?key|authorization|'
+    rf'gh_config|config_dir|signing_key)[\w-]{{0,{SECRET_NAME_AFFIX_LIMIT}}}'
+    r'["\']?\s*[:=]\s*)'
+    r'(?:(?:"[^"\n]*+")|(?:\'[^\'\n]*+\')|[^\s,;]++)'
 )
-_AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*')
-_BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']+')
+_AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*+')
+_BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']++')
 _KNOWN_TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b')
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-_PRIVATE_KEY = re.compile(r'-----BEGIN ((?:[A-Z]+ )*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----.*?(?:-----END \1-----|\Z)', re.S)
-_PRIVATE_PATH = re.compile(r'(?:/Users/|/home/)[^\s"\']+')
-_URL_AUTH = re.compile(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@')
+_PRIVATE_KEY = re.compile(
+    r'-----BEGIN ((?:[A-Z]{1,32} ){0,8}PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----'
+    r'.*?(?:-----END \1-----|\Z)',
+    re.S,
+)
+_PRIVATE_PATH = re.compile(r'(?:/Users/|/home/)[^\s"\']++')
+_URL_AUTH = re.compile(
+    rf'(?<![a-zA-Z0-9+.-])'
+    rf'([a-zA-Z][a-zA-Z0-9+.-]{{0,{URL_SCHEME_LIMIT - 1}}}://)'
+    r'[^/:@\s]++:[^/@\s]++@'
+)
 
 
 def _interleaved_atoms(*atoms: str) -> str:
@@ -89,7 +103,12 @@ def _interleaved_units(atom: str, quantifier: str) -> str:
     return f"(?:{atom}{TERMINAL_INTERLEAVE_PATTERN}){quantifier}"
 
 
-_RAW_NAME_UNIT = _interleaved_units(r"[A-Za-z0-9_-]", "*")
+_RAW_NAME_QUANTIFIER = f"{{0,{SECRET_NAME_AFFIX_LIMIT}}}"
+_RAW_SCHEME_QUANTIFIER = f"{{0,{URL_SCHEME_LIMIT - 1}}}"
+_RAW_PRIVATE_KEY_WORD_QUANTIFIER = "{1,32}"
+_RAW_NAME_UNIT = _interleaved_units(
+    r"[A-Za-z0-9_-]", _RAW_NAME_QUANTIFIER
+)
 _RAW_ALPHA_UNIT = r"[A-Za-z]"
 _RAW_SCHEME_UNIT = r"[A-Za-z0-9+.-]"
 _RAW_UPPER_UNIT = r"[A-Z]"
@@ -108,18 +127,19 @@ _RAW_SECRET_WORD = "(?:" + "|".join(
     )
 ) + ")"
 _RAW_SECRETISH = re.compile(
-    rf"(?i)(?:[\"']?{_RAW_NAME_UNIT}{_RAW_SECRET_WORD}{_RAW_NAME_UNIT}[\"']?"
+    rf"(?i)(?<![A-Za-z0-9_-])(?:[\"']?{_RAW_NAME_UNIT}"
+    rf"{_RAW_SECRET_WORD}{_RAW_NAME_UNIT}[\"']?"
     rf"{TERMINAL_INTERLEAVE_PATTERN}\s*[:=]\s*)"
-    r'(?:"[^"\n]*"|\'[^\'\n]*\'|[^\s,;]+)'
+    r'(?:(?:"[^"\n]*+")|(?:\'[^\'\n]*+\')|[^\s,;]++)'
 )
 _RAW_AUTH_HEADER = re.compile(
     rf"(?im)(?:{_interleaved_literal('authorization')}|"
     rf"(?:{_interleaved_literal('set-')})?{_interleaved_literal('cookie')})"
-    rf"{TERMINAL_INTERLEAVE_PATTERN}\s*:\s*[^\n]*"
+    rf"{TERMINAL_INTERLEAVE_PATTERN}\s*:\s*[^\n]*+"
 )
 _RAW_BEARER = re.compile(
     rf"(?i){_interleaved_literal('bearer')}"
-    rf"{TERMINAL_INTERLEAVE_PATTERN}\s+[^\s\"']+"
+    rf"{TERMINAL_INTERLEAVE_PATTERN}\s+[^\s\"']++"
 )
 _RAW_KNOWN_TOKEN = re.compile(
     "(?:"
@@ -150,16 +170,18 @@ _RAW_AKIA = re.compile(
 )
 _RAW_PRIVATE_PATH = re.compile(
     rf"(?:{_interleaved_literal('/Users/')}|{_interleaved_literal('/home/')})"
-    r"[^\s\"']+"
+    r"[^\s\"']++"
 )
 _RAW_URL_AUTH = re.compile(
+    r"(?<![A-Za-z0-9+.-])"
     rf"{_interleaved_units(_RAW_ALPHA_UNIT, '')}"
-    rf"{_interleaved_units(_RAW_SCHEME_UNIT, '*')}"
-    rf"{_interleaved_literal('://')}[^/@\s]+:[^/@\s]+@"
+    rf"{_interleaved_units(_RAW_SCHEME_UNIT, _RAW_SCHEME_QUANTIFIER)}"
+    rf"{_interleaved_literal('://')}[^/:@\s]++:[^/@\s]++@"
 )
 _RAW_PRIVATE_KEY = re.compile(
     rf"{_interleaved_literal('-----BEGIN ')}"
-    rf"(?:{_interleaved_units(_RAW_UPPER_UNIT, '+')}\s+)*"
+    rf"(?:{_interleaved_units(_RAW_UPPER_UNIT, _RAW_PRIVATE_KEY_WORD_QUANTIFIER)}"
+    rf"\s+){{0,8}}"
     rf"(?:{_interleaved_literal('PRIVATE KEY')}|"
     rf"{_interleaved_literal('PGP PRIVATE KEY BLOCK')})"
     rf"{_interleaved_literal('-----')}[\s\S]*?"
@@ -228,6 +250,36 @@ def _redact_standard_patterns(text: str) -> str:
     return _URL_AUTH.sub(r'\1[redacted]@', cleaned)
 
 
+def _prebound_redaction_input(
+    text: str, limit: int | None
+) -> tuple[str, bool]:
+    """Bound work for a bounded sink and fail closed on a split final token."""
+    if limit is None:
+        return text, False
+    cutoff = max(0, limit) + REDACTION_BOUND_MARGIN
+    if len(text) <= cutoff:
+        return text, False
+    bounded = text[:cutoff]
+    if (
+        bounded
+        and not bounded[-1].isspace()
+        and not text[cutoff].isspace()
+    ):
+        # A lone ESC makes the raw-token pass replace the token containing the
+        # artificial cut.  This prevents a cut through a credential from
+        # exposing the part that happened to precede the cutoff.
+        bounded += "\x1b"
+    return bounded, True
+
+
+def _apply_redaction_bound(
+    text: str, limit: int | None, *, source_was_cut: bool = False
+) -> str:
+    if limit is not None and (source_was_cut or len(text) > limit):
+        return text[: max(0, limit - 20)] + _TRUNCATION_MARKER
+    return text
+
+
 def redact(
     text: str,
     *,
@@ -243,8 +295,17 @@ def redact(
             else False
         )
 
+    source, source_was_cut = _prebound_redaction_input(text or "", limit)
+    has_removed_control = _RAW_REMOVED_CONTROL.search(source) is not None
+    if not has_removed_control:
+        return _apply_redaction_bound(
+            _redact_standard_patterns(source),
+            limit,
+            source_was_cut=source_was_cut,
+        )
+
     cleaned = redact_terminal_interleaved_tokens(
-        text or "", secret_matcher=matches_applicable_secret
+        source, secret_matcher=matches_applicable_secret
     )
     cleaned = _redact_standard_patterns(cleaned)
     # Redact on raw bytes first.  The tolerant expressions accept complete
@@ -256,9 +317,11 @@ def redact(
     cleaned = sanitize_terminal_text(cleaned)
     cleaned = _redact_standard_patterns(cleaned)
     cleaned = cleaned.replace("\x00", "")
-    if limit is not None and len(cleaned) > limit:
-        return cleaned[: limit - 20] + "\n…[truncated]"
-    return cleaned
+    return _apply_redaction_bound(
+        cleaned,
+        limit,
+        source_was_cut=source_was_cut,
+    )
 
 
 def reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:

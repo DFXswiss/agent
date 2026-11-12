@@ -21,30 +21,52 @@ from .skills import has_skill
 from .store import Store, StoreError, utcnow
 from .text_sanitize import sanitize_terminal_text
 
-_EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
-_BEARER = re.compile(r"(?i)bearer\s+\S+")
-_AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).+")
-_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).+")
-_USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
-_JSON_SECRET = re.compile(
-    r'(?i)("[^"]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[^"]*"\s*:\s*")[^"]*(")'
+_SECRET_NAME_AFFIX_LIMIT = 64
+_URL_SCHEME_LIMIT = 64
+_EMAIL = re.compile(
+    r"(?<![A-Z0-9._%+-])[A-Z0-9._%+-]{1,64}@"
+    r"[A-Z0-9.-]{1,253}\.[A-Z]{2,63}",
+    re.I,
 )
-_HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
+_BEARER = re.compile(r"(?i)bearer\s+\S++")
+_AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).++")
+_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).++")
+_USERINFO = re.compile(
+    rf"(?<![a-zA-Z0-9+.-])"
+    rf"([a-zA-Z][a-zA-Z0-9+.-]{{0,{_URL_SCHEME_LIMIT - 1}}}://)"
+    r"[^/:@\s]++:[^/@\s]++@"
+)
+_JSON_SECRET = re.compile(
+    rf'(?i)("[^"]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}'
+    r'(?:password|secret|token|api[_-]?key|access[_-]?token|'
+    r'client[_-]?secret|authorization|passwd|access_key)'
+    rf'[^"]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}"\s*:\s*")[^"]*+(\")'
+)
+_HEX = re.compile(r"\b[a-fA-F0-9]{20,}+\b")
 _OTEL_TRACE_ID = re.compile(
-    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])'
+    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
+    r"[0-9a-fA-F]++(?:-[0-9a-fA-F]++)*+(?![-\w])"
 )
 _OTEL_SPAN_ID = re.compile(
     r'(?i)(\b(?:parent_?)?span_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
-    r"[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])"
+    r"[0-9a-fA-F]++(?:-[0-9a-fA-F]++)*+(?![-\w])"
 )
 _OTEL_TRACEPARENT = re.compile(
-    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+(?![-\w])'
+    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
+    r"[0-9a-fA-F]++-[0-9a-fA-F]++-[0-9a-fA-F]++-"
+    r"[0-9a-fA-F]++(?![-\w])"
 )
 _SECRET = re.compile(
-    r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9_-]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[A-Za-z0-9_-]*\s*[:=]\s*\S+"
+    rf"(?i)(?<![A-Za-z0-9_-])"
+    rf"[A-Za-z0-9_-]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}"
+    r"(?:password|secret|token|api[_-]?key|access[_-]?token|"
+    r"client[_-]?secret|authorization|passwd|access_key)"
+    rf"[A-Za-z0-9_-]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}\s*[:=]\s*\S++"
 )
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+_JWT = re.compile(
+    r"\beyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\b"
+)
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
 _ACCESS_LOG = re.compile(
     r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD|TRACE|CONNECT)\s+\S+\s+\d{3}\b"

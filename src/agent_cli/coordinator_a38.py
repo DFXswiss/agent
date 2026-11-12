@@ -77,6 +77,7 @@ from .github_act import (
     ACTIVITY_MARKER,
     A38_REPORT_BINDING_KEY,
     a38_report_activity_lock,
+    a38_report_task_lock,
     coordinator_a38_report_activity_id,
     is_coordinator_a38_report_activity_for_task,
 )
@@ -576,7 +577,7 @@ def _task_pending_report_activity_ids(
 
 
 def _report_task_lock(task_id: object) -> str:
-    return f"coordinator-a38-report-task:{task_id}"
+    return a38_report_task_lock(task_id)
 
 
 def _report_checkpoint_state(task: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -610,6 +611,8 @@ def _validated_post_suite_checkpoint(value: Any) -> dict[str, Any]:
     body = value.get("body")
     body_sha256 = value.get("body_sha256")
     private = value.get("private")
+    repo = value.get("repo")
+    number = value.get("number")
     if (
         not is_sha(head)
         or not is_sha(base_sha)
@@ -620,9 +623,67 @@ def _validated_post_suite_checkpoint(value: Any) -> dict[str, Any]:
         or len(body_sha256) != 64
         or _report_body_digest(body) != body_sha256
         or not isinstance(private, bool)
+        or (repo is not None and (not isinstance(repo, str) or not repo))
+        or (number is not None and as_int(number) is None)
     ):
         raise CoordinatorError("A38 post-suite checkpoint is invalid")
     return value
+
+
+def _stable_live_pr_context(
+    store: Store,
+    worker: WorkerConfig,
+    task: Mapping[str, Any],
+    runner: Runner,
+) -> dict[str, Any] | None:
+    """Read one stable live PR identity, head, base, branch and state snapshot."""
+    candidate = dict(task)
+    c = coord(candidate)
+    number = as_int(c.get("pr_number") or candidate.get("ref"))
+    repo = target_repo(candidate)
+    if number is None or not repo:
+        return None
+    api = scoped(store, worker.session_id, runner)
+    previous: dict[str, Any] | None = None
+    for _attempt in range(A38_CONTEXT_READ_ATTEMPTS + 1):
+        try:
+            view = gh_json(
+                api,
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    str(number),
+                    "--repo",
+                    repo,
+                    "--json",
+                    "number,headRefOid,baseRefOid,baseRefName,state",
+                ],
+            )
+        except CoordinatorError:
+            return None
+        if not isinstance(view, dict):
+            return None
+        current = {
+            "repo": repo,
+            "number": as_int(view.get("number")),
+            "head": str(view.get("headRefOid") or "").lower(),
+            "base_sha": str(view.get("baseRefOid") or "").lower(),
+            "base_name": str(view.get("baseRefName") or ""),
+            "state": str(view.get("state") or "").upper(),
+        }
+        if (
+            current["number"] != number
+            or not is_sha(current["head"])
+            or not is_sha(current["base_sha"])
+            or not current["base_name"]
+            or current["state"] not in ("OPEN", "CLOSED", "MERGED")
+        ):
+            return None
+        if current == previous:
+            return current
+        previous = current
+    return None
 
 
 def _checkpoint_post_suite_report(
@@ -677,10 +738,25 @@ def _checkpoint_report_context(
         committed_task = copy.deepcopy(fresh)
         committed_c = coord(committed_task)
         committed_a38 = _a38_state(committed_c)
+        intent = committed_a38.get("report_intent")
+        activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+        active_base = _active_report_base(committed_a38)
+        binding_changed = (
+            str(committed_c.get("head_sha") or "") != head
+            or active_base != base_sha
+        )
         committed_c["head_sha"] = head
         if evidence_base_sha(committed_c, a38=True) != base_sha:
             committed_a38["pending_base_sha"] = base_sha
-        with store.conn.transaction():
+        lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+        with store.exclusive(lock_key), store.conn.transaction():
+            if binding_changed:
+                _retire_pending_report_activity(
+                    store,
+                    intent,
+                    reason="A38 report intent invalidated by a task head or base checkpoint change",
+                )
+                committed_a38.pop("report_intent", None)
             save_task(store, committed_task)
     task.clear()
     task.update(committed_task)
@@ -784,6 +860,49 @@ def _discard_report_intent(
     task.update(committed_task)
 
 
+def _retire_post_suite_checkpoint(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    reason: str,
+    phase: str,
+    head: str | None = None,
+    base_sha: str | None = None,
+) -> None:
+    """Atomically retire post-suite publication state before reroute or stop."""
+    candidate_state = _report_checkpoint_state(task)
+    with store.exclusive(_report_task_lock(task["id"])):
+        fresh = store.row("task", str(task["id"]))
+        if fresh is None:
+            raise CoordinatorError("A38 report task no longer exists")
+        if _report_checkpoint_state(fresh) != candidate_state:
+            raise A38ReportCheckpointConflict(
+                "A38 report task changed before post-suite invalidation"
+            )
+        committed_task = copy.deepcopy(fresh)
+        committed_c = coord(committed_task)
+        committed_a38 = _a38_state(committed_c)
+        intent = committed_a38.get("report_intent")
+        activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+        lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+        with store.exclusive(lock_key), store.conn.transaction():
+            _retire_pending_report_activity(store, intent, reason=reason)
+            if head is not None:
+                committed_c["head_sha"] = head
+                invalidate_head_evidence(committed_c, head)
+            if base_sha is not None:
+                _drop_base_evidence(committed_c)
+                _a38_state(committed_c)["pending_base_sha"] = base_sha
+                reopen_base_bound_checklist(store, committed_task)
+            committed_a38 = _a38_state(committed_c)
+            committed_a38.pop("report_intent", None)
+            committed_a38.pop("post_suite_checkpoint", None)
+            committed_c["phase"] = phase
+            save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+
+
 def _resume_post_suite_report(
     store: Store,
     worker: WorkerConfig,
@@ -802,57 +921,103 @@ def _resume_post_suite_report(
     report_body = str(checkpoint["body"])
     body_sha256 = str(checkpoint["body_sha256"])
     visibility = bool(checkpoint["private"])
+    checkpoint_repo = checkpoint.get("repo")
+    checkpoint_number = as_int(checkpoint.get("number"))
+    current_repo = target_repo(task)
+    current_number = as_int(c.get("pr_number") or task.get("ref"))
+    cfg = repo_cfg(worker, current_repo, task)
 
-    live_state = pr_state(store, worker, task, runner)
-    if live_state is None:
+    def validate_live_context(live: dict[str, Any]) -> list[str] | None:
+        identity_mismatch = (
+            checkpoint_repo != current_repo
+            or checkpoint_number is None
+            or checkpoint_number != current_number
+            or live.get("repo") != checkpoint_repo
+            or live.get("number") != checkpoint_number
+        )
+        head_mismatch = live.get("head") != head
+        base_mismatch = (
+            live.get("base_sha") != base_sha
+            or live.get("base_name") != cfg.base
+        )
+        if not (identity_mismatch or head_mismatch or base_mismatch):
+            return None
+        state = str(live.get("state") or "")
+        reason = "A38 post-suite checkpoint invalidated by live pull request metadata"
+        if state == "MERGED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="tests",
+            )
+            details = (
+                "identity" if identity_mismatch else "head" if head_mismatch else "base"
+            )
+            raise NonRecoverableCoordinatorError(
+                f"task-done refused: merged PR {details} differs from verified A38 "
+                "checkpoint; a merged PR cannot be remeasured"
+            )
+        if state == "CLOSED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="await_merge",
+            )
+            return [
+                "PR closed with changed post-suite metadata; verifying the merge"
+            ]
+        _retire_post_suite_checkpoint(
+            store,
+            task,
+            reason=reason,
+            phase="tests",
+            head=str(live["head"]) if head_mismatch else None,
+            base_sha=str(live["base_sha"]) if base_mismatch else None,
+        )
+        return [
+            "PR metadata changed after the A38 suite; invalidating the checkpoint "
+            "and remeasuring"
+        ]
+
+    live = _stable_live_pr_context(store, worker, task, runner)
+    if live is None:
         return ["PR state temporarily unavailable after the A38 suite; retrying"]
+    mismatch_lines = validate_live_context(live)
+    if mismatch_lines is not None:
+        return mismatch_lines
+    live_state = str(live["state"])
     draft_lines: list[str] = []
-    if live_state in ("MERGED", "CLOSED"):
-        live_head = fresh_pr_head(store, worker, task, runner)
-        if live_head is None:
-            return ["PR head temporarily unavailable after the A38 suite; retrying"]
-        if live_head != head:
-            if live_state == "MERGED":
-                raise NonRecoverableCoordinatorError(
-                    "task-done refused: merged PR head differs from reviewed head; "
-                    "a merged PR cannot be remeasured"
-                )
-            if a38.get("report_intent") is not None:
-                _discard_report_intent(
-                    store,
-                    task,
-                    reason="A38 report intent invalidated by a closed pull request head",
-                )
-                c = coord(task)
-                a38 = _a38_state(c)
-            a38.pop("post_suite_checkpoint", None)
-            c["phase"] = "await_merge"
-            save_task(store, task)
-            return ["PR closed during the A38 suite; verifying the merge"]
-    else:
+    if live_state == "OPEN":
         draft_lines = ensure_draft(store, worker, task, runner)
         c = coord(task)
         a38 = _a38_state(c)
         if str(c.get("head_sha") or "") != head:
-            raise CoordinatorError(
-                "published pull request head differs from verified A38 head"
-            )
-
-    if c.get("pr_number") and live_state not in ("MERGED", "CLOSED"):
-        try:
-            set_checklist(
+            _retire_post_suite_checkpoint(
                 store,
                 task,
-                "pushed",
-                "ja",
-                f"draft PR {c.get('pr_number')} head {head}",
-                source="script",
+                reason="A38 post-suite checkpoint invalidated by task head change",
+                phase="tests",
             )
-        except CoordinatorError:
-            pass
+            return [
+                "task head changed after the A38 suite; invalidating the checkpoint "
+                "and remeasuring"
+            ]
+
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 report comment requires a pull request number")
+
+    # Publication gets a final coherent live join after draft/checklist recovery.
+    # No report intent is queued from an unreadable or changed snapshot.
+    live = _stable_live_pr_context(store, worker, task, runner)
+    if live is None:
+        return ["PR state temporarily unavailable before A38 publication; retrying"]
+    mismatch_lines = validate_live_context(live)
+    if mismatch_lines is not None:
+        return mismatch_lines
+    live_state = str(live["state"])
 
     default_activity_id = _report_activity_id(
         str(task["id"]),
@@ -867,6 +1032,7 @@ def _resume_post_suite_report(
         base_sha=base_sha,
         policy_revision=policy_revision,
     )
+    resumed_publication = intent_matches
     if intent is not None and (
         not intent_matches
         or intent.get("body_sha256") != body_sha256
@@ -970,12 +1136,16 @@ def _resume_post_suite_report(
         live_state=live_state,
         activity_id=activity_id,
     )
+    publication = (
+        f"A38 report already posted on {head[:7]}"
+        if resumed_publication
+        else f"A38 passed and report posted on {head[:7]}"
+    )
     if live_state in ("MERGED", "CLOSED"):
         return [
-            f"A38 passed and report posted on {head[:7]}; "
-            f"PR {live_state.lower()}, verifying the merge"
+            f"{publication}; PR {live_state.lower()}, verifying the merge"
         ]
-    return [f"A38 passed and report posted on {head[:7]}", *draft_lines]
+    return [publication, *draft_lines]
 
 
 def _finalize_report_evidence(
@@ -1110,6 +1280,15 @@ def _finalize_report_evidence(
                 checklist_evidence,
                 source="script",
             )
+            if committed_c.get("pr_number"):
+                set_checklist(
+                    store,
+                    committed_task,
+                    "pushed",
+                    "ja",
+                    f"draft PR {committed_c.get('pr_number')} head {head}",
+                    source="script",
+                )
             _promote_base_evidence(
                 store, committed_task, head=head, base_sha=base_sha
             )
@@ -1253,15 +1432,6 @@ def phase_tests(
         if str(coord(task).get("head_sha") or "") != head:
             raise CoordinatorError(
                 "published pull request head differs from the A38 waiver head"
-            )
-        if c.get("pr_number"):
-            set_checklist(
-                store,
-                task,
-                "pushed",
-                "ja",
-                f"draft PR {c.get('pr_number')} head {head}",
-                source="script",
             )
         _finalize_report_evidence(
             store,
@@ -1579,6 +1749,8 @@ def phase_tests(
         task,
         expected_state=copy.deepcopy(_report_checkpoint_state(task)),
         checkpoint={
+            "repo": cfg.repo,
+            "number": number,
             "head": head,
             "base_sha": base_sha,
             "policy_revision": policy_revision,

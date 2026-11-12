@@ -105,14 +105,22 @@ def gate_ordering_unavailable(
     if stage is None:
         return None
     latest = latest_gates(store, task["id"])
-    for dimension in ("quality", "logic"):
-        gate = latest.get((canonical_stage(stage), dimension))
-        if (
-            gate is not None
-            and gate.get("verdict") == "unavailable"
-            and gate.get("head_sha") == ""
-        ):
-            return f"{stage}/{dimension} gate history ordering is unavailable"
+    stages = (
+        (SLOT_STAGES["first"], stage)
+        if stage == SLOT_STAGES["second"]
+        else (stage,)
+    )
+    for candidate_stage in stages:
+        for dimension in ("quality", "logic"):
+            gate = latest.get((canonical_stage(candidate_stage), dimension))
+            if (
+                gate is not None
+                and gate.get("verdict") == "unavailable"
+                and gate.get("head_sha") == ""
+            ):
+                return (
+                    f"{candidate_stage}/{dimension} gate history ordering is unavailable"
+                )
     return None
 
 
@@ -1399,7 +1407,7 @@ def launch_lane(
                 stage="inner-review",
                 output_file=lane_output,
             )
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001 — CoordinatorError is SystemExit
             _discard_failed_reviewer_spool(
                 store,
                 worker,
@@ -2554,6 +2562,7 @@ def phase_pr_gates(
         raise CoordinatorError("uncertain prior lane outcome for vendor stage")
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
+    ordering_phase = "pr_gates_codex" if second_stage else "pr_gates_grok"
     next_phase = "ci" if second_stage else (
         "a38_first_comment" if worker.a38 else "pr_gates_codex"
     )
@@ -2567,7 +2576,7 @@ def phase_pr_gates(
         )
 
     ordering_error = gate_ordering_unavailable(
-        store, task, phase=str(c.get("phase") or "")
+        store, task, phase=ordering_phase
     )
     if ordering_error is not None:
         raise GateOrderingUnavailableError(ordering_error)
@@ -3072,6 +3081,11 @@ def phase_pr_gates(
                 raise GateOrderingUnavailableError(
                     f"{stage}/{dimension} gate history ordering is unavailable"
                 )
+            ordering_error = gate_ordering_unavailable(
+                store, committed_task, phase=ordering_phase
+            )
+            if ordering_error is not None:
+                raise GateOrderingUnavailableError(ordering_error)
             if approved:
                 if not rejection_evidence:
                     blocker = _reconcile_approved_gate_checklist(
@@ -3122,6 +3136,11 @@ def phase_pr_gates(
                 raise GateOrderingUnavailableError(
                     f"{stage}/{dimension} gate history ordering is unavailable"
                 )
+            ordering_error = gate_ordering_unavailable(
+                store, committed_task, phase=ordering_phase
+            )
+            if ordering_error is not None:
+                raise GateOrderingUnavailableError(ordering_error)
             key = checklist_key_for_stage(stage, dimension)
             denial = _try_set_checklist(
                 store,

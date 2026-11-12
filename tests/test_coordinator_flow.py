@@ -2307,7 +2307,11 @@ def test_ready_side_ci_pending_or_transport_retries_without_reply_gate(
     lines = tick(store, worker, runner=fake, lane_runner=lane)
     task = store.rows("task")[0]
     coord = task["payload"]["coordinator"]
-    assert coord["phase"] != "blocked", lines
+    expected_retry_phase = (
+        "readiness" if ready_phase == "formal_approve" else ready_phase
+    )
+    assert coord["phase"] == expected_retry_phase, lines
+    assert lines and "retrying" in lines[0], lines
     assert coord.get("resume_phase") in (None, "")
     assert coord.get("question_activity_id") == question_before
     assert fake.pr["isDraft"] is True

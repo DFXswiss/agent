@@ -45,8 +45,11 @@ subsequent notification that provides useful model work belong to the script.
    wrappers exempt after their parameter bytes are checked with the visible
    text), redacts complete or unterminated string-control spans before token
    splitting, and applies control-tolerant secret redaction to the raw line,
-   removes terminal controls, applies the ordinary
-   error redaction again, fingerprints, and inserts or enriches
+   removes terminal controls, and applies the ordinary error redaction again.
+   Secret-key name affixes, URL schemes, terminal escape parameters, and
+   removable-control interleaves have fixed matching windows so separatorless
+   log text is handled in linear time. The script then fingerprints and inserts
+   or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.
    Enrichment never knocks. The model does not query the log source.

@@ -201,6 +201,9 @@ inside a Grep pattern, also when assignment text or punctuation precedes it.
 Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
 `\c`) fail closed by redacting the complete target. Any raw ESC or C0/C1
 control byte does the same before path classification.
+Credential-name affixes, URL schemes, escape parameters, and removable-control
+interleaves use fixed matching windows. Bounded lane fields are cut to their
+limit plus a small fail-closed inspection margin before redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage

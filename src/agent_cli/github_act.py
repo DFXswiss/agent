@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
+from contextlib import ExitStack
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -48,6 +49,11 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
 def a38_report_activity_lock(activity_id: str) -> str:
     """Cross-process serialization key shared by report publication/invalidation."""
     return f"coordinator-a38-report-activity:{activity_id}"
+
+
+def a38_report_task_lock(task_id: object) -> str:
+    """Cross-process task lock acquired before any report activity lock."""
+    return f"coordinator-a38-report-task:{task_id}"
 
 
 def coordinator_a38_report_activity_id(
@@ -178,6 +184,22 @@ def _is_a38_report_activity(store: Store, row: dict[str, Any]) -> bool:
     )
 
 
+def _a38_report_task_id(store: Store, row: dict[str, Any]) -> str | None:
+    """Resolve the one coordinator task whose lock protects this report row."""
+    payload = row.get("payload")
+    binding = payload.get(A38_REPORT_BINDING_KEY) if isinstance(payload, dict) else None
+    task_id = binding.get("task_id") if isinstance(binding, dict) else None
+    if isinstance(task_id, str) and task_id:
+        return task_id
+    matches = [
+        str(task["id"])
+        for task in store.rows("task")
+        if (_task_report_intent(task) or ({}, {}))[1].get("activity_id")
+        == row.get("id")
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _task_report_intent(
     task: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -220,6 +242,69 @@ def _a38_report_target_error(
     return None
 
 
+def _a38_report_checkpoint_error(
+    coordinator: dict[str, Any], intent: dict[str, Any], binding: dict[str, Any]
+) -> str | None:
+    """Require the executor binding to remain current for task head and base."""
+    a38 = coordinator.get("a38")
+    active_base = (
+        a38.get("pending_base_sha") or a38.get("base_sha")
+        if isinstance(a38, dict)
+        else None
+    )
+    if (
+        coordinator.get("head_sha") != binding.get("head")
+        or active_base != binding.get("base_sha")
+        or intent.get("head") != binding.get("head")
+        or intent.get("base_sha") != binding.get("base_sha")
+    ):
+        return "A38 report activity is stale for the task head or active base"
+    return None
+
+
+def _retire_a38_report_activity(
+    store: Store, row: dict[str, Any], *, error: str
+) -> None:
+    """Retire a failed row and its matching task intent in one transaction.
+
+    The caller holds the report activity lock, which serializes this update with
+    coordinator report publication and checkpoint invalidation.
+    """
+    payload = row.get("payload")
+    binding = payload.get(A38_REPORT_BINDING_KEY) if isinstance(payload, dict) else None
+    task_id = binding.get("task_id") if isinstance(binding, dict) else None
+    candidates = (
+        [store.row("task", task_id)]
+        if isinstance(task_id, str) and task_id
+        else store.rows("task")
+    )
+    matched_task: dict[str, Any] | None = None
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        current = _task_report_intent(candidate)
+        if current is not None and current[1].get("activity_id") == row.get("id"):
+            matched_task = candidate
+            break
+    updated_row = _strip(row)
+    updated_row["execution_status"] = "error"
+    updated_row["execution_error"] = error
+    with store.conn.transaction():
+        store.write("activity", "update", str(row["id"]), updated_row)
+        if matched_task is not None:
+            updated_task = _strip(matched_task)
+            task_payload = updated_task.get("payload")
+            coordinator = (
+                task_payload.get("coordinator")
+                if isinstance(task_payload, dict)
+                else None
+            )
+            a38 = coordinator.get("a38") if isinstance(coordinator, dict) else None
+            if isinstance(a38, dict):
+                a38.pop("report_intent", None)
+            store.write("task", "update", str(updated_task["id"]), updated_task)
+
+
 def _a38_report_intent_error(store: Store, row: dict[str, Any]) -> str | None:
     """Fail closed when a pending A38 report no longer has its task intent."""
     payload = row.get("payload")
@@ -257,7 +342,10 @@ def _a38_report_intent_error(store: Store, row: dict[str, Any]) -> str | None:
             or not isinstance(intent.get("private"), bool)
         ):
             return "A38 report activity payload does not match its current intent"
-        return _a38_report_target_error(row, task, coordinator)
+        checkpoint_error = _a38_report_checkpoint_error(
+            coordinator, intent, intent
+        )
+        return checkpoint_error or _a38_report_target_error(row, task, coordinator)
     expected_keys = {
         "task_id",
         "head",
@@ -303,7 +391,8 @@ def _a38_report_intent_error(store: Store, row: dict[str, Any]) -> str | None:
         intent.get(key) != value for key, value in expected_intent.items()
     ):
         return "A38 report activity has no matching current report intent"
-    return _a38_report_target_error(row, task, coordinator)
+    checkpoint_error = _a38_report_checkpoint_error(coordinator, intent, binding)
+    return checkpoint_error or _a38_report_target_error(row, task, coordinator)
 
 
 def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> str:
@@ -982,7 +1071,12 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
                     or current.get("execution_status") != "pending"
                 ):
                     return "A38 report activity is no longer pending"
-                return _a38_report_intent_error(store, current)
+                report_error = _a38_report_intent_error(store, current)
+                if report_error is not None:
+                    _retire_a38_report_activity(
+                        store, current, error=report_error
+                    )
+                return report_error
 
             return _run_comment_post(
                 store,
@@ -1007,9 +1101,17 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
             continue
         try:
             if typ == "comment.post" and _is_a38_report_activity(store, row):
-                with store.exclusive(
-                    a38_report_activity_lock(str(row.get("id") or ""))
-                ):
+                task_id = _a38_report_task_id(store, row)
+                with ExitStack() as locks:
+                    if task_id is not None:
+                        locks.enter_context(
+                            store.exclusive(a38_report_task_lock(task_id))
+                        )
+                    locks.enter_context(
+                        store.exclusive(
+                            a38_report_activity_lock(str(row.get("id") or ""))
+                        )
+                    )
                     current = store.row("activity", str(row.get("id") or ""))
                     if (
                         not isinstance(current, dict)
@@ -1018,7 +1120,9 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
                         continue
                     report_error = _a38_report_intent_error(store, current)
                     if report_error is not None:
-                        _mark(store, current, status="error", error=report_error)
+                        _retire_a38_report_activity(
+                            store, current, error=report_error
+                        )
                         lines.append(f"comment.post {current.get('id')} error")
                         continue
                     lines.append(execute(current, a38_report=True))
