@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1949,7 +1950,9 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "`grok`, `claude`, or" in doc
     assert (
         "The lane specification contains only the conflicted paths, the replayed "
-        "commit subject, the base branch, and fixed rules."
+        "commit subject, the base branch, fixed rules, and — on the single retry — "
+        "the deterministic reason why the previous attempt failed its verification, "
+        "masked like every other value."
     ) in doc
     assert (
         "These values are passed in a delimited data section; the fixed rules "
@@ -6249,6 +6252,40 @@ def test_lane_system_exit_propagates_out_of_tick(
     )
     assert worktree.exists()
     assert _control_git_dir(tmp_path).exists()
+
+
+def test_worker_lock_runtime_error_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    @contextmanager
+    def failing_exclusive(_key: str):
+        raise RuntimeError("lock backend failed")
+        yield
+
+    monkeypatch.setattr(store, "exclusive", failing_exclusive)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert len(lines) == 1
+    assert lines[0].startswith("error:")
+    assert "lock backend failed" in lines[0]
+
+
+def test_worker_lock_keyboard_interrupt_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+
+    @contextmanager
+    def interrupting_exclusive(_key: str):
+        raise KeyboardInterrupt
+        yield
+
+    monkeypatch.setattr(store, "exclusive", interrupting_exclusive)
+    with pytest.raises(KeyboardInterrupt):
+        tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
 
 
 @pytest.mark.parametrize(

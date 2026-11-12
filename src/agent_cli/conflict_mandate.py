@@ -2103,6 +2103,8 @@ def tick(
         return [f"lock error: {safe(worker, exc)}", *observations]
     except UnicodeError as exc:
         return [f"error: {safe(worker, exc)}", *observations]
+    except Exception as exc:  # noqa: BLE001 — tick must never raise silently
+        return [f"error: {safe(worker, exc)}", *observations]
 
 
 __all__ = [
