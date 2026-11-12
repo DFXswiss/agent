@@ -434,7 +434,7 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
     if raw == "":
         return ""
     if kind not in ("file_path", "path", "pattern"):
-        return redact(raw[:300], limit=300)
+        return redact(raw, limit=300)
     if _ENCODED_ESCAPE_RE.search(raw) is not None:
         return "[redacted]"
     try:
@@ -443,7 +443,7 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
         return "[redacted]"
     inside = _plain_inside_worktree_target(raw, root)
     if inside is not None:
-        return redact(inside[:300], limit=300)
+        return redact(inside, limit=300)
     normalized = _normalize_tool_target(raw)
     if _contains_disallowed_path_fragment(normalized):
         return "[redacted]"
@@ -458,7 +458,7 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
         except ValueError:
             # Any path outside the worktree is a host detail, whatever its prefix.
             return "[redacted]"
-    return redact(normalized[:300], limit=300)
+    return redact(normalized, limit=300)
 
 
 DIAGNOSTIC_LIMIT = 4000

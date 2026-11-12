@@ -603,6 +603,65 @@ def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None
         assert "[redacted]" in cleaned
 
 
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1b]8;;https://example hidden\x07",
+        "\x1bPopaque payload\x1b\\",
+        "\x1b^opaque payload\x1b\\",
+        "\x1b_opaque payload\x1b\\",
+        "\x1bXopaque payload\x1b\\",
+    ),
+    ids=("osc", "dcs", "pm", "apc", "sos"),
+)
+@pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
+@pytest.mark.parametrize(
+    "placement",
+    ("inside-key", "before-operator", "before-value", "inside-value"),
+)
+def test_assignment_redaction_classifies_around_raw_string_controls(
+    control: str, quoted: bool, placement: str
+) -> None:
+    if placement == "inside-key":
+        raw = (
+            f'"pass{control}word"="hunter two" visible'
+            if quoted
+            else f"pass{control}word=hunter2 visible"
+        )
+    elif placement == "before-operator":
+        raw = (
+            f'"password"{control}:"hunter two" visible'
+            if quoted
+            else f"password{control}=hunter2 visible"
+        )
+    elif placement == "before-value":
+        raw = (
+            f'"password":{control} "hunter two" visible'
+            if quoted
+            else f"password={control} hunter2 visible"
+        )
+    else:
+        raw = (
+            f'"password":"hun{control}ter two" visible'
+            if quoted
+            else f"password=hun{control}ter2 visible"
+        )
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert "hunter" not in cleaned
+        assert "hun" not in cleaned
+        assert "ter2" not in cleaned
+        assert "two" not in cleaned
+        assert "visible" in cleaned
+        assert "opaque payload" not in cleaned
+        assert "example hidden" not in cleaned
+        assert "\x1b" not in cleaned
+        assert "[redacted]" in cleaned
+
+
 def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
     for redact_value in (
         lambda value: redact_shared(value, limit=None),
@@ -781,6 +840,31 @@ def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     assert out.usage is not None and out.usage.model == "fallback"
     assert finalize_lane_output("codex", "stdout", "file", cwd="/work").text == "file"
     assert finalize_lane_output("grok", "stdout", "file", cwd="/work").text == "stdout"
+
+
+@pytest.mark.parametrize("target_kind", ("other", "inside", "relative"))
+def test_tool_target_redacts_token_crossing_output_cut(
+    tmp_path: Path, target_kind: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    token = "sk-" + "A" * 32
+    prefix = "v/" * 145
+    if target_kind == "other":
+        raw = prefix + token
+        kind = "command"
+    elif target_kind == "inside":
+        raw = str(worktree / prefix / token)
+        kind = "path"
+    else:
+        raw = prefix + token
+        kind = "path"
+
+    cleaned = _tool_target(raw, str(worktree), kind)
+
+    assert "sk-" not in cleaned
+    assert len(cleaned) <= 300
 
 
 def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(

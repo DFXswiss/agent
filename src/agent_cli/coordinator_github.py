@@ -1305,7 +1305,7 @@ def fetch_failure_logs(
             inaccessible = True
             chunks.append(f"{path}: logs inaccessible (archive, not plain text)")
             continue
-        chunks.append(redact(raw[:1500]))
+        chunks.append(redact(raw, limit=1500))
     if inaccessible and not any("logs inaccessible" not in c for c in chunks):
         return "failing workflow logs inaccessible"
     if not chunks:

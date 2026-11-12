@@ -1962,17 +1962,88 @@ def queue_comment_review(
             "number": number,
             "body": redacted_body,
             "event": "COMMENT",
+            "task_id": str(task["id"]),
+            "gate_id": gate_id,
         },
     )
     return activity_id
 
 
+def _rejection_review_activity_ids(task: dict[str, Any]) -> tuple[str, ...]:
+    """Return a structurally strict saved rejection-publication batch."""
+    saved = coord(task).get("rejection_review_activity_ids")
+    if saved is None:
+        return ()
+    if not isinstance(saved, list):
+        raise CoordinatorError("rejection review checkpoint is invalid")
+    activity_ids: list[str] = []
+    seen: set[str] = set()
+    for item in saved:
+        if not isinstance(item, str) or not item or item in seen:
+            raise CoordinatorError("rejection review intent is missing or foreign")
+        seen.add(item)
+        activity_ids.append(item)
+    return tuple(activity_ids)
+
+
+def _validated_rejection_review_rows(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Validate a complete saved batch before any row is retried or executed."""
+    from .coordinator_common import as_int, target_repo
+
+    activity_ids = _rejection_review_activity_ids(task)
+    target = target_repo(task)
+    number = as_int(coord(task).get("pr_number") or task.get("ref"))
+    task_id = str(task.get("id") or "")
+    rows: list[dict[str, Any]] = []
+    for activity_id in activity_ids:
+        row = store.row("activity", activity_id)
+        payload = row.get("payload") if isinstance(row, dict) else None
+        gate_id = payload.get("gate_id") if isinstance(payload, dict) else None
+        gate = (
+            store.row("review_gate", gate_id)
+            if isinstance(gate_id, str) and gate_id
+            else None
+        )
+        expected_payload_keys = {
+            "repo",
+            "number",
+            "body",
+            "event",
+            "task_id",
+            "gate_id",
+        }
+        if (
+            not isinstance(row, dict)
+            or row.get("_origin_device_id") != store.device_id()
+            or row.get("session_id") != worker.session_id
+            or row.get("type") != "review.post"
+            or row.get("execution_status") not in {"pending", "error", "done"}
+            or not isinstance(payload, dict)
+            or set(payload) != expected_payload_keys
+            or payload.get("repo") != target
+            or number is None
+            or payload.get("number") != number
+            or payload.get("event") != "COMMENT"
+            or payload.get("task_id") != task_id
+            or not isinstance(payload.get("body"), str)
+            or not payload["body"]
+            or not isinstance(gate, dict)
+            or gate.get("_origin_device_id") != store.device_id()
+            or gate.get("task_id") != task_id
+            or gate.get("verdict") != "rejected"
+        ):
+            raise CoordinatorError("rejection review intent is missing or foreign")
+        rows.append(row)
+    return tuple(rows)
+
+
 def _remember_rejection_review(task: dict[str, Any], activity_id: str) -> None:
     c = coord(task)
-    saved = c.get("rejection_review_activity_ids")
-    if saved is not None and not isinstance(saved, list):
-        raise CoordinatorError("rejection review checkpoint is invalid")
-    activity_ids = [item for item in saved or [] if isinstance(item, str)]
+    activity_ids = list(_rejection_review_activity_ids(task))
     if activity_id not in activity_ids:
         activity_ids.append(activity_id)
     c["rejection_review_activity_ids"] = activity_ids
@@ -1985,22 +2056,11 @@ def _checkpoint_rejection_reviews(
 ) -> list[str]:
     """Retain every unverified rejection publication as a pending intent."""
     c = coord(task)
-    saved = c.get("rejection_review_activity_ids")
-    if saved is not None and not isinstance(saved, list):
-        raise CoordinatorError("rejection review checkpoint is invalid")
-    activity_ids = [item for item in saved or [] if isinstance(item, str)]
+    rows = _validated_rejection_review_rows(store, worker, task)
     remaining: list[str] = []
     lines: list[str] = []
-    for activity_id in activity_ids:
-        row = store.row("activity", activity_id)
-        if (
-            row is None
-            or row.get("_origin_device_id") != store.device_id()
-            or row.get("session_id") != worker.session_id
-            or row.get("type") != "review.post"
-            or not isinstance(row.get("payload"), dict)
-        ):
-            raise CoordinatorError("rejection review intent is missing or foreign")
+    for row in rows:
+        activity_id = str(row["id"])
         if row.get("execution_status") == "done":
             lines.append(f"rejection comment {activity_id[:8]} published")
             continue
@@ -2028,21 +2088,18 @@ def reconcile_rejection_review_intents(
     runner: Runner,
 ) -> list[str]:
     """Retry saved rejection comments without relaunching a reviewer."""
-    saved = coord(task).get("rejection_review_activity_ids")
-    if saved is not None and not isinstance(saved, list):
-        raise CoordinatorError("rejection review checkpoint is invalid")
-    activity_ids = tuple(item for item in saved or [] if isinstance(item, str))
-    if not activity_ids:
+    rows = _validated_rejection_review_rows(store, worker, task)
+    if not rows:
         return []
-    for activity_id in activity_ids:
-        row = store.row("activity", activity_id)
-        if row is not None and row.get("execution_status") == "error":
+    activity_ids = tuple(str(row["id"]) for row in rows)
+    for row in rows:
+        if row.get("execution_status") == "error":
             queue_activity(
                 store,
-                activity_id=activity_id,
+                activity_id=str(row["id"]),
                 session_id=worker.session_id,
                 typ="review.post",
-                payload=dict(row.get("payload") or {}),
+                payload=dict(row["payload"]),
             )
     try:
         execute_github(store, runner, activity_ids=activity_ids)
@@ -2689,6 +2746,7 @@ def phase_pr_gates(
         task.update(committed_task)
         c = coord(task)
         if activity_ids:
+            _validated_rejection_review_rows(store, worker, task)
             execute_github(store, runner, activity_ids=tuple(activity_ids))
             _checkpoint_rejection_reviews(store, worker, task)
         return [
@@ -3261,6 +3319,7 @@ def phase_pr_gates(
     c = coord(task)
 
     if rejection_activity_ids:
+        _validated_rejection_review_rows(store, worker, task)
         execute_github(
             store, runner, activity_ids=tuple(rejection_activity_ids)
         )

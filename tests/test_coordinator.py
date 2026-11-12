@@ -1535,6 +1535,31 @@ def test_a38_report_keeps_failed_cancelled_and_pending_strict(
     assert observation.kind == expected
 
 
+def test_failed_workflow_log_redacts_token_crossing_output_cut() -> None:
+    from agent_cli.coordinator_github import fetch_failure_logs
+
+    raw = "v" * 1489 + " " + "sk-" + "A" * 32 + " trailing"
+    latest = {
+        ".github/workflows/check.yml|pull_request": {
+            "path": ".github/workflows/check.yml",
+            "status": "completed",
+            "conclusion": "failure",
+            "id": 99,
+            "run_attempt": 1,
+        }
+    }
+
+    cleaned = fetch_failure_logs(
+        lambda _argv: Completed(0, raw, ""),
+        "example/project",
+        latest,
+        [],
+    )
+
+    assert "sk-" not in cleaned
+    assert len(cleaned) <= 1500
+
+
 def test_a38_report_covered_rollup_does_not_cover_cancelled_workflow() -> None:
     from agent_cli.coordinator_github import _classify_rollup_and_inventory
 
@@ -4706,6 +4731,10 @@ def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     assert len(reviews) == 1
     assert published == [reviews[0]["id"]]
     assert f"{vendor} logic — rejected" in reviews[0]["payload"]["body"]
+    assert reviews[0]["payload"]["task_id"] == tid
+    assert reviews[0]["payload"]["gate_id"] == (
+        "aa000001-0000-4000-8000-0000000000f2"
+    )
 
 
 def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
@@ -4959,8 +4988,23 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
             ["aa000001-0000-4000-8000-0000000000f5"],
             "rejection review intent is missing or foreign",
         ),
+        ([7], "rejection review intent is missing or foreign"),
+        ([""], "rejection review intent is missing or foreign"),
+        (
+            [
+                "aa000001-0000-4000-8000-0000000000f5",
+                "aa000001-0000-4000-8000-0000000000f5",
+            ],
+            "rejection review intent is missing or foreign",
+        ),
     ],
-    ids=("structurally-invalid", "missing-or-foreign"),
+    ids=(
+        "structurally-invalid",
+        "missing-or-foreign",
+        "non-string-id",
+        "empty-id",
+        "duplicate-id",
+    ),
 )
 def test_nonrepeatable_rejection_checkpoint_reply_recovers_and_dispatches(
     tmp_path: Path,
@@ -5085,6 +5129,7 @@ def test_await_merge_rejection_reconciliation_failure_is_reply_recoverable(
             "payload": {
                 "coordinator": {
                     "phase": "await_merge",
+                    "pr_number": 42,
                     "source": {"repo": "example/project", "number": 7},
                     "rejection_review_activity_ids": [rejection_id],
                 }
@@ -5099,8 +5144,29 @@ def test_await_merge_rejection_reconciliation_failure_is_reply_recoverable(
             "id": rejection_id,
             "session_id": worker.session_id,
             "type": "review.post",
-            "payload": {"repo": "example/project", "number": 42, "body": "retry"},
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": "retry",
+                "event": "COMMENT",
+                "task_id": tid,
+                "gate_id": "aa000001-0000-4000-8000-0000000000f2",
+            },
             "execution_status": "pending",
+        },
+    )
+    store.write(
+        "review_gate",
+        "insert",
+        "aa000001-0000-4000-8000-0000000000f2",
+        {
+            "id": "aa000001-0000-4000-8000-0000000000f2",
+            "task_id": tid,
+            "stage": "review-2",
+            "dimension": "logic",
+            "vendor": "codex",
+            "verdict": "rejected",
+            "head_sha": "a" * 40,
         },
     )
     published = _record_blocker_publications(monkeypatch)
@@ -5125,6 +5191,150 @@ def test_await_merge_rejection_reconciliation_failure_is_reply_recoverable(
     assert checkpoint["question_activity_id"] in published
     assert checkpoint["blocker"] == "temporary GitHub failure"
     assert any("blocker published" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    "invalid_row",
+    (
+        "other-pr",
+        "foreign-device",
+        "wrong-session",
+        "wrong-type",
+        "wrong-event",
+        "foreign-task",
+        "invalid-status",
+        "duplicate-id",
+    ),
+)
+def test_rejection_checkpoint_validates_entire_batch_before_requeue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_row: str,
+) -> None:
+    from agent_cli.coordinator_lanes import reconcile_rejection_review_intents
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "other-session", [])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000c7"
+    first_id = "aa000001-0000-4000-8000-0000000000c8"
+    second_id = "aa000001-0000-4000-8000-0000000000c9"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "rejection_review_activity_ids": (
+                    [first_id, first_id]
+                    if invalid_row == "duplicate-id"
+                    else [first_id, second_id]
+                ),
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for index, (activity_id, initial_status) in enumerate(
+        ((first_id, "error"), (second_id, "pending")), start=1
+    ):
+        status = (
+            "working"
+            if index == 2 and invalid_row == "invalid-status"
+            else initial_status
+        )
+        gate_id = f"aa000001-0000-4000-8000-0000000000d{index}"
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality" if index == 1 else "logic",
+                "vendor": "codex",
+                "verdict": "rejected",
+                "head_sha": "a" * 40,
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": (
+                    "other-session"
+                    if index == 2 and invalid_row == "wrong-session"
+                    else worker.session_id
+                ),
+                "type": (
+                    "comment.post"
+                    if index == 2 and invalid_row == "wrong-type"
+                    else "review.post"
+                ),
+                "payload": {
+                    "repo": "example/project",
+                    "number": (
+                        99 if index == 2 and invalid_row == "other-pr" else 42
+                    ),
+                    "body": f"rejection {index}",
+                    "event": (
+                        "APPROVE"
+                        if index == 2 and invalid_row == "wrong-event"
+                        else "COMMENT"
+                    ),
+                    "task_id": (
+                        "other-task"
+                        if index == 2 and invalid_row == "foreign-task"
+                        else tid
+                    ),
+                    "gate_id": gate_id,
+                },
+                "execution_status": status,
+                **(
+                    {"execution_error": "temporary GitHub failure"}
+                    if initial_status == "error"
+                    else {}
+                ),
+            },
+        )
+
+    if invalid_row == "foreign-device":
+        real_row = store.row
+
+        def row_with_foreign_activity(table, row_id):  # noqa: ANN001
+            row = real_row(table, row_id)
+            if table == "activity" and row_id == second_id and row is not None:
+                row = dict(row)
+                row["_origin_device_id"] = "foreign-device"
+            return row
+
+        monkeypatch.setattr(store, "row", row_with_foreign_activity)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github",
+        lambda *_a, **_k: pytest.fail("invalid batch was executed"),
+    )
+
+    with pytest.raises(
+        CoordinatorError, match="rejection review intent is missing or foreign"
+    ):
+        reconcile_rejection_review_intents(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+        )
+
+    first = store.row("activity", first_id)
+    assert first["execution_status"] == "error"
+    assert first["execution_error"] == "temporary GitHub failure"
 
 
 def test_invalid_rejection_checkpoint_does_not_strand_closed_post_suite_recovery(

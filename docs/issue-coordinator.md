@@ -408,6 +408,11 @@ for worker in workers.values():
    tick, before phase dispatch and before an early merged/closed transition,
    until the owned intent is verified done. Implementation and later phases may
    continue; the retry does not wait for a human reply or relaunch a reviewer.
+   Each saved id is a unique non-empty string. Before any retry or GitHub
+   execution, the complete batch is validated as device-owned `review.post`
+   rows for this worker, task, rejected gate, repository, pull-request number,
+   and `COMMENT` event, with a pending, error, or done status. New rejection
+   payloads carry the task and gate ids explicitly.
    An invalid or foreign saved rejection checkpoint becomes a durable
    `phase-error` blocker with the exact resume phase and a reply checkpoint.
    The invalid active checkpoint is retained only as inert audit data, so an
@@ -729,8 +734,11 @@ evidence human spec input; the script never invents human grants.
 ## Evidence hygiene
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
-first replaces every complete or unterminated OSC, DCS, PM, APC, or SOS span
-with `[redacted]` on the full raw text, before whitespace tokenization. A
+first classifies secret assignments on the full raw text. During that scan,
+every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque
+skipped span between the key, operator, and value and within quoted or unquoted
+values. Only after assignment classification does the pipeline replace those
+spans with `[redacted]` on the classified text, before whitespace tokenization. A
 complete span includes its seven- or eight-bit introducer and terminator; an
 unterminated span consumes the remainder of the text and is replaced rather
 than merely removed. The pipeline then replaces any whitespace-delimited raw
@@ -750,16 +758,20 @@ unquoted `key=value` assignment retains the established whole-token replacement;
 structured or quoted assignments keep their key and delimiters while their value
 is replaced. The secret keywords include `passwd` and the `access_key`,
 `access-key`, and `accesskey` forms; removable terminal controls are consumed
-alongside whitespace between the key, assignment operator, and value, but `=`
-and `:` terminate such a control span and remain the assignment operator. Quoted
-values run to their closing quote or the bounded input end; unquoted values stop
-at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
+alongside whitespace between the key, assignment operator, and value. A complete
+string control remains one opaque span even when its payload contains `=` or
+`:`, and payload whitespace does not end an unquoted value. Quoted values run to
+their closing quote or the bounded input end; unquoted values stop at whitespace,
+comma, or semicolon. URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
 backtracking are possessive. This keeps every redaction pass linear on long
 separatorless provider text. A sink with an existing length
 limit takes only that limit plus a small inspection margin before any redaction
 regular expression runs. If that cut splits a token, the cut token is redacted
 as a whole, and the usual truncation marker and hard output limit still apply.
+Tool targets and failed-workflow logs pass their unsliced source into that
+bounded pipeline so credentials crossing the visible cutoff remain inside the
+inspection margin.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is
@@ -802,7 +814,8 @@ notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
 a CSI/ESC final byte as a possible token character, so the terminal sanitizer
 cannot assemble an unredacted token by deleting that byte.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
-`ESC \`; complete and unterminated string-control spans are replaced with
+`ESC \`. The assignment scan treats complete and unterminated string-control
+spans as opaque; only after that classification are they replaced with
 `[redacted]` before tokenization.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
@@ -1043,7 +1056,10 @@ the affected per-activity cross-process advisory lock; the executor re-reads
 both the pending activity and the task's current matching intent immediately before a GitHub
 POST. It also requires the binding head and base to equal the task's current
 `head_sha` and active pending-or-promoted base. A stale row and its matching
-intent are retired together while the activity lock is held. It never moves a non-pending row to `done`. Rows bound to a coordinator
+intent are retired together while the activity lock is held. It never moves a
+non-pending row to `done`. A row bound to a coordinator task may make that one
+verified report-intent removal through the otherwise activity-only scoped
+GitHub executor; no other task write is permitted. Rows bound to a coordinator
 task, including
 rows with either the current or legacy deterministic coordinator report id,
 fail closed without a current matching intent. Unbound report-marked comments
