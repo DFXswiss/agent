@@ -20,8 +20,8 @@ def test_contributing_states_ready_for_review_contract() -> None:
     text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     prose = _ws(text)
     assert NOT_DONE in text
-    assert "Push the branch to this repository" in text
-    assert "Do not open the pull request from a personal fork" in text
+    assert "Push the branch to this repository or to a fork of it" in text
+    assert "Do not open the pull request from a personal fork" not in text
     assert "The first review run is required" in text
     assert "Two review runs are required" in text
     assert "one_review_authors" in text

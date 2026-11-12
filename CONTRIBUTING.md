@@ -3,7 +3,7 @@
 [REVIEW.md](REVIEW.md) is binding for every change and for every review of a change. Read it and this file at the base revision of the pull request. A pull request that changes either file does not replace that base text for the rest of its diff. The review does not change files.
 
 - Branch from `develop`. Never push to `develop` or `main`.
-- Push the branch to this repository. Do not open the pull request from a personal fork.
+- Push the branch to this repository or to a fork of it. GitHub may hold the workflow runs of a pull request from a fork; the guard approves them as described in [docs/a38-guard.md](docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
 - As soon as the first signed task commit exists, push and open a **draft** pull request immediately ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). Stay draft until **Ready for review** (below). A human merges; only then is the pull request completed.
 - Sign commits with the GitHub identity that owns the commits.
 - Public repository: English for commits and comments. The visible pull-request summary is an `EN:` block, optionally followed by a labeled `DE:` block.
@@ -43,7 +43,7 @@ A draft plus local tests is not done. Do not claim the pull request is finished,
 
 Ready for review requires all of:
 
-1. Signed commits on a branch in this repository, based on `develop`.
+1. Signed commits on a branch in this repository or a fork of it, based on `develop`.
 2. The first review run is required. A later commit keeps that review when the current head still contains the reviewed commit and that commit is after the pull request base. Quality/conformance reads this file and `REVIEW.md` first. The session that authored the diff does not sit those reviews. Two review runs are required. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.
 3. Model slot `second` runs only if both dimensions of model slot `first` are approved; the provider behind each slot is the `models` value pinned on the task, taken from the device's `ai-accounts.json` when the task was created. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor.
 4. Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings. Iterate until the first review run is approved. A later commit keeps that review when the current head still contains the reviewed commit and that commit is after the pull request base. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.
