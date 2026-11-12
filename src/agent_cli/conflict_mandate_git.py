@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,13 @@ class UnmergedPath:
     path: str
     state: str
     supported: bool
+
+
+def _output_lines(output: str) -> list[str]:
+    lines = (output or "").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line.rstrip("\r") for line in lines]
 
 
 def _argv(worktree: str, *parts: str) -> list[str]:
@@ -75,7 +83,7 @@ def _driver_names(completed: Completed, label: str) -> tuple[str, ...]:
     if completed.returncode != 0:
         _fail(completed, label)
     names: list[str] = []
-    for line in (completed.stdout or "").splitlines():
+    for line in _output_lines(completed.stdout or ""):
         match = _DRIVER_LINE.match(line.strip())
         if match is None:
             raise CoordinatorError(f"{label} returned an unexpected entry")
@@ -326,7 +334,7 @@ def merge_commits(runner: Runner, worktree: str, *, base: str) -> list[str]:
         "--merges",
         f"origin/{base}..HEAD",
     )
-    return [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    return [line.strip() for line in _output_lines(completed.stdout or "") if line.strip()]
 
 
 def rebase(runner: Runner, worktree: str, *, base: str) -> Completed:
@@ -411,7 +419,7 @@ def unmerged_paths(runner: Runner, worktree: str) -> list[UnmergedPath]:
         "--porcelain=v2",
     )
     result: list[UnmergedPath] = []
-    for raw in (completed.stdout or "").splitlines():
+    for raw in _output_lines(completed.stdout or ""):
         line = raw.rstrip("\r")
         if not line.startswith("u "):
             continue
@@ -420,11 +428,20 @@ def unmerged_paths(runner: Runner, worktree: str) -> list[UnmergedPath]:
             state in _UNMERGED_STATES
             and submodule == "N..."
             and not path.startswith('"')
+            and not _unsupported_path_characters(path)
             and _regular_file(worktree, path)
             and _numstat_text(runner, worktree, path)
         )
         result.append(UnmergedPath(path=path, state=state, supported=supported))
     return result
+
+
+def _unsupported_path_characters(path: str) -> bool:
+    return any(
+        unicodedata.category(character).startswith("C")
+        or unicodedata.category(character) in {"Zl", "Zp"}
+        for character in path
+    )
 
 
 def _regular_file(worktree: str, path: str) -> bool:
@@ -453,7 +470,7 @@ def _numstat_text(runner: Runner, worktree: str, path: str) -> bool:
     if completed.returncode != 0:
         return False
     matches: list[tuple[str, str]] = []
-    for line in (completed.stdout or "").splitlines():
+    for line in _output_lines(completed.stdout or ""):
         parts = line.split("\t", 2)
         if len(parts) == 3 and parts[2] == path:
             matches.append((parts[0], parts[1]))
@@ -545,7 +562,7 @@ def range_commits(runner: Runner, worktree: str, *, base: str) -> list[str]:
         "rev-list",
         f"origin/{base}..HEAD",
     )
-    shas = [line.strip().lower() for line in (completed.stdout or "").splitlines() if line.strip()]
+    shas = [line.strip().lower() for line in _output_lines(completed.stdout or "") if line.strip()]
     if any(not re.fullmatch(r"[0-9a-f]{40}", sha) for sha in shas):
         raise CoordinatorError("cannot read replayed commit list")
     return shas

@@ -24,13 +24,14 @@ from agent_cli.conflict_mandate_github import (
     pull_number_from_comment,
     read_remote_head,
 )
-from agent_cli.conflict_mandate_git import push_with_lease
+from agent_cli.conflict_mandate_git import push_with_lease, unmerged_paths
 from agent_cli.conflict_mandate_state import (
     REQUIRED_STATE_KEYS,
     STATE_KEY_TYPES,
     STATE_PHASES,
     Request,
     StateUnreadable,
+    bounded_tail,
     comment_body,
     context,
     control_dir,
@@ -1602,6 +1603,95 @@ def test_safe_masks_absolute_paths_and_keeps_repository_names(tmp_path: Path) ->
     assert "https://example.test/a/b" in text
     assert "/mnt/data/x" not in text
     assert "~/private/y" not in text
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("error:/srv/private/file", "error:[local path]"),
+        ("fatal:~/work/x", "fatal:[local path]"),
+        (
+            "https://github.com/example/project/pull/42",
+            "https://github.com/example/project/pull/42",
+        ),
+        ("ssh://git@example.com/a/b", "ssh://git@example.com/a/b"),
+        ("key=/srv/a/b", "key=[local path]"),
+    ],
+)
+def test_safe_masks_paths_after_colons_without_masking_urls(
+    tmp_path: Path, value: str, expected: str,
+) -> None:
+    assert safe(worker(tmp_path), value) == expected
+
+
+def test_check_tail_and_blocker_comment_mask_paths_after_colons(tmp_path: Path) -> None:
+    worker_cfg = worker(tmp_path)
+    check_tail = safe(
+        worker_cfg,
+        bounded_tail("check failed: error:/srv/private/file", limit=100),
+    )
+    assert check_tail == "check failed: error:[local path]"
+    body = comment_body(
+        worker_cfg,
+        "blocker",
+        "fatal:~/work/x",
+        [("Failed verification", "error:/srv/private/file")],
+    )
+    assert "fatal:[local path]" in body
+    assert "error:[local path]" in body
+    assert "~/work/x" not in body
+    assert "/srv/private/file" not in body
+
+
+def test_bounded_tail_masks_secret_before_selecting_tail() -> None:
+    secret = "ghp_" + "A" * 36
+    output = "x" * 80 + " " + secret + " " + "y" * 10
+    limit = 24
+    cut = len(output) - limit * 2
+    assert output.index(secret) < cut < output.index(secret) + len(secret)
+    tail = bounded_tail(output, limit=limit)
+    assert "[redacted]" in tail
+    assert "ghp_" not in tail
+    assert "A" * 10 not in tail
+
+
+def test_bounded_tail_masks_local_path_before_selecting_tail() -> None:
+    path = "/srv/private/segment/another/really-long-segment/file"
+    output = "x" * 80 + " " + path + " " + "y" * 8
+    limit = 24
+    cut = len(output) - limit * 2
+    assert output.index(path) < cut < output.index(path) + len(path)
+    tail = bounded_tail(output, limit=limit)
+    assert "[local path]" in tail
+    assert "really-long-segment/file" not in tail
+
+
+def test_bounded_tail_without_masked_text_is_byte_for_byte_unchanged() -> None:
+    output = "0123456789" * 8
+    assert bounded_tail(output, limit=20) == "…" + output[-19:]
+
+
+@pytest.mark.parametrize("character", ["\u2028", "\u0085", "\u202e"])
+def test_unmerged_unicode_separator_or_format_path_is_complete_and_unsupported(
+    tmp_path: Path, character: str,
+) -> None:
+    path = f"a{character}b"
+    (tmp_path / path).write_text("conflict\n", encoding="utf-8")
+
+    def git_runner(argv: list[str]) -> Completed:
+        if "--porcelain=v2" in argv:
+            return Completed(
+                0,
+                f"u UU N... 100644 100644 100644 100644 "
+                f"{'1' * 40} {'2' * 40} {'3' * 40} {path}\n",
+                "",
+            )
+        raise AssertionError(argv)
+
+    paths = unmerged_paths(git_runner, str(tmp_path))
+    assert [(item.path, item.state, item.supported) for item in paths] == [
+        (path, "UU", False)
+    ]
 
 
 def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> None:
@@ -3751,6 +3841,26 @@ def test_wrongly_typed_comment_url_makes_listing_transient_and_keeps_checkpoint(
     assert not checkpoint.exists()
 
 
+def test_comment_with_only_issue_url_is_transient_and_keeps_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    comment = _mandate_comment_at("2026-09-01T00:00:00Z", comment_id=7)
+    comment.pop("html_url")
+    comment["issue_url"] = "https://api.github.com/repos/example/project/issues/42"
+    fake.comments = [comment]
+    lines = tick(store, worker_cfg, runner=fake)
+    assert any(line.startswith("transient:") and "comment URL" in line for line in lines)
+    assert fake.pr_comments == []
+    assert fake.reactions == []
+    assert not any("/pulls/" in " ".join(call) for call in fake.calls)
+    checkpoint = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session" / "checkpoint.json"
+    )
+    assert not checkpoint.exists()
+
+
 def test_mismatched_comment_urls_make_listing_transient_and_keep_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5007,6 +5117,20 @@ def test_comment_formatter_removes_every_formatting_character(
     assert "\u00ad" not in body
     assert "reason" in body and "visible text" in body
     assert "frame" in body and "text" in body
+
+
+@pytest.mark.parametrize("character", ["\u2028", "\u2029", "\ue000", "\u0378"])
+def test_comment_formatter_removes_other_unsupported_unicode_characters(
+    tmp_path: Path, character: str,
+) -> None:
+    body = comment_body(
+        worker(tmp_path),
+        "blocker",
+        f"unsupported path a{character}b",
+        [],
+    )
+    assert character not in body
+    assert "unsupported path ab" in body
 
 
 def test_safe_replaces_whitespace_roots_verbatim(
