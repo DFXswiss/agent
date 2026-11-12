@@ -4,6 +4,12 @@
 # move the pin only through a reviewed change. Merging this installation onto the
 # trusted default branch activates it. mode=enforce publishes failing statuses.
 # Repo config: .github/a38.json. Process: docs/a38.md and docs/a38-guard.md.
+# The guard authenticates with a per-run installation token of the GitHub App
+# dfxswiss-pr-guard. The App's permissions grant the write access the guard
+# needs, and the App has its own REST rate-limit pool instead of the
+# repository-wide GITHUB_TOKEN budget. Token and slug come from the same step so
+# they cannot drift apart, because a slug that does not name the App whose token
+# is passed makes the guard post a new comment on every run.
 
 name: dfx pr guard
 
@@ -31,10 +37,10 @@ on:
     workflows: ["test"]
     types: [completed]
 
-concurrency:
-  group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && format('a38-pr-guard-sweep-{0}', github.repository) || format('a38-pr-guard-event-{0}-{1}', github.repository, github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.event.issue.number || github.event.inputs.pr || github.run_id) }}
-  cancel-in-progress: false
-
+# These permissions belong to GITHUB_TOKEN, which the guard no longer uses.
+# They are left unchanged in this switch; narrowing them is a separate change.
+# Falling back to GITHUB_TOKEN means reverting the change that introduced the
+# app-token step, because a failing app-token step skips the guard step.
 permissions:
   contents: write
   issues: write
@@ -45,13 +51,26 @@ permissions:
 
 jobs:
   guard:
+    # The guard's own comments all carry a <!-- PR-GUARD: marker and must not start a run.
+    # A skipped job never enters job-level concurrency; human User comments are never skipped.
+    if: ${{ !(github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '<!-- PR-GUARD:')) }}
+    concurrency:
+      group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && format('a38-pr-guard-sweep-{0}', github.repository) || format('a38-pr-guard-event-{0}-{1}', github.repository, github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.event.issue.number || github.event.inputs.pr || github.run_id) }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && 45 || 10 }}
     steps:
-      - name: dfx pr guard
-        uses: DFXswiss/agent/.github/actions/a38-guard@b421c4a7c957738187aa620a44e2f115dd939bd1
+      - name: dfx pr guard app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          client-id: ${{ vars.A38_GUARD_APP_CLIENT_ID }}
+          private-key: ${{ secrets.A38_GUARD_APP_PRIVATE_KEY }}
+      - name: dfx pr guard
+        uses: DFXswiss/agent/.github/actions/a38-guard@63bd283dc9a3b6eb29827af9f690d2ba79ed1f14
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          actor_app_slug: ${{ steps.app-token.outputs.app-slug }}
           repository: ${{ github.repository }}
           pr: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pr || '' }}
           all_open: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open) }}
