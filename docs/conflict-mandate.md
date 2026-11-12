@@ -6,11 +6,13 @@ comment, verifies the mandate, rebases the feature branch onto its base, starts
 a confined model lane only for conflicted files, verifies the result, runs the
 configured checks, pushes the rebased signed branch, and reports in the pull
 request. The lane specification contains only the conflicted paths, the replayed
-commit subject, the base branch, and fixed rules. These values are passed in a
-delimited data section; the fixed rules declare them and the contents of every
-file as data, not instructions. Unicode control and bidirectional formatting
-characters are removed from the commit subject. If a value would close the data
-section, the request ends in a blocker and no lane is started. The lane runs
+commit subject, the base branch, fixed rules, and — on the single retry — the
+deterministic reason why the previous attempt failed its verification, masked like every other value. These
+values are passed in a delimited data section; the fixed rules declare them and
+the contents of every file as data, not instructions. Unicode control and
+bidirectional formatting characters are removed from the commit subject. If a
+value would close the data section, the request ends in a blocker and no lane is
+started. The lane runs
 in the worktree and can read the repository; the script confines the result:
 after a completed lane run it verifies that exactly the conflicted paths changed
 and that their final content passes the deterministic checks. An attempt that
@@ -440,8 +442,12 @@ formatting: single-line values in a code span with any backtick replaced by
 in a fenced code block whose fence is longer than any backtick run in the
 value.
 GitHub therefore renders no mention, link, HTML, or heading from a reason,
-check-output tail, lane note, file name, branch name, sha, or count. Local
-paths never appear.
+check-output tail, lane note, file name, branch name, sha, or count. Local paths
+are masked: the workspace, control and home directories are replaced verbatim,
+and every other absolute path with at least two segments and every `~/` path is
+replaced by `[local path]`. A single-segment path such as `/etc` is not masked,
+and a path that contains whitespace is masked up to the first whitespace (see
+the known limits).
 
 ## Local state and failure classes
 
