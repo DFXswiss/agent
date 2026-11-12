@@ -10,6 +10,7 @@ Fake GitHub/model/check transports only. No real network/models/tests.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1625,10 +1626,251 @@ def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
         row
         for row in store.rows("activity")
         if row.get("type") == "comment.post"
-        and "outcome is uncertain" in str((row.get("payload") or {}).get("body") or "")
     ]
     assert len(blockers) == 1
-    assert lines == ["review-1 uncertain; blocked"]
+    body = str((blockers[0].get("payload") or {}).get("body") or "")
+    assert "Model lane interrupted in pr_gates_grok; not a code rejection." in body
+    assert lines == [
+        "blocked: Model lane interrupted in pr_gates_grok; not a code rejection.",
+        "blocker published on example/project#7",
+    ]
+    saved = store.row("task", tid)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_grok"
+    assert "uncertain_lane" not in checkpoint
+    assert checkpoint["question_activity_id"] == blockers[0]["id"]
+    outcomes = checkpoint["lane_outcome"]["outcomes"]
+    assert len(outcomes) == 1
+    assert outcomes[0]["dimension"] == "logic"
+
+
+def _expire_retry(store: Store, tid: str) -> None:
+    row = store.row("task", tid)
+    row["payload"]["coordinator"]["retry"]["at"] = "2020-01-01T00:00:00Z"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in row.items() if not key.startswith("_")},
+    )
+
+
+def _seed_retry_gate_task(
+    store: Store, worker, fake: FakeGh, tid: str
+) -> None:
+    worktree = worker.workspace_root / tid
+    worktree.mkdir(parents=True)
+    (worktree / ".git").mkdir()
+    branch = f"task-{tid[:8]}"
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "models": {"first": "grok", "second": "codex"},
+            "payload": {
+                "coordinator": {
+                    "phase": "pr_gates_grok",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(worktree),
+                    "branch": branch,
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                    "evidence": {"tests_pass": True, "tests_head": fake.head},
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    from agent_cli.coordinator_git import _write_marker
+
+    fake.remotes = {
+        "origin": "https://github.com/example/project.git",
+        "publication": "https://github.com/example/project.git",
+    }
+    fake.branch = branch
+    fake.branches.add(branch)
+    _write_marker(
+        worker,
+        tid,
+        {
+            "phase": "ready",
+            "task_id": tid,
+            "session_id": worker.session_id,
+            "target_repo": "example/project",
+            "publication_repo": "example/project",
+            "branch": branch,
+            "base": "develop",
+            "base_sha": fake.base,
+            "worktree": str(worktree),
+            "worker_login": "worker-bot",
+        },
+    )
+
+
+def test_incomplete_pr_review_is_retried_before_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = replace(make_worker(tmp_path), lane_retries=1)
+    fake = FakeGh()
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: unavailable\n"
+    fake.model_outputs["pr-reviewer-logic"] = (
+        "STATUS: complete\nRESULT: approved\n"
+    )
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    tid = "a1000001-0000-4000-8000-000000000001"
+    _seed_retry_gate_task(store, worker, fake, tid)
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    assert (
+        "retry 1/1 of pr_gates_grok after review-1 review incomplete "
+        "(quality: status=partial, result=empty); next attempt in 30s"
+    ) in lines
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "pr_gates_grok"
+    assert checkpoint["retry"]["attempt"] == 1
+    assert "question_activity_id" not in checkpoint
+    assert "lane_outcome" not in checkpoint
+    gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+    assert {(row["dimension"], row["verdict"]) for row in gates} == {
+        ("quality", "unavailable"),
+        ("logic", "approved"),
+    }
+    assert not any(
+        row.get("type") == "comment.post"
+        and "Blocked:" in str((row.get("payload") or {}).get("body") or "")
+        for row in store.rows("activity")
+    )
+
+    started: list[str] = []
+
+    def approve_one(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        role = next(
+            name
+            for name in ("pr-reviewer-quality", "pr-reviewer-logic")
+            if name in material
+        )
+        started.append(role)
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    tick(store, worker, runner=fake, lane_runner=approve_one)
+    assert started == []
+    _expire_retry(store, tid)
+    tick(store, worker, runner=fake, lane_runner=approve_one)
+    assert started == ["pr-reviewer-quality"]
+    gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+    assert any(
+        row.get("dimension") == "quality" and row.get("verdict") == "approved"
+        for row in gates
+    )
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] != "blocked"
+    assert not any(
+        row.get("type") == "comment.post"
+        and "Blocked:" in str((row.get("payload") or {}).get("body") or "")
+        for row in store.rows("activity")
+    )
+
+
+def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = replace(make_worker(tmp_path), lane_retries=1)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    tid = "a1000001-0000-4000-8000-000000000002"
+    _seed_retry_gate_task(store, worker, fake, tid)
+
+    def fail_quality(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        if "pr-reviewer-quality" in material:
+            raise RuntimeError("provider transport failed")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    lines = tick(store, worker, runner=fake, lane_runner=fail_quality)
+    assert lines == [
+        "retry 1/1 of pr_gates_grok after review-1 review lane failed; "
+        "next attempt in 30s"
+    ]
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 2
+    assert all(row.get("status") == "done" for row in agents)
+    quality = next(row for row in agents if row.get("dimension") == "quality")
+    assert quality["note"] == "PR review lane execution failed"
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "pr_gates_grok"
+    assert checkpoint.get("uncertain_lane") is not True
+    outcomes = checkpoint["lane_outcome"]["outcomes"]
+    assert len(outcomes) == 1 and outcomes[0]["dimension"] == "logic"
+    assert not [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+    assert not any(
+        row.get("type") == "comment.post"
+        and "Blocked:" in str((row.get("payload") or {}).get("body") or "")
+        for row in store.rows("activity")
+    )
+
+    _expire_retry(store, tid)
+    started: list[str] = []
+
+    def approve_one(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        role = next(
+            name
+            for name in ("pr-reviewer-quality", "pr-reviewer-logic")
+            if name in material
+        )
+        started.append(role)
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    tick(store, worker, runner=fake, lane_runner=approve_one)
+    assert started == ["pr-reviewer-quality"]
+    gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+    assert {
+        (row.get("stage"), row.get("dimension"), row.get("verdict"))
+        for row in gates
+        if row.get("verdict") == "approved"
+    } == {
+        ("review-1", "quality", "approved"),
+        ("review-1", "logic", "approved"),
+    }
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] != "blocked"
 
 
 @pytest.mark.parametrize("dismissal_point", ["readiness", "evidence_comment"])

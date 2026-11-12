@@ -47,6 +47,7 @@ from .coordinator_common import (
     evidence_base_sha,
     gh_list,
     gh_json,
+    infra_failure,
     is_sha,
     redact,
     redact_tail,
@@ -68,6 +69,7 @@ from .coordinator_git import (
     verify_signed_clean_head,
 )
 from .coordinator_lanes import (
+    check_command_unavailable,
     gate_prompt_evidence,
     invalidate_head_evidence,
     latest_gates,
@@ -1641,6 +1643,15 @@ def phase_tests(
             clear_ambient_github=True,
         )
         pre_output = (precheck.stdout or "") + "\n" + (precheck.stderr or "")
+        if infra_failure(precheck.returncode):
+            return check_command_unavailable(
+                store,
+                worker,
+                task,
+                runner,
+                head=head,
+                returncode=precheck.returncode,
+            )
         if precheck.returncode != 0:
             _record_local_check(
                 store,
@@ -1731,6 +1742,19 @@ def phase_tests(
         results.append(_run_cli(argv, worker=worker, cwd=run_dir))
         if index == 0 and results[-1].returncode != 0:
             break
+    unavailable = next(
+        (result.returncode for result in results if infra_failure(result.returncode)),
+        None,
+    )
+    if unavailable is not None:
+        return check_command_unavailable(
+            store,
+            worker,
+            task,
+            runner,
+            head=head,
+            returncode=unavailable,
+        )
     passed = len(results) == 3 and all(result.returncode == 0 for result in results)
     output = "\n".join(
         redact_tail(

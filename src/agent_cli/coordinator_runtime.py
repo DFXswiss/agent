@@ -40,6 +40,7 @@ from .coordinator_common import (
     REQUIRED_WORKER_SKILLS,
     CiObservedFailureError,
     CoordinatorError,
+    LaneFailedError,
     NonRecoverableCoordinatorError,
     LaneRunner,
     Runner,
@@ -50,6 +51,7 @@ from .coordinator_common import (
     gh_json,
     gh_list,
     harden_grok_write_argv,
+    infra_failure,
     owned_session,
     parse_change_summaries,
     parse_model_result,
@@ -110,15 +112,18 @@ from .coordinator_lanes import (
     _REVIEWER_RESULTS,
     _coordinator_path_replacements,
     cleanup_finished_reviewer_spools,
+    check_command_unavailable,
     clear_reviewer_replay_outcomes,
     implementer_replay_fields,
     invalidate_head_evidence,
     gate_ordering_unavailable,
     launch_lane,
+    lane_retry,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
     reconcile_rejection_review_intents,
     reviewer_replay_outcomes,
+    retry_remaining,
     review_rules_bound,
     set_checklist,
     write_review_context,
@@ -1132,6 +1137,16 @@ def _apply_implementer_outcome(
         return coord(task)
 
     if status != "complete":
+        retry = lane_retry(
+            store,
+            worker,
+            task,
+            phase="implement",
+            reason=f"implementer status={status}",
+            before_save=lambda cp: cp.pop("lane_outcome", None),
+        )
+        if retry is not None:
+            return retry + draft_lines
         provider_unavailable = status == "unavailable"
         _commit_early_outcome(
             task_state="open",
@@ -1158,6 +1173,16 @@ def _apply_implementer_outcome(
         ) + draft_lines
 
     if model_result not in _IMPLEMENTER_RESULTS:
+        retry = lane_retry(
+            store,
+            worker,
+            task,
+            phase="implement",
+            reason=f"implementer RESULT={model_result or 'empty'}",
+            before_save=lambda cp: cp.pop("lane_outcome", None),
+        )
+        if retry is not None:
+            return retry + draft_lines
         _commit_early_outcome(
             task_state="open",
             blocker=f"implementer invalid RESULT={model_result or 'empty'}",
@@ -1662,6 +1687,21 @@ def _apply_inner_reviewer_replay(
         status in ("timeout", "partial", "unavailable")
         or model_result not in _REVIEWER_RESULTS
     ):
+        retry = lane_retry(
+            store,
+            worker,
+            task,
+            phase="inner_review",
+            reason=(
+                f"inner reviewer status={status} "
+                f"result={model_result or 'empty'}"
+            ),
+            before_save=lambda cp: clear_reviewer_replay_outcomes(
+                {"payload": {"coordinator": cp}}, agent_ids={agent_id}
+            ),
+        )
+        if retry is not None:
+            return retry
         committed_task = copy.deepcopy(task)
         committed_c = coord(committed_task)
         committed_c["phase"] = "blocked"
@@ -1853,6 +1893,15 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
         env=env,
         clear_ambient_github=True,
     )
+    if infra_failure(completed.returncode):
+        return check_command_unavailable(
+            store,
+            worker,
+            task,
+            runner,
+            head=head,
+            returncode=completed.returncode,
+        )
     output = redact_tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
     cid = str(uuid.uuid4())
     passed = completed.returncode == 0
@@ -1946,6 +1995,7 @@ def parked(task: dict[str, Any], worker: WorkerConfig) -> bool:
         or (phase == "ci" and c.get("ci_wait") is True)
         or bool(c.get("binding_blocker"))
         or c.get("lane_wait") is True
+        or retry_remaining(c, worker) > 0
     )
 
 
@@ -2105,6 +2155,8 @@ def _advance_task(
     lane_runner: LaneRunner | None,
 ) -> list[str]:
     c = coord(task)
+    if retry_remaining(c, worker) > 0:
+        return []
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)
@@ -2448,6 +2500,36 @@ def _advance_task(
             *(str(item) for item in lane_observations),
             *blocker_lines,
         ]
+    except LaneFailedError as exc:
+        retry_lines = lane_retry(
+            store, worker, task, phase=phase, reason=str(exc)
+        )
+        c = coord(task)
+        if retry_lines is None:
+            c["phase"] = "blocked"
+            c["resume_phase"] = phase
+            c["blocker"] = (
+                f"Model lane interrupted in {phase}; not a code rejection."
+            )
+            save_task(store, task)
+            retry_lines = publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                c["blocker"],
+                kind="lane-failed",
+                reply_checkpoint=True,
+            )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *retry_lines,
+        ]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
         c = coord(task)
@@ -2507,11 +2589,17 @@ def _after_advance(
     store: Store, worker: WorkerConfig, task: dict[str, Any], before: str
 ) -> list[str]:
     """Maintain the scheduler flags of one visited task; save only on a change."""
-    if _terminal(task):
-        return []
     c = coord(task)
     now = str(c.get("phase") or "accept")
     changed = False
+    retry = c.get("retry")
+    if isinstance(retry, dict) and retry.get("phase") != now:
+        c.pop("retry", None)
+        changed = True
+    if _terminal(task):
+        if changed:
+            save_task(store, task)
+        return []
     if now == "ci":
         if before == "ci" and c.get("ci_wait") is not True:
             c["ci_wait"] = True
@@ -2561,6 +2649,8 @@ def advance_one(
     touched: set[str] = set()
     for task in tasks:  # 1. observe waiting tasks
         if not parked(task, worker):
+            continue
+        if retry_remaining(coord(task), worker) > 0:
             continue
         if not observation_due(store, task, worker):
             continue

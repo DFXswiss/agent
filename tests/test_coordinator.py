@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from agent_cli.coordinator import tick
+from agent_cli.coordinator_common import LaneFailedError
 from agent_cli.coordinator_git import verify_signed_clean_head
 from agent_cli.coordinator_github import (
     phase_formal_approve,
@@ -4648,15 +4649,18 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
     def fail_lane(_argv: list[str], _stdin: str | None = None) -> Completed:
         raise RuntimeError(raw_failure)
 
-    lines = phase_pr_gates(
-        store,
-        worker,
-        task,
-        lambda argv: Completed(0, "", ""),
-        fail_lane,
-        vendor="codex",
-        stage="review-2",
-    )
+    with pytest.raises(
+        LaneFailedError, match="review-2 review lane failed"
+    ) as raised:
+        phase_pr_gates(
+            store,
+            worker,
+            task,
+            lambda argv: Completed(0, "", ""),
+            fail_lane,
+            vendor="codex",
+            stage="review-2",
+        )
 
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
     assert len(agents) == 2
@@ -4668,23 +4672,17 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
     exposed = "\n".join(
         (
             *(str(row["note"]) for row in agents),
-            str(checkpoint["blocker"]),
+            str(raised.value),
+            str(checkpoint.get("blocker") or ""),
             *(str(row.get("payload")) for row in comments),
-            *lines,
         )
     )
     assert raw_failure not in exposed
     assert private_worktree not in exposed
     assert private_config not in exposed
-    assert checkpoint["uncertain_lane"] is True
-    assert checkpoint.get("resume_phase") in (None, "")
-    assert "PR review lane execution failed" not in str(checkpoint["blocker"])
-    assert "outcome uncertain" in str(checkpoint["blocker"])
-    assert all(
-        "PR review lane execution failed" not in str(row.get("payload"))
-        for row in comments
-    )
-    assert "review-2 uncertain; blocked" in lines
+    assert checkpoint.get("uncertain_lane") is not True
+    assert checkpoint["phase"] == "pr_gates_codex"
+    assert comments == []
 
 
 def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
@@ -15313,17 +15311,17 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
         lambda *_args, **_kwargs: "status-comment",
     )
 
-    lines = coordinator_lanes.phase_pr_gates(
-        store,
-        worker,
-        store.row("task", task["id"]),
-        lambda _argv: Completed(0, "", ""),
-        reviewer,
-        vendor="codex",
-        stage="review-2",
-    )
+    with pytest.raises(LaneFailedError, match="review-2 review lane failed"):
+        coordinator_lanes.phase_pr_gates(
+            store,
+            worker,
+            store.row("task", task["id"]),
+            lambda _argv: Completed(0, "", ""),
+            reviewer,
+            vendor="codex",
+            stage="review-2",
+        )
 
-    assert lines == ["review-2 uncertain; blocked"]
     assert raw_paths and temporary_paths and final_paths
     assert all(
         not path.exists()
@@ -15340,6 +15338,9 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
         row.get("note") == coordinator_lanes.PR_REVIEW_EXECUTION_ERROR
         for row in failed
     )
+    checkpoint = store.row("task", task["id"])["payload"]["coordinator"]
+    assert checkpoint["phase"] == "pr_gates_codex"
+    assert checkpoint.get("uncertain_lane") is not True
 
 
 def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files(

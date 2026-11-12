@@ -60,6 +60,25 @@ def test_park_poll_seconds_accepts_zero_and_refuses_bad_values(tmp_path, value):
         load_coordinator_config(tmp_path)
 
 
+def test_lane_retries_defaults_to_two(tmp_path):
+    (tmp_path / 'coordinator.json').write_text(json.dumps(config(tmp_path)))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.lane_retries == 2
+
+
+@pytest.mark.parametrize('value', [-1, "1", True, 1.5])
+def test_lane_retries_accepts_zero_and_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['lane_retries'] = 0
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].lane_retries == 0
+
+    data['workers']['selected-session']['lane_retries'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='lane_retries requires an integer >= 0'):
+        load_coordinator_config(tmp_path)
+
+
 @pytest.mark.parametrize('field', ['review_session', 'workspace_root', 'repositories',
                                   'reply_logins', 'poll_seconds', 'lane_timeout', 'check_timeout'])
 def test_missing_selection_never_uses_a_default(tmp_path, field):

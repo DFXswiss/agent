@@ -122,6 +122,7 @@ def make_worker(root: Path) -> WorkerConfig:
         lane_timeout=60,
         check_timeout=30,
         park_poll_seconds=0,
+        lane_retries=0,
     )
 
 

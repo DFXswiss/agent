@@ -9,6 +9,7 @@ import re
 import tempfile
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from .ai_accounts import load_ai_accounts
 from .chain import close_allowed
 from .coordinator_common import (
     CoordinatorError,
+    LaneFailedError,
     LaneRunner,
     Runner,
     checklist_key_for_stage,
@@ -34,6 +36,7 @@ from .coordinator_common import (
     redact,
     review_is_approved,
     save_task,
+    seconds_since,
     _surface_ref_is_repository_relative,
     strip_row,
 )
@@ -88,6 +91,123 @@ _REVIEWER_OUTPUT_CHECKPOINT_VERSION = 1
 
 class GateOrderingUnavailableError(CoordinatorError):
     """Stop a gate tick without preparing or publishing any GitHub intent."""
+
+
+def retry_remaining(c: dict[str, Any], worker: WorkerConfig) -> int:
+    """Seconds until the stored retry is due; 0 when it is due or absent."""
+    retry = c.get("retry")
+    if not isinstance(retry, dict):
+        return 0
+    stored_attempt = retry.get("attempt")
+    attempt = (
+        stored_attempt
+        if isinstance(stored_attempt, int)
+        and not isinstance(stored_attempt, bool)
+        and stored_attempt >= 1
+        else 1
+    )
+    wait = worker.poll_seconds * 2 ** (attempt - 1)
+    elapsed = seconds_since(retry.get("at"))
+    if elapsed is None:
+        return 0
+    return min(wait, max(0, int(wait - elapsed)))
+
+
+def schedule_retry(
+    c: dict[str, Any], worker: WorkerConfig, *, phase: str, reason: str
+) -> list[str] | None:
+    """Write the next same-phase retry into the checkpoint; None when exhausted. Saves nothing."""
+    prior = c.get("retry")
+    prior_attempt = prior.get("attempt") if isinstance(prior, dict) else None
+    if (
+        isinstance(prior, dict)
+        and prior.get("phase") == phase
+        and isinstance(prior_attempt, int)
+        and not isinstance(prior_attempt, bool)
+    ):
+        attempt = prior_attempt + 1
+    else:
+        attempt = 1
+    if attempt > worker.lane_retries:
+        c.pop("retry", None)
+        return None
+    safe = redact(" ".join(str(reason).split()), limit=300)
+    wait = worker.poll_seconds * 2 ** (attempt - 1)
+    c["retry"] = {
+        "phase": phase,
+        "attempt": attempt,
+        "at": utcnow(),
+        "reason": safe,
+    }
+    c["phase"] = phase
+    return [
+        f"retry {attempt}/{worker.lane_retries} of {phase} after {safe}; "
+        f"next attempt in {wait}s"
+    ]
+
+
+def lane_retry(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    *,
+    phase: str,
+    reason: str,
+    before_save: Callable[[dict[str, Any]], None] | None = None,
+) -> list[str] | None:
+    """Schedule a same-phase retry and save it; None when the bound is used up."""
+    committed_task = copy.deepcopy(task)
+    committed_c = coord(committed_task)
+    lines = schedule_retry(committed_c, worker, phase=phase, reason=reason)
+    if lines is None:
+        coord(task).pop("retry", None)
+        return None
+    if before_save is not None:
+        before_save(committed_c)
+    save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    return lines
+
+
+def check_command_unavailable(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+    returncode: int,
+) -> list[str]:
+    """Retry a check command that could not run; block with a reply checkpoint when exhausted."""
+    lines = lane_retry(
+        store,
+        worker,
+        task,
+        phase="tests",
+        reason=f"check command exit {returncode}",
+    )
+    if lines is not None:
+        return lines
+    from .coordinator_github import publish_blocker
+
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["resume_phase"] = "tests"
+    c["blocker"] = (
+        f"Check command could not run on {head[:7]} (exit {returncode}); "
+        "not a code failure."
+    )
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        c["blocker"],
+        kind="check-unavailable",
+        reply_checkpoint=True,
+    )
 
 
 def gate_ordering_unavailable(
@@ -1306,11 +1426,7 @@ def launch_lane(
             agent = store.row("agent", aid)
             committed_task = copy.deepcopy(task)
             committed_c = coord(committed_task)
-            committed_c["lane"] = {"agent_id": aid, "state": "uncertain"}
-            committed_c["phase"] = "blocked"
-            committed_c["blocker"] = "lane interrupted; outcome uncertain"
-            committed_c["uncertain_lane"] = True
-            committed_c.pop("resume_phase", None)
+            committed_c["lane"] = {"agent_id": aid, "state": "failed"}
             committed_agent = None
             if agent is not None and agent.get("status") == "working":
                 committed_agent = copy.deepcopy(agent)
@@ -1334,15 +1450,7 @@ def launch_lane(
                     aid,
                     lane_output,
                 )
-            _post_issue_status(
-                store,
-                worker,
-                runner,
-                task,
-                "Blocked: model lane interrupted; outcome uncertain.",
-                "uncertain-lane",
-            )
-            raise CoordinatorError(f"lane interrupted: {safe_exc}") from exc
+            raise LaneFailedError(f"lane interrupted: {safe_exc}") from exc
         if finalized is not None:
             status, model_result = parse_model_result(
                 finalized.source_text, returncode
@@ -3040,7 +3148,6 @@ def phase_pr_gates(
 
     # Collect execution failures, but keep the task recoverable until every
     # successful sibling has a durable audit and outcome checkpoint.
-    failed_agents: list[str] = []
     failed_rows: list[dict[str, Any]] = []
     for prep in prepared_list:
         outcome = results.get(prep["agent_id"])
@@ -3052,7 +3159,6 @@ def phase_pr_gates(
             committed_agent["finished_at"] = utcnow()
             committed_agent["note"] = PR_REVIEW_EXECUTION_ERROR
             failed_rows.append(committed_agent)
-            failed_agents.append(str(committed_agent["id"]))
     # Persist successful sibling results on the main thread.
     for prep in prepared_list:
         outcome = results.get(prep["agent_id"])
@@ -3087,35 +3193,16 @@ def phase_pr_gates(
         )
 
     if failed_rows:
-        committed_task = copy.deepcopy(task)
-        committed_coord = coord(committed_task)
-        committed_coord["phase"] = "blocked"
-        committed_coord["blocker"] = f"{stage} lane outcome uncertain"
-        committed_coord["uncertain_lane"] = True
-        committed_coord.pop("resume_phase", None)
         with store.conn.transaction():
             for failed in failed_rows:
                 store.write(
                     "agent", "update", str(failed["id"]), strip_row(failed)
                 )
-            save_task(store, committed_task)
-        task.clear()
-        task.update(committed_task)
+        raise LaneFailedError(f"{stage} review lane failed")
 
     # Each reviewer checkpoint replaces ``task`` with its committed copy.
     # Refresh the coordinator reference before applying or persisting verdicts.
     c = coord(task)
-
-    if failed_agents:
-        _post_issue_status(
-            store,
-            worker,
-            runner,
-            task,
-            f"Blocked: {stage} review lane outcome is uncertain; refusing retry.",
-            "uncertain-gate",
-        )
-        return [f"{stage} uncertain; blocked"]
 
     replayed = reviewer_replay_outcomes(
         store,
@@ -3227,6 +3314,7 @@ def phase_pr_gates(
         f"{vendor} {incomplete_affected} review unavailable/incomplete "
         f"({incomplete_details}). Not a code rejection."
     )
+    incomplete_retry: list[str] | None = None
 
     # Complete both dimensions' durable work before the first external call.
     # A crash in GitHub publication must leave every parallel verdict, every
@@ -3350,26 +3438,33 @@ def phase_pr_gates(
                 gate_ids=rejection_gate_ids,
             )
         elif incomplete_outcomes:
-            from .coordinator_github import queue_issue_comment
-
-            committed_c["phase"] = "blocked"
-            committed_c["resume_phase"] = incomplete_resume
-            committed_c["blocker"] = incomplete_blocker
-            committed_c["blocker_publish_once"] = True
-            committed_c["blocker_publish_kind"] = "provider-incomplete"
-            source = committed_c["source"]
-            qid = queue_issue_comment(
-                store,
+            incomplete_retry = schedule_retry(
+                committed_c,
                 worker,
-                repo=str(source["repo"]),
-                number=int(source["number"]),
-                body=f"Blocked: {incomplete_blocker}",
-                kind="provider-incomplete",
+                phase=incomplete_resume,
+                reason=f"{stage} review incomplete ({incomplete_details})",
             )
-            prior = committed_c.get("question_activity_id")
-            committed_c["question_activity_id"] = qid
-            if prior != qid:
-                committed_c["replies_consumed_through"] = None
+            if incomplete_retry is None:
+                from .coordinator_github import queue_issue_comment
+
+                committed_c["phase"] = "blocked"
+                committed_c["resume_phase"] = incomplete_resume
+                committed_c["blocker"] = incomplete_blocker
+                committed_c["blocker_publish_once"] = True
+                committed_c["blocker_publish_kind"] = "provider-incomplete"
+                source = committed_c["source"]
+                qid = queue_issue_comment(
+                    store,
+                    worker,
+                    repo=str(source["repo"]),
+                    number=int(source["number"]),
+                    body=f"Blocked: {incomplete_blocker}",
+                    kind="provider-incomplete",
+                )
+                prior = committed_c.get("question_activity_id")
+                committed_c["question_activity_id"] = qid
+                if prior != qid:
+                    committed_c["replies_consumed_through"] = None
         else:
             if (
                 worker.a38
@@ -3416,6 +3511,8 @@ def phase_pr_gates(
         return lines
 
     if incomplete_outcomes:
+        if incomplete_retry is not None:
+            return [*lines, *incomplete_retry]
         from .coordinator_github import publish_blocker
 
         blocker_lines = publish_blocker(

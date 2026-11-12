@@ -258,6 +258,10 @@ class NonRecoverableCoordinatorError(CoordinatorError):
     """Visible coordinator failure that no authorized reply may resume."""
 
 
+class LaneFailedError(CoordinatorError):
+    """A lane process ended without a result; retried, then a resumable blocker."""
+
+
 class CiObservationTransportError(CoordinatorError):
     """Transient CI observation transport; same-phase retry, no reply gate."""
 
@@ -1413,6 +1417,11 @@ def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
 
 def review_is_approved(status: str, result: str) -> bool:
     return status == "complete" and result == "approved"
+
+
+def infra_failure(returncode: int) -> bool:
+    """True when a bounded command could not run: timeout, not found, or a signal."""
+    return returncode in (124, 127) or returncode < 0
 
 
 def source_key(repo: str, number: int) -> str:
