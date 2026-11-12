@@ -661,8 +661,11 @@ if that transaction fails, the agent remains a fresh working start. This
 terminal transition waits until every successful sibling checkpoint commits;
 if such a checkpoint rolls back, the task remains recoverable so the next tick
 can commit that sibling before classifying the failed lane as uncertain. Before
-starting a reviewer, the coordinator replays a matching saved outcome; it
-removes that outcome only in the transaction that records the round verdict or
+starting a reviewer, the coordinator replays a matching saved outcome. It also
+sweeps and verifies absence of the deterministic raw output and spool paths for
+already finished reviewers, covering a crash after the outcome transaction
+committed but before ordinary cleanup; the sweep is idempotent. The coordinator
+removes the saved outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
 summaries and reused/added surface lines are redacted structurally: summary
 sentence terminators and surface-reference backticks plus line numbers are
@@ -744,12 +747,17 @@ unterminated span consumes the remainder of the text and is replaced rather
 than merely removed. While a key has not yet matched a complete secret keyword,
 an assignment-looking `=` or `:` inside such a span remains opaque, so a key
 split as `pass` + span + `word` still joins to `password`. Once the key already
-contains a complete secret keyword, the scanner skips any following sequence of
-whitespace and terminal controls. A visible `=` or `:` after that sequence is
-the assignment operator, even when an earlier string-control payload contains
-one of those bytes. Only when no visible operator follows may a skipped,
-validly terminated string control supply its payload operator; the value then
-begins after the entire skipped sequence. The pipeline then replaces any
+contains a complete secret keyword, a terminal control ends an unquoted key
+only when an operator follows the skipped whitespace and controls before any
+further key character. A visible `=` or `:` wins, even when an earlier
+string-control payload contains one of those bytes; only when no visible
+operator follows may a skipped, validly terminated string control supply its
+payload operator. Otherwise the control is an opaque key interleave, so
+`password` + control + `_file`, `password` + control + `suffix`, and
+`aws_secret` + control + `_access_key` remain sticky secret keys. As a
+fail-closed defence, a raw whitespace token that contained a string-control
+span and contains a secret keyword is redacted whole before span replacement.
+The pipeline then replaces any
 whitespace-delimited raw token containing another ESC or C1 sequence, including
 a lone ESC byte and a sequence at either token boundary, while preserving the
 separating whitespace.
@@ -773,6 +781,8 @@ when it contains `=` or `:`. After that keyword is present, whitespace and
 terminal controls are skipped together. A visible operator after them wins;
 only without one does either byte inside a skipped complete string control
 supply the operator, with the value starting after all skipped separators.
+When another key character comes first, the control remains inside the key
+instead of ending it.
 Payload whitespace does not end an unquoted value.
 Quoted values run to their closing quote or the bounded input end; unquoted
 values stop at whitespace, comma, or semicolon. URL schemes, escape parameters, and control

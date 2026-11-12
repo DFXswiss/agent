@@ -801,6 +801,47 @@ def _cleanup_reviewer_spool(
             pass
 
 
+def cleanup_finished_reviewer_spools(
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
+) -> None:
+    """Remove and verify deterministic raw files left after a committed outcome."""
+    task_id = str(task["id"])
+    for agent in store.rows("agent"):
+        role = str(agent.get("role") or "")
+        if (
+            agent.get("task_id") != task_id
+            or agent.get("status") not in ("done", "finished")
+            or role not in (
+                "reviewer",
+                "pr-reviewer-quality",
+                "pr-reviewer-logic",
+            )
+        ):
+            continue
+        agent_id = str(agent["id"])
+        output_file = _owned_reviewer_output(store, worker, task_id, agent)
+        spool = _reviewer_spool_path(store, worker, task_id, agent_id)
+        legacy_spool = _legacy_reviewer_spool_path(worker, task_id, agent_id)
+        _cleanup_reviewer_spool(store, worker, task_id, agent_id, output_file)
+        paths = (
+            Path(output_file) if output_file else None,
+            spool,
+            legacy_spool,
+        )
+        try:
+            cleanup_failed = any(
+                path is not None and path.exists() for path in paths
+            )
+        except OSError as exc:
+            raise CoordinatorError(
+                "finished reviewer output cleanup could not be verified"
+            ) from exc
+        if cleanup_failed:
+            raise CoordinatorError(
+                "finished reviewer output cleanup could not be verified"
+            )
+
+
 def _discard_failed_reviewer_spool(
     store: Store,
     worker: WorkerConfig,
@@ -1003,6 +1044,7 @@ def launch_lane(
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> tuple[dict[str, Any], LaneResult]:
+    cleanup_finished_reviewer_spools(store, worker, task)
     try:
         # Lane/agent write path: every caller requires a task model pin.
         models_for_new_record(task)
@@ -2508,6 +2550,7 @@ def phase_pr_gates(
     evidence and stops with a GitHub-visible retry blocker; it is not a rejected
     complete gate.
     """
+    cleanup_finished_reviewer_spools(store, worker, task)
     c = coord(task)
     worktree = str(c["worktree"])
     verify_checkout_identity(store, worker, runner, worktree)

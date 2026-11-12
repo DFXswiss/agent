@@ -98,6 +98,17 @@ _SECRET_ASSIGNMENT_KEYWORDS_BY_LAST = {
 _SECRET_ASSIGNMENT_KEYWORD_MAX = max(
     len(keyword) for keyword in _SECRET_ASSIGNMENT_KEYWORDS
 )
+_SECRET_ASSIGNMENT_KEYWORD = re.compile(
+    "|".join(
+        re.escape(keyword)
+        for keyword in sorted(_SECRET_ASSIGNMENT_KEYWORDS, key=len, reverse=True)
+    ),
+    re.IGNORECASE,
+)
+_ASSIGNMENT_KEY_RUN = re.compile(r"[A-Za-z0-9_-]+")
+_TERMINAL_STRING_CONTROL_INTRODUCER = re.compile(
+    r"\x1b(?:\]|P|\^|_|X)|[\x90\x98\x9d\x9e\x9f]"
+)
 _AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*+')
 _BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']++')
 _KNOWN_TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b')
@@ -250,6 +261,8 @@ def _terminal_control_span(
     parser mirrors the terminal sanitizer's bounded CSI/ESC forms while
     remaining linear for unterminated or adversarial input.
     """
+    if index >= len(text):
+        return index, None
     codepoint = ord(text[index])
     if text[index] == "\x1b":
         if index + 1 >= len(text):
@@ -352,6 +365,96 @@ def _terminal_control_span(
 
 def _is_assignment_key_char(char: str) -> bool:
     return char.isascii() and (char.isalnum() or char in "_-")
+
+
+def _extend_secret_assignment_key_tail(tail: str, char: str) -> tuple[str, bool]:
+    lowered = char.lower()
+    tail = (tail + lowered)[-_SECRET_ASSIGNMENT_KEYWORD_MAX:]
+    matched = any(
+        tail.endswith(keyword)
+        for keyword in _SECRET_ASSIGNMENT_KEYWORDS_BY_LAST.get(lowered, ())
+    )
+    return tail, matched
+
+
+def _extend_secret_assignment_key_run(
+    tail: str, text: str, start: int, end: int
+) -> tuple[str, bool]:
+    """Extend one key tail from an ASCII run without per-character strings."""
+    matched = _SECRET_ASSIGNMENT_KEYWORD.search(text, start, end) is not None
+    if not matched and tail:
+        prefix_end = min(end, start + _SECRET_ASSIGNMENT_KEYWORD_MAX)
+        matched = (
+            _SECRET_ASSIGNMENT_KEYWORD.search(tail + text[start:prefix_end])
+            is not None
+        )
+    if end - start >= _SECRET_ASSIGNMENT_KEYWORD_MAX:
+        return text[end - _SECRET_ASSIGNMENT_KEYWORD_MAX : end].lower(), matched
+    return (tail + text[start:end].lower())[-_SECRET_ASSIGNMENT_KEYWORD_MAX:], matched
+
+
+def _is_terminal_string_control(text: str, index: int) -> bool:
+    if text[index] == "\x1b":
+        return index + 1 < len(text) and text[index + 1] in "]P^_X"
+    return ord(text[index]) in (0x90, 0x98, 0x9D, 0x9E, 0x9F)
+
+
+def _redact_string_control_secret_tokens(text: str) -> str:
+    """Fail closed on a secret-key token that contained a string control.
+
+    String controls are still opaque here, so payload whitespace cannot split
+    the surrounding raw token.  Their payload does not contribute characters
+    to the keyword match, while visible key fragments on either side still
+    join.
+    """
+    if _TERMINAL_STRING_CONTROL_INTRODUCER.search(text) is None:
+        return text
+
+    pieces: list[str] = []
+    token_start = 0
+    index = 0
+    tail = ""
+    secret_key = False
+    has_string_control = False
+    while index < len(text):
+        control_end, _final = _terminal_control_span(text, index)
+        if control_end > index:
+            has_string_control = has_string_control or _is_terminal_string_control(
+                text, index
+            )
+            index = control_end
+            continue
+        if text[index].isspace():
+            pieces.append(
+                "[redacted]"
+                if has_string_control and secret_key
+                else text[token_start:index]
+            )
+            pieces.append(text[index])
+            index += 1
+            token_start = index
+            tail = ""
+            secret_key = False
+            has_string_control = False
+            continue
+        key_match = _ASSIGNMENT_KEY_RUN.match(text, index)
+        if key_match is not None:
+            run_end = key_match.end()
+            tail, matched = _extend_secret_assignment_key_run(
+                tail, text, index, run_end
+            )
+            secret_key = secret_key or matched
+            index = run_end
+            continue
+        tail = ""
+        index += 1
+    if token_start < len(text):
+        pieces.append(
+            "[redacted]"
+            if has_string_control and secret_key
+            else text[token_start:]
+        )
+    return "".join(pieces)
 
 
 def _string_control_assignment_operator(
@@ -458,9 +561,11 @@ def _redact_secret_assignments(text: str) -> str:
     Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
     Removable terminal controls may interleave their bytes, and terminal string
     controls remain one opaque span even when their payload contains whitespace.
-    After a complete secret keyword, whitespace and terminal controls are
-    skipped together. A following visible operator wins; otherwise an operator
-    in a skipped complete string control starts the value after all separators.
+    After a complete secret keyword, a control ends an unquoted key only when
+    an operator occurs before another key character. A following visible
+    operator wins; otherwise an operator in a skipped complete string control
+    starts the value after all separators. Without either operator the control
+    remains an opaque interleave inside the key.
     Before the keyword, a string-control payload remains opaque.
     Quoted values run through their closing quote, or through the bounded input
     end when no close exists; unquoted values stop at outside whitespace, comma,
@@ -471,15 +576,6 @@ def _redact_secret_assignments(text: str) -> str:
     if not text:
         return text
     replacements: list[tuple[int, int, str]] = []
-
-    def extend_key(tail: str, char: str) -> tuple[str, bool]:
-        lowered = char.lower()
-        tail = (tail + lowered)[-_SECRET_ASSIGNMENT_KEYWORD_MAX:]
-        matched = any(
-            tail.endswith(keyword)
-            for keyword in _SECRET_ASSIGNMENT_KEYWORDS_BY_LAST.get(lowered, ())
-        )
-        return tail, matched
 
     index = 0
     length = len(text)
@@ -506,31 +602,58 @@ def _redact_secret_assignments(text: str) -> str:
         secret_key = False
         key_end: int | None = None
         while cursor < length:
-            char = text[cursor]
-            if _is_assignment_key_char(char):
-                key_length += 1
-                key_tail, matched = extend_key(key_tail, char)
+            key_match = _ASSIGNMENT_KEY_RUN.match(text, cursor)
+            if key_match is not None:
+                run_end = key_match.end()
+                key_length += run_end - cursor
+                key_tail, matched = _extend_secret_assignment_key_run(
+                    key_tail, text, cursor, run_end
+                )
                 ambiguous_matched = False
                 if ambiguous_tail is not None:
-                    ambiguous_tail, ambiguous_matched = extend_key(
-                        ambiguous_tail, char
+                    ambiguous_tail, ambiguous_matched = (
+                        _extend_secret_assignment_key_run(
+                            ambiguous_tail, text, cursor, run_end
+                        )
                     )
                 secret_key = secret_key or matched or ambiguous_matched
-                cursor += 1
+                cursor = run_end
                 continue
             control_end, final = _terminal_control_span(
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
-                if secret_key and quote is None:
+                if (
+                    secret_key
+                    and quote is None
+                    and _assignment_operator_after_key(
+                        text,
+                        cursor,
+                        allow_string_control_operator=True,
+                    )
+                    is not None
+                ):
                     key_end = cursor
                     break
-                if final is not None and _is_assignment_key_char(final):
-                    if ambiguous_tail is None:
-                        ambiguous_tail = key_tail
-                    ambiguous_tail, matched = extend_key(ambiguous_tail, final)
-                    secret_key = secret_key or matched
-                cursor = control_end
+                # No operator precedes the next key character. Consume an
+                # adjacent control run as an opaque key interleave in one pass
+                # so adversarial runs remain linear.
+                while control_end > cursor:
+                    if final is not None and _is_assignment_key_char(final):
+                        if ambiguous_tail is None:
+                            ambiguous_tail = key_tail
+                        ambiguous_tail, matched = (
+                            _extend_secret_assignment_key_tail(
+                                ambiguous_tail, final
+                            )
+                        )
+                        secret_key = secret_key or matched
+                    cursor = control_end
+                    if cursor >= length:
+                        break
+                    control_end, final = _terminal_control_span(
+                        text, cursor, stop_at_assignment_operator=True
+                    )
                 continue
             break
         if key_length == 0:
@@ -682,6 +805,7 @@ def redact(
     # still opaque spans.  Replacing them first can split a secret key from its
     # operator or turn payload whitespace into a false value delimiter.
     source = _redact_secret_assignments(source)
+    source = _redact_string_control_secret_tokens(source)
     source = redact_terminal_string_controls(source)
     has_removed_control = _RAW_REMOVED_CONTROL.search(source) is not None
     if not has_removed_control:

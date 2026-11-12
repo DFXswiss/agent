@@ -328,6 +328,54 @@ def test_error_redaction_ignores_string_payload_operator_before_secret_key_compl
 
 
 @pytest.mark.parametrize(
+    "control",
+    (
+        pytest.param("\x1b]title\x07", id="osc-7-bit"),
+        pytest.param("\x9dtitle\x07", id="osc-8-bit"),
+        pytest.param("\x1bPtitle\x1b\\", id="dcs-7-bit"),
+        pytest.param("\x90title\x9c", id="dcs-8-bit"),
+        pytest.param("\x1b^title\x1b\\", id="pm-7-bit"),
+        pytest.param("\x9etitle\x9c", id="pm-8-bit"),
+        pytest.param("\x1b_title\x1b\\", id="apc-7-bit"),
+        pytest.param("\x9ftitle\x9c", id="apc-8-bit"),
+        pytest.param("\x1bXtitle\x1b\\", id="sos-7-bit"),
+        pytest.param("\x98title\x9c", id="sos-8-bit"),
+        pytest.param("\x1b[31m", id="sgr"),
+    ),
+)
+@pytest.mark.parametrize(
+    "assignment",
+    (
+        pytest.param("_file = hunter2", id="underscore-visible-equals"),
+        pytest.param("suffix=hunter2", id="suffix-visible-equals"),
+        pytest.param("_file: hunter2", id="underscore-visible-colon"),
+    ),
+)
+def test_redact_keeps_controls_inside_complete_secret_keys(
+    control: str, assignment: str
+) -> None:
+    raw = f"neighbour password{control}{assignment} visible=keep"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert "hunter2" not in cleaned
+        assert "neighbour" in cleaned
+        assert "visible=keep" in cleaned
+        assert "[redacted]" in cleaned
+        assert all(
+            char in "\t\n"
+            or not (ord(char) < 32 or 0x7F <= ord(char) <= 0x9F)
+            for char in cleaned
+        )
+
+
+def test_redact_fails_closed_on_secret_token_with_string_control() -> None:
+    raw = "neighbour password\x1b]title opaque\x07suffix visible"
+
+    assert redact_shared(raw) == "neighbour [redacted] visible"
+    assert redact(raw) == "neighbour [redacted] visible"
+
+
+@pytest.mark.parametrize(
     ("introducer", "terminator"),
     (
         pytest.param("\x1b]", "\x07", id="osc-7"),
@@ -648,6 +696,23 @@ def test_lone_escape_redacts_the_complete_token_in_shared_sinks(raw: str) -> Non
 
 
 @pytest.mark.parametrize(
+    "terminal_tail",
+    (
+        pytest.param("\x1b", id="lone-escape"),
+        pytest.param("\x1b[31", id="partial-csi-7-bit"),
+        pytest.param("\x9b31", id="partial-csi-8-bit"),
+    ),
+)
+def test_secret_key_with_terminal_control_at_end_fails_closed(
+    terminal_tail: str,
+) -> None:
+    raw = f"password{terminal_tail}"
+
+    assert redact_shared(raw) == "[redacted]"
+    assert redact(raw) == "[redacted]"
+
+
+@pytest.mark.parametrize(
     ("introducer", "terminator"),
     (
         ("\x1b]", "\x07"),
@@ -759,6 +824,9 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     documented = (
         Path(__file__).parents[1] / "docs" / "issue-coordinator.md"
     ).read_text(encoding="utf-8")
+    ai_accounts = (
+        Path(__file__).parents[1] / "docs" / "ai-accounts.md"
+    ).read_text(encoding="utf-8")
     readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
 
     assert (
@@ -787,13 +855,15 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "split as `pass` + span + `word` still joins to `password`" in documented
     )
     assert (
-        "A visible `=` or `:` after that sequence is\n"
-        "the assignment operator, even when an earlier string-control payload contains"
+        "a terminal control ends an unquoted key\n"
+        "only when an operator follows the skipped whitespace and controls before any\n"
+        "further key character"
         in documented
     )
     assert (
-        "Only when no visible operator follows may a skipped,\n"
-        "validly terminated string control supply its payload operator"
+        "only when no visible\n"
+        "operator follows may a skipped, validly terminated string control supply its\n"
+        "payload operator"
         in documented
     )
     assert (
@@ -802,6 +872,26 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in documented
     )
     assert (
+        "a raw whitespace token that contained a string-control\nspan"
+        in documented
+    )
+    assert (
+        "credential assignments are first classified on the full raw text"
+        in ai_accounts
+    )
+    assert (
+        "a terminal control ends an unquoted key only when, after\n"
+        "skipping whitespace and controls"
+        in ai_accounts
+    )
+    assert (
+        "A raw whitespace token that\n"
+        "contained a string-control span and contains a secret keyword is "
+        "redacted whole"
+        in ai_accounts
+    )
+    assert "BEL terminates OSC only" in ai_accounts
+    assert (
         "Secret assignments are first classified on the full raw capture while "
         "complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque "
         "to that scan. Only after classification are those spans visibly replaced "
@@ -809,14 +899,13 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in readme
     )
     assert (
-        "A visible `=` or `:` after that sequence wins even when a\n"
-        "skipped OSC, DCS, PM, APC, or SOS payload contains an operator."
+        "A control ends an unquoted key only when an operator occurs\n"
+        "before another key character"
         in readme
     )
     assert (
-        "Only when no\n"
-        "visible operator follows may a complete skipped string-control span supply its\n"
-        "payload operator; the value starts after the entire skipped sequence."
+        "Otherwise the control stays inside the sticky key, so suffixes such as `_file`\n"
+        "and `suffix` remain part of the secret key."
         in readme
     )
     assert (
@@ -844,17 +933,14 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         "replaces those spans only after assignment classification" in documented
     )
     assert (
-        "Only CSI/ESC prefixes may stop before a visible `=` or `:` operator."
+        "a terminal control ends an\n"
+        "   unquoted key only if a visible `=` or `:`, or otherwise an operator inside a\n"
+        "   valid complete string control, occurs before another key character"
         in documented
     )
     assert (
-        "A visible `=` or `:` after that\n"
-        "   sequence wins. Only if none follows may either byte inside a skipped,\n"
-        "   complete string control supply the operator"
-        in documented
-    )
-    assert (
-        "While the key is incomplete, that payload remains\n"
+        "While the key\n"
+        "   is incomplete, the payload remains\n"
         "   opaque so later key fragments still join. BEL terminates OSC only"
         in documented
     )
