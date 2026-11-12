@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -59,6 +60,7 @@ from .coordinator_common import (
     review_is_approved,
     save_task,
     scoped,
+    seconds_since,
     source_key,
     strip_row,
     task_text_path,
@@ -671,6 +673,8 @@ def _insert_assigned_activity(
 
 def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> list[str]:
     """Paginated discovery of currently assigned open issues. No silent first-run ignore."""
+    if has_runnable_task(store, worker):
+        return []
     lines: list[str] = []
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
@@ -881,6 +885,7 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
             )
             continue
         lines.append(f"accepted source {repo}#{number} task={task['id']}")
+        break
     return lines
 
 
@@ -1926,6 +1931,67 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
     return tasks
 
 
+ALWAYS_PARKED = frozenset(
+    {"queued", "ask", "blocked", "await_merge", "await_ready", "await_second_review"}
+)
+PARK_KEY_PREFIX = "coordinator-park:"
+
+
+def parked(task: dict[str, Any], worker: WorkerConfig) -> bool:
+    """True while the task only waits for an outside event."""
+    c = coord(task)
+    phase = str(c.get("phase") or "accept")
+    return (
+        phase in ALWAYS_PARKED
+        or (phase == "ci" and c.get("ci_wait") is True)
+        or bool(c.get("binding_blocker"))
+        or c.get("lane_wait") is True
+    )
+
+
+def observation_due(
+    store: Store, task: dict[str, Any], worker: WorkerConfig, *, has_intent: bool = False
+) -> bool:
+    """True when a waiting task may be observed in this tick."""
+    if has_intent or worker.park_poll_seconds == 0:
+        return True
+    stored = store.sync_get(PARK_KEY_PREFIX + str(task["id"]))
+    if stored is None:
+        return True
+    elapsed = seconds_since(stored)
+    return elapsed is None or elapsed >= worker.park_poll_seconds
+
+
+def mark_observed(store: Store, task: dict[str, Any], worker: WorkerConfig) -> None:
+    if worker.park_poll_seconds == 0:
+        return
+    store.sync_set(PARK_KEY_PREFIX + str(task["id"]), utcnow())
+
+
+def runnable_count(store: Store, worker: WorkerConfig) -> int:
+    """Open coordinator tasks of the worker that are not waiting, plus queued ones."""
+    origin = store.device_id()
+    count = 0
+    for row in store.rows("task"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("session_id") != worker.session_id:
+            continue
+        if _terminal(row):
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("coordinator"), dict):
+            continue
+        phase = str(payload["coordinator"].get("phase") or "accept")
+        if phase == "queued" or not parked(row, worker):
+            count += 1
+    return count
+
+
+def has_runnable_task(store: Store, worker: WorkerConfig) -> bool:
+    return runnable_count(store, worker) > 0
+
+
 # A38 phases in which the guard may already have made the PR Ready, so a human
 # can merge before the worker reaches await_merge.
 def _a38_pr_left_open(
@@ -1999,17 +2065,45 @@ def _source_still_assigned(
     return True
 
 
-def advance_one(
+def phase_handlers(
     store: Store,
     worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+) -> dict[str, Callable[[], list[str]]]:
+    """The handler of each coordinator phase, bound to one task."""
+    return {
+        "accept": lambda: phase_accept(store, worker, task, runner),
+        "checkout": lambda: phase_checkout(store, worker, task, runner),
+        "implement": lambda: phase_implement(store, worker, task, runner, lane_runner),
+        "inner_review": lambda: phase_inner_review(store, worker, task, runner, lane_runner),
+        "tests": lambda: phase_tests(store, worker, task, runner),
+        "publish_draft": lambda: phase_publish_draft(store, worker, task, runner),
+        "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
+        "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
+        "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
+        "await_second_review": lambda: phase_await_second_review(store, worker, task, runner),
+        "ci": lambda: phase_ci(store, worker, task, runner),
+        "readiness": lambda: phase_readiness(store, worker, task, runner),
+        "await_ready": lambda: phase_a38_await_ready(store, worker, task, runner),
+        "formal_approve": lambda: phase_formal_approve(store, worker, task, runner),
+        "leave_draft": lambda: phase_leave_draft(store, worker, task, runner),
+        "await_merge": lambda: phase_await_merge(store, worker, task, runner),
+        "ask": lambda: phase_read_replies(store, worker, task, runner),
+        "blocked": lambda: phase_blocked(store, worker, task, runner),
+        "done": lambda: ["done"],
+    }
+
+
+def _advance_task(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
     *,
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
-    tasks = _open_tasks(store, worker.session_id)
-    if not tasks:
-        return []
-    task = tasks[0]
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
@@ -2232,27 +2326,7 @@ def advance_one(
                         reply_checkpoint=True,
                     ),
                 ]
-    handlers = {
-        "accept": lambda: phase_accept(store, worker, task, runner),
-        "checkout": lambda: phase_checkout(store, worker, task, runner),
-        "implement": lambda: phase_implement(store, worker, task, runner, lane_runner),
-        "inner_review": lambda: phase_inner_review(store, worker, task, runner, lane_runner),
-        "tests": lambda: phase_tests(store, worker, task, runner),
-        "publish_draft": lambda: phase_publish_draft(store, worker, task, runner),
-        "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
-        "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
-        "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
-        "await_second_review": lambda: phase_await_second_review(store, worker, task, runner),
-        "ci": lambda: phase_ci(store, worker, task, runner),
-        "readiness": lambda: phase_readiness(store, worker, task, runner),
-        "await_ready": lambda: phase_a38_await_ready(store, worker, task, runner),
-        "formal_approve": lambda: phase_formal_approve(store, worker, task, runner),
-        "leave_draft": lambda: phase_leave_draft(store, worker, task, runner),
-        "await_merge": lambda: phase_await_merge(store, worker, task, runner),
-        "ask": lambda: phase_read_replies(store, worker, task, runner),
-        "blocked": lambda: phase_blocked(store, worker, task, runner),
-        "done": lambda: ["done"],
-    }
+    handlers = phase_handlers(store, worker, task, runner, lane_runner)
     handler = handlers.get(phase)
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
@@ -2427,3 +2501,90 @@ def advance_one(
             *(str(item) for item in lane_observations),
             *blocker_lines,
         ]
+
+
+def _after_advance(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], before: str
+) -> list[str]:
+    """Maintain the scheduler flags of one visited task; save only on a change."""
+    if _terminal(task):
+        return []
+    c = coord(task)
+    now = str(c.get("phase") or "accept")
+    changed = False
+    if now == "ci":
+        if before == "ci" and c.get("ci_wait") is not True:
+            c["ci_wait"] = True
+            changed = True
+    elif "ci_wait" in c:
+        del c["ci_wait"]
+        changed = True
+    if changed:
+        save_task(store, task)
+    return []
+
+
+def _advance_guarded(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    *,
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+) -> list[str]:
+    """Visit one task; an error of this task must not stop the tick."""
+    before = str(coord(task).get("phase") or "accept")
+    try:
+        lines = _advance_task(store, worker, task, runner=runner, lane_runner=lane_runner)
+    except CoordinatorError as exc:
+        lines = [f"blocked: {redact(str(exc))}"]
+    except StoreError as exc:
+        lines = [f"store error: {redact(str(exc))}"]
+    except Exception as exc:  # noqa: BLE001 — one task must not stop the tick
+        lines = [f"error: {redact(str(exc))}"]
+    try:
+        lines = [*lines, *_after_advance(store, worker, task, before)]
+    except StoreError as exc:
+        lines = [*lines, f"store error: {redact(str(exc))}"]
+    return lines
+
+
+def advance_one(
+    store: Store,
+    worker: WorkerConfig,
+    *,
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+) -> list[str]:
+    lines: list[str] = []
+    tasks = _open_tasks(store, worker.session_id)
+    touched: set[str] = set()
+    for task in tasks:  # 1. observe waiting tasks
+        if not parked(task, worker):
+            continue
+        if not observation_due(store, task, worker):
+            continue
+        lines.extend(
+            _advance_guarded(
+                store,
+                worker,
+                task,
+                runner=runner,
+                lane_runner=lane_runner,
+            )
+        )
+        mark_observed(store, task, worker)
+        touched.add(str(task["id"]))
+    runnable = [t for t in tasks if not _terminal(t) and not parked(t, worker)]
+    candidates = [t for t in runnable if str(t["id"]) not in touched]
+    if candidates:  # 2. one phase of the oldest runnable task
+        lines.extend(
+            _advance_guarded(
+                store,
+                worker,
+                candidates[0],
+                runner=runner,
+                lane_runner=lane_runner,
+            )
+        )
+    return lines

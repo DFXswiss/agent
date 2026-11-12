@@ -7,6 +7,7 @@ lane starts, or merge. See DESIGN.md §§19.1, 19.7 and docs/issue-coordinator.m
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +27,29 @@ Runner = Callable[[list[str]], Completed]
 LaneRunner = Callable[[list[str], str | None], Any]
 
 LOCK_PREFIX = "coordinator-worker:"
+_LOGIN_ARGV_TAIL = ["gh", "api", "user", "--jq", ".login"]
+
+
+def login_cached(runner: Runner, *, max_age_seconds: int) -> Runner:
+    """Cache the successful login verification of each account for one tick."""
+    cache: dict[tuple[str, ...], tuple[float, Completed]] = {}
+
+    def cached(argv: list[str]) -> Completed:
+        if argv[-5:] != _LOGIN_ARGV_TAIL:
+            return runner(argv)
+        key = tuple(argv)
+        now = time.monotonic()
+        hit = cache.get(key)
+        if hit is not None and now - hit[0] <= max_age_seconds:
+            return hit[1]
+        result = runner(argv)
+        if result.returncode == 0:
+            cache[key] = (now, result)
+        else:
+            cache.pop(key, None)
+        return result
+
+    return cached
 
 
 def tick(
@@ -35,7 +59,7 @@ def tick(
     runner: Runner = run_argv,
     lane_runner: LaneRunner | None = None,
 ) -> list[str]:
-    """Advance one configured worker by at most one resumable step.
+    """Observe the worker's waiting tasks and advance its oldest runnable task by at most one resumable step.
 
     Holds a Postgres session advisory lock for the whole operation so concurrent
     same-session ticks across processes are excluded. The lock is released on
@@ -45,6 +69,7 @@ def tick(
     observations: list[str] = []
     if runner is run_argv:
         runner = lambda argv: run_bounded(argv, timeout=worker.check_timeout)
+    runner = login_cached(runner, max_age_seconds=worker.poll_seconds)
     try:
         with process_scope(), store.exclusive(lock_key):
             try:
@@ -75,5 +100,6 @@ def tick(
 
 
 __all__ = [
+    "login_cached",
     "tick",
 ]

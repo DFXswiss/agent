@@ -113,6 +113,21 @@ def test_owner_discovery_filters_results_and_explicit_repository_wins(
     lines = discover_assignments(store, worker, fake)
     assert len(fake.search_queries) == 1
     assert sum("example/project#7" in line for line in lines) == 1
+    assert not any("Example/owned#8" in line for line in lines)
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert discover_assignments(store, worker, fake) == []
+    assert len(fake.search_queries) == 1
+    first = tasks[0]
+    first["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        first["id"],
+        {k: v for k, v in first.items() if not k.startswith("_")},
+    )
+    lines = discover_assignments(store, worker, fake)
+    assert len(fake.search_queries) == 2
     assert sum("Example/owned#8" in line for line in lines) == 1
     sources = [
         row["payload"]["coordinator"]["source"] for row in store.rows("task")

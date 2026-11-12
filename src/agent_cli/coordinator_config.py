@@ -12,6 +12,7 @@ from .store import StoreError
 _GITHUB_LOGIN = re.compile(
     r'[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}'
 )
+DEFAULT_PARK_POLL_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class WorkerConfig:
     a38: bool = False
     second_reviewers: tuple[str, ...] = ()
     second_review_timeout_seconds: int = 86400
+    park_poll_seconds: int = DEFAULT_PARK_POLL_SECONDS
 
 
 def _text(value: object, label: str) -> str:
@@ -122,7 +124,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         optional = {'review_session', 'repositories', 'repository_owners',
                     'owner_check_argv', 'owner_readiness_argv',
                     'require_hub_assignment', 'a38', 'second_reviewers',
-                    'second_review_timeout_seconds'}
+                    'second_review_timeout_seconds', 'park_poll_seconds'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -206,5 +208,10 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    a38,
                                    reviewers,
                                    _at_least(item.get('second_review_timeout_seconds', 86400),
-                                             'second_review_timeout_seconds', 600))
+                                             'second_review_timeout_seconds', 600),
+                                   park_poll_seconds=_at_least(
+                                       item.get('park_poll_seconds', DEFAULT_PARK_POLL_SECONDS),
+                                       'park_poll_seconds',
+                                       0,
+                                   ))
     return result

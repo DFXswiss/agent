@@ -27,6 +27,7 @@ from .text_sanitize import (
     redact_terminal_string_controls,
     sanitize_terminal_text,
 )
+from .timestamps import parse_utc_timestamp
 
 Runner = Callable[[list[str]], Completed]
 LaneRunner = Callable[[list[str], str | None], Any]
@@ -1249,6 +1250,15 @@ def coord(task: dict[str, Any]) -> dict[str, Any]:
 def save_task(store: Store, task: dict[str, Any]) -> None:
     task["updated_at"] = utcnow()
     store.write("task", "update", task["id"], strip_row(task))
+
+
+def seconds_since(value: object) -> float | None:
+    """Seconds between a stored UTC timestamp and now; None when it cannot be read."""
+    then = parse_utc_timestamp(value)
+    now = parse_utc_timestamp(utcnow())
+    if then is None or now is None:
+        return None
+    return (now - then).total_seconds()
 
 
 def owned_session(store: Store, session_id: str) -> dict[str, Any]:

@@ -41,6 +41,25 @@ def test_explicit_worker_preserves_selected_commands_and_identities(tmp_path):
     assert worker.repositories['example/project'].publication_repo == 'example/project'
 
 
+def test_park_poll_seconds_defaults_to_120(tmp_path):
+    (tmp_path / 'coordinator.json').write_text(json.dumps(config(tmp_path)))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.park_poll_seconds == 120
+
+
+@pytest.mark.parametrize('value', [-1, "5", True, 1.5])
+def test_park_poll_seconds_accepts_zero_and_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['park_poll_seconds'] = 0
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].park_poll_seconds == 0
+
+    data['workers']['selected-session']['park_poll_seconds'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='park_poll_seconds requires an integer >= 0'):
+        load_coordinator_config(tmp_path)
+
+
 @pytest.mark.parametrize('field', ['review_session', 'workspace_root', 'repositories',
                                   'reply_logins', 'poll_seconds', 'lane_timeout', 'check_timeout'])
 def test_missing_selection_never_uses_a_default(tmp_path, field):
