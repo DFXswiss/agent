@@ -62,6 +62,7 @@ from .coordinator_a38 import (
     A38ReportCheckpointConflict,
     fresh_pr_head,
     intake_second_reviews,
+    post_suite_checkpoint_pending,
     pr_state,
     reconcile_a38_publication_intents,
     phase_await_ready as phase_a38_await_ready,
@@ -94,12 +95,14 @@ from .coordinator_github import (
     verify_issue_assigned,
 )
 from .coordinator_lanes import (
+    GateOrderingUnavailableError,
     _IMPLEMENTER_RESULTS,
     _REVIEWER_RESULTS,
     _coordinator_path_replacements,
     clear_reviewer_replay_outcomes,
     implementer_replay_fields,
     invalidate_head_evidence,
+    gate_ordering_unavailable,
     launch_lane,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
@@ -1907,11 +1910,17 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
+    ordering_error = gate_ordering_unavailable(store, task, phase=phase)
+    if ordering_error is not None:
+        return [ordering_error]
+    pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
     # A rejection comment is a durable task intent, not an implementation-phase
     # side effect. Reconcile it before every dispatch or early PR-state branch so
     # phase changes and a concurrently closed/merged pull request cannot strand it.
-    rejection_publication_lines = reconcile_rejection_review_intents(
-        store, worker, task, runner
+    rejection_publication_lines = (
+        []
+        if pending_post_suite
+        else reconcile_rejection_review_intents(store, worker, task, runner)
     )
     pending_provider_checkpoint = (
         phase == "blocked"
@@ -1928,6 +1937,7 @@ def advance_one(
         and as_int(c.get("pr_number")) is not None
         and phase not in ("await_merge", "done")
         and not final_blocker
+        and not pending_post_suite
     ):
         # Once the pull request exists the guard may make it Ready and a human may
         # merge it in any phase, also while asking or recoverably blocked; check that
@@ -1956,7 +1966,9 @@ def advance_one(
                 f"PR state temporarily unavailable before {phase}; retrying",
             ]
     try:
-        if (
+        if pending_post_suite:
+            pass
+        elif (
             source.get("owner_scoped")
             and (
                 phase == "accept"
@@ -2006,7 +2018,10 @@ def advance_one(
     )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
-    if phase not in ("await_merge", "done", "blocked", "ask"):
+    if (
+        phase not in ("await_merge", "done", "blocked", "ask")
+        and not pending_post_suite
+    ):
         try:
             _verify_source_assigned(store, worker, c, runner)
         except CoordinatorError as exc:
@@ -2116,6 +2131,8 @@ def advance_one(
             *rejection_publication_lines,
             "A38 report checkpoint changed concurrently; retrying",
         ]
+    except GateOrderingUnavailableError as exc:
+        return [str(exc)]
     except CiObservedFailureError as exc:
         # Ready-side observed actual failed CI: hand off to script phase_ci.
         # Do not reply-gate on the Ready phase, and do not let same-phase retry

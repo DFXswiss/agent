@@ -85,6 +85,37 @@ _REVIEWER_SPOOL_BYTES_LIMIT = 16_384
 _REVIEWER_OUTPUT_CHECKPOINT_VERSION = 1
 
 
+class GateOrderingUnavailableError(CoordinatorError):
+    """Stop a gate tick without preparing or publishing any GitHub intent."""
+
+
+def gate_ordering_unavailable(
+    store: Store, task: dict[str, Any], *, phase: str
+) -> str | None:
+    """Return the fail-closed ordering error for the gate phase, if present."""
+    effective_phase = phase
+    if phase in ("blocked", "ask"):
+        resume_phase = coord(task).get("resume_phase")
+        if isinstance(resume_phase, str):
+            effective_phase = resume_phase
+    stage = {
+        "pr_gates_grok": SLOT_STAGES["first"],
+        "pr_gates_codex": SLOT_STAGES["second"],
+    }.get(effective_phase)
+    if stage is None:
+        return None
+    latest = latest_gates(store, task["id"])
+    for dimension in ("quality", "logic"):
+        gate = latest.get((canonical_stage(stage), dimension))
+        if (
+            gate is not None
+            and gate.get("verdict") == "unavailable"
+            and gate.get("head_sha") == ""
+        ):
+            return f"{stage}/{dimension} gate history ordering is unavailable"
+    return None
+
+
 def _coordinator_path_replacements(
     store: Store, worker: WorkerConfig, task: dict[str, Any]
 ) -> tuple[tuple[str, str], ...]:
@@ -1437,6 +1468,7 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
         for key in (
             "report",
             "report_waiver",
+            "post_suite_checkpoint",
             "first_comment",
             "second_review",
             "guard_status",
@@ -2534,13 +2566,11 @@ def phase_pr_gates(
             and gate.get("head_sha") == ""
         )
 
-    for dimension in ("quality", "logic"):
-        if _ordering_unavailable(
-            latest.get((canonical_stage(stage), dimension))
-        ):
-            raise CoordinatorError(
-                f"{stage}/{dimension} gate history ordering is unavailable"
-            )
+    ordering_error = gate_ordering_unavailable(
+        store, task, phase=str(c.get("phase") or "")
+    )
+    if ordering_error is not None:
+        raise GateOrderingUnavailableError(ordering_error)
 
     def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
         # A gate counts only from the provider pinned on the task for that slot.
@@ -2781,7 +2811,7 @@ def phase_pr_gates(
                             else None
                         ),
                     )
-                except Exception as exc:  # noqa: BLE001
+                except BaseException as exc:  # noqa: BLE001
                     _discard_failed_reviewer_spool(
                         store,
                         worker,
@@ -2825,7 +2855,7 @@ def phase_pr_gates(
     failed_rows: list[dict[str, Any]] = []
     for prep in prepared_list:
         outcome = results.get(prep["agent_id"])
-        if isinstance(outcome, Exception) or outcome is None:
+        if isinstance(outcome, BaseException) or outcome is None:
             agent = store.row("agent", prep["agent_id"])
             assert agent is not None
             committed_agent = copy.deepcopy(agent)
@@ -2837,7 +2867,7 @@ def phase_pr_gates(
     # Persist successful sibling results on the main thread.
     for prep in prepared_list:
         outcome = results.get(prep["agent_id"])
-        if isinstance(outcome, Exception) or outcome is None:
+        if isinstance(outcome, BaseException) or outcome is None:
             continue
         agent = store.row("agent", prep["agent_id"])
         assert agent is not None
@@ -3039,7 +3069,7 @@ def phase_pr_gates(
                 (canonical_stage(stage), dimension)
             )
             if _ordering_unavailable(ordered_gate):
-                raise CoordinatorError(
+                raise GateOrderingUnavailableError(
                     f"{stage}/{dimension} gate history ordering is unavailable"
                 )
             if approved:
@@ -3089,7 +3119,7 @@ def phase_pr_gates(
                 (canonical_stage(stage), dimension)
             )
             if _ordering_unavailable(ordered_gate):
-                raise CoordinatorError(
+                raise GateOrderingUnavailableError(
                     f"{stage}/{dimension} gate history ordering is unavailable"
                 )
             key = checklist_key_for_stage(stage, dimension)

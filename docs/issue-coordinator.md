@@ -386,7 +386,9 @@ for worker in workers.values():
    representations as the same instant. Conflicting rows at one instant, and
    histories with a missing or invalid timestamp whose order cannot be
    established, yield an unavailable verdict before a checklist close or review
-   publication. The gate phase stops before preparing either reviewer when a
+   publication. The coordinator checks this condition before reconciling saved
+   rejection intents and returns without publishing an issue blocker or any
+   review comment. The gate phase stops before preparing either reviewer when a
    needed dimension has that synthetic empty-head verdict, and rechecks the
    shared ordering after each new verdict before closing a checklist key or
    queuing a rejection comment. Legacy stage aliases are canonicalized before grouping or
@@ -621,7 +623,10 @@ has a hard size limit. After tool entries are removed to meet that limit,
 stdout and stderr are shortened against their JSON-escaped size while the
 already parsed protocol result remains intact. Each parallel worker writes its
 checkpoint atomically as soon as its lane returns, before publishing the result to shared memory or
-waiting for its sibling. Structurally valid incomplete, unavailable, and
+waiting for its sibling. If serialization raises, including a coordinator
+validation error, that worker removes its owned raw output plus any temporary or
+final spool before recording the failed outcome; the main thread marks the
+agent finished only after that cleanup. Structurally valid incomplete, unavailable, and
 malformed-protocol results are recovered and then classified by the normal
 verdict path; they are
 not converted into uncertain outcomes. An audit-only rollback retries only this
@@ -1019,10 +1024,16 @@ verification, and publication, and continue to both required review comments.
 After a successful suite, a pull request that merged on the measured head skips
 draft reconciliation but still receives the verified report and records the
 same report, local-test, and promoted-base bindings before merge verification.
-An unreadable follow-up head keeps the task in `tests` for retry without report
-publication or base promotion. A confirmed different merged head is a
-non-recoverable completion boundary rather than an `await_merge` retry. Failed
-suites and results whose live head no longer matches remain unbound.
+Before that follow-up read, the coordinator persists the verified report body,
+digest, head, base, policy revision, and visibility as a post-suite checkpoint.
+An unreadable follow-up head keeps the task in `tests`; the next tick bypasses
+the generic merged/closed redirect and resumes only live-head validation,
+report publication, and evidence promotion without rerunning the suite. A
+confirmed different merged head is a non-recoverable completion boundary
+rather than an `await_merge` retry. A confirmed different head on a closed,
+unmerged pull request remains unbound and moves to merge verification, which
+publishes the `closed-unmerged` blocker. Failed suites and results whose live
+head no longer matches remain unbound.
 When a trusted coordinator precheck is configured, the waiver records a
 current-head `coordinator-check` skip so an older failure cannot remain the
 selected result.

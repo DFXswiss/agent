@@ -10158,7 +10158,14 @@ def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
 
 
 @pytest.mark.parametrize(
-    "failing", ["none", "run", "unreadable-head", "different-head"]
+    "failing",
+    [
+        "none",
+        "run",
+        "unreadable-head",
+        "different-head",
+        "closed-different-head",
+    ],
 )
 def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
@@ -10248,7 +10255,12 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         calls.append(argv[0])
         if argv[0] == "run":
             output_path = Path(argv[argv.index("--output") + 1])
-            if failing in ("none", "unreadable-head", "different-head"):
+            if failing in (
+                "none",
+                "unreadable-head",
+                "different-head",
+                "closed-different-head",
+            ):
                 _write_coordinator_a38_report(output_path, head=head, base=base)
             else:
                 output_path.write_text("report", encoding="utf-8")
@@ -10256,14 +10268,18 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
 
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
 
-    monkeypatch.setattr("agent_cli.coordinator_a38.pr_state", lambda *a, **k: "MERGED")
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.pr_state",
+        lambda *a, **k: "CLOSED" if failing == "closed-different-head" else "MERGED",
+    )
+    unreadable_heads = iter((None, head))
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.fresh_pr_head",
         lambda *a, **k: (
-            None
+            next(unreadable_heads)
             if failing == "unreadable-head"
             else "c" * 40
-            if failing == "different-head"
+            if failing in ("different-head", "closed-different-head")
             else head
         ),
     )
@@ -10291,6 +10307,25 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         assert "base_sha" not in checkpoint["a38"]
         return
 
+    if failing == "closed-different-head":
+        lines = phase_a38_tests(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda argv: Completed(0, "", ""),
+        )
+        checkpoint = store.row("task", tid)["payload"]["coordinator"]
+        assert lines == ["PR closed during the A38 suite; verifying the merge"]
+        assert checkpoint["phase"] == "await_merge"
+        assert "report" not in checkpoint["a38"]
+        assert "base_sha" not in checkpoint["a38"]
+        assert "post_suite_checkpoint" not in checkpoint["a38"]
+        assert not [
+            row for row in store.rows("activity")
+            if row.get("type") == "comment.post"
+        ]
+        return
+
     lines = phase_a38_tests(
         store,
         worker,
@@ -10312,6 +10347,11 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         ]
         assert "report" not in checkpoint["a38"]
         assert "base_sha" not in checkpoint["a38"]
+        post_suite = checkpoint["a38"]["post_suite_checkpoint"]
+        assert post_suite["head"] == head
+        assert post_suite["base_sha"] == base
+        assert post_suite["policy_revision"] == base
+        assert post_suite["body_sha256"]
         assert not [
             row for row in store.rows("activity")
             if row.get("type") == "comment.post"
@@ -10323,6 +10363,28 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
             and row.get("key") == "local_check_pass"
         )
         assert local["status"] == "pending"
+        from agent_cli import coordinator_runtime
+
+        monkeypatch.setattr(
+            coordinator_runtime, "refresh_execution_binding", lambda *_a, **_k: None
+        )
+        lines = coordinator_runtime.advance_one(
+            store,
+            worker,
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=None,
+        )
+        saved = store.row("task", tid)
+        checkpoint = saved["payload"]["coordinator"]
+        assert lines == [
+            f"A38 passed and report posted on {head[:7]}; "
+            "PR merged, verifying the merge"
+        ]
+        assert checkpoint["phase"] == "await_merge"
+        assert "post_suite_checkpoint" not in checkpoint["a38"]
+        assert checkpoint["a38"]["report"]["head"] == head
+        assert checkpoint["a38"]["base_sha"] == base
+        assert calls == ["policy", "run", "verify"]
         return
     assert checkpoint["phase"] == "await_merge"
     assert lines == [
@@ -13503,7 +13565,7 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
     assert failures == []
 
 
-def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
+def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
@@ -13516,6 +13578,7 @@ def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     raw_paths: list[Path] = []
     temporary_paths: list[Path] = []
+    final_paths: list[Path] = []
     real_write_spool = coordinator_lanes._write_reviewer_spool
 
     def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
@@ -13537,8 +13600,10 @@ def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
         temporary.write_text("partial secret spool", encoding="utf-8")
+        path.write_text("uncommitted secret spool", encoding="utf-8")
         temporary_paths.append(temporary)
-        raise OSError("spool filesystem unavailable")
+        final_paths.append(path)
+        raise CoordinatorError("reviewer spool exceeds the serialized size limit")
 
     monkeypatch.setattr(
         coordinator_lanes, "_write_reviewer_spool", fail_quality_spool
@@ -13555,8 +13620,22 @@ def test_parallel_reviewer_spool_failure_removes_raw_and_partial_files(
     )
 
     assert lines == ["review-2 uncertain; blocked"]
-    assert raw_paths and temporary_paths
-    assert all(not path.exists() for path in [*raw_paths, *temporary_paths])
+    assert raw_paths and temporary_paths and final_paths
+    assert all(
+        not path.exists()
+        for path in [*raw_paths, *temporary_paths, *final_paths]
+    )
+    failed = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == task["id"]
+    ]
+    assert len(failed) == 2
+    assert all(row["status"] == "done" for row in failed)
+    assert any(
+        row.get("note") == coordinator_lanes.PR_REVIEW_EXECUTION_ERROR
+        for row in failed
+    )
 
 
 def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files(
@@ -13955,6 +14034,101 @@ def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
         if row.get("type") == "review.post"
     ]
     assert _checklist_status(store, tid)["review_2_quality"] == "n_a"
+
+
+def test_advance_one_ordering_unavailable_skips_rejection_and_blocker_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes, coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-00000000022f"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    monkeypatch.setattr(
+        store,
+        "row_insert_sequences",
+        lambda table: {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        },
+    )
+    rejection_id = "aa000001-0000-4000-8000-000000000230"
+    c = task["payload"]["coordinator"]
+    c["phase"] = "blocked"
+    c["resume_phase"] = "pr_gates_codex"
+    c["blocker"] = "saved gate blocker"
+    c["rejection_review_activity_ids"] = [rejection_id]
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    store.write(
+        "activity",
+        "insert",
+        rejection_id,
+        {
+            "id": rejection_id,
+            "session_id": worker.session_id,
+            "type": "review.post",
+            "payload": {"repo": "example/project", "number": 42, "body": "saved"},
+            "execution_status": "pending",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        lambda *_a, **_k: pytest.fail("saved rejection intent was reconciled"),
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "publish_blocker",
+        lambda *_a, **_k: pytest.fail("generic blocker was published"),
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_prepare_pr_review_agent",
+        lambda *_a, **_k: pytest.fail("reviewer lane was prepared"),
+    )
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: pytest.fail("GitHub runner was called"),
+        lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+    )
+
+    assert lines == ["review-2/quality gate history ordering is unavailable"]
+    assert store.row("activity", rejection_id)["execution_status"] == "pending"
+    assert not [
+        row for row in store.rows("agent") if row.get("task_id") == tid
+    ]
 
 
 def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
