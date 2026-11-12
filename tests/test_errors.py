@@ -327,6 +327,112 @@ def test_error_redaction_ignores_string_payload_operator_before_secret_key_compl
     assert "[redacted]" in cleaned
 
 
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7"),
+        pytest.param("\x9d", "\x07", id="osc-8"),
+        pytest.param("\x1bP", "\x1b\\", id="dcs-7"),
+        pytest.param("\x90", "\x9c", id="dcs-8"),
+        pytest.param("\x1b^", "\x1b\\", id="pm-7"),
+        pytest.param("\x9e", "\x9c", id="pm-8"),
+        pytest.param("\x1b_", "\x1b\\", id="apc-7"),
+        pytest.param("\x9f", "\x9c", id="apc-8"),
+        pytest.param("\x1bX", "\x1b\\", id="sos-7"),
+        pytest.param("\x98", "\x9c", id="sos-8"),
+    ),
+)
+@pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
+@pytest.mark.parametrize(
+    "separator", ("", " "), ids=("direct", "whitespace")
+)
+@pytest.mark.parametrize(
+    "visible_operator", ("=", ":"), ids=("visible-equals", "visible-colon")
+)
+@pytest.mark.parametrize(
+    "payload",
+    ("0;=", "0;:", "8;;https://example.com"),
+    ids=("payload-equals", "payload-colon", "payload-https"),
+)
+def test_error_redaction_prefers_visible_operator_after_string_controls(
+    introducer: str,
+    terminator: str,
+    quoted: bool,
+    separator: str,
+    visible_operator: str,
+    payload: str,
+) -> None:
+    key = '"password"' if quoted else "password"
+    control = f"{introducer}{payload}{terminator}"
+    raw = f"{key}{separator}{control} {visible_operator} hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert "hunter2" not in cleaned
+        assert "visible" in cleaned
+        assert "[redacted]" in cleaned
+
+
+@pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
+@pytest.mark.parametrize(
+    "separator", ("", " "), ids=("direct", "whitespace")
+)
+@pytest.mark.parametrize("payload_operator", ("=", ":"), ids=("equals", "colon"))
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7"),
+        pytest.param("\x9d", "\x1b\\", id="osc-8"),
+    ),
+)
+def test_error_redaction_uses_string_control_operator_after_all_separators(
+    quoted: bool,
+    separator: str,
+    payload_operator: str,
+    introducer: str,
+    terminator: str,
+) -> None:
+    key = '"password"' if quoted else "password"
+    control = f"{introducer}0;{payload_operator}{terminator}"
+    raw = f"{key}{separator}{control} \x1b[31m hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert "hunter2" not in cleaned
+        assert "visible" in cleaned
+        assert "[redacted]" in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        pytest.param("\x1bP", id="dcs-7"),
+        pytest.param("\x90", id="dcs-8"),
+        pytest.param("\x1b^", id="pm-7"),
+        pytest.param("\x9e", id="pm-8"),
+        pytest.param("\x1b_", id="apc-7"),
+        pytest.param("\x9f", id="apc-8"),
+        pytest.param("\x1bX", id="sos-7"),
+        pytest.param("\x98", id="sos-8"),
+    ),
+)
+@pytest.mark.parametrize(
+    "terminator", ("\x1b\\", "\x9c"), ids=("st-7", "st-8")
+)
+@pytest.mark.parametrize("payload_operator", ("=", ":"), ids=("equals", "colon"))
+def test_error_redaction_does_not_end_non_osc_string_controls_at_bel(
+    introducer: str, terminator: str, payload_operator: str
+) -> None:
+    control = (
+        f"{introducer}0;{payload_operator}\x07still-opaque{terminator}"
+    )
+    raw = f"password{control}hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert "hunter2" not in cleaned
+        assert "still-opaque" not in cleaned
+        assert "visible" in cleaned
+        assert "[redacted]" in cleaned
+
+
 def test_redact_strips_otel_ids() -> None:
     trace_id = "a" * 32
     span_id = "b" * 16
@@ -681,8 +787,18 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "split as `pass` + span + `word` still joins to `password`" in documented
     )
     assert (
-        "an operator inside a validly terminated\n"
-        "string-control span counts as the assignment operator"
+        "A visible `=` or `:` after that sequence is\n"
+        "the assignment operator, even when an earlier string-control payload contains"
+        in documented
+    )
+    assert (
+        "Only when no visible operator follows may a skipped,\n"
+        "validly terminated string control supply its payload operator"
+        in documented
+    )
+    assert (
+        "BEL terminates\n"
+        "only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST."
         in documented
     )
     assert (
@@ -692,11 +808,22 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "with `[redacted]`, before whitespace tokenization."
         in readme
     )
-    assert "span containing `=` or `:` supplies the operator" in readme
     assert (
-        "payload operator remains opaque and later key\nfragments still join"
+        "A visible `=` or `:` after that sequence wins even when a\n"
+        "skipped OSC, DCS, PM, APC, or SOS payload contains an operator."
         in readme
     )
+    assert (
+        "Only when no\n"
+        "visible operator follows may a complete skipped string-control span supply its\n"
+        "payload operator; the value starts after the entire skipped sequence."
+        in readme
+    )
+    assert (
+        "payload operator remains opaque and later key fragments still join"
+        in readme
+    )
+    assert "BEL ends\nonly OSC; the other string controls require ST." in readme
 
 
 def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
@@ -721,13 +848,14 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in documented
     )
     assert (
-        "Inside a complete, validly terminated string control, either byte is an\n"
-        "   operator when the key already contains a complete"
+        "A visible `=` or `:` after that\n"
+        "   sequence wins. Only if none follows may either byte inside a skipped,\n"
+        "   complete string control supply the operator"
         in documented
     )
     assert (
-        "while the key is\n"
-        "   incomplete, that payload remains opaque so later key fragments still join."
+        "While the key is incomplete, that payload remains\n"
+        "   opaque so later key fragments still join. BEL terminates OSC only"
         in documented
     )
     assert (
