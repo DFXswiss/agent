@@ -408,6 +408,11 @@ for worker in workers.values():
    tick, before phase dispatch and before an early merged/closed transition,
    until the owned intent is verified done. Implementation and later phases may
    continue; the retry does not wait for a human reply or relaunch a reviewer.
+   An invalid or foreign saved rejection checkpoint becomes a durable
+   `phase-error` blocker with the exact resume phase and a reply checkpoint;
+   it is not left as a tick-only diagnostic. A pending post-suite checkpoint
+   still publishes or retires after the pull request is merged or closed before
+   merge verification continues.
    `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
@@ -620,10 +625,14 @@ deterministically identified `lane.run` audit, and the finished agent, bound to
 the task, round, head, stage, and dimension. A finished reviewer result remains
 in a local checkpoint outside the worktree and every reviewer read directory
 until that transaction commits. The checkpoint omits the account configuration
-directory; recovery reloads it from the agent's configured role. Every string,
-model, reported model, usage value, tool field, and collection is bounded and
-redacted through the same serializer as `lane.run`, and the complete JSON file
-has a hard size limit. After tool entries are removed to meet that limit,
+directory; recovery reloads it from the agent's configured role. Task id, agent
+id, head, dimension, and stage are exact unredacted identity values used only
+for recovery matching. The owned provider-output identity is stored as its file
+name, never as an absolute path, and recovery derives the path from the task and
+agent ids. Result strings, models, reported models, usage values, tool fields,
+and collections are bounded and redacted through the same serializer as
+`lane.run`, and the complete JSON file has a hard size limit. After tool entries
+are removed to meet that limit,
 stdout and stderr are shortened against their JSON-escaped size while the
 already parsed protocol result remains intact. Each parallel worker writes its
 checkpoint atomically as soon as its lane returns, before publishing the result to shared memory or
@@ -735,11 +744,14 @@ unbounded alphanumeric, underscore, and hyphen key tokens (including quoted JSON
 keys) and redacts values when the key contains a secret keyword. A plain compact
 unquoted `key=value` assignment retains the established whole-token replacement;
 structured or quoted assignments keep their key and delimiters while their value
-is replaced. Quoted values run to their closing quote or the bounded input end;
-unquoted values stop at whitespace, comma, or semicolon. URL schemes, escape
-parameters, and control interleaves use fixed matching windows; value runs that
-do not need delimiter backtracking are possessive. This keeps every redaction
-pass linear on long separatorless provider text. A sink with an existing length
+is replaced. The secret keywords include `passwd` and the `access_key`,
+`access-key`, and `accesskey` forms; removable terminal controls are consumed
+alongside whitespace between the key, assignment operator, and value. Quoted
+values run to their closing quote or the bounded input end; unquoted values stop
+at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
+interleaves use fixed matching windows; value runs that do not need delimiter
+backtracking are possessive. This keeps every redaction pass linear on long
+separatorless provider text. A sink with an existing length
 limit takes only that limit plus a small inspection margin before any redaction
 regular expression runs. If that cut splits a token, the cut token is redacted
 as a whole, and the usual truncation marker and hard output limit still apply.

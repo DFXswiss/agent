@@ -205,6 +205,61 @@ def test_error_redaction_uses_unbounded_assignment_key_scanner() -> None:
     assert "[redacted]" in cleaned
 
 
+def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> None:
+    cleaned = redact(
+        "ERROR passwd=hunter2 "
+        "db_passwd='correct horse' "
+        'access-key="dash secret" '
+        'accesskey=compact-secret '
+        "aws_access_key_id=ASIAUNQUOTED "
+        '{"access_key":"ASIAJSON","visible":"keep-me"}'
+    )
+
+    for secret in (
+        "hunter2",
+        "correct horse",
+        "dash secret",
+        "compact-secret",
+        "ASIAUNQUOTED",
+        "ASIAJSON",
+    ):
+        assert secret not in cleaned
+    assert '"visible":"keep-me"' in cleaned
+    assert cleaned.count("[redacted]") == 6
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        (
+            "password \x1b[31m: correct-horse visible=keep",
+            "correct-horse",
+        ),
+        (
+            'password:\x1b[31m "correct horse" visible=keep',
+            "correct horse",
+        ),
+        (
+            "password=\x1b[31m correct-horse visible=keep",
+            "correct-horse",
+        ),
+    ],
+    ids=(
+        "control-before-operator",
+        "control-before-quoted",
+        "control-before-unquoted",
+    ),
+)
+def test_error_redaction_consumes_terminal_controls_around_assignment_operator(
+    raw: str, secret: str
+) -> None:
+    cleaned = redact(raw)
+
+    assert secret not in cleaned
+    assert "visible=keep" in cleaned
+    assert "[redacted]" in cleaned
+
+
 def test_redact_strips_otel_ids() -> None:
     trace_id = "a" * 32
     span_id = "b" * 16
@@ -496,6 +551,27 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "`[redacted]` before tokenization"
         in documented
     )
+
+
+def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
+    documented = (
+        Path(__file__).parents[1]
+        / "src"
+        / "agent_cli"
+        / "skills"
+        / "error-fix"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "Secret-key assignments use a complete, unbounded scanner" in documented
+    )
+    assert (
+        "Fixed matching\n"
+        "   windows apply only to URL schemes, terminal escape parameters"
+        in documented
+    )
+    assert "Secret-key name affixes" not in documented
 
 
 @pytest.mark.parametrize(

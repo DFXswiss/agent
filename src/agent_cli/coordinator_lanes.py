@@ -80,7 +80,8 @@ PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
 REVIEWER_SPOOL_WRITE_ERROR = "reviewer result checkpoint failed"
 _CHECKPOINT_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
-_REVIEWER_SPOOL_VERSION = 2
+_LEGACY_REVIEWER_SPOOL_VERSION = 2
+_REVIEWER_SPOOL_VERSION = 3
 _REVIEWER_SPOOL_BYTES_LIMIT = 16_384
 _REVIEWER_OUTPUT_CHECKPOINT_VERSION = 1
 
@@ -576,6 +577,14 @@ def _write_reviewer_spool(
     usage = metadata["usage"]
     if isinstance(usage, dict):
         usage = {"model": metadata["reported_model"], **usage}
+    output_name: str | None = None
+    if output_file is not None:
+        owned_output = _owned_reviewer_output(
+            store, worker, str(task["id"]), agent
+        )
+        if owned_output != output_file:
+            raise CoordinatorError("reviewer spool output file is invalid")
+        output_name = Path(owned_output).name
     payload = {
         "version": _REVIEWER_SPOOL_VERSION,
         "task_id": _spool_identity(task["id"], "task id"),
@@ -585,7 +594,7 @@ def _write_reviewer_spool(
         "dimension": _spool_identity(dimension, "dimension", limit=100),
         "stage": _spool_identity(stage, "stage", limit=100),
         "output_file": (
-            _spool_identity(output_file, "output path") if output_file else None
+            _spool_identity(output_name, "output file") if output_name else None
         ),
         "result": {
             "role": _spool_text(
@@ -684,10 +693,15 @@ def _read_reviewer_spool(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or any(
+    if not isinstance(payload, dict):
+        return None
+    spool_version = payload.get("version")
+    if spool_version not in (
+        _LEGACY_REVIEWER_SPOOL_VERSION,
+        _REVIEWER_SPOOL_VERSION,
+    ) or any(
         payload.get(key) != expected
         for key, expected in (
-            ("version", _REVIEWER_SPOOL_VERSION),
             ("task_id", str(task["id"])),
             ("agent_id", str(agent["id"])),
             ("round", round_num),
@@ -746,14 +760,24 @@ def _read_reviewer_spool(
         or result.vendor != agent.get("vendor")
     ):
         return None
-    output_file = payload.get("output_file")
-    if output_file is not None and not isinstance(output_file, str):
+    output_name = payload.get("output_file")
+    if output_name is not None and not isinstance(output_name, str):
         return None
     owned_output = _owned_reviewer_output(
         store, worker, str(task["id"]), agent
     )
-    if owned_output is not None and output_file != owned_output:
+    if owned_output is None:
+        if output_name is not None:
+            return None
+        output_file = None
+    elif output_name != (
+        owned_output
+        if spool_version == _LEGACY_REVIEWER_SPOOL_VERSION
+        else Path(owned_output).name
+    ):
         return None
+    else:
+        output_file = owned_output
     return result, output_file
 
 
@@ -2152,6 +2176,9 @@ def _prepare_pr_review_agent(
         "argv": argv,
         "stdin_text": stdin_text,
         "output_file": lane_output,
+        "reviewer_output": (
+            _reviewer_output_checkpoint(aid) if lane_output is not None else None
+        ),
         "worktree": worktree,
         "model": selected.model,
         "config_dir": selected.account.config_dir,
@@ -2804,11 +2831,16 @@ def phase_pr_gates(
             )
             if isinstance(outcome, LaneResult):
                 try:
+                    # Worker threads do not read the Store. Carry the same
+                    # path-free ownership marker persisted during preparation.
+                    spool_agent: dict[str, Any] = {"id": agent_id}
+                    if prep.get("reviewer_output") is not None:
+                        spool_agent["reviewer_output"] = prep["reviewer_output"]
                     _write_reviewer_spool(
                         store,
                         worker,
                         task,
-                        {"id": agent_id},
+                        spool_agent,
                         outcome,
                         round_num=None,
                         head=head,

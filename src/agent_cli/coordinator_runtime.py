@@ -1917,9 +1917,43 @@ def advance_one(
     # A rejection comment is a durable task intent, not an implementation-phase
     # side effect. Reconcile it before every dispatch or early PR-state branch,
     # including checkpoint recovery and its unreadable-state retry.
-    rejection_publication_lines = reconcile_rejection_review_intents(
-        store, worker, task, runner
-    )
+    rejection_recovery_error = False
+    try:
+        rejection_publication_lines = reconcile_rejection_review_intents(
+            store, worker, task, runner
+        )
+    except (CoordinatorError, StoreError) as exc:
+        if (
+            not c.get("resume_phase")
+            and phase not in ("await_merge", "done", "blocked", "ask")
+        ):
+            c["resume_phase"] = phase
+        c["blocker"] = str(exc)
+        if phase not in ("await_merge", "done"):
+            c["phase"] = "blocked"
+            phase = "blocked"
+        save_task(store, task)
+        blocker_lines = publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            str(exc),
+            kind="phase-error",
+            reply_checkpoint=True,
+        )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        rejection_publication_lines = [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
+        ]
+        rejection_recovery_error = True
+        if not pending_post_suite:
+            return rejection_publication_lines
     pending_post_suite_state: str | None = None
     if pending_post_suite:
         # A saved suite may resume publication only after a fresh state read.
@@ -1936,6 +1970,8 @@ def advance_one(
             # a reply once the pull request leaves OPEN.
             phase = "tests"
             c["phase"] = "tests"
+    if rejection_recovery_error and phase == "blocked":
+        return rejection_publication_lines
     pending_provider_checkpoint = (
         phase == "blocked"
         and c.get("blocker_publish_once") is True
