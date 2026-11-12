@@ -211,7 +211,7 @@ def read_pull(runner: Runner, repo: str, number: int, *, sleep=time.sleep) -> di
     return last
 
 
-def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any] | None:
+def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any]:
     try:
         data = gh_json(runner, ["gh", "api", f"repos/{repo}/pulls/{number}"])
     except CoordinatorError as exc:
