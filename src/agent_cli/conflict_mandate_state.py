@@ -24,6 +24,10 @@ COMMENT_LIMIT = 8000
 FAILURE_TAIL_LIMIT = 1500
 NO_CONFLICTS = "no conflicts"
 SESSION_COMPONENT = re.compile(r"[A-Za-z0-9_-]+")
+LOCAL_PATH = re.compile(
+    r'(?<![\w./\]~\-])/(?:[^\s/"\']+/)+[^\s/"\']+'
+)
+HOME_PATH = re.compile(r'(?<![\w./\]\-])~/[^\s"\']+')
 
 STATE_PHASES = (
     "discovered",
@@ -162,6 +166,13 @@ def iso_ceiling(value: datetime) -> str:
     return iso(value)
 
 
+def _mask(value: str) -> str:
+    """Mask the complete value without shortening it."""
+    cleaned = redact(value, limit=max(1, len(value) * 4 + 100))
+    cleaned = HOME_PATH.sub("[local path]", cleaned)
+    return LOCAL_PATH.sub("[local path]", cleaned)
+
+
 def safe(worker: ConflictWorker, value: object) -> str:
     cleaned = str(value)
     replacements = (
@@ -175,25 +186,13 @@ def safe(worker: ConflictWorker, value: object) -> str:
         if path in ("", ".", "/"):
             continue
         cleaned = cleaned.replace(path, replacement)
-    cleaned = redact(cleaned, limit=COMMENT_LIMIT)
-    cleaned = re.sub(
-        r'(?<![\w./:-])/(?:[^\s/"\']+/)+[^\s/"\']+',
-        "[local path]",
-        cleaned,
-    )
-    cleaned = re.sub(
-        r'(?<![\w./:-])~/[^\s"\']+',
-        "[local path]",
-        cleaned,
-    )
-    return cleaned
+    return redact(_mask(cleaned), limit=COMMENT_LIMIT)
 
 
 def bounded_tail(value: str, *, limit: int = FAILURE_TAIL_LIMIT) -> str:
-    raw = value or ""
-    candidate = raw[-(limit * 2):] if len(raw) > limit * 2 else raw
-    cleaned = redact(candidate, limit=limit * 4)
-    return cleaned if len(cleaned) <= limit else "…" + cleaned[-(limit - 1):]
+    masked = _mask(value or "")
+    candidate = masked[-(limit * 2):] if len(masked) > limit * 2 else masked
+    return candidate if len(candidate) <= limit else "…" + candidate[-(limit - 1):]
 
 
 def _comment_text(value: str) -> str:
@@ -203,7 +202,10 @@ def _comment_text(value: str) -> str:
             characters.append(character)
         elif character == "\t":
             characters.append(" ")
-        elif unicodedata.category(character) in ("Cc", "Cf"):
+        elif (
+            unicodedata.category(character).startswith("C")
+            or unicodedata.category(character) in ("Zl", "Zp")
+        ):
             continue
         else:
             characters.append(character)

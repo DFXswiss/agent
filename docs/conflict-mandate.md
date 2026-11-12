@@ -99,8 +99,9 @@ environment variable is set in the worker process: `GIT_DIR`, `GIT_WORK_TREE`,
 `GIT_ASKPASS`. The line is `preflight blocked: the environment variable <NAME>
 is set; the conflicts worker refuses to run with it`, naming the first set
 variable in that order. Directly after the clone, before any checkout or
-rebase, the driver query runs inside the worktree with `git -C <worktree> -c
-core.hooksPath=/dev/null -c core.fsmonitor=false config --get-regexp <pattern>`
+rebase, the driver query runs inside the worktree with `git -C <worktree>
+--literal-pathspecs -c core.hooksPath=/dev/null -c core.fsmonitor=false
+config --get-regexp <pattern>`
 and no scope option. That effective query merges the system and global
 configuration, including global `includeIf "gitdir:..."` sections selected for
 this worktree's Git directory, with the cloned repository configuration. A hit
@@ -183,12 +184,12 @@ exists on GitHub, without Git, a lane, or a comment.
    is the blocker `head repository is gone`; and `mergeable` true, false, or
    null. Comment listings require a list of objects with an integer `id`
    greater than zero, string `body`, string `user.login`, string `user.type`,
-   GitHub-parsable string `created_at` and `updated_at`, and at least one
-   string `html_url` or `issue_url` that contains a parsable pull-request or
-   issue number greater than zero. When a comment carries both `issue_url` and
-   `html_url`, both numbers must be the same, and `html_url` decides whether it
-   is a pull request (`/pull/`) or an issue (`/issues/`). A mismatch or an
-   unparsable supplied URL makes the listing unreadable for that tick. A
+   GitHub-parsable string `created_at` and `updated_at`, and a string
+   `html_url` that contains a parsable pull-request or issue number greater
+   than zero. An optional `issue_url` must also contain the same number, while
+   `html_url` alone decides whether it is a pull request (`/pull/`) or an issue
+   (`/issues/`). A mismatch or an unparsable supplied URL makes the listing
+   unreadable for that tick. A
    timestamp that does not parse makes the listing transient for that tick.
    Reaction listings require objects with string `user.login` and string
    `content`.
@@ -223,7 +224,8 @@ exists on GitHub, without Git, a lane, or a comment.
    failed Git-directory comparison: the worktree and Git directory are removed
    directly and the abort is skipped. Local Git commands of this worker pass
    `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false`.
-   Every Git command runs with `--literal-pathspecs`, so a file name is never interpreted as pathspec magic or as a glob.
+   Every Git command that runs in the worktree passes `--literal-pathspecs`, so
+   a file name is never interpreted as pathspec magic or as a glob.
    Network `clone`, `fetch`, and `push` commands pass no global `-c` override.
    Directly after the clone writes `core.hooksPath=/dev/null`
    into the repository configuration with a local command, so later transfers
@@ -333,8 +335,9 @@ exists on GitHub, without Git, a lane, or a comment.
    checks it recomputes
    the reviewed range, requires the same commit list and the same
    `origin/<base>` sha as before the checks, and verifies every commit in the
-   recomputed range as signed. A failing check's redacted output tail is
-   bounded before publication. The check child inherits the device environment
+   recomputed range as signed. A failing check's complete output is masked
+   before its bounded tail is selected for publication. The check child
+   inherits the device environment
    without the ambient GitHub token variables and with an empty unconfigured
    GitHub profile, plus the
    `AGENT_CONFLICTS_HEAD`, `AGENT_CONFLICTS_BASE`, `AGENT_CONFLICTS_REPO`,
@@ -402,10 +405,11 @@ A request whose marker exists is finished whatever the local state says.
 
 Comments use a short `EN:` block, a short `DE:` block, and a facts
 `<details>` block. The fixed EN and DE sentences stay plain text. Every dynamic
-value passes through `safe` and `redact`. Unicode control characters and
-bidirectional or invisible formatting characters are removed, a tab becomes
-one space, and the value is placed in Markdown code formatting: single-line
-values in a code span with any backtick replaced by `'`, and multi-line values
+value passes through `safe` and `redact`. Unicode control, format, surrogate,
+private-use, unassigned, and line- or paragraph-separator characters are
+removed, a tab becomes one space, and the value is placed in Markdown code
+formatting: single-line values in a code span with any backtick replaced by
+`'`, and multi-line values
 in a fenced code block whose fence is longer than any backtick run in the
 value.
 GitHub therefore renders no mention, link, HTML, or heading from a reason,
@@ -549,7 +553,10 @@ blocker. This includes a reStructuredText or Markdown underline of `=`.
 - Daemon auto-start of conflict workers
 - Hub-issued mandates
 - Non-content conflicts
-- conflicted files whose names Git prints C-quoted (tab, newline, double quote, backslash)
+- conflicted files whose names Git prints C-quoted (tab, newline, double quote,
+  backslash) and file names that contain a character of a Unicode general
+  category starting with `C` (control, format, surrogate, private use,
+  unassigned) or a line or paragraph separator (`Zl`, `Zp`)
 - Branches containing merge commits
 - Repositories without a check command
 - Configure at most one conflicts worker per repository on a device and across

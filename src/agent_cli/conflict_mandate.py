@@ -297,10 +297,7 @@ _PULL_URL = re.compile(r"/pulls?/\d+(?:$|[?#])")
 def _comment_is_pull_request(comment: dict[str, Any]) -> bool:
     """Return whether a comment URL identifies a pull request, not an issue."""
     html_url = comment.get("html_url")
-    if isinstance(html_url, str):
-        return _PULL_URL.search(html_url) is not None
-    issue_url = comment.get("issue_url")
-    return isinstance(issue_url, str) and _PULL_URL.search(issue_url) is not None
+    return isinstance(html_url, str) and _PULL_URL.search(html_url) is not None
 
 
 def mandate_matches(
@@ -622,7 +619,7 @@ def _commit_subject(git_runner: Runner, worktree: Path) -> str:
     if completed.returncode != 0:
         return "unavailable"
     text = (completed.stdout or "").strip()
-    subject = text.splitlines()[0] if text else "unavailable"
+    subject = text.split("\n", 1)[0].rstrip("\r") if text else "unavailable"
     return redact(subject, limit=300)
 
 
@@ -718,7 +715,11 @@ def _rebase_failed(completed: Any) -> str:
 
 
 def _push_was_refused(output: str) -> bool:
-    for line in output.splitlines():
+    lines = output.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for raw in lines:
+        line = raw.rstrip("\r")
         lowered = line.casefold()
         if any(sign in lowered for sign in PUSH_REFUSAL_SIGNS):
             return True

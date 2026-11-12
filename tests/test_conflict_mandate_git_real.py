@@ -350,6 +350,18 @@ def test_non_ascii_path_with_space_is_returned_exactly(tmp_path: Path) -> None:
     assert [(item.path, item.state) for item in paths] == [(path, "UU")]
 
 
+def test_unicode_line_separator_conflict_is_not_split_into_adjacent_name(
+    tmp_path: Path,
+) -> None:
+    path = "a\u2028b"
+    worktree = _start_named_conflicted_rebase(tmp_path, path=path, other="a")
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state, item.supported) for item in paths] == [
+        (path, "UU", False)
+    ]
+    assert all(item.path != "a" for item in paths)
+
+
 def test_delete_modify_conflict_keeps_real_state(tmp_path: Path) -> None:
     upstream, worktree = _repo_pair(tmp_path)
     _git(worktree, "checkout", "-b", "feature")
