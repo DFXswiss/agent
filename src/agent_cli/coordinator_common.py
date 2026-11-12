@@ -71,10 +71,20 @@ _SECRET_ASSIGNMENT_KEYWORDS = (
     "signing_key",
     "config_dir",
     "password",
+    "passwd",
     "gh_config",
     "api_key",
     "api-key",
     "apikey",
+    "access_token",
+    "access-token",
+    "accesstoken",
+    "access_key",
+    "access-key",
+    "accesskey",
+    "client_secret",
+    "client-secret",
+    "clientsecret",
     "secret",
     "token",
 )
@@ -381,8 +391,15 @@ def _redact_secret_assignments(text: str) -> str:
                 continue
             cursor += 1
         key_end = cursor
-        while cursor < length and text[cursor].isspace():
-            cursor += 1
+        while cursor < length:
+            if text[cursor].isspace():
+                cursor += 1
+                continue
+            control_end, _final = _terminal_control_span(text, cursor)
+            if control_end > cursor:
+                cursor = control_end
+                continue
+            break
         if cursor >= length or text[cursor] not in ":=":
             index = max(cursor, index + 1)
             continue
@@ -393,8 +410,15 @@ def _redact_secret_assignments(text: str) -> str:
         compact_before = cursor == key_end
         cursor += 1
         value_prefix = cursor
-        while cursor < length and text[cursor].isspace():
-            cursor += 1
+        while cursor < length:
+            if text[cursor].isspace():
+                cursor += 1
+                continue
+            control_end, _final = _terminal_control_span(text, cursor)
+            if control_end > cursor:
+                cursor = control_end
+                continue
+            break
         compact_after = cursor == value_prefix
         value_start = cursor
         if cursor < length and text[cursor] in ("\"", "'"):

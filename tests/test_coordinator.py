@@ -4951,6 +4951,116 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
 
 
+def test_invalid_rejection_checkpoint_writes_reply_gated_phase_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f7"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "implementing",
+            "payload": {
+                "coordinator": {
+                    "phase": "implement",
+                    "source": {"repo": "example/project", "number": 7},
+                    "rejection_review_activity_ids": "foreign-checkpoint",
+                }
+            },
+        },
+    )
+    published = _record_blocker_publications(monkeypatch)
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=lambda *_args: pytest.fail("implementer lane was launched"),
+    )
+
+    saved = store.row("task", tid)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "implement"
+    assert checkpoint["blocker"] == "rejection review checkpoint is invalid"
+    assert checkpoint["question_activity_id"] in published
+    assert any("blocker published" in line for line in lines)
+    comment = store.row("activity", checkpoint["question_activity_id"])
+    assert comment["execution_status"] == "done"
+    assert "agent-coordinator:status:v1:phase-error" in comment["payload"]["body"]
+
+
+def test_invalid_rejection_checkpoint_does_not_strand_closed_post_suite_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_common import coord, save_task
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    tid = "aa000001-0000-4000-8000-0000000000f6"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "local-check",
+            "payload": {
+                "coordinator": {
+                    "phase": "tests",
+                    "pr_number": 42,
+                    "source": {"repo": "example/project", "number": 7},
+                    "rejection_review_activity_ids": "foreign-checkpoint",
+                    "a38": {"post_suite_checkpoint": {"pending": True}},
+                }
+            },
+        },
+    )
+    published = _record_blocker_publications(monkeypatch)
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *_args, **_kwargs: "MERGED"
+    )
+    resumed: list[str] = []
+
+    def resume_checkpoint(store_arg, _worker, task, _runner):  # noqa: ANN001
+        resumed.append(coord(task)["phase"])
+        coord(task)["phase"] = "await_merge"
+        save_task(store_arg, task)
+        return ["checkpoint resumed"]
+
+    monkeypatch.setattr(coordinator_runtime, "phase_tests", resume_checkpoint)
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert resumed == ["tests"]
+    assert saved["phase"] == "await_merge"
+    assert saved["resume_phase"] == "tests"
+    assert saved["question_activity_id"] in published
+    assert lines[-1] == "checkpoint resumed"
+    assert any("blocker published" in line for line in lines[:-1])
+
+
 def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -14176,6 +14286,65 @@ def test_reviewer_spool_is_outside_lane_reads_and_reloads_config_dir(
     assert recovered[0].config_dir == "/test/codex"
 
 
+def test_reviewer_spool_stores_only_owned_output_file_name(tmp_path: Path) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.lane import LaneResult
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    task = {"id": "aa000001-0000-4000-8000-000000000225"}
+    agent_id = "aa000001-0000-4000-8000-000000000226"
+    agent = {
+        "id": agent_id,
+        "role": "pr-reviewer-quality",
+        "vendor": "codex",
+        "reviewer_output": coordinator_lanes._reviewer_output_checkpoint(agent_id),
+    }
+    output = coordinator_lanes._reviewer_raw_output_path(
+        store, worker, task["id"], agent_id
+    )
+    path = coordinator_lanes._write_reviewer_spool(
+        store,
+        worker,
+        task,
+        agent,
+        LaneResult(
+            role="pr-reviewer-quality",
+            vendor="codex",
+            model="codex-model",
+            status="complete",
+            argv=[],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: approved\n",
+            stderr="",
+            config_dir="/test/codex",
+            protocol_result="approved",
+        ),
+        round_num=None,
+        head="a" * 40,
+        dimension="quality",
+        stage="review-2",
+        output_file=str(output),
+    )
+
+    serialized = path.read_text(encoding="utf-8")
+    assert json.loads(serialized)["output_file"] == output.name
+    assert str(output.parent) not in serialized
+    recovered = coordinator_lanes._read_reviewer_spool(
+        store,
+        worker,
+        task,
+        agent,
+        round_num=None,
+        head="a" * 40,
+        dimension="quality",
+        stage="review-2",
+    )
+    assert recovered is not None
+    assert recovered[1] == str(output)
+
+
 def test_parallel_reviewer_spools_completed_sibling_before_join(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -14244,7 +14413,11 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
         )
         spools = list(spool_dir.glob("*.json"))
         assert len(spools) == 1
-        assert json.loads(spools[0].read_text(encoding="utf-8"))["dimension"] == "quality"
+        serialized = spools[0].read_text(encoding="utf-8")
+        payload = json.loads(serialized)
+        assert payload["dimension"] == "quality"
+        assert payload["output_file"] == f"{payload['agent_id']}.output"
+        assert str(spool_dir) not in serialized
         assert stage_thread.is_alive()
     finally:
         logic_release.set()

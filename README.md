@@ -203,10 +203,12 @@ Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
 control byte does the same before path classification.
 Credential assignments use one linear scanner over complete, unbounded key
 tokens, including quoted JSON keys; quoted values are consumed through their
-closing quote or the bounded input end. URL schemes, escape parameters, and
-removable-control interleaves use fixed matching windows. Bounded lane fields
-are cut to their limit plus a small fail-closed inspection margin before
-redaction.
+closing quote or the bounded input end. The scanner recognizes the legacy
+`passwd` and `access_key` / `access-key` / `accesskey` key forms and consumes
+removable terminal controls between the key, assignment operator, and value.
+URL schemes, escape parameters, and removable-control interleaves use fixed
+matching windows. Bounded lane fields are cut to their limit plus a small
+fail-closed inspection margin before redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
