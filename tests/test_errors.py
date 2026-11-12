@@ -194,6 +194,17 @@ def test_error_redaction_is_linear_on_large_words(
         assert "[redacted]" in cleaned
 
 
+def test_error_redaction_uses_unbounded_assignment_key_scanner() -> None:
+    long_key = "A" * 10_000 + "authorization" + "Z" * 10_000
+    cleaned = redact(
+        f'{{"{long_key}":"first secret words","visible":"ok"}}'
+    )
+
+    assert "first secret words" not in cleaned
+    assert '"visible":"ok"' in cleaned
+    assert "[redacted]" in cleaned
+
+
 def test_redact_strips_otel_ids() -> None:
     trace_id = "a" * 32
     span_id = "b" * 16

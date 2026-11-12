@@ -1914,6 +1914,12 @@ def advance_one(
     if ordering_error is not None:
         return [ordering_error]
     pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
+    # A rejection comment is a durable task intent, not an implementation-phase
+    # side effect. Reconcile it before every dispatch or early PR-state branch,
+    # including checkpoint recovery and its unreadable-state retry.
+    rejection_publication_lines = reconcile_rejection_review_intents(
+        store, worker, task, runner
+    )
     pending_post_suite_state: str | None = None
     if pending_post_suite:
         # A saved suite may resume publication only after a fresh state read.
@@ -1922,16 +1928,14 @@ def advance_one(
         pending_post_suite_state = pr_state(store, worker, task, runner)
         if pending_post_suite_state is None:
             return [
+                *rejection_publication_lines,
                 "PR state temporarily unavailable before A38 checkpoint recovery; retrying"
             ]
-    # A rejection comment is a durable task intent, not an implementation-phase
-    # side effect. Reconcile it before every dispatch or early PR-state branch so
-    # phase changes and a concurrently closed/merged pull request cannot strand it.
-    rejection_publication_lines = (
-        []
-        if pending_post_suite
-        else reconcile_rejection_review_intents(store, worker, task, runner)
-    )
+        if phase == "blocked" and pending_post_suite_state in ("MERGED", "CLOSED"):
+            # A checkpointed suite has publish-or-retire work that does not need
+            # a reply once the pull request leaves OPEN.
+            phase = "tests"
+            c["phase"] = "tests"
     pending_provider_checkpoint = (
         phase == "blocked"
         and c.get("blocker_publish_once") is True
@@ -2001,21 +2005,24 @@ def advance_one(
             and isinstance(binding_blocker_activity_id, str)
             and binding_blocker_activity_id
         ):
-            return [f"blocked: {redact(message)}"]
+            return [*rejection_publication_lines, f"blocked: {redact(message)}"]
         if c.get("binding_blocker") != message:
             c.pop("binding_blocker_activity_id", None)
         c["binding_blocker"] = message
         save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            message,
-            kind="configuration-binding",
-            preserve_reply_checkpoint=True,
-            binding_notice=True,
-        )
+        return [
+            *rejection_publication_lines,
+            *publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="configuration-binding",
+                preserve_reply_checkpoint=True,
+                binding_notice=True,
+            ),
+        ]
     if "binding_blocker" in c or "binding_blocker_activity_id" in c:
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
@@ -2028,6 +2035,7 @@ def advance_one(
     )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
+    resume_post_suite_after_assignment = False
     if (
         phase not in ("await_merge", "done", "blocked", "ask")
         and (not pending_post_suite or pending_post_suite_state == "OPEN")
@@ -2039,20 +2047,48 @@ def advance_one(
                 live_state = pr_state(store, worker, task, runner)
                 if live_state is None:
                     # A merge also unassigns the closed issue; decide only on a readable state.
-                    return [f"PR state temporarily unavailable during {phase}; retrying"]
+                    return [
+                        *rejection_publication_lines,
+                        f"PR state temporarily unavailable during {phase}; retrying",
+                    ]
                 if live_state in ("MERGED", "CLOSED"):
-                    # A merge closes the issue; await_merge verifies the human merge
-                    # (and blocks a pull request that was closed without one).
-                    c["phase"] = "await_merge"
-                    save_task(store, task)
-                    return [f"PR left open state during {phase}; verifying the merge"]
-            c["phase"] = "blocked"
-            c["resume_phase"] = phase if phase not in ("blocked", "ask", "done") else "implement"
-            c["blocker"] = str(exc)
-            save_task(store, task)
-            return publish_blocker(
-                store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
-            )
+                    if pending_post_suite:
+                        # The saved suite must publish or retire against its live
+                        # context before merge verification can consume it.
+                        pending_post_suite_state = live_state
+                        phase = "tests"
+                        c["phase"] = "tests"
+                        resume_post_suite_after_assignment = True
+                    else:
+                        # A merge closes the issue; await_merge verifies the human merge
+                        # (and blocks a pull request that was closed without one).
+                        c["phase"] = "await_merge"
+                        save_task(store, task)
+                        return [
+                            *rejection_publication_lines,
+                            f"PR left open state during {phase}; verifying the merge",
+                        ]
+            if not resume_post_suite_after_assignment:
+                c["phase"] = "blocked"
+                c["resume_phase"] = (
+                    phase
+                    if phase not in ("blocked", "ask", "done")
+                    else "implement"
+                )
+                c["blocker"] = str(exc)
+                save_task(store, task)
+                return [
+                    *rejection_publication_lines,
+                    *publish_blocker(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        str(exc),
+                        kind="stopped",
+                        reply_checkpoint=True,
+                    ),
+                ]
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),
         "checkout": lambda: phase_checkout(store, worker, task, runner),
