@@ -13,7 +13,10 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
-from agent_cli.coordinator_common import redact as redact_shared
+from agent_cli.coordinator_common import (
+    REDACTION_BOUND_MARGIN,
+    redact as redact_shared,
+)
 from agent_cli.lane import (
     LANE_GITHUB_TOKEN_ENV,
     LANE_STRIP_ENV,
@@ -552,6 +555,21 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() ->
     )
 
 
+def test_controlled_line_config_dir_placeholder_exemption_is_exact() -> None:
+    placeholder = "<config_dir>/openrouter-api-key"
+    wrapped = "\x1b[31mordinary\x1b[0m"
+
+    assert redact_lane_text(
+        f"prefix {wrapped} {placeholder}", limit=None
+    ) == f"prefix ordinary {placeholder}"
+    assert redact_lane_text(
+        f"prefix {wrapped} {placeholder}=hunter2", limit=None
+    ) == "prefix ordinary [redacted]"
+    assert redact_lane_text(
+        f"prefix {wrapped} {placeholder} token=hunter2", limit=None
+    ) == f"prefix ordinary {placeholder} [redacted]"
+
+
 @pytest.mark.parametrize(
     "key",
     (
@@ -797,6 +815,22 @@ def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:
     assert cleaned.startswith("visible [redacted]")
     assert cleaned.endswith("\n…[truncated]")
     assert len(cleaned) <= 100
+
+
+def test_bounded_lane_redaction_classifies_complete_controlled_line_before_cut(
+) -> None:
+    limit = 100
+    raw = "password hunter2 " + ("word " * 100) + "\x1b[31m"
+    cutoff = limit + REDACTION_BOUND_MARGIN
+    assert raw[cutoff].isspace()
+    assert raw.index("\x1b") > cutoff
+
+    cleaned = redact_lane_text(raw, limit=limit)
+
+    assert "hunter2" not in cleaned
+    assert cleaned.startswith("[redacted]")
+    assert cleaned.endswith("\n…[truncated]")
+    assert len(cleaned) <= limit
 
 
 def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
@@ -1240,6 +1274,9 @@ def test_tool_target_redacts_percent_escaped_paths_traversal_and_secrets(
 def test_tool_target_docs_fail_closed_on_percent_escapes() -> None:
     root = Path(__file__).parents[1]
     ai_accounts = (root / "docs" / "ai-accounts.md").read_text(encoding="utf-8")
+    coordinator = (root / "docs" / "issue-coordinator.md").read_text(
+        encoding="utf-8"
+    )
     readme = (root / "README.md").read_text(encoding="utf-8")
 
     assert "percent escape of the form `%HH`" in ai_accounts
@@ -1247,6 +1284,7 @@ def test_tool_target_docs_fail_closed_on_percent_escapes() -> None:
         "before\nnormalization, for both path and pattern targets"
         in ai_accounts
     )
+    assert "percent escape of the form `%HH`" in coordinator
     assert "A `%HH` percent escape in a\npath or pattern target" in readme
 
 

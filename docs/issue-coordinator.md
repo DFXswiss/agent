@@ -281,7 +281,8 @@ for worker in workers.values():
    terminal. The deterministic `issue.assigned` identity uses that source and
    the assignee, not the observation clock. An existing row at that identity is
    reused only when its origin device, session, type, execution status, and
-   stable assignment payload match and its observation timestamps are valid.
+   stable assignment payload match and both observation timestamps parse as
+   aware ISO-8601 values.
    Otherwise the coordinator uses and validates a
    deterministic fallback identity that also includes this device id; a
    mismatched row at that fallback fails closed. Assignment activity and task
@@ -743,15 +744,27 @@ evidence human spec input; the script never invents human grants.
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
 first searches once for ESC or C1 bytes. If none exist, the existing precise
-scanner runs unchanged. For every raw line that does contain a terminal
-control, the pipeline builds a control-stripped view that removes complete or
-unterminated controls with their payloads and a payload-kept view that removes
-only control introducers, terminators, and CSI parameter bytes. If either view
-contains a shared secret keyword, case-insensitively, the raw line is redacted
-from the start of the whitespace token containing the first mapped keyword
+scanner runs unchanged. For a raw line that does contain a terminal control, a
+compiled case-insensitive candidate check runs over a control-byte-translated
+view. Only candidate lines build the three views, one at a time: a
+control-stripped view that removes complete or
+unterminated controls with their payloads, a payload-kept view that removes
+only control introducers, terminators, and CSI parameter bytes, and a key-join
+view. The key-join view uses the assignment scanner's own classifier to retain
+only control-sequence bytes that the scanner may join into a key, including a
+key-character CSI/ESC final and a `-` intermediate, while dropping string-control
+payloads and all other control bytes. If any view contains a shared secret
+keyword, case-insensitively, the raw line is redacted from the start of the
+whitespace token containing the first mapped keyword
 through the end of that line. A following line remains independent, and a
 controlled line without a secret keyword continues through the existing
-control handling. The pipeline then classifies secret assignments on the full
+control handling. A whitespace token exactly `<config_dir>/` followed only by
+`[A-Za-z0-9._-]+` is the one structural exception: keywords inside that
+placeholder do not trigger the line rule. Any other byte in that token, or a
+keyword elsewhere on the line, still triggers it. Lane sinks replace raw and
+control-interleaved config-directory paths on the complete source before this
+structural rule, apply their length bound next, and run precise redaction last.
+The pipeline then classifies secret assignments on the full
 raw text. During that scan,
 every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque
 skipped span between the key, operator, and value and within quoted or unquoted
@@ -900,6 +913,8 @@ or an absolute/UNC fragment at the start or after any character outside
 followed by `:` at that same boundary, whether the following path is absolute or
 drive-relative. Any numeric or named escape (`\x`, `\u`, `\U`, `\N{`, octal
 `\0` through `\7`, or `\c`) also redacts the complete target without decoding.
+Any percent escape of the form `%HH` is likewise fully redacted before
+normalization, for both path and pattern targets; it is never decoded.
 Any raw ESC or C0/C1 control byte redacts the complete target before
 normalization or outside-path classification.
 The only exception is a single plain whole absolute path under

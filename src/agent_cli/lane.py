@@ -474,14 +474,27 @@ def redact_lane_text(
     from .coordinator_common import (
         _apply_redaction_bound,
         _prebound_redaction_input,
+        _redact_controlled_secret_lines,
+        _TERMINAL_STRUCTURAL_TRIGGER,
         redact,
     )
 
-    bounded, source_was_cut = _prebound_redaction_input(text or "", limit)
-    safe = hide_config_dir(bounded, config_dir)
-    safe = redact(safe, limit=None)
+    # Config roots are replaced on the complete raw text so a terminal control
+    # cannot make the structural line rule consume the safe placeholder.
+    raw_source = hide_config_dir(text or "", config_dir)
+    source = raw_source
+    if _TERMINAL_STRUCTURAL_TRIGGER.search(source) is not None:
+        source = _redact_controlled_secret_lines(
+            source, control_present=True
+        )
+    # Preserve the truncation fact from the unsanitized source even when the
+    # complete structural pass collapses a long controlled line.
+    _, source_was_cut = _prebound_redaction_input(raw_source, limit)
+    bounded, bounded_was_cut = _prebound_redaction_input(source, limit)
+    source_was_cut = source_was_cut or bounded_was_cut
+    safe = redact(bounded, limit=None, controlled_lines_redacted=True)
     safe = hide_config_dir(safe, config_dir)
-    safe = redact(safe, limit=None)
+    safe = redact(safe, limit=None, controlled_lines_redacted=True)
     return _apply_redaction_bound(
         safe,
         limit,
