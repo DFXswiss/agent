@@ -206,11 +206,14 @@ tokens, including quoted JSON keys; quoted values are consumed through their
 closing quote or the bounded input end. The scanner recognizes the legacy
 `passwd` and `access_key` / `access-key` / `accesskey` key forms and consumes
 removable terminal controls between the key, assignment operator, and value.
-An `=` or `:` inside a complete, validly terminated OSC, DCS, PM, APC, or SOS
-span is an assignment operator only after the key already contains a complete
-secret keyword; before that point it stays opaque so split key fragments still
-join. The value after that span's terminator follows the ordinary quoted or
-unquoted redaction rules.
+After a complete secret keyword, the scanner skips any following whitespace and
+terminal controls. A visible `=` or `:` after that sequence wins even when a
+skipped OSC, DCS, PM, APC, or SOS payload contains an operator. Only when no
+visible operator follows may a complete skipped string-control span supply its
+payload operator; the value starts after the entire skipped sequence. Before
+the key is complete, payload operators stay opaque so split key fragments still
+join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
+`ESC \` or the eight-bit ST byte.
 URL schemes, escape parameters, and removable-control interleaves use fixed
 matching windows. Bounded lane fields are cut to their limit plus a small
 fail-closed inspection margin before redaction.
@@ -251,11 +254,13 @@ agent session stop --id <session-id>
 
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before captures use the shared raw-redaction, terminal-sanitization, second-redaction pipeline without the bounded diagnostic limit. Secret assignments are first classified on the full raw capture while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque to that scan. Only after classification are those spans visibly replaced with `[redacted]`, before whitespace tokenization. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
 
-For that raw assignment classification, a validly terminated string-control
-span containing `=` or `:` supplies the operator when the preceding key already
-contains a complete secret keyword; the value begins after the terminator. If
-the key is not complete yet, the payload operator remains opaque and later key
-fragments still join.
+For that raw assignment classification, the scanner skips whitespace and
+terminal controls after a complete secret keyword. A visible `=` or `:` after
+the skipped sequence is the operator. Only if none follows may a validly
+terminated string-control payload supply the operator, and the value then
+begins after the entire skipped sequence. If the key is not complete yet, the
+payload operator remains opaque and later key fragments still join. BEL ends
+only OSC; the other string controls require ST.
 
 ## Testing against another hub
 

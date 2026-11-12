@@ -744,11 +744,15 @@ unterminated span consumes the remainder of the text and is replaced rather
 than merely removed. While a key has not yet matched a complete secret keyword,
 an assignment-looking `=` or `:` inside such a span remains opaque, so a key
 split as `pass` + span + `word` still joins to `password`. Once the key already
-contains a complete secret keyword, an operator inside a validly terminated
-string-control span counts as the assignment operator and the value begins
-after that terminator. The pipeline then replaces any whitespace-delimited raw
-token containing another ESC or C1 sequence, including a lone ESC byte and a
-sequence at either token boundary, while preserving the separating whitespace.
+contains a complete secret keyword, the scanner skips any following sequence of
+whitespace and terminal controls. A visible `=` or `:` after that sequence is
+the assignment operator, even when an earlier string-control payload contains
+one of those bytes. Only when no visible operator follows may a skipped,
+validly terminated string control supply its payload operator; the value then
+begins after the entire skipped sequence. The pipeline then replaces any
+whitespace-delimited raw token containing another ESC or C1 sequence, including
+a lone ESC byte and a sequence at either token boundary, while preserving the
+separating whitespace.
 The only possible
 exemption is a token whose sequences are exclusively one leading and/or one
 trailing `ESC [` SGR wrapper containing only digits and semicolons before `m`,
@@ -765,9 +769,11 @@ is replaced. The secret keywords include `passwd` and the `access_key`,
 `access-key`, and `accesskey` forms; removable terminal controls are consumed
 alongside whitespace between the key, assignment operator, and value. Before a
 complete secret keyword is present, a string-control payload stays opaque even
-when it contains `=` or `:`. After that keyword is present, either byte inside a
-complete, validly terminated string control is the operator and the value after
-the terminator is redacted. Payload whitespace does not end an unquoted value.
+when it contains `=` or `:`. After that keyword is present, whitespace and
+terminal controls are skipped together. A visible operator after them wins;
+only without one does either byte inside a skipped complete string control
+supply the operator, with the value starting after all skipped separators.
+Payload whitespace does not end an unquoted value.
 Quoted values run to their closing quote or the bounded input end; unquoted
 values stop at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
@@ -821,7 +827,9 @@ notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
 a CSI/ESC final byte as a possible token character, so the terminal sanitizer
 cannot assemble an unredacted token by deleting that byte.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
-`ESC \`. The assignment scan treats complete and unterminated string-control
+`ESC \`; their eight-bit forms accept those same ST spellings. BEL terminates
+only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST.
+The assignment scan treats complete and unterminated string-control
 spans as opaque; only after that classification are they replaced with
 `[redacted]` before tokenization, subject to the complete-secret-key operator
 rule above for a validly terminated span.

@@ -256,9 +256,12 @@ def _terminal_control_span(
             return index + 1, None
         introducer = text[index + 1]
         if introducer in "]P^_X":
+            is_osc = introducer == "]"
             cursor = index + 2
             while cursor < len(text):
-                if text[cursor] in ("\x07", "\x9c"):
+                if text[cursor] == "\x9c" or (
+                    is_osc and text[cursor] == "\x07"
+                ):
                     return cursor + 1, None
                 if (
                     text[cursor] == "\x1b"
@@ -323,9 +326,12 @@ def _terminal_control_span(
             return cursor + 1, text[cursor]
         return cursor, None
     if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
+        is_osc = codepoint == 0x9D
         cursor = index + 1
         while cursor < len(text):
-            if text[cursor] in ("\x07", "\x9c"):
+            if text[cursor] == "\x9c" or (
+                is_osc and text[cursor] == "\x07"
+            ):
                 return cursor + 1, None
             if (
                 text[cursor] == "\x1b"
@@ -395,14 +401,67 @@ def _string_control_assignment_operator(
     return "=" if equals < colon else ":"
 
 
+def _assignment_operator_after_key(
+    text: str,
+    index: int,
+    *,
+    allow_string_control_operator: bool,
+) -> tuple[str, int, int] | None:
+    """Find the operator after a key and return it with value-start position.
+
+    Whitespace and terminal controls are separators after the key.  A visible
+    operator after all such separators wins.  Otherwise, a complete string
+    control may supply the operator, but the value still starts after the whole
+    skipped separator sequence.
+    """
+    cursor = index
+    string_control_operator: tuple[str, int] | None = None
+    visible_operator_control_end: int | None = None
+    while cursor < len(text):
+        if text[cursor].isspace():
+            cursor += 1
+            continue
+        control_end, _final = _terminal_control_span(
+            text, cursor, stop_at_assignment_operator=True
+        )
+        if control_end <= cursor:
+            break
+        if allow_string_control_operator and string_control_operator is None:
+            operator = _string_control_assignment_operator(
+                text, cursor, control_end
+            )
+            if operator is not None:
+                string_control_operator = (operator, cursor)
+        if control_end < len(text) and text[control_end] in "=:":
+            visible_operator_control_end, _ = _terminal_control_span(
+                text, cursor
+            )
+        cursor = control_end
+
+    if cursor < len(text) and text[cursor] in "=:":
+        value_start = cursor + 1
+        if (
+            visible_operator_control_end is not None
+            and value_start < visible_operator_control_end
+        ):
+            value_start = visible_operator_control_end
+        return text[cursor], cursor, value_start
+    if string_control_operator is not None:
+        operator, operator_start = string_control_operator
+        return operator, operator_start, cursor
+    return None
+
+
 def _redact_secret_assignments(text: str) -> str:
     """Redact secret-key assignment values with one linear lexical scan.
 
     Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
     Removable terminal controls may interleave their bytes, and terminal string
     controls remain one opaque span even when their payload contains whitespace.
-    After a complete secret keyword, an operator in a complete string control
-    starts the value after that span; before the keyword, it remains opaque.
+    After a complete secret keyword, whitespace and terminal controls are
+    skipped together. A following visible operator wins; otherwise an operator
+    in a skipped complete string control starts the value after all separators.
+    Before the keyword, a string-control payload remains opaque.
     Quoted values run through their closing quote, or through the bounded input
     end when no close exists; unquoted values stop at outside whitespace, comma,
     or semicolon.  Preserve the established whole-token replacement for a
@@ -445,9 +504,6 @@ def _redact_secret_assignments(text: str) -> str:
         key_tail = ""
         ambiguous_tail: str | None = None
         secret_key = False
-        operator: str | None = None
-        operator_start: int | None = None
-        operator_control_end: int | None = None
         key_end: int | None = None
         while cursor < length:
             char = text[cursor]
@@ -466,23 +522,9 @@ def _redact_secret_assignments(text: str) -> str:
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
-                control_operator = (
-                    _string_control_assignment_operator(text, cursor, control_end)
-                    if secret_key
-                    and quote is None
-                    and (control_end >= length or text[control_end] not in "=:")
-                    else None
-                )
-                if control_operator is not None:
+                if secret_key and quote is None:
                     key_end = cursor
-                    operator = control_operator
-                    operator_start = cursor
-                    operator_control_end = control_end
-                    cursor = control_end
                     break
-                if control_end < length and text[control_end] in "=:":
-                    full_control_end, _ = _terminal_control_span(text, cursor)
-                    operator_control_end = full_control_end
                 if final is not None and _is_assignment_key_char(final):
                     if ambiguous_tail is None:
                         ambiguous_tail = key_tail
@@ -501,48 +543,19 @@ def _redact_secret_assignments(text: str) -> str:
             cursor += 1
         if key_end is None:
             key_end = cursor
-        if operator is None:
-            while cursor < length:
-                if text[cursor].isspace():
-                    cursor += 1
-                    continue
-                control_end, _final = _terminal_control_span(
-                    text, cursor, stop_at_assignment_operator=True
-                )
-                if control_end > cursor:
-                    control_operator = (
-                        _string_control_assignment_operator(
-                            text, cursor, control_end
-                        )
-                        if secret_key
-                        and (control_end >= length or text[control_end] not in "=:")
-                        else None
-                    )
-                    if control_operator is not None:
-                        operator = control_operator
-                        operator_start = cursor
-                        operator_control_end = control_end
-                        cursor = control_end
-                        break
-                    if control_end < length and text[control_end] in "=:":
-                        full_control_end, _ = _terminal_control_span(text, cursor)
-                        operator_control_end = full_control_end
-                    cursor = control_end
-                    continue
-                break
-            if cursor >= length or text[cursor] not in ":=":
-                index = max(cursor, index + 1)
-                continue
-            operator = text[cursor]
-            operator_start = cursor
-            cursor += 1
+        operator_match = _assignment_operator_after_key(
+            text,
+            cursor,
+            allow_string_control_operator=secret_key,
+        )
+        if operator_match is None:
+            index = max(cursor, index + 1)
+            continue
+        operator, operator_start, cursor = operator_match
         if not secret_key:
             index = max(start + 1, cursor)
             continue
-        assert operator_start is not None
         compact_before = operator_start == key_end
-        if operator_control_end is not None and cursor < operator_control_end:
-            cursor = operator_control_end
         value_prefix = cursor
         while cursor < length:
             if text[cursor].isspace():
