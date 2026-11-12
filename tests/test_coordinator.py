@@ -5017,7 +5017,9 @@ def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     saved = store.row("task", tid)
     assert saved["state"] == "implementing"
     assert saved["payload"]["coordinator"]["phase"] == "implement"
-    assert saved["payload"]["coordinator"]["findings"] == "Logic found a durable defect."
+    assert saved["payload"]["coordinator"]["findings"] == (
+        "Logic review findings:\nLogic found a durable defect."
+    )
     assert saved["payload"]["coordinator"]["handled_rejected_gate_ids"] == [
         "aa000001-0000-4000-8000-0000000000f2"
     ]

@@ -31,6 +31,7 @@ from .coordinator_common import (
     CiObservedFailureError,
     CoordinatorError,
     NonRecoverableCoordinatorError,
+    OUTPUT_BOUND,
     QUESTION_MARKER_PREFIX,
     STATUS_MARKER_PREFIX,
     Runner,
@@ -43,6 +44,7 @@ from .coordinator_common import (
     gh_list,
     is_sha,
     redact,
+    redact_tail,
     reopen_base_bound_checklist,
     repository_push_permission,
     save_task,
@@ -1302,12 +1304,18 @@ def fetch_failure_logs(
             inaccessible = True
             chunks.append(f"{path}: logs inaccessible (archive, not plain text)")
             continue
-        chunks.append(redact(raw, limit=1500))
+        chunks.append(redact_tail(raw, limit=1500))
     if inaccessible and not any("logs inaccessible" not in c for c in chunks):
         return "failing workflow logs inaccessible"
     if not chunks:
         return "failing workflow logs inaccessible"
     return "\n".join(chunks)
+
+
+def _ci_failure_findings(head: str, failures: list[str], logs: str) -> str:
+    """The failed checks first, then the end of their logs."""
+    header = redact(f"CI failed on {head[:7]}:\n" + "\n".join(failures), limit=1000)
+    return header + "\n" + redact_tail(logs, limit=OUTPUT_BOUND - len(header) - 1)
 
 
 def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
@@ -1411,7 +1419,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
                 kind="ci-logs",
                 reply_checkpoint=True,
             )
-        c["findings"] = redact(f"CI failed on {head[:7]}:\n" + "\n".join(failures) + "\n" + logs)
+        c["findings"] = _ci_failure_findings(head, failures, logs)
         c["phase"] = "implement"
         task["state"] = "implementing"
         evidence = c.setdefault("evidence", {})

@@ -956,9 +956,13 @@ def _lane_result_from_reviewer_replay(outcome: dict[str, Any]) -> LaneResult:
     )
 
 
+def render_spec(role: str, body: str) -> str:
+    return f"# Role: {role}\n\n{prompt_prohibitions()}\n{body}\n"
+
+
 def write_spec(path: Path, role: str, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# Role: {role}\n\n{prompt_prohibitions()}\n{body}\n", encoding="utf-8")
+    path.write_text(render_spec(role, body), encoding="utf-8")
 
 
 def blocking_working_agent(
@@ -1041,6 +1045,7 @@ def launch_lane(
     vendor: str,
     round_num: int | None,
     spec_body: str,
+    record_spec_body: str | None = None,
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> tuple[dict[str, Any], LaneResult]:
@@ -1205,7 +1210,11 @@ def launch_lane(
                     config_dir=selected.account.config_dir,
                     limit=LANE_MODEL_LIMIT,
                 ),
-                "prompt": spec_text,
+                "prompt": (
+                    render_spec(role, record_spec_body)
+                    if record_spec_body is not None
+                    else spec_text
+                ),
                 **(
                     {
                         "head_sha": str(c.get("head_sha") or ""),
@@ -2510,15 +2519,41 @@ def _handled_rejected_gate_ids(task: dict[str, Any]) -> set[str]:
     return {value for value in raw if isinstance(value, str) and value}
 
 
+_DIMENSION_TITLES = {
+    "quality": "Quality review findings:",
+    "logic": "Logic review findings:",
+}
+
+
+def merge_review_findings(rejected: list[tuple[str, str]]) -> str:
+    """Findings of every rejecting dimension, quality first, each under its title."""
+    ordered = [
+        item
+        for dimension in ("quality", "logic")
+        for item in rejected
+        if item[0] == dimension
+    ]
+    ordered.extend(item for item in rejected if item[0] not in _DIMENSION_TITLES)
+    entries = []
+    for dimension, evidence in ordered:
+        title = _DIMENSION_TITLES.get(dimension)
+        entries.append(f"{title}\n{evidence}" if title else evidence)
+    return "\n\n".join(entries)
+
+
 def _apply_rejected_gate_transition(
-    task: dict[str, Any], *, head: str, evidence: list[str], gate_ids: list[str]
+    task: dict[str, Any],
+    *,
+    head: str,
+    rejected: list[tuple[str, str]],
+    gate_ids: list[str],
 ) -> None:
     """Route a durable current-head rejection without starting another lane."""
     c = coord(task)
     handled = _handled_rejected_gate_ids(task)
     handled.update(gate_ids)
     c["handled_rejected_gate_ids"] = sorted(handled)
-    c["findings"] = "\n\n".join(evidence)
+    c["findings"] = merge_review_findings(rejected)
     evidence_map = c.setdefault("evidence", {})
     if isinstance(evidence_map, dict):
         evidence_map.pop("gates", None)
@@ -2781,7 +2816,12 @@ def phase_pr_gates(
             _apply_rejected_gate_transition(
                 committed_task,
                 head=head,
-                evidence=recovered_evidence,
+                rejected=[
+                    (str(gate.get("dimension") or ""), evidence)
+                    for gate, evidence in zip(
+                        persisted_rejections, recovered_evidence, strict=True
+                    )
+                ],
                 gate_ids=[str(gate["id"]) for gate in persisted_rejections],
             )
             save_task(store, committed_task)
@@ -3301,7 +3341,12 @@ def phase_pr_gates(
             _apply_rejected_gate_transition(
                 committed_task,
                 head=head,
-                evidence=rejection_evidence,
+                rejected=[
+                    (str(prep["dimension"]), evidence)
+                    for (prep, _outcome, _status, _result), evidence in zip(
+                        rejected_outcomes, rejection_evidence, strict=True
+                    )
+                ],
                 gate_ids=rejection_gate_ids,
             )
         elif incomplete_outcomes:

@@ -49,6 +49,7 @@ from .coordinator_common import (
     gh_json,
     is_sha,
     redact,
+    redact_tail,
     reopen_base_bound_checklist,
     save_task,
     scoped,
@@ -260,7 +261,7 @@ def _record_local_check(
             "name": name,
             "command": command,
             "result": "skip" if passed is None else ("pass" if passed else "fail"),
-            "output": redact(output),
+            "output": redact_tail(output),
             "ran_at": utcnow(),
             "head_sha": head,
         },
@@ -1650,7 +1651,7 @@ def phase_tests(
                 output=pre_output,
                 head=head,
             )
-            c["findings"] = f"Trusted precheck failed on {head[:7]}:\n{redact(pre_output)}"
+            c["findings"] = f"Trusted precheck failed on {head[:7]}:\n{redact_tail(pre_output)}"
             evidence = c.setdefault("evidence", {})
             if isinstance(evidence, dict):
                 evidence["tests_pass"] = False
@@ -1732,7 +1733,9 @@ def phase_tests(
             break
     passed = len(results) == 3 and all(result.returncode == 0 for result in results)
     output = "\n".join(
-        redact((result.stdout or "") + "\n" + (result.stderr or ""), limit=2000)
+        redact_tail(
+            (result.stdout or "") + "\n" + (result.stderr or ""), limit=2000
+        )
         for result in results
     )
     _record_local_check(

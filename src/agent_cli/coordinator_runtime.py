@@ -30,6 +30,9 @@ from .model_slots import (
 )
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
+    FINDINGS_SPEC_BOUND,
+    TASK_TEXT_BOUND,
+    TASK_TEXT_RECORD_BOUND,
     check_label,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
@@ -50,12 +53,17 @@ from .coordinator_common import (
     parse_change_summaries,
     parse_model_result,
     parse_surface_list,
+    read_task_text,
     redact,
+    redact_tail,
     review_is_approved,
     save_task,
     scoped,
     source_key,
     strip_row,
+    task_text_path,
+    task_text_reference,
+    write_task_text,
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
@@ -443,6 +451,20 @@ def _ensure_checklist_rows(store: Store, task: dict[str, Any], session: dict[str
         )
 
 
+def _discard_task_text(worker: WorkerConfig, task_id: str) -> None:
+    """Remove a task text written for a task this call does not own."""
+    path = task_text_path(worker, task_id)
+    for candidate in (path, path.with_suffix(".tmp")):
+        try:
+            candidate.unlink()
+        except OSError:
+            pass
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
 def _create_implement_task(
     store: Store,
     worker: WorkerConfig,
@@ -499,34 +521,44 @@ def _create_implement_task(
         held["existing"] = existing
         return True
 
-    store.write_with_advisory(
-        "task",
-        "insert",
-        tid,
-        {
-            "id": tid,
-            "session_id": worker.session_id,
-            "workflow": "implement",
-            "title": f"{worker.session_id[:8]} - {title[:120]}",
-            "repo": repo,  # target repository
-            "ref": None,
-            "payload": {"coordinator": c, "source_issue": {"repo": repo, "number": number}},
-            "state": "open",
-            "current_round": 0,
-            **model_pins(ai.models, ai.implementer),
-            "created_at": utcnow(),
-            "updated_at": utcnow(),
-            "change_summary_en": None,
-            "change_summary_de": None,
-        },
-        lock_key=f"coordinator-source:{repo.casefold()}:{number}",
-        skip=_skip,
-    )
+    try:
+        write_task_text(worker, tid, body)
+        store.write_with_advisory(
+            "task",
+            "insert",
+            tid,
+            {
+                "id": tid,
+                "session_id": worker.session_id,
+                "workflow": "implement",
+                "title": f"{worker.session_id[:8]} - {title[:120]}",
+                "repo": repo,  # target repository
+                "ref": None,
+                "payload": {
+                    "coordinator": c,
+                    "source_issue": {"repo": repo, "number": number},
+                },
+                "state": "open",
+                "current_round": 0,
+                **model_pins(ai.models, ai.implementer),
+                "created_at": utcnow(),
+                "updated_at": utcnow(),
+                "change_summary_en": None,
+                "change_summary_de": None,
+            },
+            lock_key=f"coordinator-source:{repo.casefold()}:{number}",
+            skip=_skip,
+        )
+    except BaseException:
+        _discard_task_text(worker, tid)
+        raise
     if held["existing"] is not None:
+        _discard_task_text(worker, tid)
         return None
     task = store.row("task", tid)
     if task is None:
         # Lost the race to another insert with same logical source.
+        _discard_task_text(worker, tid)
         return _find_task_for_issue_device_wide(store, repo, number)
     _ensure_checklist_rows(store, task, session)
     return task
@@ -929,7 +961,9 @@ def _implementer_instruction(
     )
 
 
-def _spec_context(c: dict[str, Any], extra: str = "") -> str:
+def _spec_context(
+    c: dict[str, Any], extra: str = "", *, text: str | None = None
+) -> str:
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     title = source.get("title") or ""
     body = source.get("body") or ""
@@ -943,9 +977,9 @@ def _spec_context(c: dict[str, Any], extra: str = "") -> str:
     return (
         f"Source issue: {source.get('repo')}#{source.get('number')}\n"
         f"Title: {redact(str(title))}\n"
-        f"Body (untrusted):\n{redact(str(body), limit=1500)}\n"
+        f"Body (untrusted):\n{redact(text, limit=TASK_TEXT_BOUND) if text is not None else redact(str(body), limit=1500)}\n"
         f"{reply_text}\n"
-        f"{('Findings to address:\\n' + redact(str(findings))) if findings else ''}\n"
+        f"{('Findings to address:\\n' + redact(str(findings), limit=FINDINGS_SPEC_BOUND)) if findings else ''}\n"
         f"{extra}\n"
     )
 
@@ -1422,6 +1456,13 @@ def phase_implement(
         )
 
     first_vendor = _first_slot_vendor(task)
+    instruction = _implementer_instruction(store, worker, task, runner)
+    task_text = read_task_text(worker, task)
+    record_body = (
+        _spec_context(c, instruction, text=task_text_reference(task_text))
+        if len(task_text) > TASK_TEXT_RECORD_BOUND
+        else None
+    )
     agent, result = launch_lane(
         store,
         worker,
@@ -1429,7 +1470,8 @@ def phase_implement(
         role="implementer",
         vendor=first_vendor,
         round_num=round_num,
-        spec_body=_spec_context(c, _implementer_instruction(store, worker, task, runner)),
+        spec_body=_spec_context(c, instruction, text=task_text),
+        record_spec_body=record_body,
         runner=runner,
         lane_runner=lane_runner,
     )
@@ -1806,7 +1848,7 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
         env=env,
         clear_ambient_github=True,
     )
-    output = redact((completed.stdout or "") + "\n" + (completed.stderr or ""))
+    output = redact_tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
     cid = str(uuid.uuid4())
     passed = completed.returncode == 0
     store.write(

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
@@ -64,6 +67,10 @@ ACCEPT_BODY = (
 QUESTION_MARKER_PREFIX = "<!-- agent-coordinator:question:v1:"
 STATUS_MARKER_PREFIX = "<!-- agent-coordinator:status:v1:"
 OUTPUT_BOUND = 4000
+TASK_TEXT_BOUND = 60_000
+TASK_TEXT_FILE = "task-text.md"
+TASK_TEXT_RECORD_BOUND = 2_000
+FINDINGS_SPEC_BOUND = 2 * OUTPUT_BOUND + 200
 URL_SCHEME_LIMIT = 64
 REDACTION_BOUND_MARGIN = 256
 _TRUNCATION_MARKER = "\n…[truncated]"
@@ -1178,6 +1185,15 @@ def redact(
     )
 
 
+def redact_tail(text: str, *, limit: int = OUTPUT_BOUND) -> str:
+    """Like redact, but a text over the limit keeps its end."""
+    cleaned = redact(text or "", limit=None)
+    if len(cleaned) <= limit:
+        return cleaned
+    keep = max(0, limit - 20)
+    return _TRUNCATION_MARKER.strip() + "\n" + cleaned[len(cleaned) - keep:]
+
+
 def reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:
     """Reopen local-test and readiness keys as soon as an A38 base moves."""
     keys = {
@@ -1520,6 +1536,49 @@ def control_dir(worker: WorkerConfig, task_id: str):
     from pathlib import Path
 
     return Path(worker.workspace_root) / ".coordinator-control" / str(task_id)
+
+
+def task_text_path(worker: WorkerConfig, task_id: str) -> Path:
+    return control_dir(worker, task_id) / TASK_TEXT_FILE
+
+
+def write_task_text(worker: WorkerConfig, task_id: str, text: str) -> tuple[str, int]:
+    """Store the redacted task text; return its SHA-256 and its length."""
+    data = redact(text or "", limit=TASK_TEXT_BOUND).encode(
+        "utf-8", errors="replace"
+    )
+    path = task_text_path(worker, task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    replaced = False
+    try:
+        temporary.write_bytes(data)
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+        replaced = True
+    finally:
+        if not replaced:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+    return hashlib.sha256(data).hexdigest(), len(data.decode("utf-8"))
+
+
+def read_task_text(worker: WorkerConfig, task: dict[str, Any]) -> str:
+    """The stored task text, or the source preview when no file exists."""
+    c = coord(task)
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    try:
+        text = task_text_path(worker, str(task["id"])).read_bytes().decode("utf-8")
+    except (OSError, UnicodeError):
+        return str(source.get("body") or "")
+    return text or str(source.get("body") or "")
+
+
+def task_text_reference(text: str) -> str:
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    return f"[task text: sha256 {digest}, {len(text)} characters]"
 
 
 def prompt_prohibitions() -> str:
