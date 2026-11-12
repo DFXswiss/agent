@@ -126,7 +126,6 @@ _CONTROLLED_LINE_CANDIDATE_TRANSLATION = str.maketrans(
     ),
 )
 _CONFIG_DIR_PLACEHOLDER_TOKEN = re.compile(r"<config_dir>/[A-Za-z0-9._-]+\Z")
-_RAW_LINE_BREAK = re.compile(r"\r\n|\r|\n")
 _AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*+')
 _BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']++')
 _KNOWN_TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{16,})\b')
@@ -442,6 +441,28 @@ def _is_terminal_string_control(text: str, index: int) -> bool:
     return ord(text[index]) in (0x90, 0x98, 0x9D, 0x9E, 0x9F)
 
 
+def _terminal_control_spans(text: str) -> list[tuple[int, int, bool]]:
+    """Index every removable control once on the complete raw input.
+
+    A string control is one span even when its payload contains newlines.  The
+    final boolean lets the controlled-line pass identify those spans without
+    reparsing them for each structural view.
+    """
+    spans: list[tuple[int, int, bool]] = []
+    cursor = 0
+    while True:
+        control = _RAW_REMOVED_CONTROL.search(text, cursor)
+        if control is None:
+            break
+        start = control.start()
+        end, _final = _terminal_control_span(text, start)
+        if end <= start:
+            end = start + 1
+        spans.append((start, end, _is_terminal_string_control(text, start)))
+        cursor = end
+    return spans
+
+
 def _append_control_view(
     text: str,
     pieces: list[str],
@@ -491,29 +512,19 @@ def _mapped_secret_keyword_start(
 
 
 def _terminal_keyword_view(
-    line: str, kind: str
+    line: str,
+    kind: str,
+    control_spans: list[tuple[int, int, bool]],
 ) -> tuple[str, list[tuple[int, int, int]]]:
     """Build one structural keyword view with its raw mapping."""
     pieces: list[str] = []
     spans: list[tuple[int, int, int]] = []
     view_length = 0
     cursor = 0
-    while True:
-        control = _TERMINAL_STRUCTURAL_TRIGGER.search(line, cursor)
-        if control is None:
-            _append_control_view(
-                line, pieces, spans, view_length, cursor, len(line)
-            )
-            break
-
-        control_start = control.start()
+    for control_start, control_end, is_string_control in control_spans:
         view_length = _append_control_view(
             line, pieces, spans, view_length, cursor, control_start
         )
-        control_end, _ = _terminal_control_span(line, control_start)
-        if control_end <= control_start:
-            # The trigger is itself a removable control, so this is defensive.
-            control_end = control_start + 1
 
         if kind == "key-join":
             for raw_offset, _key_char in _terminal_control_key_chars(
@@ -527,9 +538,7 @@ def _terminal_keyword_view(
                     raw_offset,
                     raw_offset + 1,
                 )
-        elif kind == "payload" and _is_terminal_string_control(
-            line, control_start
-        ):
+        elif kind == "payload" and is_string_control:
             payload_start = control_start + (
                 2 if line[control_start] == "\x1b" else 1
             )
@@ -580,10 +589,14 @@ def _terminal_keyword_view(
             )
         cursor = control_end
 
+    _append_control_view(line, pieces, spans, view_length, cursor, len(line))
+
     return "".join(pieces), spans
 
 
-def _redact_controlled_secret_line(line: str) -> str:
+def _redact_controlled_secret_line(
+    line: str, control_spans: list[tuple[int, int, bool]]
+) -> str:
     """Fail closed from the first controlled-line secret token to line end."""
     if _TERMINAL_STRUCTURAL_TRIGGER.search(line) is None:
         return line
@@ -596,12 +609,19 @@ def _redact_controlled_secret_line(line: str) -> str:
 
     token_start: int | None = None
     for kind in ("stripped", "payload", "key-join"):
-        view, spans = _terminal_keyword_view(line, kind)
+        view, spans = _terminal_keyword_view(line, kind, control_spans)
         start = _mapped_secret_keyword_start(line, view, spans)
         if start is None:
             continue
         while start > 0 and not line[start - 1].isspace():
             start -= 1
+        # A keyword found in a string-control payload must never leave the
+        # introducer detached from the rest of that control.  Move the
+        # redaction boundary to the beginning of its complete raw span.
+        for control_start, control_end, is_string_control in control_spans:
+            if control_start < start < control_end and is_string_control:
+                start = control_start
+                break
         token_start = start if token_start is None else min(token_start, start)
         if token_start == 0:
             break
@@ -619,17 +639,57 @@ def _redact_controlled_secret_lines(
         and _TERMINAL_STRUCTURAL_TRIGGER.search(text) is None
     ):
         return text
+    controls = _terminal_control_spans(text)
+    string_controls = [
+        (start, end)
+        for start, end, is_string_control in controls
+        if is_string_control
+    ]
     pieces: list[str] = []
     line_start = 0
-    for line_break in _RAW_LINE_BREAK.finditer(text):
+    control_index = 0
+    string_index = 0
+
+    def append_logical_line(line_end: int) -> None:
+        nonlocal control_index
+        while (
+            control_index < len(controls)
+            and controls[control_index][1] <= line_start
+        ):
+            control_index += 1
+        end_index = control_index
+        local_controls: list[tuple[int, int, bool]] = []
+        while end_index < len(controls) and controls[end_index][0] < line_end:
+            start, end, is_string_control = controls[end_index]
+            local_controls.append(
+                (start - line_start, end - line_start, is_string_control)
+            )
+            end_index += 1
         pieces.append(
             _redact_controlled_secret_line(
-                text[line_start:line_break.start()]
+                text[line_start:line_end], local_controls
             )
         )
-        pieces.append(line_break.group())
-        line_start = line_break.end()
-    pieces.append(_redact_controlled_secret_line(text[line_start:]))
+        control_index = end_index
+
+    for line_break in re.finditer("\n", text):
+        position = line_break.start()
+        while (
+            string_index < len(string_controls)
+            and string_controls[string_index][1] <= position
+        ):
+            string_index += 1
+        if (
+            string_index < len(string_controls)
+            and string_controls[string_index][0]
+            <= position
+            < string_controls[string_index][1]
+        ):
+            continue
+        append_logical_line(position)
+        pieces.append("\n")
+        line_start = position + 1
+    append_logical_line(len(text))
     return "".join(pieces)
 
 

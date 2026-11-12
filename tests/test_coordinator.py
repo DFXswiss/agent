@@ -9894,8 +9894,22 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
     fake.pr["mergeCommit"] = {"oid": "dddddddddddddddddddddddddddddddddddddddd"}
     fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
     # A later blocking review of the merged head wins over the earlier passing one,
-    # even though task-done would already be allowed.
+    # even though cumulative CI is green and task-done would already be allowed.
     import copy
 
     from agent_cli import coordinator_github
@@ -10303,6 +10317,20 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
     fake.pr["mergeCommit"] = {"oid": "d" * 40}
     fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
     monkeypatch.setattr(
         coordinator_github,
         "_trusted_done_review",

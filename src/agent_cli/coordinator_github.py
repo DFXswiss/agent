@@ -2733,6 +2733,43 @@ def _block_merged_readiness(
     )
 
 
+def _block_merged_ci(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+    observation: _CiObservation,
+) -> list[str]:
+    """Stop a merged A38 task whose cumulative exact-head CI is not green."""
+    if observation.kind == "failed":
+        detail = ", ".join(observation.failures[:5]) or observation.detail
+    elif observation.kind == "action_required":
+        detail = ", ".join(observation.action_required[:5]) or observation.detail
+    elif observation.kind == "head_changed":
+        detail = "CI observation returned a different PR head"
+    else:
+        detail = observation.detail or observation.kind
+    message = (
+        "task-done refused: cumulative GitHub CI is not green on merged head "
+        f"{head} ({detail}); the merged task requires human intervention"
+    )
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["blocker"] = message
+    clear_reply_recovery(c)
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        message,
+        kind="merged-ci-non-green",
+    )
+
+
 def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     target = target_repo(task)
@@ -2858,6 +2895,33 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 "human merge observed; task-done blocked: missing change summaries "
                 "describing the actual result"
             ]
+        if worker.a38:
+            passed_a38 = _a38_ci_evidence(
+                store, worker, task, expected_head
+            )
+            ci_observation = _observe_exact_head_ci(
+                scoped_runner,
+                target,
+                number,
+                expected_head,
+                fields="statusCheckRollup,headRefOid",
+                passed_a38=passed_a38,
+            )
+            if ci_observation.kind in ("pending", "transport"):
+                return [
+                    "human merge observed; cumulative GitHub CI "
+                    f"{ci_observation.detail} on {expected_head[:7]}; "
+                    "retrying await_merge"
+                ]
+            if ci_observation.kind != "green":
+                return _block_merged_ci(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    head=expected_head,
+                    observation=ci_observation,
+                )
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)

@@ -233,57 +233,117 @@ def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> No
     assert cleaned.count("[redacted]") == 6
 
 
+_TERMINATED_CONTROL_EXPECTED = "prefix [redacted]\nvisible line"
+
+
 @pytest.mark.parametrize(
-    "controlled",
+    ("controlled", "expected"),
     (
         pytest.param(
             "password\x1b]x=y\x07_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
             id="osc-payload-operator",
         ),
-        pytest.param("password\x9dx=y\x9c_file = hunter2", id="osc-8-bit"),
-        pytest.param("password\x1bPx=y\x1b\\_file = hunter2", id="dcs-7-bit"),
-        pytest.param("password\x90x=y\x9c_file = hunter2", id="dcs-8-bit"),
-        pytest.param("password\x1b^x=y\x1b\\_file = hunter2", id="pm-7-bit"),
-        pytest.param("password\x9ex=y\x9c_file = hunter2", id="pm-8-bit"),
-        pytest.param("password\x1b_x=y\x1b\\_file = hunter2", id="apc-7-bit"),
-        pytest.param("password\x9fx=y\x9c_file = hunter2", id="apc-8-bit"),
-        pytest.param("password\x1bXx=y\x1b\\_file = hunter2", id="sos-7-bit"),
-        pytest.param("password\x98x=y\x9c_file = hunter2", id="sos-8-bit"),
+        pytest.param(
+            "password\x9dx=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-8-bit",
+        ),
+        pytest.param(
+            "password\x1bPx=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="dcs-7-bit",
+        ),
+        pytest.param(
+            "password\x90x=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="dcs-8-bit",
+        ),
+        pytest.param(
+            "password\x1b^x=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="pm-7-bit",
+        ),
+        pytest.param(
+            "password\x9ex=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="pm-8-bit",
+        ),
+        pytest.param(
+            "password\x1b_x=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="apc-7-bit",
+        ),
+        pytest.param(
+            "password\x9fx=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="apc-8-bit",
+        ),
+        pytest.param(
+            "password\x1bXx=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sos-7-bit",
+        ),
+        pytest.param(
+            "password\x98x=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sos-8-bit",
+        ),
         pytest.param(
             "passwor\x1b[31d\x1b]0;=\x07 hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
             id="csi-final-completes-password-before-osc",
         ),
         pytest.param(
             "secre\x1b[31t\x1b]0;=\x07 hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
             id="csi-final-completes-secret-before-osc",
         ),
-        pytest.param("password\x1b[31m_file = hunter2", id="sgr-key-interleave"),
-        pytest.param("password\x1b]8;;\x07_file = hunter2", id="osc-empty-link"),
-        pytest.param("password\x1b]title\x07suffix=hunter2", id="osc-key-suffix"),
+        pytest.param(
+            "password\x1b[31m_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sgr-key-interleave",
+        ),
+        pytest.param(
+            "password\x1b]8;;\x07_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-empty-link",
+        ),
+        pytest.param(
+            "password\x1b]title\x07suffix=hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-key-suffix",
+        ),
         pytest.param(
             '"password" \x1b]0;=\x07hunter2',
+            _TERMINATED_CONTROL_EXPECTED,
             id="quoted-key-osc-operator",
         ),
         pytest.param(
             "password \x1b]8;;https://example.com\x07 = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
             id="osc-link-before-visible-operator",
         ),
         pytest.param(
             "password\x1bP0;=\x07\x1b\\hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
             id="dcs-bel-payload-before-st",
         ),
         pytest.param(
             "password\x1b]unterminated hunter2",
+            "prefix [redacted]",
             id="unterminated-osc-7-bit",
         ),
         pytest.param(
             "password\x90unterminated hunter2",
+            "prefix [redacted]",
             id="unterminated-dcs-8-bit",
         ),
     ),
 )
 def test_controlled_secret_keyword_lines_fail_closed_across_shared_sinks(
     controlled: str,
+    expected: str,
 ) -> None:
     raw = f"prefix {controlled}\nvisible line"
 
@@ -292,7 +352,89 @@ def test_controlled_secret_keyword_lines_fail_closed_across_shared_sinks(
         redact(raw),
         redact_lane_text(raw, limit=None),
     ):
+        assert cleaned == expected
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_multiline_string_control_secret_lines_are_one_logical_line_across_shared_sinks(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"prefix {introducer}token\nhunter2{terminator}\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
         assert cleaned == "prefix [redacted]\nvisible line"
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_unterminated_multiline_string_control_secret_lines_fail_closed_across_shared_sinks(
+    introducer: str,
+) -> None:
+    raw = f"prefix {introducer}token\nhunter2"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "prefix [redacted]"
         assert "hunter2" not in cleaned
 
 
@@ -341,6 +483,15 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
                     + keyword[split:]
                 )
                 lines.extend(controlled + suffix for suffix in suffixes)
+
+        for c0 in ("\x08", "\x00", "\x7f", "\r"):
+            split = max(1, len(keyword) // 2)
+            lines.append(
+                keyword[:split]
+                + c0
+                + keyword[split:]
+                + " is hunter2 \x1b[31mnote\x1b[0m"
+            )
 
     lines.append("passwor\x1b[31!d\x1b]0;=\x07 hunter2")
     raw = "\n".join(lines)
@@ -975,6 +1126,10 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         )
         assert "Any other byte in that token" in normalized
         assert "keyword elsewhere on the line, still triggers it" in normalized
+        assert "logical line" in normalized
+        assert "removable C0" in normalized
+        assert "introducer" in normalized
+        assert "swallows every following physical line" in normalized
 
     assert (
         "then classifies secret assignments on the full\nraw text. During that scan,\n"
@@ -1019,6 +1174,11 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in documented
     )
     assert (
+        "Before `task-done` is evaluated for a merged A38 head, `await_merge` also\n"
+        "re-observes the exact-head cumulative GitHub check rollup and Actions workflow"
+        in documented
+    )
+    assert (
         "a raw whitespace token that contained a string-control\nspan"
         in documented
     )
@@ -1039,11 +1199,16 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     )
     assert "BEL terminates OSC only" in ai_accounts
     assert (
-        "Secret assignments are first classified on the full raw capture while "
-        "complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque "
-        "to that scan. Only after classification are those spans visibly replaced "
-        "with `[redacted]`, before whitespace tokenization."
-        in readme
+        "the full capture first has its configured profile path replaced, then "
+        "passes the controlled-logical-line rule, and then enters the precise "
+        "raw secret scanner"
+        in " ".join(readme.split())
+    )
+    assert (
+        "That scanner classifies assignments while complete or unterminated OSC, "
+        "DCS, PM, APC, and SOS spans remain opaque, replaces those spans with "
+        "`[redacted]`, and applies raw-token redaction before terminal sanitization."
+        in " ".join(readme.split())
     )
     assert (
         "A control ends an unquoted key only when an operator occurs\n"
@@ -1077,12 +1242,15 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
     )
     assert "shared controlled-line structural rule" in documented
     assert (
-        "each controlled raw line gets a compiled case-insensitive candidate check"
-        in documented
+        "each controlled raw logical line gets a compiled case-insensitive candidate check"
+        in " ".join(documented.split())
     )
     assert "Only candidate lines build the three" in documented
     assert "a key-join view" in documented
-    assert "mapped whitespace token through line end" in documented
+    assert "mapped whitespace token through logical-line end" in documented
+    assert "Standalone removable C0" in documented
+    assert "payload newlines are\n   not boundaries" in documented
+    assert "swallows every\n   following physical line" in documented
     assert "classifies secret assignments on the raw line" in documented
     assert (
         "replaces those spans only after assignment classification" in documented
