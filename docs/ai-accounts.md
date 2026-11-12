@@ -239,7 +239,7 @@ terminal sanitization or path classification.
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
 one initial ESC/C1 search skips the structural rule entirely when the input has
-no terminal controls. For each controlled raw line, a compiled case-insensitive
+no ESC/C1. For each controlled raw logical line, a compiled case-insensitive
 candidate check runs over a control-byte-translated view. Only candidate lines
 build the three views, one at a time: a control-stripped view
 removes complete or unterminated controls and their payloads, a payload-kept
@@ -248,10 +248,16 @@ key-join view uses the assignment scanner's own classifier to retain only
 control-sequence bytes that the scanner may join into a key. Those bytes include
 a key-character CSI/ESC final and a `-` intermediate; string-control payloads
 and all other control bytes are dropped. If any view contains a shared secret
-keyword, case-insensitively, the raw line is replaced from the start of that
+keyword, case-insensitively, the raw logical line is replaced from the start of that
 keyword's mapped whitespace token
-through line end. Other lines remain independent, and controlled lines without
-a keyword retain the existing control handling. A whitespace token exactly
+through logical-line end. Standalone removable C0 bytes are removed from every
+view without activating the rule by themselves. String-control spans are indexed
+on the complete raw input first, so their payload newlines do not split logical
+lines; a mapped start inside one moves to the introducer and the span is never
+split by two replacement stages. An unterminated string control extends through
+the end of the text and swallows every following physical line into its payload.
+Other normal lines remain independent, and controlled lines without a keyword
+retain the existing control handling. A whitespace token exactly
 `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
 exception: keywords inside that placeholder do not trigger the line rule. Any
 other byte in that token, or a keyword elsewhere on the line, still triggers

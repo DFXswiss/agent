@@ -744,7 +744,7 @@ evidence human spec input; the script never invents human grants.
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
 first searches once for ESC or C1 bytes. If none exist, the existing precise
-scanner runs unchanged. For a raw line that does contain a terminal control, a
+scanner runs unchanged. For a raw logical line that does contain ESC or C1, a
 compiled case-insensitive candidate check runs over a control-byte-translated
 view. Only candidate lines build the three views, one at a time: a
 control-stripped view that removes complete or
@@ -754,13 +754,20 @@ view. The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
 payloads and all other control bytes. If any view contains a shared secret
-keyword, case-insensitively, the raw line is redacted from the start of the
+keyword, case-insensitively, the raw logical line is redacted from the start of the
 whitespace token containing the first mapped keyword
-through the end of that line. A following line remains independent, and a
-controlled line without a secret keyword continues through the existing
-control handling. A whitespace token exactly `<config_dir>/` followed only by
-`[A-Za-z0-9._-]+` is the one structural exception: keywords inside that
-placeholder do not trigger the line rule. Any other byte in that token, or a
+through the end of that logical line. All three views remove standalone
+removable C0 bytes such as backspace, NUL, DEL, and carriage return; those bytes
+do not activate the rule without ESC/C1. Complete and unterminated string-control
+spans are indexed once on the full raw input before line splitting, so newlines
+inside OSC, DCS, PM, APC, or SOS payloads are not boundaries. If a mapped keyword
+starts inside such a span, redaction starts at its introducer. A following normal
+line outside the span remains independent. An unterminated string control
+extends through the end of the text and swallows every following physical line
+into its payload. A controlled line without a secret keyword continues through
+the existing control handling. A whitespace token exactly `<config_dir>/`
+followed only by `[A-Za-z0-9._-]+` is the one structural exception: keywords
+inside that placeholder do not trigger the line rule. Any other byte in that token, or a
 keyword elsewhere on the line, still triggers it. Lane sinks replace raw and
 control-interleaved config-directory paths on the complete source before this
 structural rule, apply their length bound next, and run precise redaction last.
@@ -1215,6 +1222,13 @@ on that merged head with the same readiness source as the ordinary phase unless
 it already ran on exactly that head (`readiness_head`); keys closed on an earlier
 head do not count. An unreadable pull request state is retried on the
 next tick without taking in mail.
+Before `task-done` is evaluated for a merged A38 head, `await_merge` also
+re-observes the exact-head cumulative GitHub check rollup and Actions workflow
+inventory with the same classifier as `ci`. Pending or transport-unavailable
+evidence retries without effects. Failed, cancelled, `action_required`,
+malformed, or uncovered `skipped`/`neutral` evidence leaves the merged task at a
+non-recoverable human-intervention blocker; only a verified exact-head author
+report may cover a matching `skipped` or `neutral` check.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never
 reopens work. After the merge every waiting review is taken in before

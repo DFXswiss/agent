@@ -1868,6 +1868,12 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
             if key in {"contributing_ok", "deviation_declared", "deviation_granted"}
             else "ja"
         )
+        evidence = "seed" if status == "ja" else None
+        if key in {"review_2_quality", "review_2_logic"}:
+            evidence = (
+                f"external second review by outside-reviewer at {head}: "
+                "https://github.com/Example/owned/pull/42#issuecomment-2"
+            )
         store.write(
             "checklist_item",
             "insert",
@@ -1877,25 +1883,26 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
                 "task_id": task_id,
                 "key": key,
                 "status": status,
-                "evidence": "seed" if status == "ja" else None,
+                "evidence": evidence,
                 "source": "human" if key == "spec_written" else "script",
             },
         )
-    store.write(
-        "review_gate",
-        "insert",
-        f"{task_id}-quality",
-        {
-            "id": f"{task_id}-quality",
-            "task_id": task_id,
-            "stage": "review-1",
-            "dimension": "quality",
-            "vendor": "grok",
-            "verdict": "approved",
-            "head_sha": head,
-            "recorded_at": "2026-01-01T00:00:00Z",
-        },
-    )
+    for dimension in ("quality", "logic"):
+        store.write(
+            "review_gate",
+            "insert",
+            f"{task_id}-{dimension}",
+            {
+                "id": f"{task_id}-{dimension}",
+                "task_id": task_id,
+                "stage": "review-1",
+                "dimension": dimension,
+                "vendor": "grok",
+                "verdict": "approved",
+                "head_sha": head,
+                "recorded_at": "2026-01-01T00:00:00Z",
+            },
+        )
     store.write(
         "local_check",
         "insert",
@@ -1946,14 +1953,12 @@ def _patch_early_merge_readiness(monkeypatch, head):
         lambda *_args: ("worker-bot", {}),
     )
     monkeypatch.setattr(
-        "agent_cli.coordinator_github.evaluate_allow",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            allowed=True, reason="allow", blocking=[]
-        ),
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: SimpleNamespace(kind="green"),
     )
 
 
-def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
+def test_a38_merge_during_ci_rechecks_all_green_and_uses_real_allow(
     monkeypatch, tmp_path
 ):
     from agent_cli.coordinator_github import phase_await_merge
@@ -1987,6 +1992,124 @@ def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
         assert checklist[key]["evidence"] == (
             "hub mandate assignment-row: human-owner stated deviation declared=false"
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "detail", "failures", "action_required"),
+    (
+        ("failed", "CI failed", ("tests:failure",), ()),
+        ("failed", "CI failed", ("tests:cancelled",), ()),
+        ("failed", "CI failed", ("tests:skipped",), ()),
+        ("failed", "CI failed", ("tests:neutral",), ()),
+        (
+            "action_required",
+            "CI action_required (external authorization)",
+            (),
+            (".github/workflows/tests.yml",),
+        ),
+        ("protocol", "PR check rollup malformed", (), ()),
+    ),
+    ids=(
+        "failed",
+        "cancelled",
+        "uncovered-skipped",
+        "uncovered-neutral",
+        "action-required",
+        "malformed",
+    ),
+)
+def test_a38_merged_task_blocks_non_green_cumulative_ci_before_real_allow(
+    monkeypatch,
+    tmp_path,
+    kind,
+    detail,
+    failures,
+    action_required,
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation(
+            kind,
+            detail,
+            failures=failures,
+            action_required=action_required,
+        ),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs))
+        or ["published"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["published"]
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "blocked"
+    assert "cumulative GitHub CI is not green on merged head" in checkpoint[
+        "blocker"
+    ]
+    assert "human intervention" in checkpoint["blocker"]
+    assert "resume_phase" not in checkpoint
+    assert published == [
+        (checkpoint["blocker"], {"kind": "merged-ci-non-green"})
+    ]
+
+
+@pytest.mark.parametrize("kind", ("pending", "transport"))
+def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
+    monkeypatch, tmp_path, kind
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    detail = (
+        "checks pending"
+        if kind == "pending"
+        else "inventory temporarily unavailable"
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation(kind, detail),
+    )
+    before = store.row("task", task_id)
+
+    lines = phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    )
+
+    assert "retrying await_merge" in lines[0]
+    assert store.row("task", task_id) == before
+    assert store.rows("activity") == []
 
 
 def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(

@@ -42,7 +42,8 @@ subsequent notification that provides useful model work belong to the script.
 
 1. A **script** on this device queries a configured log source, applies the
    shared controlled-line structural rule: after one initial ESC/C1 search,
-   each controlled raw line gets a compiled case-insensitive candidate check
+   each controlled raw logical line gets a compiled case-insensitive candidate
+   check
    over a control-byte-translated view. Only candidate lines build the three
    views, one at a time: a control-stripped view (controls and their
    payloads removed), a payload-kept view (only introducers, terminators, and
@@ -51,12 +52,19 @@ subsequent notification that provides useful model work belong to the script.
    that the scanner may join into a key, including a key-character CSI/ESC
    final and a `-` intermediate, while dropping string-control payloads and all
    other control bytes. If any view contains a shared secret keyword,
-   case-insensitively, the raw line is redacted from the start of the
-   mapped whitespace token through line end. Following lines remain independent;
-   lines without controls skip this rule, and controlled lines without a keyword
-   retain the existing control handling. A whitespace token exactly
-   `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
-   exception: keywords inside that placeholder do not trigger the line rule.
+   case-insensitively, the raw logical line is redacted from the start of the
+   mapped whitespace token through logical-line end. Standalone removable C0
+   bytes are removed from every view but activate nothing without ESC/C1.
+   Complete and unterminated OSC, DCS, PM, APC, and SOS spans are indexed on the
+   complete raw input before logical lines are formed, so payload newlines are
+   not boundaries. A mapped start inside such a span moves to its introducer;
+   the introducer and payload are never replaced separately. An unterminated
+   string control extends through the end of the text and swallows every
+   following physical line into its payload. Following normal lines outside the
+   span remain independent; lines without ESC/C1 skip this rule, and controlled
+   lines without a keyword retain the existing control handling. A whitespace
+   token exactly `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one
+   structural exception: keywords inside that placeholder do not trigger the line rule.
    Any other byte in that token, or a keyword elsewhere on the line, still
    triggers it. Lane sinks replace raw and control-interleaved config-directory
    paths on the complete source before this structural rule, apply their length

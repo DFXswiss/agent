@@ -203,8 +203,8 @@ Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
 path or pattern target also redacts the complete target before normalization,
 without decoding. Any raw ESC or C0/C1
 control byte does the same before path classification.
-The shared text redactor performs one initial ESC/C1 search. For a raw line
-that contains a terminal control, a compiled case-insensitive candidate check
+The shared text redactor performs one initial ESC/C1 search. For a raw logical
+line that contains ESC/C1, a compiled case-insensitive candidate check
 runs over a control-byte-translated view. Only candidate lines build three views,
 one at a time: a control-stripped view
 (complete or unterminated controls and payloads removed), a payload-kept view
@@ -213,10 +213,18 @@ view. The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
 payloads and all other control bytes. If any view contains a shared secret
-keyword, case-insensitively, the raw line is redacted
-from the start of the mapped whitespace token through line end. Following lines
-remain unchanged, lines without controls keep the precise scanner unchanged,
-and controlled lines without a keyword retain the existing control handling.
+keyword, case-insensitively, the raw logical line is redacted
+from the start of the mapped whitespace token through logical-line end.
+Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
+return, are removed from every structural view but do not activate the rule
+without ESC/C1. Complete and unterminated string-control spans are indexed on
+the full raw input before lines are formed, so payload newlines are not
+boundaries; a mapped start inside such a span moves to its introducer. Following
+normal lines outside the span remain unchanged. An unterminated string control
+extends through the end of the text and swallows every following physical line
+into its payload. Lines without ESC/C1 keep the precise scanner
+unchanged, and controlled lines without a keyword retain the existing control
+handling.
 A whitespace token exactly `<config_dir>/` followed only by
 `[A-Za-z0-9._-]+` is the one structural exception: keywords inside that
 placeholder do not trigger the line rule. Any other byte in that token, or a
@@ -278,7 +286,7 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before captures use the shared raw-redaction, terminal-sanitization, second-redaction pipeline without the bounded diagnostic limit. Secret assignments are first classified on the full raw capture while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque to that scan. Only after classification are those spans visibly replaced with `[redacted]`, before whitespace tokenization. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
 
 For that raw assignment classification, the scanner skips whitespace and
 terminal controls after a complete secret keyword. A control ends an unquoted
