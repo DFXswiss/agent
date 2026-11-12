@@ -636,6 +636,7 @@ def push_with_lease(
     return runner(_transfer_argv(
         worktree,
         "push",
+        "--no-follow-tags",
         f"--force-with-lease=refs/heads/{ref}:{old_sha}",
         "publication",
         f"{verified_sha}:refs/heads/{ref}",

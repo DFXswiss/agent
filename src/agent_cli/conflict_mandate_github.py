@@ -6,6 +6,7 @@ import time
 from typing import Any
 from urllib.parse import quote
 
+from .conflict_mandate_config import validate_repository_name
 from .conflict_mandate_state import parse_time
 from .coordinator_common import (
     CoordinatorError,
@@ -14,12 +15,12 @@ from .coordinator_common import (
     redact,
     repository_push_permission,
 )
+from .store import StoreError
 
 RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_SLEEP_SECONDS = 1.0
 _COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/([+-]?\d+)(?:$|[?#])"
-_REPOSITORY_FULL_NAME_RE = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 
 
 class ConflictTransientError(CoordinatorError):
@@ -142,10 +143,9 @@ def _validate_pull(data: Any, label: str) -> dict[str, Any]:
     if head_repo is None:
         raise ConflictHeadRepositoryGone(state)
     full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
-    if (
-        not isinstance(full_name, str)
-        or _REPOSITORY_FULL_NAME_RE.fullmatch(full_name) is None
-    ):
+    try:
+        validate_repository_name(full_name)
+    except StoreError:
         raise ConflictTransientError(f"{label} head repository is unreadable")
     if "mergeable" not in data:
         raise ConflictTransientError(f"{label} mergeable state is unreadable")
@@ -158,6 +158,10 @@ def _validate_pull(data: Any, label: str) -> dict[str, Any]:
 def _api(runner: Runner, argv: list[str], label: str) -> Any:
     try:
         return gh_json(runner, argv)
+    except UnicodeError as exc:
+        raise ConflictTransientError(
+            f"{label} returned output that is not valid UTF-8"
+        ) from exc
     except CoordinatorError as exc:
         raise ConflictTransientError(redact(str(exc))) from exc
 
@@ -224,16 +228,21 @@ def read_pull(runner: Runner, repo: str, number: int, *, sleep=time.sleep) -> di
 
 
 def read_optional_pull(runner: Runner, repo: str, number: int) -> dict[str, Any]:
-    try:
-        data = gh_json(runner, ["gh", "api", f"repos/{repo}/pulls/{number}"])
-    except CoordinatorError as exc:
-        raise ConflictTransientError(redact(str(exc))) from exc
+    data = _api(
+        runner,
+        ["gh", "api", f"repos/{repo}/pulls/{number}"],
+        "pull request",
+    )
     return _validate_pull(data, "pull request")
 
 
 def has_push_permission(runner: Runner, repo: str) -> bool:
     try:
         push = repository_push_permission(runner, repo)
+    except UnicodeError as exc:
+        raise ConflictTransientError(
+            "repository permissions returned output that is not valid UTF-8"
+        ) from exc
     except (CoordinatorError, OSError) as exc:
         raise ConflictTransientError(redact(str(exc))) from exc
     if push is None:
@@ -295,6 +304,10 @@ def find_result_comment(
 def _post(runner: Runner, argv: list[str], label: str) -> None:
     try:
         completed = runner(argv)
+    except UnicodeError as exc:
+        raise ConflictTransientError(
+            f"{label} returned output that is not valid UTF-8"
+        ) from exc
     except OSError as exc:
         raise ConflictTransientError(redact(str(exc))) from exc
     if completed.returncode != 0:
@@ -302,14 +315,12 @@ def _post(runner: Runner, argv: list[str], label: str) -> None:
 
 
 def add_eyes(runner: Runner, repo: str, comment_id: int, *, login: str) -> None:
-    try:
-        data = gh_json(
-            runner,
-            ["gh", "api", "--paginate", "--slurp",
-             f"repos/{repo}/issues/comments/{comment_id}/reactions"],
-        )
-    except CoordinatorError as exc:
-        raise ConflictTransientError(redact(str(exc))) from exc
+    data = _api(
+        runner,
+        ["gh", "api", "--paginate", "--slurp",
+         f"repos/{repo}/issues/comments/{comment_id}/reactions"],
+        "comment reactions",
+    )
     reactions = _pages(data, "comment reactions", reactions=True)
     for reaction in reactions:
         if (
