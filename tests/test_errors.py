@@ -266,6 +266,67 @@ def test_error_redaction_consumes_terminal_controls_around_assignment_operator(
     assert "[redacted]" in cleaned
 
 
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7-bel"),
+        pytest.param("\x1b]", "\x1b\\", id="osc-7-st-7"),
+        pytest.param("\x1b]", "\x9c", id="osc-7-st-8"),
+        pytest.param("\x9d", "\x07", id="osc-8-bel"),
+        pytest.param("\x9d", "\x1b\\", id="osc-8-st-7"),
+        pytest.param("\x9d", "\x9c", id="osc-8-st-8"),
+        pytest.param("\x1bP", "\x1b\\", id="dcs-7-st-7"),
+        pytest.param("\x1bP", "\x9c", id="dcs-7-st-8"),
+        pytest.param("\x90", "\x1b\\", id="dcs-8-st-7"),
+        pytest.param("\x90", "\x9c", id="dcs-8-st-8"),
+        pytest.param("\x1b^", "\x1b\\", id="pm-7-st-7"),
+        pytest.param("\x1b^", "\x9c", id="pm-7-st-8"),
+        pytest.param("\x9e", "\x1b\\", id="pm-8-st-7"),
+        pytest.param("\x9e", "\x9c", id="pm-8-st-8"),
+        pytest.param("\x1b_", "\x1b\\", id="apc-7-st-7"),
+        pytest.param("\x1b_", "\x9c", id="apc-7-st-8"),
+        pytest.param("\x9f", "\x1b\\", id="apc-8-st-7"),
+        pytest.param("\x9f", "\x9c", id="apc-8-st-8"),
+        pytest.param("\x1bX", "\x1b\\", id="sos-7-st-7"),
+        pytest.param("\x1bX", "\x9c", id="sos-7-st-8"),
+        pytest.param("\x98", "\x1b\\", id="sos-8-st-7"),
+        pytest.param("\x98", "\x9c", id="sos-8-st-8"),
+    ),
+)
+@pytest.mark.parametrize("operator", ("=", ":"), ids=("equals", "colon"))
+@pytest.mark.parametrize(
+    ("value_prefix", "value"),
+    (
+        pytest.param("", "hunter2", id="compact-unquoted"),
+        pytest.param(" ", "hunter2", id="spaced-unquoted"),
+        pytest.param("", '"hunter two"', id="quoted"),
+    ),
+)
+def test_error_redaction_uses_operator_inside_complete_string_control(
+    introducer: str,
+    terminator: str,
+    operator: str,
+    value_prefix: str,
+    value: str,
+) -> None:
+    control = f"{introducer}0;{operator}{terminator}"
+
+    cleaned = redact(f"password{control}{value_prefix}{value} visible")
+
+    assert "hunter" not in cleaned
+    assert "visible" in cleaned
+    assert "[redacted]" in cleaned
+
+
+def test_error_redaction_ignores_string_payload_operator_before_secret_key_complete(
+) -> None:
+    cleaned = redact("pass\x1b]0;=\x07word=hunter2 visible")
+
+    assert "hunter2" not in cleaned
+    assert "visible" in cleaned
+    assert "[redacted]" in cleaned
+
+
 def test_redact_strips_otel_ids() -> None:
     trace_id = "a" * 32
     span_id = "b" * 16
@@ -617,10 +678,23 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in documented
     )
     assert (
+        "split as `pass` + span + `word` still joins to `password`" in documented
+    )
+    assert (
+        "an operator inside a validly terminated\n"
+        "string-control span counts as the assignment operator"
+        in documented
+    )
+    assert (
         "Secret assignments are first classified on the full raw capture while "
         "complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque "
         "to that scan. Only after classification are those spans visibly replaced "
         "with `[redacted]`, before whitespace tokenization."
+        in readme
+    )
+    assert "span containing `=` or `:` supplies the operator" in readme
+    assert (
+        "payload operator remains opaque and later key\nfragments still join"
         in readme
     )
 
@@ -637,6 +711,24 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
 
     assert (
         "Secret-key assignments use a complete, unbounded scanner" in documented
+    )
+    assert "classifies secret assignments on the raw line" in documented
+    assert (
+        "replaces those spans only after assignment classification" in documented
+    )
+    assert (
+        "Only CSI/ESC prefixes may stop before a visible `=` or `:` operator."
+        in documented
+    )
+    assert (
+        "Inside a complete, validly terminated string control, either byte is an\n"
+        "   operator when the key already contains a complete"
+        in documented
+    )
+    assert (
+        "while the key is\n"
+        "   incomplete, that payload remains opaque so later key fragments still join."
+        in documented
     )
     assert (
         "Fixed matching\n"

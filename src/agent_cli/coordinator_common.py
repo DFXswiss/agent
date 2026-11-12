@@ -348,12 +348,61 @@ def _is_assignment_key_char(char: str) -> bool:
     return char.isascii() and (char.isalnum() or char in "_-")
 
 
+def _string_control_assignment_operator(
+    text: str, index: int, control_end: int
+) -> str | None:
+    """Return an assignment operator inside one complete string control.
+
+    BEL terminates OSC only; every string-control form accepts either ST
+    spelling.  Unterminated spans and other terminal controls are not
+    assignment operators.
+    """
+    is_osc = False
+    if text[index] == "\x1b" and index + 1 < control_end:
+        introducer = text[index + 1]
+        if introducer not in "]P^_X":
+            return None
+        is_osc = introducer == "]"
+        payload_start = index + 2
+    elif ord(text[index]) in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
+        is_osc = ord(text[index]) == 0x9D
+        payload_start = index + 1
+    else:
+        return None
+
+    if (
+        control_end >= payload_start + 2
+        and text[control_end - 2 : control_end] == "\x1b\\"
+    ):
+        payload_end = control_end - 2
+    elif control_end > payload_start and text[control_end - 1] == "\x9c":
+        payload_end = control_end - 1
+    elif (
+        is_osc
+        and control_end > payload_start
+        and text[control_end - 1] == "\x07"
+    ):
+        payload_end = control_end - 1
+    else:
+        return None
+
+    equals = text.find("=", payload_start, payload_end)
+    colon = text.find(":", payload_start, payload_end)
+    if equals < 0:
+        return ":" if colon >= 0 else None
+    if colon < 0:
+        return "="
+    return "=" if equals < colon else ":"
+
+
 def _redact_secret_assignments(text: str) -> str:
     """Redact secret-key assignment values with one linear lexical scan.
 
     Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
     Removable terminal controls may interleave their bytes, and terminal string
     controls remain one opaque span even when their payload contains whitespace.
+    After a complete secret keyword, an operator in a complete string control
+    starts the value after that span; before the keyword, it remains opaque.
     Quoted values run through their closing quote, or through the bounded input
     end when no close exists; unquoted values stop at outside whitespace, comma,
     or semicolon.  Preserve the established whole-token replacement for a
@@ -396,7 +445,10 @@ def _redact_secret_assignments(text: str) -> str:
         key_tail = ""
         ambiguous_tail: str | None = None
         secret_key = False
+        operator: str | None = None
+        operator_start: int | None = None
         operator_control_end: int | None = None
+        key_end: int | None = None
         while cursor < length:
             char = text[cursor]
             if _is_assignment_key_char(char):
@@ -414,6 +466,20 @@ def _redact_secret_assignments(text: str) -> str:
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
+                control_operator = (
+                    _string_control_assignment_operator(text, cursor, control_end)
+                    if secret_key
+                    and quote is None
+                    and (control_end >= length or text[control_end] not in "=:")
+                    else None
+                )
+                if control_operator is not None:
+                    key_end = cursor
+                    operator = control_operator
+                    operator_start = cursor
+                    operator_control_end = control_end
+                    cursor = control_end
+                    break
                 if control_end < length and text[control_end] in "=:":
                     full_control_end, _ = _terminal_control_span(text, cursor)
                     operator_control_end = full_control_end
@@ -433,30 +499,48 @@ def _redact_secret_assignments(text: str) -> str:
                 index = max(cursor, index + 1)
                 continue
             cursor += 1
-        key_end = cursor
-        while cursor < length:
-            if text[cursor].isspace():
-                cursor += 1
+        if key_end is None:
+            key_end = cursor
+        if operator is None:
+            while cursor < length:
+                if text[cursor].isspace():
+                    cursor += 1
+                    continue
+                control_end, _final = _terminal_control_span(
+                    text, cursor, stop_at_assignment_operator=True
+                )
+                if control_end > cursor:
+                    control_operator = (
+                        _string_control_assignment_operator(
+                            text, cursor, control_end
+                        )
+                        if secret_key
+                        and (control_end >= length or text[control_end] not in "=:")
+                        else None
+                    )
+                    if control_operator is not None:
+                        operator = control_operator
+                        operator_start = cursor
+                        operator_control_end = control_end
+                        cursor = control_end
+                        break
+                    if control_end < length and text[control_end] in "=:":
+                        full_control_end, _ = _terminal_control_span(text, cursor)
+                        operator_control_end = full_control_end
+                    cursor = control_end
+                    continue
+                break
+            if cursor >= length or text[cursor] not in ":=":
+                index = max(cursor, index + 1)
                 continue
-            control_end, _final = _terminal_control_span(
-                text, cursor, stop_at_assignment_operator=True
-            )
-            if control_end > cursor:
-                if control_end < length and text[control_end] in "=:":
-                    full_control_end, _ = _terminal_control_span(text, cursor)
-                    operator_control_end = full_control_end
-                cursor = control_end
-                continue
-            break
-        if cursor >= length or text[cursor] not in ":=":
-            index = max(cursor, index + 1)
-            continue
+            operator = text[cursor]
+            operator_start = cursor
+            cursor += 1
         if not secret_key:
             index = max(start + 1, cursor)
             continue
-        operator = text[cursor]
-        compact_before = cursor == key_end
-        cursor += 1
+        assert operator_start is not None
+        compact_before = operator_start == key_end
         if operator_control_end is not None and cursor < operator_control_end:
             cursor = operator_control_end
         value_prefix = cursor

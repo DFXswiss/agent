@@ -43,13 +43,19 @@ subsequent notification that provides useful model work belong to the script.
 1. A **script** on this device queries a configured log source, applies the
    shared fail-closed ESC/C1 token rule (with only strict leading/trailing SGR
    wrappers exempt after their parameter bytes are checked with the visible
-   text), redacts complete or unterminated string-control spans before token
-   splitting, and applies control-tolerant secret redaction to the raw line,
-   removes terminal controls, and applies the ordinary error redaction again.
+   text), and classifies secret assignments on the raw line while complete or
+   unterminated OSC, DCS, PM, APC, and SOS controls remain opaque spans. It
+   replaces those spans only after assignment classification and before token
+   splitting, then applies control-tolerant secret redaction, removes terminal
+   controls, and applies ordinary error redaction again.
    Secret-key assignments use a complete, unbounded scanner over alphanumeric,
-   underscore, and hyphen key tokens, including quoted JSON keys. Assignment
-   operators remain visible even when a preceding terminal-control prefix would
-   otherwise consume `=` or `:`. Fixed matching
+   underscore, and hyphen key tokens, including quoted JSON keys.
+   Only CSI/ESC prefixes may stop before a visible `=` or `:` operator.
+   Inside a complete, validly terminated string control, either byte is an
+   operator when the key already contains a complete
+   secret keyword, and the value begins after the terminator; while the key is
+   incomplete, that payload remains opaque so later key fragments still join.
+   Fixed matching
    windows apply only to URL schemes, terminal escape parameters, and removable
    terminal-control interleaves so separatorless log text is handled in linear
    time. The script then fingerprints and inserts or enriches

@@ -1606,52 +1606,25 @@ def phase_tests(
         intent_matches = False
         activity_id = default_activity_id
     if isinstance(activity, dict):
-        payload = activity.get("payload")
-        if activity.get("execution_status") != "done":
-            if (
-                activity.get("type") != "comment.post"
-                or not isinstance(payload, dict)
-                or payload.get("exact_body") is not True
-                or not isinstance(payload.get("body"), str)
-                or not payload["body"]
-            ):
-                raise CoordinatorError("existing A38 report activity is invalid")
-            queue_activity(
-                store,
-                activity_id=activity_id,
-                session_id=worker.session_id,
-                typ="comment.post",
-                payload=payload,
-            )
-            execute_github(store, runner, activity_ids=(activity_id,))
-            activity = store.row("activity", activity_id)
-        result = activity.get("result") if isinstance(activity, dict) else None
-        if (
-            not isinstance(activity, dict)
-            or activity.get("execution_status") != "done"
-            or not isinstance(result, dict)
-            or not isinstance(result.get("url"), str)
-            or not result["url"]
-        ):
-            raise CoordinatorError("A38 report comment was not verified published")
-        live_state = pr_state(store, worker, task, runner)
-        _finalize_report_evidence(
+        assert isinstance(body, str)
+        assert isinstance(intent, dict)
+        assert isinstance(visibility, bool)
+        _checkpoint_post_suite_report(
             store,
-            worker,
             task,
             expected_state=copy.deepcopy(_report_checkpoint_state(task)),
-            head=head,
-            base_sha=base_sha,
-            policy_revision=policy_revision,
-            live_state=live_state,
-            activity_id=activity_id,
+            checkpoint={
+                "repo": cfg.repo,
+                "number": number,
+                "head": head,
+                "base_sha": base_sha,
+                "policy_revision": policy_revision,
+                "body": body,
+                "body_sha256": str(intent["body_sha256"]),
+                "private": visibility,
+            },
         )
-        if live_state in ("MERGED", "CLOSED"):
-            return [
-                f"A38 report already posted on {head[:7]}; "
-                f"PR {live_state.lower()}, verifying the merge"
-            ]
-        return [f"A38 report already posted on {head[:7]}"]
+        return _resume_post_suite_report(store, worker, task, runner)
 
     if cfg.check_argv:
         from .coordinator_common import coordinator_env

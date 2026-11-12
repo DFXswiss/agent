@@ -741,7 +741,12 @@ values. Only after assignment classification does the pipeline replace those
 spans with `[redacted]` on the classified text, before whitespace tokenization. A
 complete span includes its seven- or eight-bit introducer and terminator; an
 unterminated span consumes the remainder of the text and is replaced rather
-than merely removed. The pipeline then replaces any whitespace-delimited raw
+than merely removed. While a key has not yet matched a complete secret keyword,
+an assignment-looking `=` or `:` inside such a span remains opaque, so a key
+split as `pass` + span + `word` still joins to `password`. Once the key already
+contains a complete secret keyword, an operator inside a validly terminated
+string-control span counts as the assignment operator and the value begins
+after that terminator. The pipeline then replaces any whitespace-delimited raw
 token containing another ESC or C1 sequence, including a lone ESC byte and a
 sequence at either token boundary, while preserving the separating whitespace.
 The only possible
@@ -758,11 +763,13 @@ unquoted `key=value` assignment retains the established whole-token replacement;
 structured or quoted assignments keep their key and delimiters while their value
 is replaced. The secret keywords include `passwd` and the `access_key`,
 `access-key`, and `accesskey` forms; removable terminal controls are consumed
-alongside whitespace between the key, assignment operator, and value. A complete
-string control remains one opaque span even when its payload contains `=` or
-`:`, and payload whitespace does not end an unquoted value. Quoted values run to
-their closing quote or the bounded input end; unquoted values stop at whitespace,
-comma, or semicolon. URL schemes, escape parameters, and control
+alongside whitespace between the key, assignment operator, and value. Before a
+complete secret keyword is present, a string-control payload stays opaque even
+when it contains `=` or `:`. After that keyword is present, either byte inside a
+complete, validly terminated string control is the operator and the value after
+the terminator is redacted. Payload whitespace does not end an unquoted value.
+Quoted values run to their closing quote or the bounded input end; unquoted
+values stop at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
 backtracking are possessive. This keeps every redaction pass linear on long
 separatorless provider text. A sink with an existing length
@@ -816,7 +823,8 @@ cannot assemble an unredacted token by deleting that byte.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
 `ESC \`. The assignment scan treats complete and unterminated string-control
 spans as opaque; only after that classification are they replaced with
-`[redacted]` before tokenization.
+`[redacted]` before tokenization, subject to the complete-secret-key operator
+rule above for a validly terminated span.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
@@ -1022,9 +1030,12 @@ the checkpoint without a live assignment. An unreadable state retries without
 changing the task or publishing. Recovery requires full payload equality and revalidates the
 v2 schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
-evidence. Its report publication identity includes the head,
-base, and active policy revision, so a base move requires new evidence and a
-new comment. Immediately before creating or reusing that intent, recovery reads
+evidence. A validated legacy report intent that predates the post-suite
+checkpoint is first converted into that checkpoint, then resumes through the
+same stable identity, head, base, base-name, and state checks; it cannot use the
+older state-only finalization path. Its report publication identity includes
+the head, base, and active policy revision, so a base move requires new evidence
+and a new comment. Immediately before creating or reusing that intent, recovery reads
 two equal snapshots containing the pull-request number, head SHA, base SHA,
 base name, and state. An open identity, head, base, or base-name mismatch retires
 the checkpoint and pending report and routes to measurement; a closed mismatch
