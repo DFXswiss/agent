@@ -166,6 +166,7 @@ class FakeGh:
         }
         self.head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         self.base = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        self.private = False
         self.dirty = False
         self.commits_ahead = False
         self.signed = True
@@ -233,6 +234,15 @@ class FakeGh:
             return Completed(0, "worker-bot", "")
 
         joined = " ".join(argv)
+
+        if argv == [
+            "gh",
+            "api",
+            "repos/example/project",
+            "--jq",
+            ".private",
+        ]:
+            return Completed(0, json.dumps(self.private), "")
 
         if "repos/example/project/issues?assignee=" in joined or (
             argv[0] == "gh" and argv[1] == "api" and "--paginate" in argv and "issues?assignee=" in argv[-1]

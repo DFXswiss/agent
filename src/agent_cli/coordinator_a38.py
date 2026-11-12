@@ -447,6 +447,17 @@ def _repository_visibility(api: Runner, repo: str) -> bool:
     return visibility
 
 
+def _report_body_private(body: str) -> bool:
+    """Read the exact visibility asserted by a stored local-CI report body."""
+    try:
+        report = parse_comment(body)
+    except LocalCiError as exc:
+        raise NonRecoverableCoordinatorError(
+            "stored A38 report body is invalid"
+        ) from exc
+    return report.private
+
+
 def _validate_report_body(
     body: str,
     *,
@@ -988,6 +999,58 @@ def _resume_post_suite_report(
     if mismatch_lines is not None:
         return mismatch_lines
     live_state = str(live["state"])
+
+    def validate_live_visibility(api: Runner) -> list[str] | None:
+        try:
+            live_visibility = _repository_visibility(api, cfg.repo)
+        except CoordinatorError:
+            return [
+                "repository visibility temporarily unavailable before A38 report "
+                "finalization; retrying"
+            ]
+        if (
+            _report_body_private(report_body) is visibility
+            and live_visibility is visibility
+        ):
+            return None
+        reason = "A38 report visibility no longer matches the target repository"
+        if live_state == "MERGED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="tests",
+            )
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR visibility differs from the stored "
+                "A38 report; a merged PR cannot be remeasured"
+            )
+        if live_state == "CLOSED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="await_merge",
+            )
+            return [
+                "PR closed after repository visibility changed; verifying the merge "
+                "without promoting the A38 report"
+            ]
+        _retire_post_suite_checkpoint(
+            store,
+            task,
+            reason=reason,
+            phase="tests",
+        )
+        return [
+            "repository visibility changed after A38 measurement; invalidating "
+            "the report and remeasuring"
+        ]
+
+    # A transient visibility lookup must not trigger draft or report effects.
+    visibility_lines = validate_live_visibility(runner)
+    if visibility_lines is not None:
+        return visibility_lines
     draft_lines: list[str] = []
     if live_state == "OPEN":
         draft_lines = ensure_draft(store, worker, task, runner)
@@ -1018,6 +1081,10 @@ def _resume_post_suite_report(
     if mismatch_lines is not None:
         return mismatch_lines
     live_state = str(live["state"])
+
+    visibility_lines = validate_live_visibility(runner)
+    if visibility_lines is not None:
+        return visibility_lines
 
     default_activity_id = _report_activity_id(
         str(task["id"]),
@@ -1125,6 +1192,12 @@ def _resume_post_suite_report(
     ):
         raise CoordinatorError("A38 report comment was not verified published")
 
+    # Close the visibility race after publication and immediately before the
+    # report becomes completion evidence.
+    visibility_lines = validate_live_visibility(runner)
+    if visibility_lines is not None:
+        return visibility_lines
+
     _finalize_report_evidence(
         store,
         worker,
@@ -1226,6 +1299,7 @@ def _finalize_report_evidence(
                     "base_sha": base_sha,
                     "policy_revision": policy_revision,
                     "activity_id": activity_id,
+                    "body": str(payload["body"]),
                     "id": result.get("id"),
                     "url": result["url"],
                 }
@@ -3024,6 +3098,9 @@ def intake_second_reviews(
             _mark_message_read(store, worker, message_id)
             lines.append(f"blocking external second review by @{login} recorded")
             continue
+        # Merge-deadline checks use this durable review-record timestamp, not
+        # the later coordinator tick that happens to ingest the mail.
+        state["requirement_satisfied_at"] = at
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
@@ -3348,6 +3425,53 @@ def merged_base_evidence_satisfied(
         and _bound_base_evidence(a38, head=head, base_sha=base_sha)
         and _local_gate_recorded(store, task, head=head)
     )
+
+
+def merged_report_visibility_satisfied(
+    store: Store,
+    worker: WorkerConfig,
+    task: Mapping[str, Any],
+    api: Runner,
+) -> bool:
+    """Compare a finalized report body with current repository visibility.
+
+    Inventory waivers have no local-CI report body and therefore no stored
+    visibility assertion to revalidate here.
+    """
+    candidate = dict(task)
+    c = coord(candidate)
+    report = _a38_state(c).get("report")
+    if not isinstance(report, Mapping):
+        return True
+    activity_id = report.get("activity_id")
+    activity = (
+        store.row("activity", activity_id)
+        if isinstance(activity_id, str) and activity_id
+        else None
+    )
+    if not isinstance(activity, dict) or not _own_report_activity(
+        store,
+        worker,
+        candidate,
+        activity,
+        str(report.get("head") or ""),
+    ):
+        activity = None
+    payload = activity.get("payload") if isinstance(activity, Mapping) else None
+    activity_body = payload.get("body") if isinstance(payload, Mapping) else None
+    body = report.get("body")
+    if isinstance(activity_body, str) and activity_body:
+        if isinstance(body, str) and body and body != activity_body:
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: stored A38 report bodies differ"
+            )
+        body = activity_body
+    if not isinstance(body, str) or not body:
+        raise NonRecoverableCoordinatorError(
+            "task-done refused: stored A38 report body is unavailable"
+        )
+    live_visibility = _repository_visibility(api, target_repo(candidate))
+    return _report_body_private(body) is live_visibility
 
 
 def mark_base_moved_after_evidence(

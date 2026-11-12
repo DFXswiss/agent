@@ -46,7 +46,7 @@ subsequent notification that provides useful model work belong to the script.
    check
    over a control-byte-translated view. Only candidate lines build the three
    views, one at a time: a control-stripped view (controls and their
-   payloads removed), a payload-kept view (only introducers, terminators, and
+   payloads removed), a payload-kept view (the outer introducer, terminator, and
    CSI parameter bytes removed), and a key-join view. The key-join view uses the
    assignment scanner's own classifier to retain only control-sequence bytes
    that the scanner may join into a key, including a key-character CSI/ESC
@@ -57,7 +57,9 @@ subsequent notification that provides useful model work belong to the script.
    bytes are removed from every view but activate nothing without ESC/C1.
    Removable control bytes inside retained string-control payloads are omitted
    from every structural view, so they cannot split a keyword in the
-   payload-kept view.
+   payload-kept view. Nested seven- or eight-bit CSI, ESC sequences, C0, and C1
+   controls are lexed as complete spans in that payload view, including CSI
+   parameters, intermediates, and finals.
    Complete and unterminated OSC, DCS, PM, APC, and SOS spans are indexed on the
    complete raw input before logical lines are formed, so payload newlines are
    not boundaries. A mapped start inside such a span moves to its introducer;

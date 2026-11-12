@@ -6902,6 +6902,12 @@ def _a38_external_review_env(
             "base_sha": fake.base,
             "policy_revision": fake.base,
             "activity_id": "seed-a38-report",
+            "body": _write_coordinator_a38_report(
+                tmp_path / f"{task_id}-report.md",
+                head=fake.head,
+                base=fake.base,
+                private=False,
+            ),
         },
     )
     checkpoint["a38"]["second_review"] = {
@@ -7030,6 +7036,9 @@ def test_a38_intake_processes_all_reviews_for_one_head(
             "reviewer-one",
             "reviewer-two",
         ]
+        assert second_review["requirement_satisfied_at"] == second_review[
+            "reviews"
+        ][-1]["at"]
         assert all(
             set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge", "at", "mail_id"}
             for review in second_review["reviews"]
@@ -8207,13 +8216,13 @@ def test_a38_merge_without_second_review_waits_then_blocks(
     monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
 
     first = coordinator_github._await_second_review_after_merge(
-        store, worker, task, fake, fake.head, blocking=False
+        store, worker, task, fake, fake.head, outcome="missing"
     )
     second = coordinator_github._await_second_review_after_merge(
-        store, worker, task, fake, fake.head, blocking=False
+        store, worker, task, fake, fake.head, outcome="missing"
     )
     third = coordinator_github._await_second_review_after_merge(
-        store, worker, task, fake, fake.head, blocking=False
+        store, worker, task, fake, fake.head, outcome="missing"
     )
 
     assert "awaiting the external second review" in first[0]
@@ -8238,9 +8247,149 @@ def test_a38_merge_with_blocking_second_review_blocks_at_once(
     )
 
     assert coordinator_github._await_second_review_after_merge(
-        store, worker, task, fake, fake.head, blocking=True
+        store, worker, task, fake, fake.head, outcome="blocking"
     ) == ["blocker merged-with-blocking-second-review"]
     assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def _a38_merged_review_deadline_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: str,
+    review_second: int,
+) -> tuple[Store, Any, FakeGh]:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    worker = replace(worker, second_review_timeout_seconds=10)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "await_merge"
+    checkpoint["a38"]["merged_waiting_since"] = "2026-01-01T00:00:00Z"
+    checkpoint["evidence"]["readiness_head"] = fake.head
+    # The timeout is part of the pinned worker configuration. Re-pin this test
+    # fixture so advance_one reaches second-review intake instead of correctly
+    # rejecting the deliberately shortened timeout as a configuration change.
+    checkpoint["execution_binding"] = execution_binding(
+        store, worker, checkpoint["source"]["repo"]
+    )
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-01-01T00:00:05Z"
+    fake.pr["mergeCommit"] = {"oid": "d" * 40}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    _a38_review_mail(
+        store,
+        worker,
+        message_id=f"passing-review-{review_second}",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=review_second,
+    )
+    return store, worker, fake
+
+
+def test_advance_one_blocks_review_ingested_after_merged_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000021"
+    store, worker, fake = _a38_merged_review_deadline_env(
+        tmp_path,
+        monkeypatch,
+        task_id=task_id,
+        review_second=11,
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-01-01T00:00:12Z"
+    )
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines[-1] == "blocker published on example/project#7"
+    saved = store.row("task", task_id)
+    second_review = saved["payload"]["coordinator"]["a38"][
+        "second_review"
+    ]
+    assert second_review["status"] == "posted"
+    assert second_review["reviews"][-1]["at"] == "2026-01-01T00:00:11Z"
+    assert second_review["reviews"][-1]["blocks_merge"] is False
+    assert second_review["requirement_satisfied_at"] == "2026-01-01T00:00:11Z"
+    assert (
+        coordinator_github._a38_second_review_outcome(
+            saved["payload"]["coordinator"], fake.head
+        )
+        == "passed"
+    )
+    assert saved["payload"]["coordinator"]["phase"] == "blocked"
+    assert saved["payload"]["coordinator"]["blocker"] == (
+        f"merged without an external second review on {fake.head}"
+    )
+    assert saved["state"] != "done"
+    blocker_comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and "agent-coordinator:status:v1:merged-without-second-review:"
+        in str(row.get("payload", {}).get("body", ""))
+    ]
+    assert len(blocker_comments) == 1
+    assert blocker_comments[0]["execution_status"] == "done"
+
+
+def test_advance_one_completes_review_ingested_before_merged_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000022"
+    store, worker, fake = _a38_merged_review_deadline_env(
+        tmp_path,
+        monkeypatch,
+        task_id=task_id,
+        review_second=8,
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-01-01T00:00:12Z"
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)
+    second_review = saved["payload"]["coordinator"]["a38"][
+        "second_review"
+    ]
+    assert second_review["status"] == "posted"
+    assert second_review["reviews"][-1]["at"] == "2026-01-01T00:00:08Z"
+    assert second_review["reviews"][-1]["blocks_merge"] is False
+    assert second_review["requirement_satisfied_at"] == "2026-01-01T00:00:08Z"
+    assert (
+        coordinator_github._a38_second_review_outcome(
+            saved["payload"]["coordinator"], fake.head
+        )
+        == "passed"
+    )
+    assert lines[-1] == "human merge verified example/project#42; task done"
+    assert saved["payload"]["coordinator"]["phase"] == "done"
+    assert saved["state"] == "done"
+    assert not [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and "agent-coordinator:status:v1:merged-without-second-review:"
+        in str(row.get("payload", {}).get("body", ""))
+    ]
 
 
 def test_a38_blocking_review_with_unknown_pr_state_retries_without_rerouting(
@@ -8910,6 +9059,12 @@ def _a38_first_comment_env(
                         "base_sha": fake.base,
                         "policy_revision": fake.base,
                         "activity_id": "report",
+                        "body": _write_coordinator_a38_report(
+                            tmp_path / "first-comment-report.md",
+                            head=fake.head,
+                            base=fake.base,
+                            private=False,
+                        ),
                     },
                     "first_review_passes": 1,
                 },
@@ -11537,10 +11692,12 @@ def test_blocked_post_suite_checkpoint_resumes_after_close_without_reply(
 
 
 def _post_suite_recovery_fixture(
-    tmp_path: Path, *, checkpoint_number: int = 42
+    tmp_path: Path, *, checkpoint_number: int = 42, private: bool = True
 ) -> tuple[Store, Any, str, str, str, str]:
     import hashlib
     from dataclasses import replace
+
+    from agent_cli import coordinator_a38
 
     store = Store(tmp_path)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -11549,7 +11706,12 @@ def _post_suite_recovery_fixture(
     activity_id = "33333333-3333-4333-8333-33333333341f"
     head = "a" * 40
     base = "b" * 40
-    body = "verified A38 report"
+    body = _write_coordinator_a38_report(
+        tmp_path / "post-suite-report.md",
+        head=head,
+        base=base,
+        private=private,
+    )
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     intent = {
         "head": head,
@@ -11557,7 +11719,7 @@ def _post_suite_recovery_fixture(
         "policy_revision": base,
         "activity_id": activity_id,
         "body_sha256": digest,
-        "private": True,
+        "private": private,
     }
     store.write(
         "task",
@@ -11587,13 +11749,15 @@ def _post_suite_recovery_fixture(
                             "policy_revision": base,
                             "body": body,
                             "body_sha256": digest,
-                            "private": True,
+                            "private": private,
                         },
                     },
                 }
             },
         },
     )
+    task = store.row("task", tid)
+    assert task is not None
     store.write(
         "activity",
         "insert",
@@ -11602,7 +11766,17 @@ def _post_suite_recovery_fixture(
             "id": activity_id,
             "session_id": worker.session_id,
             "type": "comment.post",
-            "payload": {"repo": "example/project", "number": 42, "body": body},
+            "payload": coordinator_a38._report_activity_payload(
+                task,
+                repo="example/project",
+                number=42,
+                body=body,
+                head=head,
+                base_sha=base,
+                policy_revision=base,
+                body_sha256=digest,
+                private=private,
+            ),
             "execution_status": "pending",
         },
     )
@@ -11688,6 +11862,9 @@ def test_post_suite_rereads_live_base_immediately_before_publication(
     monkeypatch.setattr(
         coordinator_a38, "_stable_live_pr_context", lambda *_a, **_k: next(contexts)
     )
+    monkeypatch.setattr(
+        coordinator_a38, "_repository_visibility", lambda *_a, **_k: True
+    )
     monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
     monkeypatch.setattr(
         coordinator_a38,
@@ -11705,6 +11882,155 @@ def test_post_suite_rereads_live_base_immediately_before_publication(
     assert "post_suite_checkpoint" not in saved["a38"]
     assert "report_intent" not in saved["a38"]
     assert store.row("activity", activity_id)["execution_status"] == "error"
+
+
+@pytest.mark.parametrize(
+    "report_private",
+    [True, False],
+    ids=["private-to-public", "public-to-private"],
+)
+def test_post_suite_visibility_change_retires_report_and_remeasures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report_private: bool,
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path,
+        private=report_private,
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": base,
+            "base_name": "develop",
+            "state": "OPEN",
+        },
+    )
+    monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_repository_visibility",
+        lambda *_a, **_k: not report_private,
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "execute_github",
+        lambda *_a, **_k: pytest.fail(
+            "visibility-mismatched report was published"
+        ),
+    )
+
+    lines = coordinator_a38.phase_tests(
+        store, worker, store.row("task", tid), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "repository visibility changed after A38 measurement; invalidating "
+        "the report and remeasuring"
+    ]
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert "post_suite_checkpoint" not in saved["a38"]
+    assert "report_intent" not in saved["a38"]
+    assert store.row("activity", activity_id)["execution_status"] == "error"
+
+
+def test_post_suite_rereads_visibility_immediately_before_finalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path,
+        private=True,
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": base,
+            "base_name": "develop",
+            "state": "OPEN",
+        },
+    )
+    monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
+    visibility = iter((True, True, False))
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_repository_visibility",
+        lambda *_a, **_k: next(visibility),
+    )
+    patch_execute_github(monkeypatch)
+
+    lines = coordinator_a38.phase_tests(
+        store, worker, store.row("task", tid), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "repository visibility changed after A38 measurement; invalidating "
+        "the report and remeasuring"
+    ]
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert "post_suite_checkpoint" not in saved["a38"]
+    assert "report_intent" not in saved["a38"]
+    assert "report" not in saved["a38"]
+    assert store.row("activity", activity_id)["execution_status"] == "done"
+
+
+def test_post_suite_unreadable_visibility_retries_without_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": base,
+            "base_name": "develop",
+            "state": "OPEN",
+        },
+    )
+    monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_repository_visibility",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CoordinatorError("visibility unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "execute_github",
+        lambda *_a, **_k: pytest.fail("report publication was executed"),
+    )
+    before_task = store.row("task", tid)
+    before_activity = store.row("activity", activity_id)
+
+    assert coordinator_a38.phase_tests(
+        store, worker, store.row("task", tid), lambda _argv: Completed(0, "", "")
+    ) == [
+        "repository visibility temporarily unavailable before A38 report "
+        "finalization; retrying"
+    ]
+    assert store.row("task", tid) == before_task
+    assert store.row("activity", activity_id) == before_activity
 
 
 @pytest.mark.parametrize("mismatch", ["head", "base"])

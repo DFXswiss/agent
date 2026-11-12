@@ -243,7 +243,7 @@ no ESC/C1. For each controlled raw logical line, a compiled case-insensitive
 candidate check runs over a control-byte-translated view. Only candidate lines
 build the three views, one at a time: a control-stripped view
 removes complete or unterminated controls and their payloads, a payload-kept
-view removes only introducers, terminators, and CSI parameter bytes, and a
+view removes the outer introducer, terminator, and CSI parameter bytes, and a
 key-join view uses the assignment scanner's own classifier to retain only
 control-sequence bytes that the scanner may join into a key. Those bytes include
 a key-character CSI/ESC final and a `-` intermediate; string-control payloads
@@ -253,7 +253,11 @@ keyword's mapped whitespace token
 through logical-line end. Standalone removable C0 bytes are removed from every
 view without activating the rule by themselves. Removable control bytes inside
 retained string-control payloads are omitted from every structural view, so
-they cannot split a keyword in the payload-kept view. String-control spans are
+they cannot split a keyword in the payload-kept view. Nested seven- or
+eight-bit CSI, ESC sequences, C0, and C1 controls are lexed as complete spans
+in the payload view, omitting CSI parameters, intermediates, and finals
+together rather than leaving printable control bytes in the keyword view.
+String-control spans are
 indexed on the complete raw input first, so their payload newlines do not split
 logical lines; a mapped start inside one moves to the introducer and the span is
 never split by two replacement stages. An unterminated string control extends

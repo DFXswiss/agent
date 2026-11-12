@@ -749,8 +749,11 @@ compiled case-insensitive candidate check runs over a control-byte-translated
 view. Only candidate lines build the three views, one at a time: a
 control-stripped view that removes complete or
 unterminated controls with their payloads, a payload-kept view that removes
-only control introducers, terminators, and CSI parameter bytes, and a key-join
-view. The key-join view uses the assignment scanner's own classifier to retain
+the outer control introducer, terminator, and CSI parameter bytes, and a key-join
+view. Inside retained string-control payloads, the payload view runs the same
+control lexer again and omits each complete nested CSI (parameters,
+intermediates, and final), ESC sequence, C0, or C1 span with its raw mapping.
+The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
 payloads and all other control bytes. If any view contains a shared secret
@@ -760,7 +763,9 @@ through the end of that logical line. All three views remove standalone
 removable C0 bytes such as backspace, NUL, DEL, and carriage return; those bytes
 do not activate the rule without ESC/C1. Removable control bytes inside retained
 string-control payloads are omitted from every structural view, so they cannot
-split a keyword in the payload-kept view. Complete and unterminated
+split a keyword in the payload-kept view; printable parameter, intermediate,
+and final bytes of a nested control are omitted with that complete span as
+well. Complete and unterminated
 string-control spans are indexed once on the full raw input before line
 splitting, so newlines inside OSC, DCS, PM, APC, or SOS payloads are not
 boundaries. If a mapped keyword starts inside such a span, redaction starts at
@@ -1107,7 +1112,15 @@ the start of the tick. Report publication and inventory-waiver finalisation
 reload that checkpoint under the task lock; publication also holds the
 activity lock and requires the current intent to match the completed activity.
 Only then do the report or waiver, local gate, base promotion, and phase
-transition commit together. Every such conflict reloads the task and retries
+transition commit together. Repository visibility is read again before report
+publication and again immediately before that finalisation. The `private` value
+parsed from the stored report body must equal both the checkpoint value and the
+live repository value. An unreadable visibility retries without publication or
+state changes. An open mismatch retires the intent and checkpoint and returns
+to measurement; a mismatch after merge is a non-recoverable completion blocker.
+Merged completion performs the same live lookup and stored-body comparison, so
+a report measured under the opposite visibility cannot satisfy `task-done`.
+Every such conflict reloads the task and retries
 without saving the stale caller row or publishing a blocker. The checkpoint
 then records the newly verified head on the
 fresh row and, when it differs from the promoted evidence base, records the
@@ -1226,8 +1239,12 @@ head do not count. An unreadable pull request state is retried on the
 next tick without taking in mail.
 Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
 the merged-head second-review outcome and starts or checks its timeout on every
-tick. A blocking review or expired timeout publishes its merge blocker even
-while cumulative CI is pending or temporarily unavailable. A non-expired wait
+tick, including when the newest review is passing. Intake persists the passing
+review record's timestamp as the time the requirement was satisfied; the tick
+time is never substituted. If that timestamp is later than the persisted merge
+deadline, `await_merge` publishes `merged-without-second-review` and does not
+complete the task. A blocking review or expired timeout publishes its merge
+blocker even while cumulative CI is pending or temporarily unavailable. A non-expired wait
 may still return the cumulative-CI pending result, but its timer has already
 been persisted and checked. `await_merge` re-observes the exact-head cumulative
 GitHub check rollup and Actions workflow inventory with the same classifier as

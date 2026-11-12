@@ -497,6 +497,26 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
                 lines.extend(
                     payload_keyword + suffix for suffix in payload_c0_suffixes
                 )
+            for nested_control in (
+                "\x1b[31m",
+                "\x9b31m",
+                "\x1b7",
+                "\x1b(0",
+            ):
+                for nested_split in range(1, len(keyword)):
+                    payload_keyword = (
+                        "prefix "
+                        + introducer
+                        + "0;"
+                        + keyword[:nested_split]
+                        + nested_control
+                        + keyword[nested_split:]
+                        + terminator
+                    )
+                    lines.extend(
+                        payload_keyword + suffix
+                        for suffix in payload_c0_suffixes
+                    )
 
         for c0 in ("\x08", "\x00", "\x7f", "\r"):
             split = max(1, len(keyword) // 2)
@@ -1195,12 +1215,19 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     assert (
         "Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates\n"
         "the merged-head second-review outcome and starts or checks its timeout on every\n"
-        "tick."
+        "tick, including when the newest review is passing."
         in documented
     )
+    assert "review record's timestamp" in documented
+    assert "the tick\ntime is never substituted" in documented
+    assert "stored report body" in documented
+    assert "live repository value" in documented
+    assert "same\ncontrol lexer" in documented
+    for text in (ai_accounts, readme, skill):
+        assert "Nested seven- or eight-bit CSI" in " ".join(text.split())
     assert (
-        "even\nwhile cumulative CI is pending or temporarily unavailable"
-        in documented
+        "even while cumulative CI is pending or temporarily unavailable"
+        in " ".join(documented.split())
     )
     assert (
         "a raw whitespace token that contained a string-control\nspan"

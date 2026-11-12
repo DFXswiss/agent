@@ -488,13 +488,20 @@ def _append_string_control_payload_view(
     raw_start: int,
     raw_end: int,
 ) -> int:
-    """Append payload bytes while omitting removable controls and mapping gaps."""
+    """Append payload bytes while omitting nested control spans and mapping gaps."""
     cursor = raw_start
-    for control in _RAW_REMOVED_CONTROL.finditer(text, raw_start, raw_end):
+    while True:
+        control = _RAW_REMOVED_CONTROL.search(text, cursor, raw_end)
+        if control is None:
+            break
+        control_start = control.start()
         view_length = _append_control_view(
-            text, pieces, spans, view_length, cursor, control.start()
+            text, pieces, spans, view_length, cursor, control_start
         )
-        cursor = control.end()
+        control_end, _final = _terminal_control_span(text, control_start)
+        # A nested unterminated string control may lex through the outer
+        # terminator. The payload view owns only this raw payload slice.
+        cursor = min(raw_end, max(control_start + 1, control_end))
     return _append_control_view(
         text, pieces, spans, view_length, cursor, raw_end
     )

@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -2877,7 +2878,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 "a merged PR cannot be remeasured"
             )
         if worker.a38:
-            from .coordinator_a38 import merged_base_evidence_satisfied
+            from .coordinator_a38 import (
+                merged_base_evidence_satisfied,
+                merged_report_visibility_satisfied,
+            )
 
             if not merged_base_evidence_satisfied(
                 store,
@@ -2891,18 +2895,38 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR has no report or waiver evidence "
                     f"bound to base {observed_base}; a merged PR cannot be remeasured"
                 )
-            second_review = _a38_second_review_outcome(c, expected_head)
-            if second_review != "passed":
-                second_review_wait = _await_second_review_after_merge(
+            try:
+                visibility_satisfied = merged_report_visibility_satisfied(
                     store,
                     worker,
                     task,
-                    runner,
-                    expected_head,
-                    blocking=second_review == "blocking",
+                    scoped_runner,
                 )
-                if c.get("phase") == "blocked":
-                    return second_review_wait
+            except NonRecoverableCoordinatorError:
+                raise
+            except CoordinatorError:
+                return [
+                    "merge observed but repository visibility is temporarily "
+                    "unavailable; retrying await_merge"
+                ]
+            if not visibility_satisfied:
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR visibility differs from the stored "
+                    "A38 report; a merged PR cannot be remeasured"
+                )
+            second_review = _a38_second_review_outcome(c, expected_head)
+            second_review_wait = _await_second_review_after_merge(
+                store,
+                worker,
+                task,
+                runner,
+                expected_head,
+                outcome=second_review,
+            )
+            if c.get("phase") == "blocked":
+                return second_review_wait or [
+                    "blocked: merged-head second-review deadline failed"
+                ]
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -3067,14 +3091,16 @@ def _await_second_review_after_merge(
     runner: Runner,
     head: str,
     *,
-    blocking: bool,
-) -> list[str]:
+    outcome: str,
+) -> list[str] | None:
     """A merge can land before the external second review (the guard sets Ready
     without it). Keep accepting that review for the merged head for one review
-    timeout, then stop with a visible, non-recoverable blocker. A blocking review
-    of the merged head stops at once."""
+    timeout, then stop with a visible, non-recoverable blocker. Every merged
+    tick compares that deadline with the deciding review record's timestamp,
+    including when the current outcome passes. A blocking review stops at once.
+    """
     c = coord(task)
-    if blocking:
+    if outcome == "blocking":
         c["phase"] = "blocked"
         c["blocker"] = f"merged although the external second review blocks the merge on {head}"
         clear_reply_recovery(c)
@@ -3096,9 +3122,34 @@ def _await_second_review_after_merge(
     if since is None:
         a38["merged_waiting_since"] = stamp
         save_task(store, task)
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
-    if (now - since).total_seconds() < worker.second_review_timeout_seconds:
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+        since = now
+    deadline = since + timedelta(seconds=worker.second_review_timeout_seconds)
+    satisfied_at = None
+    state = a38.get("second_review")
+    if (
+        outcome == "passed"
+        and isinstance(state, dict)
+        and state.get("head") == head
+    ):
+        satisfied_at = _parse_coordinator_time(
+            state.get("requirement_satisfied_at")
+        )
+        reviews = state.get("reviews")
+        entries = [review for review in reviews or [] if isinstance(review, dict)]
+        if entries and entries[-1].get("blocks_merge") is not True:
+            review_at = _parse_coordinator_time(entries[-1].get("at"))
+            if review_at is not None:
+                satisfied_at = review_at
+                if state.get("requirement_satisfied_at") != entries[-1].get("at"):
+                    state["requirement_satisfied_at"] = entries[-1].get("at")
+                    save_task(store, task)
+    if satisfied_at is not None and satisfied_at <= deadline:
+        return None
+    if satisfied_at is None and now < deadline:
+        return [
+            f"human merge observed on {head[:7]}; "
+            "awaiting the external second review"
+        ]
     c["phase"] = "blocked"
     c["blocker"] = f"merged without an external second review on {head}"
     clear_reply_recovery(c)
