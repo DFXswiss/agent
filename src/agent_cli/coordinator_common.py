@@ -63,16 +63,29 @@ ACCEPT_BODY = (
 QUESTION_MARKER_PREFIX = "<!-- agent-coordinator:question:v1:"
 STATUS_MARKER_PREFIX = "<!-- agent-coordinator:status:v1:"
 OUTPUT_BOUND = 4000
-SECRET_NAME_AFFIX_LIMIT = 64
 URL_SCHEME_LIMIT = 64
 REDACTION_BOUND_MARGIN = 256
 _TRUNCATION_MARKER = "\n…[truncated]"
-SECRETISH = re.compile(
-    rf'(?i)(?<![\w-])(?:["\']?[\w-]{{0,{SECRET_NAME_AFFIX_LIMIT}}}'
-    r'(?:token|password|secret|api[_-]?key|authorization|'
-    rf'gh_config|config_dir|signing_key)[\w-]{{0,{SECRET_NAME_AFFIX_LIMIT}}}'
-    r'["\']?\s*[:=]\s*)'
-    r'(?:(?:"[^"\n]*+")|(?:\'[^\'\n]*+\')|[^\s,;]++)'
+_SECRET_ASSIGNMENT_KEYWORDS = (
+    "authorization",
+    "signing_key",
+    "config_dir",
+    "password",
+    "gh_config",
+    "api_key",
+    "api-key",
+    "apikey",
+    "secret",
+    "token",
+)
+_SECRET_ASSIGNMENT_KEYWORDS_BY_LAST = {
+    final: tuple(
+        keyword for keyword in _SECRET_ASSIGNMENT_KEYWORDS if keyword[-1] == final
+    )
+    for final in {keyword[-1] for keyword in _SECRET_ASSIGNMENT_KEYWORDS}
+}
+_SECRET_ASSIGNMENT_KEYWORD_MAX = max(
+    len(keyword) for keyword in _SECRET_ASSIGNMENT_KEYWORDS
 )
 _AUTH_HEADER = re.compile(r'(?im)\b(?:authorization|(?:set-)?cookie)\s*:\s*[^\n]*+')
 _BEARER = re.compile(r'(?i)\bbearer\s+[^\s"\']++')
@@ -103,35 +116,11 @@ def _interleaved_units(atom: str, quantifier: str) -> str:
     return f"(?:{atom}{TERMINAL_INTERLEAVE_PATTERN}){quantifier}"
 
 
-_RAW_NAME_QUANTIFIER = f"{{0,{SECRET_NAME_AFFIX_LIMIT}}}"
 _RAW_SCHEME_QUANTIFIER = f"{{0,{URL_SCHEME_LIMIT - 1}}}"
 _RAW_PRIVATE_KEY_WORD_QUANTIFIER = "{1,32}"
-_RAW_NAME_UNIT = _interleaved_units(
-    r"[A-Za-z0-9_-]", _RAW_NAME_QUANTIFIER
-)
 _RAW_ALPHA_UNIT = r"[A-Za-z]"
 _RAW_SCHEME_UNIT = r"[A-Za-z0-9+.-]"
 _RAW_UPPER_UNIT = r"[A-Z]"
-_RAW_SECRET_WORD = "(?:" + "|".join(
-    _interleaved_literal(word)
-    for word in (
-        "token",
-        "password",
-        "secret",
-        "api_key",
-        "api-key",
-        "authorization",
-        "gh_config",
-        "config_dir",
-        "signing_key",
-    )
-) + ")"
-_RAW_SECRETISH = re.compile(
-    rf"(?i)(?<![A-Za-z0-9_-])(?:[\"']?{_RAW_NAME_UNIT}"
-    rf"{_RAW_SECRET_WORD}{_RAW_NAME_UNIT}[\"']?"
-    rf"{TERMINAL_INTERLEAVE_PATTERN}\s*[:=]\s*)"
-    r'(?:(?:"[^"\n]*+")|(?:\'[^\'\n]*+\')|[^\s,;]++)'
-)
 _RAW_AUTH_HEADER = re.compile(
     rf"(?im)(?:{_interleaved_literal('authorization')}|"
     rf"(?:{_interleaved_literal('set-')})?{_interleaved_literal('cookie')})"
@@ -192,7 +181,6 @@ _RAW_SECRET_PATTERNS = (
     _RAW_PRIVATE_KEY,
     _RAW_AUTH_HEADER,
     _RAW_BEARER,
-    _RAW_SECRETISH,
     _RAW_KNOWN_TOKEN,
     _RAW_AKIA,
     _RAW_PRIVATE_PATH,
@@ -239,11 +227,230 @@ class CiObservedFailureError(CoordinatorError):
     """Observed actual failed CI on a Ready-side recheck; route to phase_ci."""
 
 
+def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
+    """Return one removable terminal-control span and its ambiguous final byte.
+
+    The scanner needs positions, not a sanitized copy.  This small lexical
+    parser mirrors the terminal sanitizer's bounded CSI/ESC forms while
+    remaining linear for unterminated or adversarial input.
+    """
+    codepoint = ord(text[index])
+    if text[index] == "\x1b":
+        if index + 1 >= len(text):
+            return index + 1, None
+        introducer = text[index + 1]
+        if introducer in "]P^_X":
+            cursor = index + 2
+            while cursor < len(text):
+                if text[cursor] in ("\x07", "\x9c"):
+                    return cursor + 1, None
+                if (
+                    text[cursor] == "\x1b"
+                    and cursor + 1 < len(text)
+                    and text[cursor + 1] == "\\"
+                ):
+                    return cursor + 2, None
+                cursor += 1
+            return len(text), None
+        if introducer == "[":
+            cursor = index + 2
+            while cursor < len(text) and "0" <= text[cursor] <= "?":
+                cursor += 1
+            while cursor < len(text) and " " <= text[cursor] <= "/":
+                cursor += 1
+            if cursor < len(text) and "@" <= text[cursor] <= "~":
+                return cursor + 1, text[cursor]
+            return cursor, None
+        cursor = index + 1
+        while cursor < len(text) and " " <= text[cursor] <= "/":
+            cursor += 1
+        if cursor < len(text) and "0" <= text[cursor] <= "~":
+            return cursor + 1, text[cursor]
+        return cursor, None
+    if codepoint == 0x9B:
+        cursor = index + 1
+        while cursor < len(text) and "0" <= text[cursor] <= "?":
+            cursor += 1
+        while cursor < len(text) and " " <= text[cursor] <= "/":
+            cursor += 1
+        if cursor < len(text) and "@" <= text[cursor] <= "~":
+            return cursor + 1, text[cursor]
+        return cursor, None
+    if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
+        cursor = index + 1
+        while cursor < len(text):
+            if text[cursor] in ("\x07", "\x9c"):
+                return cursor + 1, None
+            if (
+                text[cursor] == "\x1b"
+                and cursor + 1 < len(text)
+                and text[cursor + 1] == "\\"
+            ):
+                return cursor + 2, None
+            cursor += 1
+        return len(text), None
+    if (
+        codepoint <= 0x08
+        or 0x0B <= codepoint <= 0x1F
+        or 0x7F <= codepoint <= 0x9F
+    ):
+        return index + 1, None
+    return index, None
+
+
+def _is_assignment_key_char(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char in "_-")
+
+
+def _redact_secret_assignments(text: str) -> str:
+    """Redact secret-key assignment values with one linear lexical scan.
+
+    Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
+    Removable terminal controls may interleave their bytes.  Quoted values run
+    through their closing quote, or through the bounded input end when no close
+    exists; unquoted values stop at whitespace, comma, or semicolon.  Preserve
+    the established whole-token replacement for a plain, compact
+    ``key=value`` assignment; structured and quoted assignments retain their
+    key and delimiters while only their value is replaced.
+    """
+    if not text:
+        return text
+    replacements: list[tuple[int, int, str]] = []
+
+    def extend_key(tail: str, char: str) -> tuple[str, bool]:
+        lowered = char.lower()
+        tail = (tail + lowered)[-_SECRET_ASSIGNMENT_KEYWORD_MAX:]
+        matched = any(
+            tail.endswith(keyword)
+            for keyword in _SECRET_ASSIGNMENT_KEYWORDS_BY_LAST.get(lowered, ())
+        )
+        return tail, matched
+
+    index = 0
+    length = len(text)
+    while index < length:
+        start = index
+        quote = text[index] if text[index] in ("\"", "'") else None
+        if quote is not None:
+            if index > 0 and _is_assignment_key_char(text[index - 1]):
+                index += 1
+                continue
+            cursor = index + 1
+        else:
+            if not _is_assignment_key_char(text[index]):
+                index += 1
+                continue
+            if index > 0 and _is_assignment_key_char(text[index - 1]):
+                index += 1
+                continue
+            cursor = index
+
+        key_length = 0
+        key_tail = ""
+        ambiguous_tail: str | None = None
+        secret_key = False
+        while cursor < length:
+            char = text[cursor]
+            if _is_assignment_key_char(char):
+                key_length += 1
+                key_tail, matched = extend_key(key_tail, char)
+                ambiguous_matched = False
+                if ambiguous_tail is not None:
+                    ambiguous_tail, ambiguous_matched = extend_key(
+                        ambiguous_tail, char
+                    )
+                secret_key = secret_key or matched or ambiguous_matched
+                cursor += 1
+                continue
+            control_end, final = _terminal_control_span(text, cursor)
+            if control_end > cursor:
+                if final is not None and _is_assignment_key_char(final):
+                    if ambiguous_tail is None:
+                        ambiguous_tail = key_tail
+                    ambiguous_tail, matched = extend_key(ambiguous_tail, final)
+                    secret_key = secret_key or matched
+                cursor = control_end
+                continue
+            break
+        if key_length == 0:
+            index += 1
+            continue
+        if quote is not None:
+            if cursor >= length or text[cursor] != quote:
+                index = max(cursor, index + 1)
+                continue
+            cursor += 1
+        key_end = cursor
+        while cursor < length and text[cursor].isspace():
+            cursor += 1
+        if cursor >= length or text[cursor] not in ":=":
+            index = max(cursor, index + 1)
+            continue
+        if not secret_key:
+            index = max(start + 1, cursor)
+            continue
+        operator = text[cursor]
+        compact_before = cursor == key_end
+        cursor += 1
+        value_prefix = cursor
+        while cursor < length and text[cursor].isspace():
+            cursor += 1
+        compact_after = cursor == value_prefix
+        value_start = cursor
+        if cursor < length and text[cursor] in ("\"", "'"):
+            value_quote = text[cursor]
+            content_start = cursor + 1
+            cursor = content_start
+            while cursor < length:
+                control_end, _final = _terminal_control_span(text, cursor)
+                if control_end > cursor:
+                    cursor = control_end
+                    continue
+                if text[cursor] == "\\" and cursor + 1 < length:
+                    cursor += 2
+                    continue
+                if text[cursor] == value_quote:
+                    replacements.append((content_start, cursor, "[redacted]"))
+                    cursor += 1
+                    break
+                cursor += 1
+            else:
+                replacements.append((content_start, length, "[redacted]"))
+            index = cursor
+            continue
+        while (
+            cursor < length
+            and not text[cursor].isspace()
+            and text[cursor] not in ",;"
+        ):
+            cursor += 1
+        replacement_start = (
+            start
+            if quote is None
+            and operator == "="
+            and compact_before
+            and compact_after
+            else value_start
+        )
+        replacements.append((replacement_start, cursor, "[redacted]"))
+        index = max(cursor, value_start + 1)
+
+    if not replacements:
+        return text
+    pieces: list[str] = []
+    previous = 0
+    for start, end, replacement in replacements:
+        pieces.extend((text[previous:start], replacement))
+        previous = end
+    pieces.append(text[previous:])
+    return "".join(pieces)
+
+
 def _redact_standard_patterns(text: str) -> str:
-    cleaned = _PRIVATE_KEY.sub('[redacted]', text)
+    cleaned = _redact_secret_assignments(text)
+    cleaned = _PRIVATE_KEY.sub('[redacted]', cleaned)
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)
     cleaned = _BEARER.sub('[redacted]', cleaned)
-    cleaned = SECRETISH.sub('[redacted]', cleaned)
     cleaned = _KNOWN_TOKEN.sub('[redacted]', cleaned)
     cleaned = _AKIA.sub('[redacted]', cleaned)
     cleaned = _PRIVATE_PATH.sub('[redacted]', cleaned)
@@ -296,6 +503,7 @@ def redact(
         )
 
     source, source_was_cut = _prebound_redaction_input(text or "", limit)
+    source = _redact_secret_assignments(source)
     has_removed_control = _RAW_REMOVED_CONTROL.search(source) is not None
     if not has_removed_control:
         return _apply_redaction_bound(

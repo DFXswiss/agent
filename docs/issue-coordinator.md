@@ -730,7 +730,13 @@ around otherwise escape-free text. Before granting that exemption, the secret
 matcher checks the SGR parameter bytes joined to the visible text; a match
 redacts the entire token. The pipeline then applies control-tolerant secret
 matching to raw text, removes terminal escapes and controls, redacts again, and
-finally applies its length bound. Secret-key name affixes, URL schemes, escape
+finally applies its length bound. One lexical assignment scanner walks complete,
+unbounded alphanumeric, underscore, and hyphen key tokens (including quoted JSON
+keys) and redacts values when the key contains a secret keyword. A plain compact
+unquoted `key=value` assignment retains the established whole-token replacement;
+structured or quoted assignments keep their key and delimiters while their value
+is replaced. Quoted values run to their closing quote or the bounded input end;
+unquoted values stop at whitespace, comma, or semicolon. URL schemes, escape
 parameters, and control interleaves use fixed matching windows; value runs that
 do not need delimiter backtracking are possessive. This keeps every redaction
 pass linear on long separatorless provider text. A sink with an existing length
@@ -1054,7 +1060,12 @@ digest, head, base, policy revision, and visibility as a post-suite checkpoint.
 An unreadable follow-up head keeps the task in `tests`; the next tick bypasses
 the generic merged/closed redirect and resumes only live-head validation,
 report publication, and evidence promotion without rerunning the suite. A
-saved matching report intent is reported as `already posted` after its
+pending rejection-review comment is still retried before that checkpoint read
+and before any merge, close, or blocker decision. If an assignment failure first
+blocks checkpoint recovery, a later merged or closed state resumes `tests`
+without a reply so the checkpoint can publish or retire under its live-context
+rules before merge verification. A saved matching report intent is reported as
+`already posted` after its
 publication result is verified, rather than being described as a new report. A
 confirmed different merged head is a non-recoverable completion boundary
 rather than an `await_merge` retry. A confirmed different head on a closed,
@@ -1065,7 +1076,11 @@ When a trusted coordinator precheck is configured, the waiver records a
 current-head `coordinator-check` skip so an older failure cannot remain the
 selected result.
 Immediately before draft reconciliation, the waiver path rechecks pull-request
-state and routes a merged or closed pull request directly to merge verification.
+identity, head, base revision, base name, and state in one stable snapshot. It
+repeats that snapshot immediately before finalization. An open mismatch retires
+the waiver measurement and returns to `tests`; a merged or closed mismatch moves
+to merge verification without promoting the stale waiver. A matching merged or
+closed snapshot may still bind the waiver before merge verification.
 The 500-file waiver ceiling counts the expanded GitHub path inventory, so each
 rename or copy contributes both its old and new path, matching the guard.
 Coordinator A38 mode does not implement policy migrations; a changed

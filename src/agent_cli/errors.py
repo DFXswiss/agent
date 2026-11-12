@@ -21,7 +21,6 @@ from .skills import has_skill
 from .store import Store, StoreError, utcnow
 from .text_sanitize import sanitize_terminal_text
 
-_SECRET_NAME_AFFIX_LIMIT = 64
 _URL_SCHEME_LIMIT = 64
 _EMAIL = re.compile(
     r"(?<![A-Z0-9._%+-])[A-Z0-9._%+-]{1,64}@"
@@ -36,12 +35,6 @@ _USERINFO = re.compile(
     rf"([a-zA-Z][a-zA-Z0-9+.-]{{0,{_URL_SCHEME_LIMIT - 1}}}://)"
     r"[^/:@\s]++:[^/@\s]++@"
 )
-_JSON_SECRET = re.compile(
-    rf'(?i)("[^"]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}'
-    r'(?:password|secret|token|api[_-]?key|access[_-]?token|'
-    r'client[_-]?secret|authorization|passwd|access_key)'
-    rf'[^"]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}"\s*:\s*")[^"]*+(\")'
-)
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}+\b")
 _OTEL_TRACE_ID = re.compile(
     r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
@@ -55,13 +48,6 @@ _OTEL_TRACEPARENT = re.compile(
     r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
     r"[0-9a-fA-F]++-[0-9a-fA-F]++-[0-9a-fA-F]++-"
     r"[0-9a-fA-F]++(?![-\w])"
-)
-_SECRET = re.compile(
-    rf"(?i)(?<![A-Za-z0-9_-])"
-    rf"[A-Za-z0-9_-]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}"
-    r"(?:password|secret|token|api[_-]?key|access[_-]?token|"
-    r"client[_-]?secret|authorization|passwd|access_key)"
-    rf"[A-Za-z0-9_-]{{0,{_SECRET_NAME_AFFIX_LIMIT}}}\s*[:=]\s*\S++"
 )
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _JWT = re.compile(
@@ -208,8 +194,6 @@ def _redact_error_patterns(text: str) -> str:
     out = _BEARER.sub("[redacted]", out)
     out = _COOKIE.sub(r"\1[redacted]", out)
     out = _USERINFO.sub(r"\1[redacted]@", out)
-    out = _JSON_SECRET.sub(r"\1[redacted]\2", out)
-    out = _SECRET.sub("[redacted]", out)
     out = _AKIA.sub("[redacted]", out)
     out = _JWT.sub("[redacted]", out)
     out = _EMAIL.sub("[redacted]", out)

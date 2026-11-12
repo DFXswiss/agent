@@ -553,6 +553,73 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() ->
 
 
 @pytest.mark.parametrize(
+    "key",
+    (
+        "A" * 65 + "token",
+        "token" + "A" * 65,
+        "A" * 10_000 + "token",
+        "token" + "A" * 10_000,
+    ),
+    ids=("65-prefix", "65-suffix", "10000-prefix", "10000-suffix"),
+)
+def test_assignment_redaction_has_no_secret_key_affix_limit(key: str) -> None:
+    raw = f"{key}=credential-value visible"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert "credential-value" not in cleaned
+        assert "visible" in cleaned
+        assert "[redacted]" in cleaned
+
+
+def test_assignment_redaction_handles_json_keys_and_bounded_quoted_values() -> None:
+    json_value = '{"prefix-token-suffix":"two word credential","visible":"ok"}'
+    bounded_value = 'password="first ' + "secret-part " * 500 + '" visible'
+
+    for redact_value in (
+        lambda value, limit: redact_shared(value, limit=limit),
+        lambda value, limit: redact_lane_text(value, limit=limit),
+    ):
+        cleaned_json = redact_value(json_value, None)
+        assert "two word credential" not in cleaned_json
+        assert '"visible":"ok"' in cleaned_json
+        cleaned_bounded = redact_value(bounded_value, 2000)
+        assert "first" not in cleaned_bounded
+        assert "secret-part" not in cleaned_bounded
+        assert cleaned_bounded.endswith("\n…[truncated]")
+
+
+def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:
+    raw = '"pass\x1b[31mword"="first secret words" visible'
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert "first secret words" not in cleaned
+        assert "visible" in cleaned
+        assert "[redacted]" in cleaned
+
+
+def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
+    for redact_value in (
+        lambda value: redact_shared(value, limit=None),
+        lambda value: redact_lane_text(value, limit=None),
+    ):
+        assert redact_value("Mask password=value and token=other") == (
+            "Mask [redacted] and [redacted]"
+        )
+        assert redact_value('password="two word value" visible') == (
+            'password="[redacted]" visible'
+        )
+        assert redact_value('{"password":"two word value","visible":"ok"}') == (
+            '{"password":"[redacted]","visible":"ok"}'
+        )
+
+
+@pytest.mark.parametrize(
     "raw",
     [
         "\x1bopaque-credential",

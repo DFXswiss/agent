@@ -1408,7 +1408,58 @@ def phase_tests(
         )
         c = coord(task)
         finalization_state = copy.deepcopy(_report_checkpoint_state(task))
-        live_state = pr_state(store, worker, task, runner)
+
+        def current_waiver_context() -> tuple[
+            dict[str, Any] | None, list[str] | None
+        ]:
+            live = _stable_live_pr_context(store, worker, task, runner)
+            if live is None:
+                return None, [
+                    "PR state temporarily unavailable before A38 inventory waiver "
+                    "finalization; retrying"
+                ]
+            identity_mismatch = (
+                live.get("repo") != cfg.repo
+                or live.get("number") != number
+            )
+            head_mismatch = live.get("head") != head
+            base_mismatch = (
+                live.get("base_sha") != base_sha
+                or live.get("base_name") != cfg.base
+            )
+            if not (identity_mismatch or head_mismatch or base_mismatch):
+                return live, None
+            state = str(live.get("state") or "")
+            reason = "A38 inventory waiver invalidated by live pull request metadata"
+            if state == "OPEN":
+                _retire_post_suite_checkpoint(
+                    store,
+                    task,
+                    reason=reason,
+                    phase="tests",
+                    head=str(live["head"]) if head_mismatch else None,
+                    base_sha=str(live["base_sha"]) if base_mismatch else None,
+                )
+                return None, [
+                    "PR metadata changed after A38 inventory measurement; "
+                    "invalidating the waiver and remeasuring"
+                ]
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="await_merge",
+            )
+            return None, [
+                f"PR {state.lower()} with changed A38 inventory metadata; "
+                "verifying the merge without promoting the waiver"
+            ]
+
+        live, context_lines = current_waiver_context()
+        if context_lines is not None:
+            return context_lines
+        assert live is not None
+        live_state = str(live["state"])
         if live_state in ("MERGED", "CLOSED"):
             _finalize_report_evidence(
                 store,
@@ -1433,6 +1484,11 @@ def phase_tests(
             raise CoordinatorError(
                 "published pull request head differs from the A38 waiver head"
             )
+        live, context_lines = current_waiver_context()
+        if context_lines is not None:
+            return context_lines
+        assert live is not None
+        live_state = str(live["state"])
         _finalize_report_evidence(
             store,
             worker,
@@ -1445,6 +1501,11 @@ def phase_tests(
             waiver_reason=waiver_reason,
             coordinator_check_command=(check_label(c, cfg) if cfg.check_argv else None),
         )
+        if live_state in ("MERGED", "CLOSED"):
+            return [
+                f"PR {live_state.lower()} during the A38 inventory waiver; "
+                "verifying the merge"
+            ]
         return [f"A38 report waived on {head[:7]} ({waiver_reason})", *draft_lines]
     a38.pop("report_waiver", None)
     evidence = c.get("evidence")

@@ -9654,6 +9654,7 @@ def test_a38_new_head_is_checkpointed_on_first_measurement_tick(
         lambda *args, **kwargs: (fake.base, ["README.md"], True, False),
     )
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *args: [])
+    fake.pr["headRefOid"] = new_head
 
     lines = phase_tests(store, worker, store.row("task", task_id), fake)
 
@@ -10570,6 +10571,14 @@ def test_pending_post_suite_checkpoint_unreadable_pr_retries_without_effects(
         },
     }
     store.write("task", "insert", tid, task)
+    reconciled: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        lambda *_a, **_k: reconciled.append("rejection") or [
+            "rejection comment retried"
+        ],
+    )
     monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *_a, **_k: None)
     monkeypatch.setattr(
         coordinator_runtime,
@@ -10596,10 +10605,157 @@ def test_pending_post_suite_checkpoint_unreadable_pr_retries_without_effects(
     )
 
     assert lines == [
+        "rejection comment retried",
         "PR state temporarily unavailable before A38 checkpoint recovery; retrying"
     ]
+    assert reconciled == ["rejection"]
     assert store.row("task", tid) == before
     assert store.rows("activity") == []
+
+
+@pytest.mark.parametrize("closed_state", ["MERGED", "CLOSED"])
+def test_pending_post_suite_assignment_failure_resumes_checkpoint_after_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    closed_state: str,
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    tid = "33333333-3333-4333-8333-3333333333af"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "local-check",
+            "payload": {
+                "coordinator": {
+                    "phase": "tests",
+                    "pr_number": 42,
+                    "source": {"repo": "example/project", "number": 7},
+                    "a38": {"post_suite_checkpoint": {"pending": True}},
+                }
+            },
+        },
+    )
+    states = iter(("OPEN", closed_state))
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *_a, **_k: next(states)
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_execution_binding", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "_verify_source_assigned",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CoordinatorError("source issue is no longer assigned")
+        ),
+    )
+    resumed: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_tests",
+        lambda *_a, **_k: resumed.append(
+            _a[2]["payload"]["coordinator"]["phase"]
+        ) or ["checkpoint resumed"],
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "publish_blocker",
+        lambda *_a, **_k: pytest.fail("assignment blocker was published"),
+    )
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    assert lines == ["checkpoint resumed"]
+    assert resumed == ["tests"]
+
+
+@pytest.mark.parametrize("closed_state", ["MERGED", "CLOSED"])
+def test_blocked_post_suite_checkpoint_resumes_after_close_without_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    closed_state: str,
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    tid = "33333333-3333-4333-8333-3333333333bf"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "local-check",
+            "payload": {
+                "coordinator": {
+                    "phase": "blocked",
+                    "resume_phase": "tests",
+                    "blocker": "source issue is no longer assigned",
+                    "pr_number": 42,
+                    "source": {"repo": "example/project", "number": 7},
+                    "a38": {"post_suite_checkpoint": {"pending": True}},
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *_a, **_k: closed_state
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "refresh_execution_binding",
+        lambda *_a, **_k: pytest.fail("binding refresh ran"),
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "_verify_source_assigned",
+        lambda *_a, **_k: pytest.fail("assignment check ran"),
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_blocked",
+        lambda *_a, **_k: pytest.fail("reply-gated blocked phase ran"),
+    )
+    resumed: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_tests",
+        lambda *_a, **_k: resumed.append(
+            _a[2]["payload"]["coordinator"]["phase"]
+        ) or ["checkpoint resumed"],
+    )
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    assert lines == ["checkpoint resumed"]
+    assert resumed == ["tests"]
 
 
 def _post_suite_recovery_fixture(
@@ -10834,24 +10990,28 @@ def test_a38_pr_left_open_routes_only_a_definite_merge_or_close(monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
-    ("paths", "reason", "live_state"),
+    ("paths", "reason", "live_state", "live_base"),
     [
-        (["docs/guide.md", "README.md"], "markdown-only change set", None),
+        (["docs/guide.md", "README.md"], "markdown-only change set", None, None),
         (
             ["docs/guide.md", ".github/workflows/a38-guard.yml"],
             "guard-docs change set",
             None,
+            None,
         ),
-        (["docs/guide.md"], "markdown-only change set", "MERGED"),
-        (["docs/guide.md"], "markdown-only change set", "CLOSED"),
+        (["docs/guide.md"], "markdown-only change set", "MERGED", None),
+        (["docs/guide.md"], "markdown-only change set", "CLOSED", None),
+        (["docs/guide.md"], "markdown-only change set", "OPEN", "d" * 40),
+        (["docs/guide.md"], "markdown-only change set", "MERGED", "d" * 40),
     ],
 )
-def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
+def test_a38_inventory_waiver_finalization_uses_live_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     paths: list[str],
     reason: str,
     live_state: str | None,
+    live_base: str | None,
 ) -> None:
     from dataclasses import replace
 
@@ -10953,14 +11113,23 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
         "agent_cli.coordinator_a38._run_cli",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("suite must be waived")),
     )
-    if live_state is None:
+    actual_state = live_state or "OPEN"
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context",
+        lambda *a, **k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": live_base or base,
+            "base_name": "develop",
+            "state": actual_state,
+        },
+    )
+    if actual_state == "OPEN":
         monkeypatch.setattr(
             "agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: []
         )
     else:
-        monkeypatch.setattr(
-            "agent_cli.coordinator_a38.pr_state", lambda *a, **k: live_state
-        )
         monkeypatch.setattr(
             "agent_cli.coordinator_a38.ensure_draft",
             lambda *a, **k: (_ for _ in ()).throw(
@@ -10981,6 +11150,26 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
 
     saved = store.row("task", tid)
     checkpoint = saved["payload"]["coordinator"]
+    if live_base is not None:
+        if actual_state == "OPEN":
+            assert lines == [
+                "PR metadata changed after A38 inventory measurement; "
+                "invalidating the waiver and remeasuring"
+            ]
+            assert checkpoint["phase"] == "tests"
+            assert checkpoint["a38"]["pending_base_sha"] == live_base
+        else:
+            assert lines == [
+                "PR merged with changed A38 inventory metadata; "
+                "verifying the merge without promoting the waiver"
+            ]
+            assert checkpoint["phase"] == "await_merge"
+        assert "report_waiver" not in checkpoint["a38"]
+        assert "base_sha" not in checkpoint["a38"]
+        checklist_status = _checklist_status(store, tid)
+        assert checklist_status["local_check_pass"] == "pending"
+        assert checklist_status["pushed"] == "pending"
+        return
     if live_state is not None:
         assert lines == [
             f"PR {live_state.lower()} during the A38 inventory waiver; "
