@@ -828,5 +828,289 @@ class TestPrReviewerWithoutSlot(unittest.TestCase):
         )
 
 
+class TestRegistryCheckClose(unittest.TestCase):
+    def test_registry_check_closes_with_script_source(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="script",
+            evidence="x",
+            snapshot={"registry_action": "implement", "source_kind": "order"},
+            status="ja",
+        )
+
+        self.assertTrue(verdict.allowed)
+        self.assertEqual(verdict.reason, "allow")
+        self.assertIsNone(verdict.step)
+
+    def test_registry_check_accepts_pending_without_evidence(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="script",
+            evidence=None,
+            snapshot={"registry_action": "implement", "source_kind": "order"},
+            status="pending",
+        )
+
+        self.assertTrue(verdict.allowed)
+        self.assertEqual(verdict.reason, "allow")
+        self.assertIsNone(verdict.step)
+
+    def test_registry_check_refuses_unknown_status(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="script",
+            evidence="x",
+            snapshot={"registry_action": "implement", "source_kind": "order"},
+            status="done",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(
+            verdict.reason,
+            "check status must be pending|ja|nein|n_a|unavailable",
+        )
+        self.assertIsNone(verdict.step)
+
+    def test_registry_check_refuses_n_a(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="script",
+            evidence="x",
+            snapshot={"registry_action": "implement", "source_kind": "order"},
+            status="n_a",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, "n_a is not declared for spec_available")
+        self.assertIsNone(verdict.step)
+
+    def test_registry_check_requires_evidence(self) -> None:
+        for evidence in ("", "  "):
+            with self.subTest(evidence=evidence):
+                verdict = close_allowed(
+                    "implement",
+                    "spec_available",
+                    checklist={},
+                    source="script",
+                    evidence=evidence,
+                    snapshot={
+                        "registry_action": "implement",
+                        "source_kind": "order",
+                    },
+                    status="nein",
+                )
+
+                self.assertFalse(verdict.allowed)
+                self.assertEqual(verdict.reason, "spec_available requires evidence")
+                self.assertIsNone(verdict.step)
+
+    def test_registry_check_outside_its_action_is_refused(self) -> None:
+        cases = (
+            (
+                "duplicates_checked",
+                {"registry_action": "tests", "source_kind": "order"},
+                "duplicates_checked is not a check of action tests",
+            ),
+            (
+                "spec_available",
+                {"registry_action": "implement", "source_kind": "github-issue"},
+                "spec_available is not a check of action implement",
+            ),
+            (
+                "spec_available",
+                None,
+                "spec_available is not a check of action -",
+            ),
+        )
+        for key, snapshot, reason in cases:
+            with self.subTest(key=key, snapshot=snapshot):
+                verdict = close_allowed(
+                    "implement",
+                    key,
+                    checklist={},
+                    source="script",
+                    evidence="x",
+                    snapshot=snapshot,
+                    status="ja",
+                )
+
+                self.assertFalse(verdict.allowed)
+                self.assertEqual(verdict.reason, reason)
+                self.assertIsNone(verdict.step)
+
+    def test_registry_check_refuses_other_sources(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="runner",
+            evidence="x",
+            snapshot={"registry_action": "implement", "source_kind": "order"},
+            status="ja",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(
+            verdict.reason,
+            "spec_available requires --source script (got runner)",
+        )
+        self.assertIsNone(verdict.step)
+
+    def test_registry_check_refuses_human_source_without_override(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "duplicates_checked",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot={"registry_action": "open_draft", "source_kind": "order"},
+            status="ja",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(
+            verdict.reason,
+            "duplicates_checked requires --source script (got human)",
+        )
+        self.assertIsNone(verdict.step)
+
+    def test_overridable_check_accepts_a_named_override(self) -> None:
+        snapshot = {
+            "registry_action": "open_draft",
+            "source_kind": "order",
+            "override": {"by": "owner", "reason": "different goal"},
+        }
+        allowed = close_allowed(
+            "implement",
+            "duplicates_checked",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot=snapshot,
+            status="ja",
+        )
+        refused = close_allowed(
+            "implement",
+            "duplicates_checked",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot=snapshot,
+            status="nein",
+        )
+
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(allowed.reason, "allow")
+        self.assertIsNone(allowed.step)
+        self.assertFalse(refused.allowed)
+        self.assertEqual(
+            refused.reason,
+            "duplicates_checked requires --source script (got human)",
+        )
+        self.assertIsNone(refused.step)
+
+    def test_non_overridable_check_refuses_override(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot={
+                "registry_action": "implement",
+                "source_kind": "order",
+                "override": {"by": "owner", "reason": "x"},
+            },
+            status="ja",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, "spec_available cannot be overridden")
+        self.assertIsNone(verdict.step)
+
+    def test_skippable_check_accepts_a_named_skip(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "duplicates_checked",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot={
+                "registry_action": "open_draft",
+                "source_kind": "order",
+                "skip": {"by": "owner", "reason": "no duplicate exists"},
+            },
+            status="ja",
+        )
+
+        self.assertTrue(verdict.allowed)
+        self.assertEqual(verdict.reason, "allow")
+        self.assertIsNone(verdict.step)
+
+    def test_non_skippable_check_refuses_a_skip(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "spec_available",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot={
+                "registry_action": "implement",
+                "source_kind": "order",
+                "skip": {"by": "owner", "reason": "x"},
+            },
+            status="ja",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, "spec_available cannot be skipped")
+        self.assertIsNone(verdict.step)
+
+    def test_skip_needs_who_and_why(self) -> None:
+        verdict = close_allowed(
+            "implement",
+            "duplicates_checked",
+            checklist={},
+            source="human",
+            evidence="x",
+            snapshot={
+                "registry_action": "open_draft",
+                "source_kind": "order",
+                "skip": {"by": "", "reason": "x"},
+            },
+            status="ja",
+        )
+
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(
+            verdict.reason,
+            "duplicates_checked requires --source script (got human)",
+        )
+        self.assertIsNone(verdict.step)
+
+    def test_unknown_key_stays_unknown(self) -> None:
+        for key in ("no_such_key", "draft_open"):
+            with self.subTest(key=key):
+                verdict = close_allowed(
+                    "implement",
+                    key,
+                    checklist={},
+                    source="script",
+                    evidence="x",
+                )
+
+                self.assertFalse(verdict.allowed)
+                self.assertEqual(verdict.reason, f"unknown key {key}")
+                self.assertIsNone(verdict.step)
+
+
 if __name__ == "__main__":
     unittest.main()

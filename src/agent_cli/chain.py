@@ -31,6 +31,7 @@ from .model_slots import (
     parse_model_slots,
 )
 from .pr_guard_config import one_review_for
+from .preconditions import ACTIONS, CHECKS, CHECK_STATUSES
 
 KINDS = ("script", "agent", "human")
 # Who may set ja on these keys (source).
@@ -310,6 +311,11 @@ def close_allowed(
     checklist = canonical_checklist(checklist)
     step = find_step(workflow, key)
     if step is None:
+        check = CHECKS.get(key)
+        if check is not None and check.fact == "registry":
+            return _check_close_allowed(
+                check, status=status, source=source, evidence=evidence, snapshot=snapshot or {}
+            )
         return CloseVerdict(False, f"unknown key {key}", None)
     if status not in CLOSE_STATUSES:
         return CloseVerdict(False, "close-step --status must be ja|n_a|unavailable", step)
@@ -383,6 +389,73 @@ def close_allowed(
     if extra:
         return CloseVerdict(False, extra, step)
     return CloseVerdict(True, "allow", step)
+
+
+def _named(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _check_close_allowed(
+    check,
+    *,
+    status: str,
+    source: str,
+    evidence: str | None,
+    snapshot: Mapping[str, Any],
+) -> CloseVerdict:
+    """May a coordinator precondition check be written with this status and source?"""
+    key = check.key
+    if status not in CHECK_STATUSES:
+        return CloseVerdict(
+            False,
+            "check status must be pending|ja|nein|n_a|unavailable",
+            None,
+        )
+    if status == "n_a" and not check.n_a_ok:
+        return CloseVerdict(False, f"n_a is not declared for {key}", None)
+    if status != "pending" and (not evidence or not str(evidence).strip()):
+        return CloseVerdict(False, f"{key} requires evidence", None)
+    action_name = str(snapshot.get("registry_action") or "")
+    action = ACTIONS.get(action_name)
+    kind = snapshot.get("source_kind")
+    if action is None or not any(
+        requirement.check == key and kind in requirement.kinds
+        for requirement in action.requires
+    ):
+        return CloseVerdict(
+            False,
+            f"{key} is not a check of action {action_name or '-'}",
+            None,
+        )
+    if source == "script":
+        return CloseVerdict(True, "allow", None)
+    if source != "human":
+        return CloseVerdict(
+            False,
+            f"{key} requires --source script (got {source})",
+            None,
+        )
+    skip = snapshot.get("skip")
+    if isinstance(skip, Mapping):
+        if not check.skippable:
+            return CloseVerdict(False, f"{key} cannot be skipped", None)
+        grant = skip
+    else:
+        if not check.overridable:
+            return CloseVerdict(False, f"{key} cannot be overridden", None)
+        grant = snapshot.get("override")
+    if (
+        status == "ja"
+        and isinstance(grant, Mapping)
+        and _named(grant.get("by"))
+        and _named(grant.get("reason"))
+    ):
+        return CloseVerdict(True, "allow", None)
+    return CloseVerdict(
+        False,
+        f"{key} requires --source script (got human)",
+        None,
+    )
 
 
 def _late_inner_skip(

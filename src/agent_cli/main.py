@@ -87,6 +87,7 @@ from .model_slots import (
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
+from .preconditions import REGISTRY_KEYS
 from .runtime import (
     PreflightRuntime,
     Runtime,
@@ -206,6 +207,8 @@ ACTIVITY_TYPES = frozenset(
         "usage.snapshot",
         "lane.run",
         "supervise.event",
+        "order.event",
+        "order.reply",
     }
 )
 SCRIPT_ONLY_ACTIVITY = frozenset(
@@ -220,6 +223,8 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "error.seen",
         "supervise.event",
         "issue.assigned.ack",
+        "order.event",
+        "order.reply",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -984,6 +989,8 @@ def cmd_checklist(args: list[str]) -> None:
     supplied_key = require_flag(rest, "--key")
     key = canonical_key(supplied_key)
     _warn_deprecated_name(supplied_key, key)
+    if key in REGISTRY_KEYS:
+        die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     status = require_flag(rest, "--status")
     source = require_flag(rest, "--source")
     if status not in CHECKLIST_STATUSES:
@@ -3245,6 +3252,8 @@ def cmd_close_step(args: list[str]) -> None:
             "Usage: agent close-step --task ID --key KEY --source script|human|runner "
             "--evidence TEXT [--status ja|n_a|unavailable] [--head SHA]"
         )
+    if key in REGISTRY_KEYS:
+        die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     if status not in CLOSE_STATUSES:
         die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
