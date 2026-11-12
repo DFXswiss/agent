@@ -12,11 +12,14 @@ Callers supply the parsed catalogue and configs; this module only
 applies the rules. Unusable input is reported as a problem rather than
 silently read as healthy, with one documented exception: a catalogue entry
 the original's own reader drops without complaint — a null, or a mapping
-whose id is null, false or empty — is dropped here too. Everywhere this
-port departs from the original it departs by being stricter, reporting
-something the original would have run; it never passes something the
-original refuses. `unresolved_skills` says where and why.
-None of these functions raise.
+whose id is null, false or empty — is dropped here too.
+
+Departures from the original are mostly stricter, reporting something the
+original would have run. One is deliberately laxer: `runner_config_problems`
+accepts a configuration with no `skills` table at all, which the original's
+rule rejects, because the supervisor runs that configuration and reporting
+it would be a false alarm. `unresolved_skills` and `runner_config_problems`
+say where and why for each. None of these functions raise.
 """
 
 from __future__ import annotations

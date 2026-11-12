@@ -67,10 +67,16 @@ def prunable(rows: list[dict[str, Any]], *, state: str, now_epoch: int, days: in
     Skip — never prune — a row whose `id` is not a string with
     non-whitespace content, whose `finished` field is missing, or whose
     `finished` field does not parse via `iso_epoch`. Wrong-shaped input yields an empty list.
-    `days` must be a non-negative int (`bool` is rejected). Strictly
-    less than.
+    `state` must be a non-empty string and `days` a non-negative int
+    (`bool` is rejected). Strictly less than.
     """
     if not isinstance(rows, list):
+        return []
+    # Without this a `state` of None would match every row whose state is
+    # missing or null and hand exactly those malformed rows over for
+    # deletion: the filter below is an equality test, so the target has to
+    # be a real state before comparing against it is safe.
+    if not isinstance(state, str) or not state:
         return []
     if not isinstance(now_epoch, int) or isinstance(now_epoch, bool):
         return []

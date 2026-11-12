@@ -232,6 +232,22 @@ def test_prunable_returns_an_empty_list_for_a_bool_days_value() -> None:
     assert prunable(rows, state="done", now_epoch=1768435200, days=True) == []
 
 
+def test_prunable_deletes_nothing_when_the_target_state_is_not_a_real_state() -> None:
+    # The filter is an equality test, so a target of None would match every
+    # row whose state is missing or null and hand those malformed rows over
+    # for deletion. The rows here are old enough to qualify on time alone.
+    rows = [
+        {"id": "no-state", "finished": "2020-01-01T00:00:00Z"},
+        {"id": "null-state", "state": None, "finished": "2020-01-01T00:00:00Z"},
+        {"id": "blank-state", "state": "", "finished": "2020-01-01T00:00:00Z"},
+    ]
+    for bad in (None, "", 7):
+        assert prunable(rows, state=bad, now_epoch=1768435200, days=7) == [], f"{bad!r}"  # type: ignore[arg-type]
+    # Control: a real state on the same ancient timestamps does prune.
+    rows.append({"id": "done", "state": "done", "finished": "2020-01-01T00:00:00Z"})
+    assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["done"]
+
+
 # ---------------------------------------------------------------- retry_payload
 
 
