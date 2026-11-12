@@ -3438,6 +3438,11 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             store.row("task", tid),
             _latest_gates(store, tid),
             [row for row in store.rows("checklist_item") if row.get("task_id") == tid],
+            [
+                {key: row.get(key) for key in ("id", "name", "result", "ran_at")}
+                for row in store.rows("local_check")
+                if row.get("task_id") == tid
+            ],
         )
 
     original_evidence = ledger_evidence()

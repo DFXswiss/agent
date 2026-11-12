@@ -957,12 +957,13 @@ def test_task_close_from_pr_reviewed_ancestor(
             assert _CLOSE_HEAD in item["evidence"]
 
 
-@pytest.mark.parametrize("change", ["review_gate", "checklist_item", "task"])
+@pytest.mark.parametrize("change", ["review_gate", "checklist_item", "task", "local_check"])
 def test_task_close_from_pr_ledger_changed_before_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     change: str,
 ) -> None:
     tid = _close_from_pr_fixture(tmp_path, capsys)
+    before = _close_rows(tmp_path, tid)
     original = Store.write_many
     changed_rows = None
 
@@ -978,6 +979,16 @@ def test_task_close_from_pr_ledger_changed_before_write(
             item["status"] = "pending"
             item["evidence"] = "changed during lookup"
             self.write(change, "update", item["id"], item)
+        elif change == "local_check":
+            cid = str(uuid.uuid4())
+            self.write(change, "insert", cid, {
+                "id": cid,
+                "task_id": tid,
+                "name": "concurrent-check",
+                "command": "concurrent-check",
+                "result": "fail",
+                "ran_at": utcnow(),
+            })
         else:
             task = self.row("task", tid)
             task["payload"] = dict(task.get("payload") or {})
@@ -992,6 +1003,8 @@ def test_task_close_from_pr_ledger_changed_before_write(
     assert f"task {tid} not closed: ledger changed during close; retry" in capsys.readouterr().out
     assert changed_rows is not None
     assert _close_rows(tmp_path, tid) == changed_rows
+    if change == "local_check":
+        assert changed_rows == before
 
 
 def test_task_close_from_pr_human_merge_completes_ready_task_and_aborts_agents(
