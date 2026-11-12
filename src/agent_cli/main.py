@@ -3433,6 +3433,17 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     if not repo or not number:
         die("no pull request attached")
 
+    def ledger_evidence() -> tuple:
+        return (
+            store.row("task", tid),
+            _latest_gates(store, tid),
+            [row for row in store.rows("checklist_item") if row.get("task_id") == tid],
+        )
+
+    original_evidence = ledger_evidence()
+    if original_evidence[0] is None or _strip(original_evidence[0]) != _strip(task):
+        die("ledger changed during close; retry")
+
     runner = _bound_review_runner(store, task)
     try:
         response = runner(["gh", "api", f"repos/{repo}/pulls/{number}"])
@@ -3476,14 +3487,26 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             die("review-1 gates must share one reviewed head")
         reviewed_head = gate_head
 
+    pre_merge_base = ""
     if reviewed_head != head_sha:
-        base = pull.get("base")
-        base_sha = str(base.get("sha") or "").strip() if isinstance(base, dict) else ""
-        if not base_sha:
-            die("pull request base is missing")
+        try:
+            commit = runner(["gh", "api", f"repos/{repo}/commits/{merge_commit_sha}"])
+        except AccountError as exc:
+            die(str(exc))
+        if commit.returncode != 0:
+            die("pre-merge base could not be read")
+        try:
+            body = json.loads(commit.stdout or "{}")
+        except json.JSONDecodeError:
+            die("pre-merge base is invalid")
+        parents = body.get("parents") if isinstance(body, dict) else None
+        if isinstance(parents, list) and parents and isinstance(parents[0], dict):
+            pre_merge_base = str(parents[0].get("sha") or "").strip()
+        if not pre_merge_base:
+            die("pre-merge base is missing")
         for start, end, statuses in (
             (reviewed_head, head_sha, {"ahead", "identical"}),
-            (base_sha, reviewed_head, {"ahead"}),
+            (pre_merge_base, reviewed_head, {"ahead", "diverged"}),
         ):
             try:
                 comparison = runner(["gh", "api", f"repos/{repo}/compare/{start}...{end}"])
@@ -3497,6 +3520,10 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                 die("reviewed head ancestry is invalid")
             if not isinstance(body, dict) or body.get("status") not in statuses:
                 die("reviewed head is not after the base and contained in the merged head")
+            if start == pre_merge_base:
+                ahead_by = body.get("ahead_by")
+                if type(ahead_by) is not int or ahead_by <= 0:
+                    die("reviewed head is not after the pre-merge base")
 
     state = str(task.get("state") or "")
     writes: list[tuple[str, str, str]] = []
@@ -3618,6 +3645,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             "head_sha": head_sha,
             "reviewed_head": reviewed_head,
             "merge_commit_sha": merge_commit_sha,
+            "pre_merge_base": pre_merge_base,
             "merged_by": merged_login,
             "merged_at": merged_at,
             "unbooked": blocking,
@@ -3625,7 +3653,12 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
         current["payload"] = current_payload
         current["updated_at"] = utcnow()
         batch.append(("task", "update", tid, _strip(current)))
-        store.write_many(batch)
+
+        def check_ledger() -> None:
+            if ledger_evidence() != original_evidence:
+                die("ledger changed during close; retry")
+
+        store.write_many(batch, check=check_ledger)
         state = str(current["state"])
 
     note = f"task closed from merged PR {repo}#{number}"

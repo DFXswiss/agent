@@ -840,10 +840,12 @@ def _assert_close_no_write(
     capsys: pytest.CaptureFixture[str],
     tid: str,
     pull: dict,
+    *,
+    comparisons: dict | None = None,
 ) -> None:
     before = _close_rows(tmp_path, tid)
     with pytest.raises(SystemExit):
-        _run_close(monkeypatch, tmp_path, tid, pull)
+        _run_close(monkeypatch, tmp_path, tid, pull, comparisons=comparisons)
     assert f"task {tid} not closed:" in capsys.readouterr().out
     assert _close_rows(tmp_path, tid) == before
 
@@ -899,7 +901,11 @@ def test_task_close_from_pr_transaction_rolls_back_then_retries(
     [("ahead", "ahead", True), ("identical", "ahead", True),
      ("diverged", "ahead", False), ("ahead", "behind", False),
      ("ahead", "identical", False), ("invalid", "ahead", False),
-     ("error", "ahead", False)],
+     ("error", "ahead", False), ("ahead", "diverged", True),
+     ("ahead", "zero", False), ("ahead", "missing_parents", False),
+     ("ahead", "missing_ahead_by", False), ("ahead", "bool_ahead_by", False),
+     ("ahead", "invalid_base", False), ("ahead", "error_base", False),
+     ("ahead", "invalid_commit", False), ("ahead", "error_commit", False)],
 )
 def test_task_close_from_pr_reviewed_ancestor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -911,15 +917,30 @@ def test_task_close_from_pr_reviewed_ancestor(
     before = _close_rows(tmp_path, tid)
     merged_head, base = "b" * 40, "c" * 40
     comparisons = {
+        f"repos/DFXswiss/agent/commits/{_CLOSE_MERGE}": Completed(
+            1 if after_base == "error_commit" else 0,
+            "{" if after_base == "invalid_commit" else json.dumps({
+                "parents": [] if after_base == "missing_parents" else [{"sha": base}],
+            }), "",
+        ),
         f"repos/DFXswiss/agent/compare/{_CLOSE_HEAD}...{merged_head}": Completed(
             1 if contains == "error" else 0,
             "{" if contains == "invalid" else json.dumps({"status": contains}), "",
         ),
         f"repos/DFXswiss/agent/compare/{base}...{_CLOSE_HEAD}": Completed(
-            0, json.dumps({"status": after_base}), "",
+            1 if after_base == "error_base" else 0,
+            "{" if after_base == "invalid_base" else json.dumps({
+                "status": after_base if after_base in {"behind", "identical", "diverged"} else "ahead",
+                **({} if after_base == "missing_ahead_by" else {
+                    "ahead_by": True if after_base == "bool_ahead_by" else (
+                        1 if after_base in {"ahead", "diverged"} else 0
+                    ),
+                }),
+            }), "",
         ),
     }
-    pull = _close_pull(head={"sha": merged_head}, base={"sha": base})
+    # The live base is already the post-merge tip; only the first parent counts.
+    pull = _close_pull(head={"sha": merged_head}, base={"sha": merged_head})
     if not closes:
         with pytest.raises(SystemExit):
             _run_close(monkeypatch, tmp_path, tid, pull, comparisons=comparisons)
@@ -930,9 +951,47 @@ def test_task_close_from_pr_reviewed_ancestor(
     assert task["state"] == "done"
     assert task["payload"]["merge_close"]["reviewed_head"] == _CLOSE_HEAD
     assert task["payload"]["merge_close"]["head_sha"] == merged_head
+    assert task["payload"]["merge_close"]["pre_merge_base"] == base
     for item in checklist:
         if item["key"].startswith("review_1_"):
             assert _CLOSE_HEAD in item["evidence"]
+
+
+@pytest.mark.parametrize("change", ["review_gate", "checklist_item", "task"])
+def test_task_close_from_pr_ledger_changed_before_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    change: str,
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    original = Store.write_many
+    changed_rows = None
+
+    def change_then_write(self, writes, **kwargs):
+        nonlocal changed_rows
+        if change == "review_gate":
+            gate = next(row for row in self.rows(change)
+                        if row.get("task_id") == tid and row.get("stage") == "review-1")
+            gate["verdict"] = "rejected"
+            self.write(change, "update", gate["id"], gate)
+        elif change == "checklist_item":
+            item = next(row for row in self.rows(change) if row.get("task_id") == tid)
+            item["status"] = "pending"
+            item["evidence"] = "changed during lookup"
+            self.write(change, "update", item["id"], item)
+        else:
+            task = self.row("task", tid)
+            task["payload"] = dict(task.get("payload") or {})
+            task["payload"]["summary_en"] = "Changed during lookup."
+            self.write("task", "update", tid, task)
+        changed_rows = _close_rows(tmp_path, tid)
+        return original(self, writes, **kwargs)
+
+    monkeypatch.setattr(Store, "write_many", change_then_write)
+    with pytest.raises(SystemExit):
+        _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    assert f"task {tid} not closed: ledger changed during close; retry" in capsys.readouterr().out
+    assert changed_rows is not None
+    assert _close_rows(tmp_path, tid) == changed_rows
 
 
 def test_task_close_from_pr_human_merge_completes_ready_task_and_aborts_agents(
@@ -1076,8 +1135,25 @@ def test_task_close_from_pr_missing_merge_commit_writes_nothing(
 def test_task_close_from_pr_mismatched_gate_head_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    from agent_cli.runtime import Completed
+
     tid = _close_from_pr_fixture(tmp_path, capsys)
-    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull(head={"sha": "f" * 40}))
+    merged_head, base = "f" * 40, "c" * 40
+    comparisons = {
+        f"repos/DFXswiss/agent/commits/{_CLOSE_MERGE}": Completed(
+            0, json.dumps({"parents": [{"sha": base}]}), "",
+        ),
+        f"repos/DFXswiss/agent/compare/{_CLOSE_HEAD}...{merged_head}": Completed(
+            0, json.dumps({"status": "diverged"}), "",
+        ),
+        f"repos/DFXswiss/agent/compare/{base}...{_CLOSE_HEAD}": Completed(
+            0, json.dumps({"status": "ahead", "ahead_by": 1}), "",
+        ),
+    }
+    _assert_close_no_write(
+        monkeypatch, tmp_path, capsys, tid, _close_pull(head={"sha": merged_head}),
+        comparisons=comparisons,
+    )
 
 
 def test_task_close_from_pr_single_first_review_gate_writes_nothing(

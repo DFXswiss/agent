@@ -80,6 +80,25 @@ def test_write_many_commits_together_and_rolls_back_second_failure(
         store.close()
 
 
+def test_write_many_failing_check_rolls_back_all_writes(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        def check() -> None:
+            # A write through this connection proves the check shares the transaction.
+            store._write_in_txn("session", "insert", "check", {"id": "check"})
+            raise RuntimeError("ledger changed")
+
+        with pytest.raises(RuntimeError, match="ledger changed"):
+            store.write_many(
+                [("session", "insert", "batch", {"id": "batch"})], check=check,
+            )
+        assert store.row("session", "check") is None
+        assert store.row("session", "batch") is None
+        assert store.pending_events() == []
+    finally:
+        store.close()
+
+
 def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None:
     store = Store(tmp_path)
     for row_id in ("a-row", "c-row", "b-row"):
