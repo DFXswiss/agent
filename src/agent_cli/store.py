@@ -283,6 +283,11 @@ class Store:
         with self._lock, self.conn.transaction():
             return self._write_in_txn(table, op, row_id, payload)
 
+    @_wrap_pg_errors
+    def write_many(self, writes: list[tuple[str, str, str, dict[str, Any]]]) -> list[dict[str, Any]]:
+        with self._lock, self.conn.transaction():
+            return [self._write_in_txn(*write) for write in writes]
+
     def write_with_advisory(
         self,
         table: str,

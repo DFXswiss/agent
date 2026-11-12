@@ -45,6 +45,7 @@ from .chain import (
     required_source,
     step_vendor,
     step_vendor_label,
+    steps_for,
     to_json as step_to_json,
 )
 from .github_act import _repo_ok
@@ -1071,6 +1072,7 @@ def _update_checklist_item(
     deviation_declared: bool | None = None,
     deviation_granted: bool | None = None,
     granted_by: str | None = None,
+    writes: list[tuple[str, str, str, dict]] | None = None,
 ) -> None:
     """Shared checklist mutation used by ``checklist set`` and trusted closers."""
     item["status"] = status
@@ -1083,7 +1085,11 @@ def _update_checklist_item(
     if granted_by is not None:
         item["granted_by"] = granted_by
     item["updated_at"] = utcnow()
-    store.write("checklist_item", "update", str(item["id"]), _strip(item))
+    write = ("checklist_item", "update", str(item["id"]), _strip(item))
+    if writes is None:
+        store.write(*write)
+    else:
+        writes.append(write)
 
 
 def cmd_round(args: list[str]) -> None:
@@ -3456,6 +3462,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
         first_vendor = models_from_snapshot(task).first
     except (TypeError, ValueError) as exc:
         die(str(exc))
+    reviewed_head = ""
     for dimension in ("quality", "logic"):
         gate = latest.get(("review-1", dimension))
         if gate is None:
@@ -3464,19 +3471,48 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             die(f"review-1/{dimension} gate is not approved")
         if gate.get("vendor") != first_vendor:
             die(f"review-1/{dimension} gate vendor does not match slot first")
-        if gate.get("head_sha") != head_sha:
-            die(f"review-1/{dimension} gate head does not match merged head")
+        gate_head = str(gate.get("head_sha") or "").strip()
+        if not gate_head or (reviewed_head and gate_head != reviewed_head):
+            die("review-1 gates must share one reviewed head")
+        reviewed_head = gate_head
+
+    if reviewed_head != head_sha:
+        base = pull.get("base")
+        base_sha = str(base.get("sha") or "").strip() if isinstance(base, dict) else ""
+        if not base_sha:
+            die("pull request base is missing")
+        for start, end, statuses in (
+            (reviewed_head, head_sha, {"ahead", "identical"}),
+            (base_sha, reviewed_head, {"ahead"}),
+        ):
+            try:
+                comparison = runner(["gh", "api", f"repos/{repo}/compare/{start}...{end}"])
+            except AccountError as exc:
+                die(str(exc))
+            if comparison.returncode != 0:
+                die("reviewed head ancestry could not be read")
+            try:
+                body = json.loads(comparison.stdout or "{}")
+            except json.JSONDecodeError:
+                die("reviewed head ancestry is invalid")
+            if not isinstance(body, dict) or body.get("status") not in statuses:
+                die("reviewed head is not after the base and contained in the merged head")
 
     state = str(task.get("state") or "")
     writes: list[tuple[str, str, str]] = []
     if state not in TERMINAL_STATES:
-        snap = _chain_snapshot(store, tid, extra_head=head_sha)
+        snap = _chain_snapshot(store, tid, extra_head=reviewed_head)
         checklist = dict(snap.get("checklist") or {})
-        for dimension in ("quality", "logic"):
-            key = f"review_1_{dimension}"
+        for step in steps_for(str(snap["workflow"])):
+            key = step.key
+            if key not in {"pushed", "review_1_quality", "review_1_logic"}:
+                continue
             if checklist.get(key) == "ja":
                 continue
-            evidence = f"gate review-1/{dimension} approved at {head_sha}"
+            evidence = (
+                reviewed_head if key == "pushed"
+                else f"gate review-1/{key.removeprefix('review_1_')} approved at {reviewed_head}"
+            )
             verdict = close_allowed(
                 str(snap["workflow"]),
                 key,
@@ -3489,20 +3525,6 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             if verdict.allowed:
                 writes.append((key, "ja", evidence))
                 checklist[key] = "ja"
-        if checklist.get("pushed") != "ja":
-            verdict = close_allowed(
-                str(snap["workflow"]),
-                "pushed",
-                checklist=checklist,
-                source="script",
-                evidence=head_sha,
-                snapshot={**snap, "checklist": checklist},
-                status="ja",
-            )
-            if verdict.allowed:
-                writes.append(("pushed", "ja", head_sha))
-                checklist["pushed"] = "ja"
-
         review_2_exists = any(
             canonical_stage(str(gate.get("stage") or "")) == "review-2"
             for gate in store.rows("review_gate")
@@ -3548,30 +3570,35 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
         for key, _status, _evidence in writes:
             if key not in checklist_items:
                 die(f"checklist {key} for task {tid} not found")
+        current = _need(store, "task", tid)
+        current_payload = dict(current.get("payload") or {})
         if any(status == "n_a" for _, status, _ in writes):
-            current = _need(store, "task", tid)
-            current_payload = (
-                dict(current.get("payload"))
-                if isinstance(current.get("payload"), dict)
-                else {}
-            )
             current_payload["one_review_author"] = {
                 "pull_opener": snap["pull_opener"],
                 "trusted_pr_guard": snap["trusted_pr_guard"],
             }
-            current["payload"] = current_payload
-            current["updated_at"] = utcnow()
-            store.write("task", "update", tid, _strip(current))
+        batch: list[tuple[str, str, str, dict]] = []
         for key, status, evidence in writes:
             item = checklist_items.get(key)
             assert item is not None
             _update_checklist_item(
-                store, item, status=status, source="script", evidence=evidence
+                store, item, status=status, source="script", evidence=evidence, writes=batch
             )
 
-        current = _need(store, "task", tid)
-        snap = load_task_dict(store, tid)
-        _attach_live_one_review(store, snap, row=current)
+        # Decide against the exact checklist and evidence collected for this transaction.
+        proposed_snap = load_task_dict(store, tid)
+        for key, status, evidence in writes:
+            proposed_snap["checklist"][key] = status
+            proposed_snap["checklist_evidence"][key] = evidence
+        if both_second_reviews_na(
+            proposed_snap["checklist"], proposed_snap["checklist_evidence"]
+        ):
+            if not isinstance(snap.get("trusted_pr_guard"), dict):
+                _attach_live_one_review(store, proposed_snap, row=current)
+            else:
+                proposed_snap["pull_opener"] = snap["pull_opener"]
+                proposed_snap["trusted_pr_guard"] = snap["trusted_pr_guard"]
+        snap = proposed_snap
         result = evaluate_allow(
             "task-done",
             session_id=str(current.get("session_id") or ""),
@@ -3585,23 +3612,20 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
             current["state"] = "done"
         else:
             current["state"] = "merged"
-            current_payload = (
-                dict(current.get("payload"))
-                if isinstance(current.get("payload"), dict)
-                else {}
-            )
-            current_payload["merge_close"] = {
-                "repo": repo,
-                "pr": int(number) if number.isdigit() else number,
-                "head_sha": head_sha,
-                "merge_commit_sha": merge_commit_sha,
-                "merged_by": merged_login,
-                "merged_at": merged_at,
-                "unbooked": blocking,
-            }
-            current["payload"] = current_payload
+        current_payload["merge_close"] = {
+            "repo": repo,
+            "pr": int(number) if number.isdigit() else number,
+            "head_sha": head_sha,
+            "reviewed_head": reviewed_head,
+            "merge_commit_sha": merge_commit_sha,
+            "merged_by": merged_login,
+            "merged_at": merged_at,
+            "unbooked": blocking,
+        }
+        current["payload"] = current_payload
         current["updated_at"] = utcnow()
-        store.write("task", "update", tid, _strip(current))
+        batch.append(("task", "update", tid, _strip(current)))
+        store.write_many(batch)
         state = str(current["state"])
 
     note = f"task closed from merged PR {repo}#{number}"

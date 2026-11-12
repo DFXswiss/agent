@@ -785,10 +785,12 @@ def _close_pull(**changes: object) -> dict:
     return pull
 
 
-def _close_gh(pull: dict, *, trusted: list[str] | None = None):
+def _close_gh(pull: dict, *, trusted: list[str] | None = None, comparisons: dict | None = None):
     from agent_cli.runtime import Completed
 
     def gh(argv: list[str]) -> Completed:
+        if comparisons is not None and argv[-1] in comparisons:
+            return comparisons[argv[-1]]
         if argv == ["gh", "api", "repos/DFXswiss/agent/pulls/149"]:
             return Completed(0, json.dumps(pull), "")
         if argv[:3] == ["gh", "pr", "view"]:
@@ -820,12 +822,13 @@ def _run_close(
     *,
     trusted: list[str] | None = None,
     session: bool = False,
+    comparisons: dict | None = None,
 ) -> None:
     from github_support import configure_accounts, transport
 
     configure_accounts(tmp_path, ["s"])
     monkeypatch.setattr(
-        "agent_cli.main._exec_argv", transport(_close_gh(pull, trusted=trusted))
+        "agent_cli.main._exec_argv", transport(_close_gh(pull, trusted=trusted, comparisons=comparisons))
     )
     selector = ["--session", "s"] if session else ["--id", tid]
     run(tmp_path, ["task", "close-from-pr", *selector])
@@ -845,6 +848,93 @@ def _assert_close_no_write(
     assert _close_rows(tmp_path, tid) == before
 
 
+def test_task_close_from_pr_books_push_before_first_reviews(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for item in store.rows("checklist_item"):
+            if item.get("task_id") == tid and item.get("key") == "pushed":
+                item["status"] = "pending"
+                store.write("checklist_item", "update", item["id"], item)
+    finally:
+        store.close()
+    _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    task, checklist, _ = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+    for key in ("pushed", "review_1_quality", "review_1_logic"):
+        assert next(item for item in checklist if item["key"] == key)["status"] == "ja"
+
+
+def test_task_close_from_pr_transaction_rolls_back_then_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys, review_2=False)
+    before = _close_rows(tmp_path, tid)
+    original = Store._write_in_txn
+    calls = 0
+
+    def fail_second(self, *args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("second write failed")
+        return original(self, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "_write_in_txn", fail_second)
+        with pytest.raises(RuntimeError, match="second write failed"):
+            _run_close(patch, tmp_path, tid, _close_pull(), trusted=["alice"])
+    assert calls == 2
+    assert _close_rows(tmp_path, tid) == before
+    _run_close(monkeypatch, tmp_path, tid, _close_pull(), trusted=["alice"])
+    task, checklist, _ = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+    assert all(item["status"] == "n_a" for item in checklist if item["key"].startswith("review_2_"))
+
+
+@pytest.mark.parametrize(
+    "contains,after_base,closes",
+    [("ahead", "ahead", True), ("identical", "ahead", True),
+     ("diverged", "ahead", False), ("ahead", "behind", False),
+     ("ahead", "identical", False), ("invalid", "ahead", False),
+     ("error", "ahead", False)],
+)
+def test_task_close_from_pr_reviewed_ancestor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    contains: str, after_base: str, closes: bool,
+) -> None:
+    from agent_cli.runtime import Completed
+
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    before = _close_rows(tmp_path, tid)
+    merged_head, base = "b" * 40, "c" * 40
+    comparisons = {
+        f"repos/DFXswiss/agent/compare/{_CLOSE_HEAD}...{merged_head}": Completed(
+            1 if contains == "error" else 0,
+            "{" if contains == "invalid" else json.dumps({"status": contains}), "",
+        ),
+        f"repos/DFXswiss/agent/compare/{base}...{_CLOSE_HEAD}": Completed(
+            0, json.dumps({"status": after_base}), "",
+        ),
+    }
+    pull = _close_pull(head={"sha": merged_head}, base={"sha": base})
+    if not closes:
+        with pytest.raises(SystemExit):
+            _run_close(monkeypatch, tmp_path, tid, pull, comparisons=comparisons)
+        assert _close_rows(tmp_path, tid) == before
+        return
+    _run_close(monkeypatch, tmp_path, tid, pull, comparisons=comparisons)
+    task, checklist, _ = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+    assert task["payload"]["merge_close"]["reviewed_head"] == _CLOSE_HEAD
+    assert task["payload"]["merge_close"]["head_sha"] == merged_head
+    for item in checklist:
+        if item["key"].startswith("review_1_"):
+            assert _CLOSE_HEAD in item["evidence"]
+
+
 def test_task_close_from_pr_human_merge_completes_ready_task_and_aborts_agents(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -853,7 +943,7 @@ def test_task_close_from_pr_human_merge_completes_ready_task_and_aborts_agents(
     _run_close(monkeypatch, tmp_path, tid, _close_pull())
     task, checklist, agents = _close_rows(tmp_path, tid)
     assert task["state"] == "done"
-    assert "merge_close" not in dict(task.get("payload") or {})
+    assert task["payload"]["merge_close"]["reviewed_head"] == _CLOSE_HEAD
     assert all(row["status"] in ("ja", "n_a") for row in checklist)
     for dimension in ("quality", "logic"):
         item = next(row for row in checklist if row["key"] == f"review_1_{dimension}")
@@ -903,7 +993,7 @@ def test_task_close_from_pr_trusted_opener_marks_second_review_not_applicable(
     _run_close(monkeypatch, tmp_path, tid, _close_pull(), trusted=["alice"])
     task, checklist, agents = _close_rows(tmp_path, tid)
     assert task["state"] == "done"
-    assert "merge_close" not in dict(task.get("payload") or {})
+    assert task["payload"]["merge_close"]["reviewed_head"] == _CLOSE_HEAD
     assert all(row["status"] == "done" for row in agents)
     second = {row["key"]: row for row in checklist if row["key"].startswith("review_2_")}
     assert {row["status"] for row in second.values()} == {"n_a"}
@@ -920,7 +1010,7 @@ def test_task_close_from_pr_existing_second_gate_preserves_second_review_rows(
     after = {row["key"]: row for row in checklist if row["key"].startswith("review_2_")}
     assert after == before
     assert task["state"] == "done"
-    assert "merge_close" not in dict(task.get("payload") or {})
+    assert task["payload"]["merge_close"]["reviewed_head"] == _CLOSE_HEAD
     assert all(row["status"] == "done" for row in agents)
 
 
