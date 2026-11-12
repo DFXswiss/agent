@@ -598,9 +598,7 @@ def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None
         redact_shared(raw, limit=None),
         redact_lane_text(raw, limit=None),
     ):
-        assert "first secret words" not in cleaned
-        assert "visible" in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -651,15 +649,7 @@ def test_assignment_redaction_classifies_around_raw_string_controls(
         redact_shared(raw, limit=None),
         redact_lane_text(raw, limit=None),
     ):
-        assert "hunter" not in cleaned
-        assert "hun" not in cleaned
-        assert "ter2" not in cleaned
-        assert "two" not in cleaned
-        assert "visible" in cleaned
-        assert "opaque payload" not in cleaned
-        assert "example hidden" not in cleaned
-        assert "\x1b" not in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "[redacted]"
 
 
 def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
@@ -1213,6 +1203,122 @@ def test_tool_target_redacts_numeric_and_named_escapes(
     worktree.mkdir()
 
     assert _tool_target(target, str(worktree), kind) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    ("kind", "target"),
+    (
+        ("path", "%2fhome%2falice%2f.config%2fsecret"),
+        ("file_path", "%2fhome%2falice%2f.config%2fsecret"),
+        ("pattern", "%2Fhome%2Falice%2F.config%2Fsecret"),
+        ("path", "%2e%2e%2fprivate/config.json"),
+        ("pattern", "src%2f%2e%2e%2fprivate/*.json"),
+        ("path", "api%5fkey=hunter2"),
+        ("pattern", "secr%65t=hunter2"),
+    ),
+    ids=(
+        "encoded-path-lowercase",
+        "encoded-file-path",
+        "encoded-path-uppercase",
+        "encoded-traversal",
+        "encoded-pattern-traversal",
+        "encoded-api-key",
+        "encoded-secret",
+    ),
+)
+def test_tool_target_redacts_percent_escaped_paths_traversal_and_secrets(
+    tmp_path: Path, kind: str, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(target, str(worktree), kind) == "[redacted]"
+
+
+def test_tool_target_docs_fail_closed_on_percent_escapes() -> None:
+    root = Path(__file__).parents[1]
+    ai_accounts = (root / "docs" / "ai-accounts.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    assert "percent escape of the form `%HH`" in ai_accounts
+    assert (
+        "before\nnormalization, for both path and pattern targets"
+        in ai_accounts
+    )
+    assert "A `%HH` percent escape in a\npath or pattern target" in readme
+
+
+def test_percent_escaped_tool_targets_are_redacted_in_lane_run() -> None:
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "path",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "%2fhome%2falice%2f.config%2fsecret"
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "traversal",
+                        "name": "Glob",
+                        "input": {"pattern": "%2e%2e%2fprivate/*.json"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "secret",
+                        "name": "Grep",
+                        "input": {"pattern": "api%5fkey=hunter2"},
+                    },
+                ]
+            },
+        },
+        {"type": "result", "result": "STATUS: complete", "usage": {}},
+    ]
+    finalized = finalize_lane_output(
+        "claude",
+        "\n".join(json.dumps(event) for event in events),
+        "",
+        cwd="/work",
+    )
+
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(
+            self, _table: str, _operation: str, _row_id: str, row: dict
+        ) -> None:
+            self.row = row
+
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="claude",
+            model="model",
+            status="complete",
+            argv=["claude"],
+            returncode=0,
+            stdout=finalized.text,
+            stderr="",
+            tools=finalized.tools,
+        ),
+    )
+
+    assert store.row is not None
+    assert [item["target"] for item in store.row["payload"]["tools"]] == [
+        "[redacted]",
+        "[redacted]",
+        "[redacted]",
+    ]
 
 
 @pytest.mark.parametrize(

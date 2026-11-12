@@ -2600,6 +2600,141 @@ def test_assignment_activity_and_task_retry_in_one_source_transaction(
     assert tasks[0]["payload"]["coordinator"]["source"]["assigned_id"] == assigned[0]["id"]
 
 
+def test_assignment_activity_uses_device_scoped_id_when_primary_is_foreign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    primary_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:example/project:7:worker-bot",
+        )
+    )
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": primary_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": primary_id,
+                "session_id": worker.session_id,
+                "type": "issue.assigned",
+                "payload": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "url": "https://github.com/example/project/issues/7",
+                    "title": "Fix it",
+                    "body": "Please fix",
+                    "assigned_at": "2026-01-01T00:00:00Z",
+                    "assignment_observed_at": "2026-01-01T00:00:00Z",
+                    "assignee": "worker-bot",
+                    "mandate": "github-assignment",
+                    "source": "coordinator",
+                },
+                "execution_status": "done",
+            },
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    from agent_cli import coordinator_runtime
+
+    lines = coordinator_runtime.discover_assignments(store, worker, fake)
+
+    fallback_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:"
+            f"{store.device_id()}:example/project:7:worker-bot",
+        )
+    )
+    assert lines == [
+        f"accepted source example/project#7 task={store.rows('task')[0]['id']}"
+    ]
+    assert (
+        store.row("activity", primary_id)["_origin_device_id"]
+        == "foreign-device"
+    )
+    fallback = store.row("activity", fallback_id)
+    assert fallback is not None
+    assert fallback["_origin_device_id"] == store.device_id()
+    assert fallback["session_id"] == worker.session_id
+    assert fallback["type"] == "issue.assigned"
+    assert fallback["execution_status"] == "done"
+    assert (
+        store.rows("task")[0]["payload"]["coordinator"]["source"][
+            "assigned_id"
+        ]
+        == fallback_id
+    )
+
+    replayed = coordinator_runtime._insert_assigned_activity(
+        store,
+        worker,
+        repo="example/project",
+        number=7,
+        title=str(fallback["payload"]["title"]),
+        body=str(fallback["payload"]["body"]),
+        url=str(fallback["payload"]["url"]),
+        assignee="worker-bot",
+        assigned_at="2026-01-02T00:00:00Z",
+    )
+    assert replayed == fallback_id
+    documented = (Path(__file__).parents[1] / "docs" / "issue-coordinator.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "deterministic fallback identity that also includes this device id"
+        in documented
+    )
+
+
+def test_assignment_activity_keeps_same_device_crash_replay_idempotent(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    arguments = {
+        "repo": "example/project",
+        "number": 7,
+        "title": "Fix it",
+        "body": "Please fix",
+        "url": "https://github.com/example/project/issues/7",
+        "assignee": "worker-bot",
+    }
+
+    first = coordinator_runtime._insert_assigned_activity(
+        store,
+        worker,
+        **arguments,
+        assigned_at="2026-01-01T00:00:00Z",
+    )
+    replayed = coordinator_runtime._insert_assigned_activity(
+        store,
+        worker,
+        **arguments,
+        assigned_at="2026-01-02T00:00:00Z",
+    )
+
+    assert replayed == first
+    assert [
+        row["id"]
+        for row in store.rows("activity")
+        if row.get("type") == "issue.assigned"
+    ] == [first]
+
+
 def test_implementer_result_blocked_sets_task_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

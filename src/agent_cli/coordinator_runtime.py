@@ -543,45 +543,99 @@ def _insert_assigned_activity(
     assignee: str,
     assigned_at: str,
 ) -> str:
-    activity_id = str(
+    primary_id = str(
         uuid5(
             NAMESPACE_URL,
             f"coordinator-assigned:{repo.casefold()}:{number}:{assignee.casefold()}",
         )
     )
-    existing = store.row("activity", activity_id)
-    if existing is not None:
-        return activity_id
-
-    def _skip() -> bool:
-        return store.row("activity", activity_id) is not None
-
-    store.write_with_advisory(
-        "activity",
-        "insert",
-        activity_id,
-        {
-            "id": activity_id,
-            "session_id": worker.session_id,
-            "type": "issue.assigned",
-            "payload": {
-                "repo": repo,
-                "number": number,
-                "url": url,
-                "title": title,
-                "body": redact(body, limit=2000),
-                "assigned_at": assigned_at,
-                "assignment_observed_at": utcnow(),
-                "assignee": assignee,
-                "mandate": "github-assignment",
-                "source": "coordinator",
-            },
-            "execution_status": "done",
-        },
-        lock_key=f"coordinator-source:{repo.casefold()}:{number}",
-        skip=_skip,
+    fallback_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:"
+            f"{store.device_id()}:{repo.casefold()}:{number}:{assignee.casefold()}",
+        )
     )
-    return activity_id
+    stable_payload = {
+        "repo": repo,
+        "number": number,
+        "url": url,
+        "title": title,
+        "body": redact(body, limit=2000),
+        "assignee": assignee,
+        "mandate": "github-assignment",
+        "source": "coordinator",
+    }
+
+    def _matches(row: dict[str, Any], activity_id: str) -> bool:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        stored_assigned_at = payload.get("assigned_at")
+        observed_at = payload.get("assignment_observed_at")
+        expected_payload = {
+            **stable_payload,
+            "assigned_at": stored_assigned_at,
+            "assignment_observed_at": observed_at,
+        }
+        return (
+            row.get("_origin_device_id") == store.device_id()
+            and row.get("id") == activity_id
+            and row.get("session_id") == worker.session_id
+            and row.get("type") == "issue.assigned"
+            and row.get("execution_status") == "done"
+            and isinstance(stored_assigned_at, str)
+            and bool(stored_assigned_at)
+            and isinstance(observed_at, str)
+            and bool(observed_at)
+            and payload == expected_payload
+        )
+
+    for activity_id in (primary_id, fallback_id):
+        existing = store.row("activity", activity_id)
+        if existing is not None:
+            if _matches(existing, activity_id):
+                return activity_id
+            if activity_id == fallback_id:
+                raise CoordinatorError(
+                    "device-scoped assignment activity id is occupied by a "
+                    "mismatched row"
+                )
+            continue
+
+        collision: dict[str, dict[str, Any] | None] = {"row": None}
+
+        def _skip(candidate_id: str = activity_id) -> bool:
+            current = store.row("activity", candidate_id)
+            collision["row"] = current
+            return current is not None
+
+        store.write_with_advisory(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "issue.assigned",
+                "payload": {
+                    **stable_payload,
+                    "assigned_at": assigned_at,
+                    "assignment_observed_at": utcnow(),
+                },
+                "execution_status": "done",
+            },
+            lock_key=f"coordinator-source:{repo.casefold()}:{number}",
+            skip=_skip,
+        )
+        written = collision["row"] or store.row("activity", activity_id)
+        if isinstance(written, dict) and _matches(written, activity_id):
+            return activity_id
+        if activity_id == fallback_id:
+            raise CoordinatorError(
+                "assignment activity write is missing or mismatched"
+            )
+    raise CoordinatorError("assignment activity id selection failed")
 
 
 def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> list[str]:

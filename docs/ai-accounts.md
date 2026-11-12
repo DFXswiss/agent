@@ -225,7 +225,9 @@ removed first. A target containing `..` anywhere, `~`, a drive fragment, or `/`
 at the start or immediately after a character outside `[A-Za-z0-9._-]` is stored
 as `[redacted]`. A target containing a numeric or named escape (`\x`, `\u`,
 `\U`, `\N{`, octal `\0` through `\7`, or `\c`) is also fully redacted without
-decoding. A drive fragment is one ASCII letter followed by `:` at that
+decoding. Any percent escape of the form `%HH` is likewise fully redacted before
+normalization, for both path and pattern targets; it is never decoded. A drive
+fragment is one ASCII letter followed by `:` at that
 same boundary, regardless of whether `/` follows. The only absolute-path
 exception is a single plain whole target with no whitespace or regex
 metacharacters other than glob `*`, `?`, `[` and `]`, starting with the absolute
@@ -236,7 +238,15 @@ terminal sanitization or path classification.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
-credential assignments are first classified on the full raw text, where
+one initial ESC/C1 search skips the structural rule entirely when the input has
+no terminal controls. On each controlled raw line, a control-stripped view
+removes complete or unterminated controls and their payloads, while a
+payload-kept view removes only introducers, terminators, and CSI parameter
+bytes. If either view contains a shared secret keyword, case-insensitively, the
+raw line is replaced from the start of that keyword's mapped whitespace token
+through line end. Other lines remain independent, and controlled lines without
+a keyword retain the existing control handling. Credential assignments are
+then classified on the full raw text, where
 complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque and
 payload whitespace is not a value delimiter. Before a complete secret keyword,
 payload operators stay opaque so visible key fragments still join. After a

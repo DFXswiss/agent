@@ -21,6 +21,7 @@ from agent_cli.errors import (
     scan_errors,
     stack_sig,
 )
+from agent_cli.lane import redact_lane_text
 from agent_cli.store import Store, StoreError
 
 
@@ -229,6 +230,80 @@ def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> No
 
 
 @pytest.mark.parametrize(
+    "controlled",
+    (
+        pytest.param(
+            "password\x1b]x=y\x07_file = hunter2",
+            id="osc-payload-operator",
+        ),
+        pytest.param("password\x9dx=y\x9c_file = hunter2", id="osc-8-bit"),
+        pytest.param("password\x1bPx=y\x1b\\_file = hunter2", id="dcs-7-bit"),
+        pytest.param("password\x90x=y\x9c_file = hunter2", id="dcs-8-bit"),
+        pytest.param("password\x1b^x=y\x1b\\_file = hunter2", id="pm-7-bit"),
+        pytest.param("password\x9ex=y\x9c_file = hunter2", id="pm-8-bit"),
+        pytest.param("password\x1b_x=y\x1b\\_file = hunter2", id="apc-7-bit"),
+        pytest.param("password\x9fx=y\x9c_file = hunter2", id="apc-8-bit"),
+        pytest.param("password\x1bXx=y\x1b\\_file = hunter2", id="sos-7-bit"),
+        pytest.param("password\x98x=y\x9c_file = hunter2", id="sos-8-bit"),
+        pytest.param(
+            "passwor\x1b[31d\x1b]0;=\x07 hunter2",
+            id="csi-final-completes-password-before-osc",
+        ),
+        pytest.param(
+            "secre\x1b[31t\x1b]0;=\x07 hunter2",
+            id="csi-final-completes-secret-before-osc",
+        ),
+        pytest.param("password\x1b[31m_file = hunter2", id="sgr-key-interleave"),
+        pytest.param("password\x1b]8;;\x07_file = hunter2", id="osc-empty-link"),
+        pytest.param("password\x1b]title\x07suffix=hunter2", id="osc-key-suffix"),
+        pytest.param(
+            '"password" \x1b]0;=\x07hunter2',
+            id="quoted-key-osc-operator",
+        ),
+        pytest.param(
+            "password \x1b]8;;https://example.com\x07 = hunter2",
+            id="osc-link-before-visible-operator",
+        ),
+        pytest.param(
+            "password\x1bP0;=\x07\x1b\\hunter2",
+            id="dcs-bel-payload-before-st",
+        ),
+        pytest.param(
+            "password\x1b]unterminated hunter2",
+            id="unterminated-osc-7-bit",
+        ),
+        pytest.param(
+            "password\x90unterminated hunter2",
+            id="unterminated-dcs-8-bit",
+        ),
+    ),
+)
+def test_controlled_secret_keyword_lines_fail_closed_across_shared_sinks(
+    controlled: str,
+) -> None:
+    raw = f"prefix {controlled}\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact(raw),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "prefix [redacted]\nvisible line"
+        assert "hunter2" not in cleaned
+
+
+def test_controlled_line_without_secret_keyword_keeps_existing_handling() -> None:
+    raw = "prefix \x1b[31mordinary\x1b[0m tail\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact(raw),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "prefix ordinary tail\nvisible line"
+
+
+@pytest.mark.parametrize(
     ("raw", "secret"),
     [
         (
@@ -262,8 +337,7 @@ def test_error_redaction_consumes_terminal_controls_around_assignment_operator(
     cleaned = redact(raw)
 
     assert secret not in cleaned
-    assert "visible=keep" in cleaned
-    assert "[redacted]" in cleaned
+    assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -313,18 +387,14 @@ def test_error_redaction_uses_operator_inside_complete_string_control(
 
     cleaned = redact(f"password{control}{value_prefix}{value} visible")
 
-    assert "hunter" not in cleaned
-    assert "visible" in cleaned
-    assert "[redacted]" in cleaned
+    assert cleaned == "[redacted]"
 
 
 def test_error_redaction_ignores_string_payload_operator_before_secret_key_complete(
 ) -> None:
     cleaned = redact("pass\x1b]0;=\x07word=hunter2 visible")
 
-    assert "hunter2" not in cleaned
-    assert "visible" in cleaned
-    assert "[redacted]" in cleaned
+    assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -357,10 +427,7 @@ def test_redact_keeps_controls_inside_complete_secret_keys(
     raw = f"neighbour password{control}{assignment} visible=keep"
 
     for cleaned in (redact_shared(raw), redact(raw)):
-        assert "hunter2" not in cleaned
-        assert "neighbour" in cleaned
-        assert "visible=keep" in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "neighbour [redacted]"
         assert all(
             char in "\t\n"
             or not (ord(char) < 32 or 0x7F <= ord(char) <= 0x9F)
@@ -371,8 +438,8 @@ def test_redact_keeps_controls_inside_complete_secret_keys(
 def test_redact_fails_closed_on_secret_token_with_string_control() -> None:
     raw = "neighbour password\x1b]title opaque\x07suffix visible"
 
-    assert redact_shared(raw) == "neighbour [redacted] visible"
-    assert redact(raw) == "neighbour [redacted] visible"
+    assert redact_shared(raw) == "neighbour [redacted]"
+    assert redact(raw) == "neighbour [redacted]"
 
 
 @pytest.mark.parametrize(
@@ -415,9 +482,7 @@ def test_error_redaction_prefers_visible_operator_after_string_controls(
     raw = f"{key}{separator}{control} {visible_operator} hunter2 visible"
 
     for cleaned in (redact_shared(raw), redact(raw)):
-        assert "hunter2" not in cleaned
-        assert "visible" in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
@@ -444,9 +509,7 @@ def test_error_redaction_uses_string_control_operator_after_all_separators(
     raw = f"{key}{separator}{control} \x1b[31m hunter2 visible"
 
     for cleaned in (redact_shared(raw), redact(raw)):
-        assert "hunter2" not in cleaned
-        assert "visible" in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -475,10 +538,7 @@ def test_error_redaction_does_not_end_non_osc_string_controls_at_bel(
     raw = f"password{control}hunter2 visible"
 
     for cleaned in (redact_shared(raw), redact(raw)):
-        assert "hunter2" not in cleaned
-        assert "still-opaque" not in cleaned
-        assert "visible" in cleaned
-        assert "[redacted]" in cleaned
+        assert cleaned == "[redacted]"
 
 
 def test_redact_strips_otel_ids() -> None:
@@ -789,10 +849,7 @@ def test_redact_replaces_complete_string_control_inside_secret_assignment(
     raw = f"token=x{introducer}0;opaque credential{terminator} visible=keep"
     cleaned = redact_shared(raw)
 
-    assert "opaque" not in cleaned
-    assert "credential" not in cleaned
-    assert "visible=keep" in cleaned
-    assert "\x1b" not in cleaned
+    assert cleaned == "[redacted]"
 
 
 @pytest.mark.parametrize(
@@ -815,9 +872,7 @@ def test_redact_replaces_unterminated_string_control_inside_secret_assignment(
 ) -> None:
     cleaned = redact_shared(f"token=x{introducer}0;opaque credential")
 
-    assert "opaque" not in cleaned
-    assert "credential" not in cleaned
-    assert "\x1b" not in cleaned
+    assert cleaned == "[redacted]"
 
 
 def test_issue_coordinator_documents_terminal_redaction_order() -> None:
@@ -830,7 +885,24 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
 
     assert (
-        "first classifies secret assignments on the full raw text. During that scan,\n"
+        "control-stripped view that removes complete or\nunterminated controls"
+        in documented
+    )
+    assert (
+        "payload-kept view that removes\nonly control introducers"
+        in documented
+    )
+    assert (
+        "through the end of that line. A following line remains independent"
+        in documented
+    )
+    assert "On each controlled raw line, a control-stripped view" in ai_accounts
+    assert "through line end. Other lines remain independent" in ai_accounts
+    assert "it builds both a control-stripped view" in readme
+    assert "Following lines\nremain unchanged, lines without controls" in readme
+
+    assert (
+        "then classifies secret assignments on the full\nraw text. During that scan,\n"
         "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
         in documented
     )
@@ -876,7 +948,7 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in documented
     )
     assert (
-        "credential assignments are first classified on the full raw text"
+        "Credential assignments are\nthen classified on the full raw text"
         in ai_accounts
     )
     assert (
@@ -928,6 +1000,11 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
     assert (
         "Secret-key assignments use a complete, unbounded scanner" in documented
     )
+    assert "shared controlled-line structural rule" in documented
+    assert (
+        "every controlled raw line gets a control-stripped view" in documented
+    )
+    assert "mapped whitespace token through line end" in documented
     assert "classifies secret assignments on the raw line" in documented
     assert (
         "replaces those spans only after assignment classification" in documented

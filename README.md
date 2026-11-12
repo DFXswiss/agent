@@ -199,8 +199,18 @@ credentials; a tool target outside the worktree is stored as `[redacted]`,
 including a Glob pattern or an absolute or relative-traversal path fragment
 inside a Grep pattern, also when assignment text or punctuation precedes it.
 Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
-`\c`) fail closed by redacting the complete target. Any raw ESC or C0/C1
+`\c`) fail closed by redacting the complete target. A `%HH` percent escape in a
+path or pattern target also redacts the complete target before normalization,
+without decoding. Any raw ESC or C0/C1
 control byte does the same before path classification.
+The shared text redactor performs one initial ESC/C1 search. On every raw line
+that contains a terminal control, it builds both a control-stripped view
+(complete or unterminated controls and payloads removed) and a payload-kept view
+(only introducers, terminators, and CSI parameter bytes removed). If either view
+contains a shared secret keyword, case-insensitively, the raw line is redacted
+from the start of the mapped whitespace token through line end. Following lines
+remain unchanged, lines without controls keep the precise scanner unchanged,
+and controlled lines without a keyword retain the existing control handling.
 Credential assignments use one linear scanner over complete, unbounded key
 tokens, including quoted JSON keys; quoted values are consumed through their
 closing quote or the bounded input end. The scanner recognizes the legacy

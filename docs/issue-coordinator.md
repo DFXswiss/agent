@@ -279,7 +279,12 @@ for worker in workers.values():
    includes current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
    terminal. The deterministic `issue.assigned` identity uses that source and
-   the assignee, not the observation clock. Assignment activity and task
+   the assignee, not the observation clock. An existing row at that identity is
+   reused only when its origin device, session, type, execution status, and
+   stable assignment payload match and its observation timestamps are valid.
+   Otherwise the coordinator uses and validates a
+   deterministic fallback identity that also includes this device id; a
+   mismatched row at that fallback fails closed. Assignment activity and task
    admission are checked and written under one advisory transaction, so a
    crash or a losing worker leaves neither an orphan activity nor a duplicate.
    Failed tasks are **not** auto-reopened merely because the issue is
@@ -737,7 +742,17 @@ evidence human spec input; the script never invents human grants.
 ## Evidence hygiene
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
-first classifies secret assignments on the full raw text. During that scan,
+first searches once for ESC or C1 bytes. If none exist, the existing precise
+scanner runs unchanged. For every raw line that does contain a terminal
+control, the pipeline builds a control-stripped view that removes complete or
+unterminated controls with their payloads and a payload-kept view that removes
+only control introducers, terminators, and CSI parameter bytes. If either view
+contains a shared secret keyword, case-insensitively, the raw line is redacted
+from the start of the whitespace token containing the first mapped keyword
+through the end of that line. A following line remains independent, and a
+controlled line without a secret keyword continues through the existing
+control handling. The pipeline then classifies secret assignments on the full
+raw text. During that scan,
 every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque
 skipped span between the key, operator, and value and within quoted or unquoted
 values. Only after assignment classification does the pipeline replace those
@@ -788,10 +803,12 @@ Quoted values run to their closing quote or the bounded input end; unquoted
 values stop at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
 backtracking are possessive. This keeps every redaction pass linear on long
-separatorless provider text. A sink with an existing length
-limit takes only that limit plus a small inspection margin before any redaction
-regular expression runs. If that cut splits a token, the cut token is redacted
-as a whole, and the usual truncation marker and hard output limit still apply.
+separatorless provider text. The initial ESC/C1 search and any controlled-line
+structural pass are linear over the raw input. After that structural rule, a
+sink with an existing length limit takes only that limit plus a small inspection
+margin before the remaining precise redaction expressions run. If that cut
+splits a token, the cut token is redacted as a whole, and the usual truncation
+marker and hard output limit still apply.
 Tool targets and failed-workflow logs pass their unsliced source into that
 bounded pipeline so credentials crossing the visible cutoff remain inside the
 inspection margin.
