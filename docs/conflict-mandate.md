@@ -90,16 +90,17 @@ merge or diff drivers (<names>); the conflicts worker refuses to run
 with them`. The preflight also refuses to run when the environment variable
 `GIT_EXTERNAL_DIFF` is set in the worker process, with `preflight blocked:
 GIT_EXTERNAL_DIFF is set; the conflicts worker refuses to run with an external
-diff program`. It likewise refuses to run when any repository-selecting Git
-environment variable is set in the worker process: `GIT_DIR`, `GIT_WORK_TREE`,
+diff program`. It likewise refuses to run when any of these Git environment
+variables is set in the worker process: `GIT_DIR`, `GIT_WORK_TREE`,
 `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
 `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_COUNT`,
-`GIT_CONFIG_PARAMETERS`, `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR`, `GIT_SSH`, and
-`GIT_ASKPASS`. The line is `preflight blocked: the environment variable <NAME>
-is set; the conflicts worker refuses to run with it`, naming the first set
-variable in that order. Directly after the clone, before any checkout or
-rebase, the driver query runs inside the worktree with `git -C <worktree>
+`GIT_CONFIG_PARAMETERS`, `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR`, `GIT_EDITOR`,
+`GIT_SEQUENCE_EDITOR`, `GIT_SSH`, and `GIT_ASKPASS`. The line is `preflight
+blocked: the environment variable <NAME> is set; the conflicts worker refuses
+to run with it`, naming the first set variable in that order. Directly after
+the clone, before any checkout or rebase, the driver query runs inside the
+worktree with `git -C <worktree>
 --literal-pathspecs -c core.hooksPath=/dev/null -c core.fsmonitor=false
 config --get-regexp <pattern>`
 and no scope option. That effective query merges the system and global
@@ -132,10 +133,11 @@ cannot be read, is not valid JSON, or fails that validation, the tick reports
 failed check without printing the value. The reason is one of `not readable`,
 `not valid JSON`, `not an object`, `key <name> is missing`, `unknown key
 <name>`, `key <name> has type <type>`, `key <name> does not match the request
-directory`, or `phase is not known`. A reason may name a key and a Python type
-name, never a value read from the file. In that tick the worker does nothing
-else for that request or for that worker's checkpoint: no discovery restart,
-no clone, no comment, and no overwrite of the file.
+directory`, `phase is not known`, or `key blocker_facts has an unknown label`.
+A reason may name a key and a Python type name, never a value read from the
+file. In that tick the worker does nothing else for that request or for that
+worker's checkpoint: no discovery restart, no clone, no comment, and no
+overwrite of the file.
 
 A state file of another worker, identified by its recorded worker session id
 or login, is ignored silently and left untouched. A missing state file is no
@@ -295,9 +297,11 @@ exists on GitHub, without Git, a lane, or a comment.
    failure in the spec. Other unmerged states, a second failure, or too many
    stops abort the rebase and post one blocker. A lane answer of `RESULT:
    blocked` is not itself a transition. The deterministic verification runs in
-   this order after a lane attempt: the index fingerprint and the `.git` file
-   are always checked; the change-set measurement, conflict-marker detection,
-   and `git diff --check` run only when the lane status is `complete`. A
+   this order after a lane attempt: the `.git` file is always checked; the index
+   fingerprint is then read unless the `.git` file check failed, because no Git
+   command runs in a worktree whose `.git` file changed. The change-set
+   measurement, conflict-marker detection, and `git diff --check` run only when
+   the lane status is `complete`. A
    `partial` or `timeout` attempt is a failed verification by its status alone.
    If verification passes, the request continues even
    when the lane said `blocked`. If it fails and the lane said `blocked`, there
@@ -355,7 +359,7 @@ exists on GitHub, without Git, a lane, or a comment.
    unreadable response, is transient:
    nothing is pushed and the next tick starts again from the pull-request read.
    A closed pull request, changed refs or repository, or newly protected branch
-   is a blocker without a push. It then pushes only
+   is a blocker without a push. The eventual push sends only
    `<verified-head>:refs/heads/<head-ref>` with
    `--force-with-lease=refs/heads/<head-ref>:<old-head>`. The account runner
    accepts exactly that lease form: the value is split at the last colon, the
@@ -366,9 +370,11 @@ exists on GitHub, without Git, a lane, or a comment.
    the index measurement and `git status`, the `.git` file is unchanged, every
    commit of the range still verifies as signed, and the `origin` and
    `publication` URLs are the expected repositories. A difference finishes with
-   the blocker `checks changed the repository state` without a push. It also
-   persists the old head, new head, replayed commit count, resolved files, and
-   check result with phase `pushing`; after a successful push it persists phase
+   the blocker `checks changed the repository state` without a push. After the
+   pre-push verification passes, it persists the old head, new head, replayed
+   commit count, resolved files, and check result with phase `pushing`, then
+   immediately runs the push command; nothing else runs between that state
+   write and the push. After a successful push it persists phase
    `result-pending`, re-reads the pull request with the bounded `mergeable`
    retries, and posts the result once from the stored pre-push facts plus that
    fresh value. The `Mergeable` fact is `true`, `false`, or `unknown` when the
@@ -535,12 +541,9 @@ when it appears inside free text such as check output. The configured
 `workspace_root`, the control directory, and the home directory are replaced
 verbatim wherever they appear.
 
-The Git runner API used by this worker does not expose a child-environment
-override. The rebase commands pass `-c core.editor=true` and
-`-c sequence.editor=true`, but ambient `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`,
-`VISUAL`, and `EDITOR` take precedence over Git configuration. The account Git
-runner is therefore responsible for removing those four variables from the
-child environment.
+The preflight refuses `GIT_EDITOR` and `GIT_SEQUENCE_EDITOR`. `VISUAL` and
+`EDITOR` do not take precedence over the editor configuration the rebase
+commands pass with `-c core.editor=true` and `-c sequence.editor=true`.
 
 A resolved file that legitimately contains a line of seven or more identical
 `<`, `=`, `>`, or `|` characters is reported as still conflicted and ends in a

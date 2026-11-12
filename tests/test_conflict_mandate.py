@@ -1735,6 +1735,7 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "state unreadable: <masked file name> (<reason>)" in doc
     assert "key <name> has type <type>" in doc
     assert "phase is not known" in doc
+    assert "key blocker_facts has an unknown label" in doc
     assert "never a value read from the file" in doc
     assert "`rebase_stops`" in doc
     assert "current rebase attempt" in doc
@@ -1749,20 +1750,37 @@ def test_documentation_describes_effective_config_and_complete_lane_checks() -> 
     doc = (
         Path(__file__).resolve().parents[1] / "docs" / "conflict-mandate.md"
     ).read_text(encoding="utf-8")
-    assert "`diff.external`" in doc
-    assert "`GIT_EXTERNAL_DIFF` is set in the worker process" in doc
-    assert "`GIT_DIR`, `GIT_WORK_TREE`" in doc
-    assert "`GIT_ASKPASS`" in doc
-    assert "merely starts with `remote:` is not a refusal" in doc
-    assert "includeIf \"gitdir:...\"" in doc
-    assert "config --get-regexp <pattern>`" in doc
+    normalized = " ".join(doc.split())
+    assert "`diff.external`" in normalized
+    assert "`GIT_EXTERNAL_DIFF` is set in the worker process" in normalized
+    assert "`GIT_DIR`, `GIT_WORK_TREE`" in normalized
+    assert "`GIT_EDITOR`" in normalized
+    assert "`GIT_SEQUENCE_EDITOR`" in normalized
+    assert "`GIT_ASKPASS`" in normalized
+    assert "merely starts with `remote:` is not a refusal" in normalized
+    assert "includeIf \"gitdir:...\"" in normalized
+    assert "config --get-regexp <pattern>`" in normalized
     assert (
-        "Every `git diff`\ninvocation of this feature passes `--no-ext-diff` "
-        "and `--no-textconv`."
-    ) in doc
-    assert "the index fingerprint and the `.git` file\n   are always checked" in doc
-    assert "run only when the lane status is `complete`" in doc
-    assert "`partial` or `timeout` attempt is a failed verification by its status alone" in doc
+        "Every `git diff` invocation of this feature passes `--no-ext-diff` and "
+        "`--no-textconv`."
+    ) in normalized
+    assert (
+        "the `.git` file is always checked; the index fingerprint is then read unless the "
+        "`.git` file check failed, because no Git command runs in a worktree whose `.git` "
+        "file changed"
+    ) in normalized
+    assert "run only when the lane status is `complete`" in normalized
+    assert (
+        "`partial` or `timeout` attempt is a failed verification by its status alone"
+        in normalized
+    )
+    assert (
+        "The preflight refuses `GIT_EDITOR` and `GIT_SEQUENCE_EDITOR`." in normalized
+    )
+    assert (
+        "`VISUAL` and `EDITOR` do not take precedence over the editor configuration the "
+        "rebase commands pass"
+    ) in normalized
 
 
 def test_checkpoint_advances_and_finished_request_is_not_reprocessed(
@@ -4073,6 +4091,61 @@ def test_pull_request_head_moved_during_pre_push_checks_is_transient(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_pre_push_pull_read_failure_stays_bounded_before_pushing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_ran = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_ran["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def unreadable_after_checks(argv: list[str]) -> Completed:
+        if checks_ran["value"] and argv[:1] == ["gh"] and any(
+            "/pulls/42" in item for item in argv
+        ):
+            return Completed(1, "", "GitHub unreachable")
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(
+        store,
+        worker_cfg,
+        runner=unreadable_after_checks,
+        lane_runner=fake.lane,
+    )
+    assert lines == ["transient: GitHub unreachable"]
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "transient"
+    new_head = state["new_head"]
+    fake.pull["head"]["sha"] = new_head
+    save_state(ctx, None, transient_start="2026-08-31T00:00:00Z")
+    fake.calls.clear()
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["blocker posted: transient failures persisted for 24 hours"]
+    assert len(fake.pr_comments) == 1
+    assert "transient failures persisted for 24 hours" in fake.pr_comments[0]["body"]
+    assert "Old head" not in fake.pr_comments[0]["body"]
+    assert new_head not in fake.pr_comments[0]["body"]
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+    assert (
+        json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"]
+        == "blocked"
+    )
+
+
 def test_pull_request_base_moved_during_pre_push_checks_is_transient(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4109,7 +4182,7 @@ def test_pull_request_base_moved_during_pre_push_checks_is_transient(
         tmp_path / "work" / ".conflicts-control" / "worker-session" / "example__project" / "pr-42-c7" / "state.json"
     )
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state["phase"] == "pushing"
+    assert state["phase"] == "transient"
     assert state["transient_start"] is not None
 
 
