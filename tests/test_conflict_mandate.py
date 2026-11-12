@@ -144,6 +144,7 @@ class FakeConflictTransport:
         self.lane_index_writes = 0
         self.driver_config: dict[str, str] = {}
         self.driver_config_reads: list[str] = []
+        self.effective_driver_outputs: list[str] = []
         self.clone_fails = False
 
     def _git(self, argv: list[str]) -> Completed:
@@ -160,7 +161,11 @@ class FakeConflictTransport:
             scopes = [scope for scope in ("--system", "--global", "--local") if scope in args]
             scope = scopes[0] if scopes else "effective"
             self.driver_config_reads.append(scope)
-            output = self.driver_config.get(scope, "")
+            output = (
+                self.effective_driver_outputs.pop(0)
+                if scope == "effective" and self.effective_driver_outputs
+                else self.driver_config.get(scope, "")
+            )
             return Completed(0 if output else 1, output, "")
         if args[:1] == ["rebase"]:
             if "--abort" in args:
@@ -666,6 +671,9 @@ MALFORMED_PULL_VALUES = (
     ("head.sha is unreadable", "head.sha", "g" * 40),
     ("head repository is unreadable", "head.repo.full_name", ""),
     ("head repository is unreadable", "head.repo.full_name", "owner"),
+    ("head repository is unreadable", "head.repo.full_name", "owner name/project"),
+    ("head repository is unreadable", "head.repo.full_name", "owner/proj\x01ect"),
+    ("head repository is unreadable", "head.repo.full_name", "owner/project/extra"),
 )
 
 
@@ -1924,6 +1932,7 @@ def test_documentation_describes_effective_config_and_complete_lane_checks() -> 
     assert "`GIT_ASKPASS`" in normalized
     assert "merely starts with `remote:` is not a refusal" in normalized
     assert "includeIf \"gitdir:...\"" in normalized
+    assert "The query runs again after the checkout and before the rebase." in normalized
     assert "config --get-regexp <pattern>`" in normalized
     assert (
         "Every `git diff` invocation of this feature passes `--no-ext-diff` and "
@@ -2326,6 +2335,42 @@ def test_undecodable_check_keeps_metadata_blocker_precedence(
     body = fake.pr_comments[0]["body"]
     assert "checks changed the repository state" in body
     assert "command output is not valid UTF-8" not in body
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_invalid_utf8_from_post_check_git_verification_keeps_exact_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    checks_finished = {"value": False}
+
+    def checks(argv: list[str], **kwargs: Any) -> Completed:
+        checks_finished["value"] = True
+        return fake.check(argv, **kwargs)
+
+    def undecodable_verification(argv: list[str]) -> Completed:
+        if (
+            checks_finished["value"]
+            and argv[:1] == ["git"]
+            and "status" in argv
+            and "--porcelain=v2" in argv
+        ):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
+    lines = tick(
+        store,
+        worker_cfg,
+        runner=undecodable_verification,
+        lane_runner=fake.lane,
+    )
+    assert lines == ["blocker posted: command output is not valid UTF-8"]
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "`command output is not valid UTF-8`" in body
+    assert "configured check failed" not in body
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
@@ -3188,11 +3233,13 @@ def test_dry_run_reports_refused_push_route(
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
     fake.pull["head"]["repo"]["full_name"] = "someone-else/project"
     fake.pull["mergeable"] = True
+    fake.protection_read_fails = True
     lines = tick(store, worker_cfg, runner=fake, dry_run=True)
     assert any("would accept" in line for line in lines)
     assert any("would post blocker" in line and "cannot push" in line for line in lines)
     assert not any("would report" in line for line in lines)
     assert fake.pr_comments == []
+    assert fake.branch_reads == 0
     assert not any(call[:1] == ["clone"] for call in fake.calls)
 
 
@@ -4682,6 +4729,43 @@ def test_plain_store_error_from_index_read_after_lane_result_still_records_lane_
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_invalid_utf8_index_read_after_lane_result_still_records_lane_run_and_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lane_finished = {"value": False}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        lane_finished["value"] = True
+        return completed
+
+    def failing_index(argv: list[str]) -> Completed:
+        if lane_finished["value"] and "ls-files" in argv:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=failing_index, lane_runner=lane)
+    assert lines == ["blocker posted: command output is not valid UTF-8"]
+    assert len(fake.pr_comments) == 1
+    assert "`command output is not valid UTF-8`" in fake.pr_comments[0]["body"]
+    records = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run"
+        and row.get("session_id") == "worker-session"
+    ]
+    assert len(records) == 1
+    control = (
+        tmp_path / "work" / ".conflicts-control" / "worker-session"
+        / "example__project" / "pr-42-c7"
+    )
+    assert (control / "lane-s1-a1.log").exists()
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_blocker_is_persisted_before_cleanup_and_resumes_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5349,6 +5433,32 @@ def test_lane_start_failure_with_unchanged_state_is_transient(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_lane_start_failure_with_unreadable_index_posts_one_blocker_without_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    launch_calls = {"value": 0}
+
+    def unavailable(*args: Any, **kwargs: Any) -> Any:
+        launch_calls["value"] += 1
+        raise RuntimeError("lane unavailable")
+
+    def failing_index(argv: list[str]) -> Completed:
+        if launch_calls["value"] and "ls-files" in argv:
+            raise StoreError("index unavailable")
+        return fake(argv)
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.launch_lane_process", unavailable)
+    lines = tick(store, worker_cfg, runner=failing_index, lane_runner=fake.lane)
+    tick(store, worker_cfg, runner=failing_index, lane_runner=fake.lane)
+    assert lines == ["blocker posted: index could not be read after the lane run"]
+    assert launch_calls["value"] == 1
+    assert len(fake.pr_comments) == 1
+    assert "`index could not be read after the lane run`" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_failed_lane_record_is_visible_and_the_lane_result_is_used(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5631,6 +5741,26 @@ def test_effective_git_driver_after_clone_blocks_and_removes_directories(
     assert not any(call[:1] == ["checkout"] for call in fake.calls)
     assert "effective" in fake.driver_config_reads
     assert "--local" not in fake.driver_config_reads
+
+
+def test_effective_git_driver_after_checkout_blocks_before_rebase_and_removes_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.effective_driver_outputs = ["", "filter.branch.smudge cat\n"]
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["blocker posted: repository configuration defines Git drivers"]
+    assert len(fake.pr_comments) == 1
+    assert "repository configuration defines Git drivers" in fake.pr_comments[0]["body"]
+    assert fake.driver_config_reads.count("effective") == 2
+    assert any("checkout" in call for call in fake.calls)
+    assert not any("rebase" in call for call in fake.calls)
+    assert fake.lanes == []
+    assert not _control_git_dir(tmp_path).exists()
+    assert not (
+        tmp_path / "work" / "worker-session" / "example__project" / "pr-42-c7"
+    ).exists()
 
 
 def test_blocked_request_without_marker_is_not_rediscovered(

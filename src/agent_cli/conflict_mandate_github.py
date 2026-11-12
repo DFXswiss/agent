@@ -19,6 +19,7 @@ RESULT_MARKER_PREFIX = "<!-- agent-conflicts:result:v1:"
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_SLEEP_SECONDS = 1.0
 _COMMENT_NUMBER_PATTERN = r"/(?:issues|pull|pulls)/([+-]?\d+)(?:$|[?#])"
+_REPOSITORY_FULL_NAME_RE = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 
 
 class ConflictTransientError(CoordinatorError):
@@ -143,7 +144,7 @@ def _validate_pull(data: Any, label: str) -> dict[str, Any]:
     full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
     if (
         not isinstance(full_name, str)
-        or re.fullmatch(r"[^/]+/[^/]+", full_name) is None
+        or _REPOSITORY_FULL_NAME_RE.fullmatch(full_name) is None
     ):
         raise ConflictTransientError(f"{label} head repository is unreadable")
     if "mergeable" not in data:

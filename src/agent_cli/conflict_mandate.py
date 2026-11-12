@@ -860,7 +860,12 @@ def _run_lane_attempt(
         )
     except (StoreError, Exception) as exc:
         _verify_metadata(ctx, expected_git_file)
-        index_after = index_fingerprint(git_runner, str(ctx.worktree))
+        try:
+            index_after = index_fingerprint(git_runner, str(ctx.worktree))
+        except (StoreError, OSError) as index_exc:
+            raise _Blocker(
+                "index could not be read after the lane run"
+            ) from index_exc
         if index_before != index_after:
             raise _Blocker("lane changed the index") from exc
         raise ConflictTransientError(redact(str(exc))) from exc
@@ -889,10 +894,15 @@ def _run_lane_attempt(
         result=(parsed_result if status == "complete" else ""),
     )
     index_failure = False
+    index_blocker: _Blocker | None = None
     index_after = None
     if metadata_failure is None:
         try:
             index_after = index_fingerprint(git_runner, str(ctx.worktree))
+        except _Blocker as exc:
+            if str(exc) != INVALID_UTF8_OUTPUT:
+                raise
+            index_blocker = exc
         except (StoreError, OSError):
             index_failure = True
     try:
@@ -916,6 +926,8 @@ def _run_lane_attempt(
         )
     if metadata_failure is not None:
         raise metadata_failure
+    if index_blocker is not None:
+        raise index_blocker
     note = (
         _blocked_sentence(stdout)
         if status == "complete" and parsed_result == "blocked"
@@ -1184,6 +1196,12 @@ def _prepare_worktree(
         fetch_branch(git_runner, str(ctx.worktree), remote="publication", branch=head_ref)
         fetch_branch(git_runner, str(ctx.worktree), remote="origin", branch=base_ref)
         checkout_head(git_runner, str(ctx.worktree), branch=head_ref)
+        drivers = effective_driver_names(git_runner, str(ctx.worktree))
+        if drivers:
+            raise _Blocker(
+                "repository configuration defines Git drivers",
+                skip_git=True,
+            )
     except CoordinatorError as exc:
         remove_repository(ctx.worktree)
         remove_repository(ctx.control / "git")
@@ -1391,6 +1409,8 @@ def _run_checks(
             head_repo=head_repo,
         )
     except _Blocker as exc:
+        if str(exc) == INVALID_UTF8_OUTPUT:
+            raise
         return False, str(exc), exc.skip_git
     return True, "passed", False
 
@@ -1597,6 +1617,16 @@ def _run_request(
             if not dry_run:
                 raise
             route = f"would post blocker: {exc}"
+        if dry_run and route.startswith("would post blocker:"):
+            return _dry_run_request(
+                ctx,
+                head_ref=head_ref,
+                head_sha=head_sha,
+                head_repo=head_repo,
+                base_ref=base_ref,
+                route=route,
+                mergeable=mergeable,
+            )
         if not dry_run:
             save_state(
                 ctx,
