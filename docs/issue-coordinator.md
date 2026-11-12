@@ -755,17 +755,22 @@ Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
 first searches once for ESC or C1 bytes. If none exist, the existing precise
 scanner runs unchanged. For a raw logical line that does contain ESC or C1, a
 compiled case-insensitive candidate check runs over a control-byte-translated
-view. Only candidate lines build the three views, one at a time: a
+view. Only candidate lines build the three primary views, one at a time: a
 control-stripped view that removes complete or
 unterminated controls with their payloads, a payload-kept view that removes
 string-control introducers and terminators and CSI parameter bytes while
 retaining string-control payload text at every nesting depth, and a key-join
 view. Inside retained string-control payloads, the payload view runs the same
 control lexer again. Nested string controls keep their payload text at every
-nesting depth; their introducers and terminators are omitted. CSI spans
-(including parameters, intermediates, and finals), other ESC sequences, C0
-bytes, and lone C1 bytes inside retained string-control payloads are omitted
-from every structural view with their raw mapping.
+nesting depth; their introducers and terminators are omitted. Retained
+string-control payloads are checked in both a payload-clean view and a
+payload-key-join view while preserving the raw mapping. The payload-clean view
+omits complete nested CSI spans (parameters, intermediates, and final), other
+ESC sequences, C0 bytes, and lone C1 bytes. The payload-key-join view
+contributes exactly the key characters from nested CSI/ESC sequences that the
+assignment scanner may join into a key and omits all other control bytes. The
+second view is built lazily only for payloads that contain nested controls, and
+a keyword in either view activates the line rule.
 The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
@@ -782,7 +787,9 @@ splitting, so newlines inside OSC, DCS, PM, APC, or SOS payloads are not
 boundaries. If a mapped keyword starts inside such a span, redaction starts at
 its introducer. A following normal line outside the span remains independent. An unterminated string control
 extends through the end of the text and swallows every following physical line
-into its payload. A controlled line without a secret keyword continues through
+into its payload. The same linear, nesting-aware scanner supplies every
+string-control span boundary to redaction, terminal sanitization, logical-line
+splitting, and all structural views, including both payload views. A controlled line without a secret keyword continues through
 the existing control handling. A whitespace token exactly `<config_dir>/`
 followed only by `[A-Za-z0-9._-]+` is the one structural exception: keywords
 inside that placeholder do not trigger the line rule. Any other byte in that token, or a

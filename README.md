@@ -205,8 +205,8 @@ without decoding. Any raw ESC or C0/C1
 control byte does the same before path classification.
 The shared text redactor performs one initial ESC/C1 search. For a raw logical
 line that contains ESC/C1, a compiled case-insensitive candidate check
-runs over a control-byte-translated view. Only candidate lines build three views,
-one at a time: a control-stripped view
+runs over a control-byte-translated view. Only candidate lines build three
+primary views, one at a time: a control-stripped view
 (complete or unterminated controls and payloads removed), a payload-kept view
 (the outer introducer, terminator, and CSI parameter bytes removed), and a key-join
 view. The key-join view uses the assignment scanner's own classifier to retain
@@ -218,11 +218,15 @@ from the start of the mapped whitespace token through logical-line end.
 Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
 return, are removed from every structural view but do not activate the rule
 without ESC/C1. Nested string controls keep their payload text at every nesting
-depth; their introducers and terminators are omitted. CSI spans (including
-parameters, intermediates, and finals), other ESC sequences, C0 bytes, and lone
-C1 bytes inside retained string-control payloads are omitted from every
-structural view, so they cannot split a keyword in the payload-kept view. An
-unterminated nested string control fails closed and treats the whole logical
+depth; their introducers and terminators are omitted. Retained string-control
+payloads are checked in both a payload-clean view and a payload-key-join view.
+The payload-clean view omits complete nested CSI spans (parameters,
+intermediates, and final), other ESC sequences, C0 bytes, and lone C1 bytes. The
+payload-key-join view contributes exactly the key characters from nested
+CSI/ESC sequences that the assignment scanner may join into a key and omits
+all other control bytes. The second view is built lazily only for payloads that
+contain nested controls, and a keyword in either view activates the line rule.
+An unterminated nested string control fails closed and treats the whole logical
 line as matched. Complete and unterminated
 string-control spans are indexed on
 the full raw input before lines are formed, so payload newlines are not
@@ -294,6 +298,11 @@ agent session stop --id <session-id>
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+
+One shared linear, nesting-aware scanner supplies every string-control span
+boundary to redaction, terminal sanitization, logical-line splitting, and all
+structural views, including both payload views; an unterminated outer span
+reaches the end of the text.
 
 For that raw assignment classification, the scanner skips whitespace and
 terminal controls after a complete secret keyword. A control ends an unquoted

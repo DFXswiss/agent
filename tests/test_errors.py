@@ -27,6 +27,7 @@ from agent_cli.errors import (
 )
 from agent_cli.lane import redact_lane_text
 from agent_cli.store import Store, StoreError
+from agent_cli.text_sanitize import sanitize_terminal_text
 
 
 def _runner_session(store: Store, sid: str = "runner-1") -> None:
@@ -398,6 +399,141 @@ def test_multiline_string_control_secret_lines_are_one_logical_line_across_share
 
 
 @pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x07"),
+        ("\x1bP", "\x1b\\"),
+        ("\x90", "\x9c"),
+        ("\x1b^", "\x1b\\"),
+        ("\x9e", "\x9c"),
+        ("\x1b_", "\x1b\\"),
+        ("\x9f", "\x9c"),
+        ("\x1bX", "\x1b\\"),
+        ("\x98", "\x9c"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+@pytest.mark.parametrize("depth", (2, 3), ids=("depth-2", "depth-3"))
+def test_nested_string_control_boundaries_match_across_sinks_and_sanitizer(
+    introducer: str, terminator: str, depth: int
+) -> None:
+    marker = "Zx7Qp9Lm4V2"
+    raw = (
+        "before "
+        + (introducer * depth)
+        + "inner"
+        + terminator
+        + marker
+        + (terminator * (depth - 1))
+        + " after"
+    )
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "before [redacted] after"
+        assert marker not in cleaned
+    assert sanitize_terminal_text(raw) == "before  after"
+
+
+def test_nested_osc_payload_view_keeps_scanner_key_bytes_across_sinks() -> None:
+    raw = (
+        "x\x1b]\x1b]inner\x07 "
+        "\x1b[api_key= hunter2\x07 visible"
+    )
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "x[redacted]"
+        assert "hunter2" not in cleaned
+    assert sanitize_terminal_text(raw) == "x visible"
+
+
+@pytest.mark.parametrize(
+    ("payload", "suffix"),
+    (
+        ("a\x1b[31muthorization", "=hunter2"),
+        ("au\x1b[31mthorization", " hunter2"),
+        ("authoriz\x1b[31mation", ": hunter2"),
+    ),
+    ids=("equals", "space", "colon"),
+)
+def test_nested_osc_payload_clean_view_omits_complete_controls_across_sinks(
+    payload: str,
+    suffix: str,
+) -> None:
+    raw = f"prefix \x1b]0;{payload}\x07{suffix}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "prefix [redacted]"
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_unterminated_nested_string_controls_consume_the_outer_span_everywhere(
+    introducer: str,
+) -> None:
+    marker = "Zx7Qp9Lm4V2"
+    raw = f"before {introducer}{introducer}inner {marker}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert marker not in cleaned
+        assert cleaned in ("[redacted]", "before [redacted]")
+    assert sanitize_terminal_text(raw) == "before "
+
+
+@pytest.mark.parametrize(
     "introducer",
     (
         "\x1b]",
@@ -530,12 +666,18 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
     lines.append("passwor\x1b[31!d\x1b]0;=\x07 hunter2")
     raw = "\n".join(lines)
 
-    for cleaned in (
-        redact_shared(raw, limit=None),
-        redact_lane_text(raw, limit=None),
-        redact(raw),
-    ):
-        assert "hunter2" not in cleaned
+    sinks = (
+        ("shared", redact_shared(raw, limit=None)),
+        ("lane", redact_lane_text(raw, limit=None)),
+        ("errors", redact(raw)),
+    )
+    for sink, cleaned in sinks:
+        cleaned_lines = cleaned.split("\n")
+        assert len(cleaned_lines) == len(lines)
+        for source, cleaned_line in zip(lines, cleaned_lines, strict=True):
+            assert "hunter2" not in cleaned_line, (
+                f"{sink} leaked generated line {source!r}"
+            )
 
 
 def test_assignment_scanner_rechecks_operator_after_control_completes_key(
@@ -1167,16 +1309,28 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
             in normalized
         )
         assert (
-            "CSI spans (including parameters, intermediates, and finals), other "
-            "ESC sequences, C0 bytes, and lone C1 bytes inside retained "
-            "string-control payloads are omitted from every structural view"
+            "Retained string-control payloads are checked in both a "
+            "payload-clean view and a payload-key-join view"
             in normalized
         )
+        assert "payload-clean view omits complete nested CSI spans" in normalized
+        assert (
+            "payload-key-join view contributes exactly the key characters"
+            in normalized
+        )
+        assert "assignment scanner may join into a key" in normalized
+        assert (
+            "second view is built lazily only for payloads that contain nested controls"
+            in normalized
+        )
+        assert "keyword in either view activates the line rule" in normalized
         assert (
             "An unterminated nested string control fails closed and treats the "
             "whole logical line as matched"
             in normalized
         )
+        assert "linear, nesting-aware" in normalized
+        assert "every string-control span boundary" in normalized
         assert "introducer" in normalized
         assert "swallows every following physical line" in normalized
 
@@ -1240,9 +1394,8 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
             in normalized
         )
         assert (
-            "CSI spans (including parameters, intermediates, and finals), other "
-            "ESC sequences, C0 bytes, and lone C1 bytes inside retained "
-            "string-control payloads"
+            "Retained string-control payloads are checked in both a "
+            "payload-clean view and a payload-key-join view"
             in normalized
         )
     assert (

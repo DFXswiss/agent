@@ -241,7 +241,7 @@ terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
 one initial ESC/C1 search skips the structural rule entirely when the input has
 no ESC/C1. For each controlled raw logical line, a compiled case-insensitive
 candidate check runs over a control-byte-translated view. Only candidate lines
-build the three views, one at a time: a control-stripped view
+build the three primary views, one at a time: a control-stripped view
 removes complete or unterminated controls and their payloads, a payload-kept
 view removes the outer introducer, terminator, and CSI parameter bytes, and a
 key-join view uses the assignment scanner's own classifier to retain only
@@ -253,16 +253,23 @@ keyword's mapped whitespace token
 through logical-line end. Standalone removable C0 bytes are removed from every
 view without activating the rule by themselves. Nested string controls keep
 their payload text at every nesting depth; their introducers and terminators
-are omitted. CSI spans (including parameters, intermediates, and finals), other
-ESC sequences, C0 bytes, and lone C1 bytes inside retained string-control
-payloads are omitted from every structural view, so they cannot split a keyword
-in the payload-kept view. An unterminated nested string control fails closed and
-treats the whole logical line as matched.
+are omitted. Retained string-control payloads are checked in both a
+payload-clean view and a payload-key-join view. The payload-clean view omits
+complete nested CSI spans (parameters, intermediates, and final), other ESC
+sequences, C0 bytes, and lone C1 bytes. The payload-key-join view contributes
+exactly the key characters from nested CSI/ESC sequences that the assignment
+scanner may join into a key and omits all other control bytes. The second view
+is built lazily only for payloads that contain nested controls, and a keyword
+in either view activates the line rule. An unterminated nested string control
+fails closed and treats the whole logical line as matched.
 String-control spans are
 indexed on the complete raw input first, so their payload newlines do not split
 logical lines; a mapped start inside one moves to the introducer and the span is
 never split by two replacement stages. An unterminated string control extends
 through the end of the text and swallows every following physical line into its payload.
+The same linear, nesting-aware scanner supplies every string-control span
+boundary to redaction, terminal sanitization, logical-line splitting, and all
+structural views, including both payload views.
 Other normal lines remain independent, and controlled lines without a keyword
 retain the existing control handling. A whitespace token exactly
 `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural

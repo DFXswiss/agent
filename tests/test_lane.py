@@ -44,6 +44,7 @@ from agent_cli.text_sanitize import (
     redact_terminal_interleaved_secret,
     redact_terminal_interleaved_tokens,
     redact_terminal_interleaved_urlencoded_secret,
+    redact_terminal_string_controls,
     sanitize_terminal_text,
 )
 
@@ -849,6 +850,37 @@ def test_public_terminal_redaction_helpers_are_linear_on_large_words(
         call()
         elapsed = time.monotonic() - started
         assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+
+
+def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
+) -> None:
+    depth = 100_000
+    raw = ("\x1bP" * depth) + "Zx7Qp9Lm4V2" + ("\x1b\\" * depth)
+    calls = (
+        (
+            "shared redaction",
+            lambda: redact_shared(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "lane redaction",
+            lambda: redact_lane_text(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "string-control redaction",
+            lambda: redact_terminal_string_controls(raw),
+            "[redacted]",
+        ),
+        ("terminal sanitization", lambda: sanitize_terminal_text(raw), ""),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == expected
 
 
 def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:
