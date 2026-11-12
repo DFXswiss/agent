@@ -6,6 +6,13 @@ import re
 from collections.abc import Callable
 
 
+# Longer escape/control runs are not trusted presentation. The shared raw-token
+# pass sees their ESC/C1 bytes and redacts the whole token instead of asking a
+# backtracking expression to classify an unbounded sequence.
+_MAX_ESCAPE_PARAMETER_BYTES = 64
+_MAX_TERMINAL_INTERLEAVES = 64
+
+
 # String controls must be matched on the complete raw text before whitespace
 # tokenization. Both 7-bit and 8-bit forms accept either ST spelling; an
 # unterminated string consumes the remaining text rather than exposing its
@@ -21,8 +28,10 @@ _TERMINAL_STRING_RE = re.compile(
 _TERMINAL_ESCAPE_RE = re.compile(
     r"(?:"
     rf"{_TERMINAL_STRING_RE.pattern}"
-    r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"  # CSI
-    r"|\x1b[ -/]*[0-~]"  # other complete ESC sequences
+    rf"|(?:\x1b\[|\x9b)[0-?]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
+    rf"[ -/]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}[@-~]"  # CSI
+    rf"|\x1b[ -/]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
+    r"[0-~]"  # other complete ESC sequences
     r")"
 )
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
@@ -31,7 +40,9 @@ _ESC_OR_C1_SEQUENCE_RE = re.compile(
     # the strict leading/trailing SGR exemption can still inspect one wrapper.
     rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|\x1b|[\x80-\x9f])"
 )
-_SGR_WRAPPER_RE = re.compile(r"\x1b\[([0-9;]*)m")
+_SGR_WRAPPER_RE = re.compile(
+    rf"\x1b\[([0-9;]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}})m"
+)
 
 # Before ordinary terminal sanitization, a known secret needs a stricter path:
 # a CSI final byte may itself be the next secret character. The first two
@@ -41,11 +52,12 @@ _SGR_WRAPPER_RE = re.compile(r"\x1b\[([0-9;]*)m")
 # frame content instead of being consumed by a redaction match.
 TERMINAL_INTERLEAVE_PATTERN = (
     r"(?:"
-    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*"
-    r"|\x1b[ -/]*"
+    rf"(?:\x1b\[|\x9b)[0-?]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
+    rf"[ -/]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
+    rf"|\x1b[ -/]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
     rf"|{_TERMINAL_ESCAPE_RE.pattern}"
     rf"|{_TERMINAL_CONTROL_RE.pattern}"
-    r")*"
+    rf"){{0,{_MAX_TERMINAL_INTERLEAVES}}}"
 )
 
 

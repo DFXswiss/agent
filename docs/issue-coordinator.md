@@ -389,8 +389,9 @@ for worker in workers.values():
    publication. The coordinator checks this condition before reconciling saved
    rejection intents and returns without publishing an issue blocker or any
    review comment. The gate phase stops before preparing either reviewer when a
-   needed dimension has that synthetic empty-head verdict, and rechecks the
-   shared ordering after each new verdict before closing a checklist key or
+   needed dimension has that synthetic empty-head verdict. During `review-2`,
+   this includes both `review-1` prerequisite dimensions as well as the active
+   `review-2` dimensions. The phase rechecks the shared ordering after each new verdict before closing a checklist key or
    queuing a rejection comment. Legacy stage aliases are canonicalized before grouping or
    comparison. All completed and unavailable parallel gates, their checklist
    reconciliation, every rejection intent, the combined findings, and the task
@@ -439,6 +440,9 @@ for worker in workers.values():
    conclusion, or positive attempt — typed `CiObservationProtocolError` /
    `CiInventoryProtocolError`) enter recoverable blocked + `resume_phase=ci` +
    checkpoint; an authorized reply resumes CI once valid evidence is restored.
+   For a non-completed workflow run, both `null` and `""` mean that no
+   conclusion exists yet and are classified as pending; completed runs still
+   require a known non-empty conclusion.
    Transient observation transport (PR view **or** inventory `gh_json` /
    typed `CiObservationTransportError`) and pending / absent-yet evidence stay
    on static `phase=ci` and retry without an idle model, blind implement, or
@@ -726,7 +730,13 @@ around otherwise escape-free text. Before granting that exemption, the secret
 matcher checks the SGR parameter bytes joined to the visible text; a match
 redacts the entire token. The pipeline then applies control-tolerant secret
 matching to raw text, removes terminal escapes and controls, redacts again, and
-finally applies its length bound.
+finally applies its length bound. Secret-key name affixes, URL schemes, escape
+parameters, and control interleaves use fixed matching windows; value runs that
+do not need delimiter backtracking are possessive. This keeps every redaction
+pass linear on long separatorless provider text. A sink with an existing length
+limit takes only that limit plus a small inspection margin before any redaction
+regular expression runs. If that cut splits a token, the cut token is redacted
+as a whole, and the usual truncation marker and hard output limit still apply.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is
@@ -968,13 +978,22 @@ then blocks recoverably. A merged or closed state in either metadata read
 rejects the measurement context and routes directly to merge verification,
 without checkpointing, running or waiving the suite, publishing a report, or
 promoting base evidence. Before publication is queued, the task checkpoints
-the exact verified report-body digest, visibility, head, base, policy revision,
-and activity id. Recovery requires full payload equality and revalidates the
+the pull-request repository and number, exact verified report-body digest,
+visibility, head, base, and policy revision. Recovery first reads pull-request
+state. An open pull request still requires the current execution binding and
+source assignment; only a confirmed merged or closed pull request may finish
+the checkpoint without a live assignment. An unreadable state retries without
+changing the task or publishing. Recovery requires full payload equality and revalidates the
 v2 schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
 evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
-new comment. The verified report intent and its pending comment row become
+new comment. Immediately before creating or reusing that intent, recovery reads
+two equal snapshots containing the pull-request number, head SHA, base SHA,
+base name, and state. An open identity, head, base, or base-name mismatch retires
+the checkpoint and pending report and routes to measurement; a closed mismatch
+retires them before merge verification. A merged mismatch retires them before a
+non-recoverable stop and is never remeasured or published. The verified report intent and its pending comment row become
 visible in one transaction. Under the task-wide report lock, that checkpoint
 reloads the task and rejects it when another writer changed the head, pending
 or promoted base, policy revision, or report intent from the snapshot read at
@@ -986,7 +1005,9 @@ transition commit together. Every such conflict reloads the task and retries
 without saving the stale caller row or publishing a blocker. The checkpoint
 then records the newly verified head on the
 fresh row and, when it differs from the promoted evidence base, records the
-observed base as pending. While a base remeasurement is pending,
+observed base as pending. A head or active-base checkpoint change retires a
+stale report intent and its pending activity in that same transaction while
+holding the report activity lock. While a base remeasurement is pending,
 `pending_base_sha` is the active checkpoint binding and the previously promoted
 `base_sha` remains historical evidence until replacement evidence and the local
 gate promote the pending base. A checkpoint conflict reloads the task and
@@ -997,7 +1018,9 @@ coordinator A38 report for the task, including legacy and superseded
 deterministic ids, to `error`. Publication and invalidation additionally hold
 the affected per-activity cross-process advisory lock; the executor re-reads
 both the pending activity and the task's current matching intent immediately before a GitHub
-POST. It never moves a non-pending row to `done`. Rows bound to a coordinator
+POST. It also requires the binding head and base to equal the task's current
+`head_sha` and active pending-or-promoted base. A stale row and its matching
+intent are retired together while the activity lock is held. It never moves a non-pending row to `done`. Rows bound to a coordinator
 task, including
 rows with either the current or legacy deterministic coordinator report id,
 fail closed without a current matching intent. Unbound report-marked comments
@@ -1021,6 +1044,8 @@ commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
+Report publication and inventory waivers close `local_check_pass` before the
+validated `pushed` bookkeeping step, preserving the spine checklist order.
 After a successful suite, a pull request that merged on the measured head skips
 draft reconciliation but still receives the verified report and records the
 same report, local-test, and promoted-base bindings before merge verification.
@@ -1029,6 +1054,8 @@ digest, head, base, policy revision, and visibility as a post-suite checkpoint.
 An unreadable follow-up head keeps the task in `tests`; the next tick bypasses
 the generic merged/closed redirect and resumes only live-head validation,
 report publication, and evidence promotion without rerunning the suite. A
+saved matching report intent is reported as `already posted` after its
+publication result is verified, rather than being described as a new report. A
 confirmed different merged head is a non-recoverable completion boundary
 rather than an `await_merge` retry. A confirmed different head on a closed,
 unmerged pull request remains unbound and moves to merge verification, which

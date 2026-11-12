@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -12,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
+from agent_cli.coordinator_common import redact as redact_shared
 from agent_cli.lane import (
     LANE_GITHUB_TOKEN_ENV,
     LANE_STRIP_ENV,
@@ -25,16 +27,22 @@ from agent_cli.lane import (
     codex_argv,
     finalize_lane_output,
     grok_argv,
+    hide_config_dir,
     launch,
     openrouter_argv,
-    hide_config_dir,
     redact_diagnostic,
+    redact_lane_text,
     record_lane_run,
     tmux_wrap_argv,
 )
 from agent_cli.main import main
 from agent_cli.model_slots import MODELS_NOT_CONFIGURED
-from agent_cli.text_sanitize import sanitize_terminal_text
+from agent_cli.text_sanitize import (
+    redact_terminal_interleaved_secret,
+    redact_terminal_interleaved_tokens,
+    redact_terminal_interleaved_urlencoded_secret,
+    sanitize_terminal_text,
+)
 
 pytestmark = pytest.mark.no_pg
 
@@ -599,6 +607,80 @@ def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:
     assert "<config-dir>" not in redacted
     assert "<config_dir>/cache" in redacted
     assert "<config_dir>/settings.json" in redacted
+
+
+@pytest.mark.parametrize(
+    ("raw", "contains_secret"),
+    [
+        ("m" * 1_000_000, False),
+        ("api_key=model-secret-" + "m" * 1_000_000, True),
+        ("\x1b[31m" + "m" * 1_000_000 + "\x1b[0m", False),
+    ],
+    ids=("separatorless-word", "keyword-prefix", "raw-control-wrapper"),
+)
+def test_public_shared_and_lane_redaction_are_linear_on_large_words(
+    raw: str, contains_secret: bool
+) -> None:
+    calls = (
+        ("shared", lambda: redact_shared(raw, limit=None)),
+        ("lane", lambda: redact_lane_text(raw, limit=None)),
+        ("diagnostic", lambda: redact_diagnostic(raw)),
+    )
+
+    for label, call in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+        if contains_secret:
+            assert "model-secret" not in cleaned
+            assert "[redacted]" in cleaned
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "m" * 1_000_000,
+        "api_key=model-secret-" + "m" * 1_000_000,
+    ],
+    ids=("separatorless-word", "keyword-prefix"),
+)
+def test_public_terminal_redaction_helpers_are_linear_on_large_words(
+    raw: str,
+) -> None:
+    calls = (
+        ("tokens", lambda: redact_terminal_interleaved_tokens(raw)),
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(
+                raw, "api_key=model-secret-"
+            ),
+        ),
+        (
+            "urlencoded",
+            lambda: redact_terminal_interleaved_urlencoded_secret(
+                raw, "api_key=model-secret-"
+            ),
+        ),
+        ("sanitize", lambda: sanitize_terminal_text(raw)),
+    )
+
+    for label, call in calls:
+        started = time.monotonic()
+        call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+
+
+def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:
+    cleaned = redact_lane_text(
+        "visible " + "m" * 1_000_000,
+        limit=100,
+    )
+
+    assert cleaned.startswith("visible [redacted]")
+    assert cleaned.endswith("\n…[truncated]")
+    assert len(cleaned) <= 100
 
 
 def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:

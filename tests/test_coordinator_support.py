@@ -613,6 +613,10 @@ def lane_runner(fake: FakeGh):
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
+        if "--output-last-message" in argv:
+            output = Path(argv[argv.index("--output-last-message") + 1])
+            output.write_text(out, encoding="utf-8")
+            return Completed(0, "", "")
         return Completed(0, out, "")
 
     return run

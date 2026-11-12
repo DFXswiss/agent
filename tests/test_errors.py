@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,27 @@ def test_redact_and_fingerprint() -> None:
     fp = fingerprint(service="api", error_class="TimeoutError", stack_sig=sig, environment="prod")
     assert fp.startswith("api|TimeoutError|")
     assert fp.endswith("|prod")
+
+
+@pytest.mark.parametrize(
+    ("raw", "contains_secret"),
+    [
+        ("m" * 1_000_000, False),
+        ("api_key=model-secret-" + "m" * 1_000_000, True),
+    ],
+    ids=("separatorless-word", "keyword-prefix"),
+)
+def test_error_redaction_is_linear_on_large_words(
+    raw: str, contains_secret: bool
+) -> None:
+    started = time.monotonic()
+    cleaned = redact(raw)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"error redaction took {elapsed:.3f}s"
+    if contains_secret:
+        assert "model-secret" not in cleaned
+        assert "[redacted]" in cleaned
 
 
 def test_redact_strips_otel_ids() -> None:

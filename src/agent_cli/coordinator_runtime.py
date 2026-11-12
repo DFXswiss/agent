@@ -1914,6 +1914,16 @@ def advance_one(
     if ordering_error is not None:
         return [ordering_error]
     pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
+    pending_post_suite_state: str | None = None
+    if pending_post_suite:
+        # A saved suite may resume publication only after a fresh state read.
+        # Open pull requests still require the current execution binding and
+        # source assignment; merge/close is the only no-assignment finalization.
+        pending_post_suite_state = pr_state(store, worker, task, runner)
+        if pending_post_suite_state is None:
+            return [
+                "PR state temporarily unavailable before A38 checkpoint recovery; retrying"
+            ]
     # A rejection comment is a durable task intent, not an implementation-phase
     # side effect. Reconcile it before every dispatch or early PR-state branch so
     # phase changes and a concurrently closed/merged pull request cannot strand it.
@@ -1966,7 +1976,7 @@ def advance_one(
                 f"PR state temporarily unavailable before {phase}; retrying",
             ]
     try:
-        if pending_post_suite:
+        if pending_post_suite and pending_post_suite_state in ("MERGED", "CLOSED"):
             pass
         elif (
             source.get("owner_scoped")
@@ -2020,7 +2030,7 @@ def advance_one(
     # observation only; formal_approve / leave_draft must not proceed.
     if (
         phase not in ("await_merge", "done", "blocked", "ask")
-        and not pending_post_suite
+        and (not pending_post_suite or pending_post_suite_state == "OPEN")
     ):
         try:
             _verify_source_assigned(store, worker, c, runner)

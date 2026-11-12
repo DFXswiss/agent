@@ -127,6 +127,86 @@ def test_scan_rejects_stale_a38_report_activity_before_github(
     assert calls == []
 
 
+@pytest.mark.parametrize("moved", ["head", "base"])
+def test_scan_retires_self_consistent_report_intent_after_task_checkpoint_moves(
+    tmp_path: Path, moved: str
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    task_id = "aa000001-0000-4000-8000-000000000306"
+    activity_id = "aa000001-0000-4000-8000-000000000307"
+    old_head = "a" * 40
+    old_base = "b" * 40
+    body = "verified report for the previous task checkpoint"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    intent = {
+        "head": old_head,
+        "base_sha": old_base,
+        "policy_revision": old_base,
+        "activity_id": activity_id,
+        "body_sha256": digest,
+        "private": True,
+    }
+    store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "s1",
+            "repo": "example/project",
+            "ref": 42,
+            "payload": {
+                "coordinator": {
+                    "head_sha": "c" * 40 if moved == "head" else old_head,
+                    "pr_number": 42,
+                    "source": {"repo": "example/project"},
+                    "a38": {
+                        "pending_base_sha": (
+                            "d" * 40 if moved == "base" else old_base
+                        ),
+                        "report_intent": intent,
+                    },
+                }
+            },
+        },
+    )
+    _pending(
+        store,
+        activity_id,
+        "comment.post",
+        {
+            "repo": "example/project",
+            "number": 42,
+            "body": body,
+            "target": "pr",
+            "exact_body": True,
+            "_coordinator_a38_report": {
+                "task_id": task_id,
+                "head": old_head,
+                "base_sha": old_base,
+                "policy_revision": old_base,
+                "body_sha256": digest,
+                "private": True,
+            },
+        },
+    )
+    calls: list[list[str]] = []
+
+    lines = scan_github(
+        store,
+        lambda argv: calls.append(list(argv)) or Completed(1, "", "must not run"),
+    )
+
+    assert lines == [f"comment.post {activity_id} error"]
+    activity = store.row("activity", activity_id)
+    assert activity["execution_status"] == "error"
+    assert "stale for the task head or active base" in activity["execution_error"]
+    saved = store.row("task", task_id)
+    assert "report_intent" not in saved["payload"]["coordinator"]["a38"]
+    assert calls == []
+
+
 @pytest.mark.parametrize("identity", ["current", "legacy"])
 def test_scan_fails_closed_for_unbound_deterministic_coordinator_a38_report(
     tmp_path: Path, identity: str
@@ -237,7 +317,11 @@ def test_a38_report_invalidation_waits_for_discovery_publication_lock(
                 "coordinator": {
                     "source": {"repo": "example/project"},
                     "pr_number": 42,
-                    "a38": {"report_intent": intent},
+                    "head_sha": "a" * 40,
+                    "a38": {
+                        "pending_base_sha": "b" * 40,
+                        "report_intent": intent,
+                    },
                 }
             },
         },

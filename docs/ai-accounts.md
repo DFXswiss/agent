@@ -249,7 +249,12 @@ redacted on the full raw text before whitespace tokenization, including their
 payload.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
-bounding. The known-secret raw pass
+bounding. Credential-name affixes, URL schemes, terminal escape parameters,
+and removable-control interleaves have fixed matching windows so long
+separatorless text remains linear to process. Already bounded lane fields are
+cut to their limit plus a small inspection margin before matching; a token split
+by that cut is redacted in full before the ordinary truncation marker is added.
+The known-secret raw pass
 allows a CSI/ESC final byte to be a
 token character, so sanitization cannot assemble a credential that evades the
 matcher. Seven-bit DCS, PM, APC, and SOS strings accept
