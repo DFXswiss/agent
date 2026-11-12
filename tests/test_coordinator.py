@@ -4951,14 +4951,32 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
 
 
-def test_invalid_rejection_checkpoint_writes_reply_gated_phase_blocker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("checkpoint_value", "expected_error"),
+    [
+        ("invalid-checkpoint", "rejection review checkpoint is invalid"),
+        (
+            ["aa000001-0000-4000-8000-0000000000f5"],
+            "rejection review intent is missing or foreign",
+        ),
+    ],
+    ids=("structurally-invalid", "missing-or-foreign"),
+)
+def test_nonrepeatable_rejection_checkpoint_reply_recovers_and_dispatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint_value: object,
+    expected_error: str,
 ) -> None:
     from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_common import coord, save_task
 
     store = Store(tmp_path)
+    write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
     tid = "aa000001-0000-4000-8000-0000000000f7"
     store.write(
         "task",
@@ -4973,17 +4991,32 @@ def test_invalid_rejection_checkpoint_writes_reply_gated_phase_blocker(
                 "coordinator": {
                     "phase": "implement",
                     "source": {"repo": "example/project", "number": 7},
-                    "rejection_review_activity_ids": "foreign-checkpoint",
+                    "rejection_review_activity_ids": checkpoint_value,
                 }
             },
         },
     )
     published = _record_blocker_publications(monkeypatch)
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_execution_binding", lambda *a: None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "_verify_source_assigned", lambda *a: None
+    )
+    dispatched: list[str] = []
+
+    def dispatch_implement(store_, _worker, task_, *_args):  # noqa: ANN001
+        dispatched.append("implement")
+        coord(task_)["phase"] = "inner_review"
+        save_task(store_, task_)
+        return ["implementation dispatched"]
+
+    monkeypatch.setattr(coordinator_runtime, "phase_implement", dispatch_implement)
 
     lines = coordinator_runtime.advance_one(
         store,
         worker,
-        runner=lambda _argv: Completed(0, "", ""),
+        runner=fake,
         lane_runner=lambda *_args: pytest.fail("implementer lane was launched"),
     )
 
@@ -4991,12 +5024,107 @@ def test_invalid_rejection_checkpoint_writes_reply_gated_phase_blocker(
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
     assert checkpoint["resume_phase"] == "implement"
-    assert checkpoint["blocker"] == "rejection review checkpoint is invalid"
+    assert checkpoint["blocker"] == expected_error
+    assert "rejection_review_activity_ids" not in checkpoint
+    assert checkpoint["rejection_review_checkpoint_audit"] == {
+        "checkpoint": checkpoint_value,
+        "error": expected_error,
+    }
     assert checkpoint["question_activity_id"] in published
     assert any("blocker published" in line for line in lines)
     comment = store.row("activity", checkpoint["question_activity_id"])
     assert comment["execution_status"] == "done"
     assert "agent-coordinator:status:v1:phase-error" in comment["payload"]["body"]
+
+    fake.comments = [
+        {
+            "id": 20,
+            "body": comment["payload"]["body"],
+            "user": {"login": "worker-bot"},
+        },
+        {
+            "id": 21,
+            "body": "checkpoint corrected; continue",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    resumed = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=None
+    )
+    assert any("authorized reply" in line for line in resumed)
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "implement"
+
+    dispatched_lines = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=None
+    )
+    assert dispatched == ["implement"]
+    assert "implementation dispatched" in dispatched_lines
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "inner_review"
+
+
+def test_await_merge_rejection_reconciliation_failure_is_reply_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f4"
+    rejection_id = "aa000001-0000-4000-8000-0000000000f3"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "pr-review",
+            "payload": {
+                "coordinator": {
+                    "phase": "await_merge",
+                    "source": {"repo": "example/project", "number": 7},
+                    "rejection_review_activity_ids": [rejection_id],
+                }
+            },
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        rejection_id,
+        {
+            "id": rejection_id,
+            "session_id": worker.session_id,
+            "type": "review.post",
+            "payload": {"repo": "example/project", "number": 42, "body": "retry"},
+            "execution_status": "pending",
+        },
+    )
+    published = _record_blocker_publications(monkeypatch)
+    def transient_failure(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise CoordinatorError("temporary GitHub failure")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github", transient_failure
+    )
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "await_merge"
+    assert checkpoint["rejection_review_activity_ids"] == [rejection_id]
+    assert checkpoint["question_activity_id"] in published
+    assert checkpoint["blocker"] == "temporary GitHub failure"
+    assert any("blocker published" in line for line in lines)
 
 
 def test_invalid_rejection_checkpoint_does_not_strand_closed_post_suite_recovery(
@@ -5055,8 +5183,14 @@ def test_invalid_rejection_checkpoint_does_not_strand_closed_post_suite_recovery
     saved = store.row("task", tid)["payload"]["coordinator"]
     assert resumed == ["tests"]
     assert saved["phase"] == "await_merge"
-    assert saved["resume_phase"] == "tests"
-    assert saved["question_activity_id"] in published
+    assert saved.get("resume_phase") is None
+    assert saved.get("question_activity_id") is None
+    assert "rejection_review_activity_ids" not in saved
+    assert saved["rejection_review_checkpoint_audit"] == {
+        "checkpoint": "foreign-checkpoint",
+        "error": "rejection review checkpoint is invalid",
+    }
+    assert published
     assert lines[-1] == "checkpoint resumed"
     assert any("blocker published" in line for line in lines[:-1])
 

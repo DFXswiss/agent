@@ -138,7 +138,7 @@ def redact_terminal_interleaved_tokens(
     """
     if not text:
         return text
-    text = _TERMINAL_STRING_RE.sub(replacement, text)
+    text = redact_terminal_string_controls(text, replacement=replacement)
     pieces: list[str] = []
     start = 0
     index = 0
@@ -168,6 +168,13 @@ def redact_terminal_interleaved_tokens(
             else token
         )
     return "".join(pieces)
+
+
+def redact_terminal_string_controls(
+    text: str, *, replacement: str = "[redacted]"
+) -> str:
+    """Replace complete or unterminated terminal string controls on raw text."""
+    return _TERMINAL_STRING_RE.sub(replacement, text or "")
 
 
 def redact_terminal_interleaved_secret(

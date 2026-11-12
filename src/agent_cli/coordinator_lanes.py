@@ -2044,7 +2044,14 @@ def reconcile_rejection_review_intents(
                 typ="review.post",
                 payload=dict(row.get("payload") or {}),
             )
-    execute_github(store, runner, activity_ids=activity_ids)
+    try:
+        execute_github(store, runner, activity_ids=activity_ids)
+    except CoordinatorError as exc:
+        if str(exc) == "GitHub intent is missing or foreign":
+            raise CoordinatorError(
+                "rejection review intent is missing or foreign"
+            ) from exc
+        raise
     return _checkpoint_rejection_reviews(store, worker, task)
 
 

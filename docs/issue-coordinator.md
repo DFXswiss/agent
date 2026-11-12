@@ -409,10 +409,14 @@ for worker in workers.values():
    until the owned intent is verified done. Implementation and later phases may
    continue; the retry does not wait for a human reply or relaunch a reviewer.
    An invalid or foreign saved rejection checkpoint becomes a durable
-   `phase-error` blocker with the exact resume phase and a reply checkpoint;
-   it is not left as a tick-only diagnostic. A pending post-suite checkpoint
-   still publishes or retires after the pull request is merged or closed before
-   merge verification continues.
+   `phase-error` blocker with the exact resume phase and a reply checkpoint.
+   The invalid active checkpoint is retained only as inert audit data, so an
+   authorized reply can resume dispatch instead of retrying the same structural
+   error. Transient GitHub execution failures retain the active checkpoint for
+   retry. This recovery also applies in `await_merge`, where merge verification
+   resumes after the reply. A pending post-suite checkpoint still publishes or
+   retires after the pull request is merged or closed before merge verification
+   continues; finalization to `await_merge` clears stale reply recovery fields.
    `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
@@ -746,7 +750,8 @@ unquoted `key=value` assignment retains the established whole-token replacement;
 structured or quoted assignments keep their key and delimiters while their value
 is replaced. The secret keywords include `passwd` and the `access_key`,
 `access-key`, and `accesskey` forms; removable terminal controls are consumed
-alongside whitespace between the key, assignment operator, and value. Quoted
+alongside whitespace between the key, assignment operator, and value, but `=`
+and `:` terminate such a control span and remain the assignment operator. Quoted
 values run to their closing quote or the bounded input end; unquoted values stop
 at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter

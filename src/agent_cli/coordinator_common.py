@@ -21,6 +21,7 @@ from .store import Store, StoreError, utcnow
 from .text_sanitize import (
     TERMINAL_INTERLEAVE_PATTERN,
     redact_terminal_interleaved_tokens,
+    redact_terminal_string_controls,
     sanitize_terminal_text,
 )
 
@@ -237,7 +238,12 @@ class CiObservedFailureError(CoordinatorError):
     """Observed actual failed CI on a Ready-side recheck; route to phase_ci."""
 
 
-def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
+def _terminal_control_span(
+    text: str,
+    index: int,
+    *,
+    stop_at_assignment_operator: bool = False,
+) -> tuple[int, str | None]:
     """Return one removable terminal-control span and its ambiguous final byte.
 
     The scanner needs positions, not a sanitized copy.  This small lexical
@@ -252,6 +258,8 @@ def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
         if introducer in "]P^_X":
             cursor = index + 2
             while cursor < len(text):
+                if stop_at_assignment_operator and text[cursor] in "=:":
+                    return cursor, None
                 if text[cursor] in ("\x07", "\x9c"):
                     return cursor + 1, None
                 if (
@@ -264,8 +272,20 @@ def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
             return len(text), None
         if introducer == "[":
             cursor = index + 2
-            while cursor < len(text) and "0" <= text[cursor] <= "?":
+            while (
+                cursor < len(text)
+                and not (
+                    stop_at_assignment_operator and text[cursor] in "=:"
+                )
+                and "0" <= text[cursor] <= "?"
+            ):
                 cursor += 1
+            if (
+                cursor < len(text)
+                and stop_at_assignment_operator
+                and text[cursor] in "=:"
+            ):
+                return cursor, None
             while cursor < len(text) and " " <= text[cursor] <= "/":
                 cursor += 1
             if cursor < len(text) and "@" <= text[cursor] <= "~":
@@ -274,13 +294,31 @@ def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
         cursor = index + 1
         while cursor < len(text) and " " <= text[cursor] <= "/":
             cursor += 1
+        if (
+            cursor < len(text)
+            and stop_at_assignment_operator
+            and text[cursor] in "=:"
+        ):
+            return cursor, None
         if cursor < len(text) and "0" <= text[cursor] <= "~":
             return cursor + 1, text[cursor]
         return cursor, None
     if codepoint == 0x9B:
         cursor = index + 1
-        while cursor < len(text) and "0" <= text[cursor] <= "?":
+        while (
+            cursor < len(text)
+            and not (
+                stop_at_assignment_operator and text[cursor] in "=:"
+            )
+            and "0" <= text[cursor] <= "?"
+        ):
             cursor += 1
+        if (
+            cursor < len(text)
+            and stop_at_assignment_operator
+            and text[cursor] in "=:"
+        ):
+            return cursor, None
         while cursor < len(text) and " " <= text[cursor] <= "/":
             cursor += 1
         if cursor < len(text) and "@" <= text[cursor] <= "~":
@@ -289,6 +327,8 @@ def _terminal_control_span(text: str, index: int) -> tuple[int, str | None]:
     if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
         cursor = index + 1
         while cursor < len(text):
+            if stop_at_assignment_operator and text[cursor] in "=:":
+                return cursor, None
             if text[cursor] in ("\x07", "\x9c"):
                 return cursor + 1, None
             if (
@@ -359,6 +399,7 @@ def _redact_secret_assignments(text: str) -> str:
         key_tail = ""
         ambiguous_tail: str | None = None
         secret_key = False
+        operator_control_end: int | None = None
         while cursor < length:
             char = text[cursor]
             if _is_assignment_key_char(char):
@@ -372,8 +413,13 @@ def _redact_secret_assignments(text: str) -> str:
                 secret_key = secret_key or matched or ambiguous_matched
                 cursor += 1
                 continue
-            control_end, final = _terminal_control_span(text, cursor)
+            control_end, final = _terminal_control_span(
+                text, cursor, stop_at_assignment_operator=True
+            )
             if control_end > cursor:
+                if control_end < length and text[control_end] in "=:":
+                    full_control_end, _ = _terminal_control_span(text, cursor)
+                    operator_control_end = full_control_end
                 if final is not None and _is_assignment_key_char(final):
                     if ambiguous_tail is None:
                         ambiguous_tail = key_tail
@@ -395,8 +441,13 @@ def _redact_secret_assignments(text: str) -> str:
             if text[cursor].isspace():
                 cursor += 1
                 continue
-            control_end, _final = _terminal_control_span(text, cursor)
+            control_end, _final = _terminal_control_span(
+                text, cursor, stop_at_assignment_operator=True
+            )
             if control_end > cursor:
+                if control_end < length and text[control_end] in "=:":
+                    full_control_end, _ = _terminal_control_span(text, cursor)
+                    operator_control_end = full_control_end
                 cursor = control_end
                 continue
             break
@@ -409,6 +460,8 @@ def _redact_secret_assignments(text: str) -> str:
         operator = text[cursor]
         compact_before = cursor == key_end
         cursor += 1
+        if operator_control_end is not None and cursor < operator_control_end:
+            cursor = operator_control_end
         value_prefix = cursor
         while cursor < length:
             if text[cursor].isspace():
@@ -527,6 +580,7 @@ def redact(
         )
 
     source, source_was_cut = _prebound_redaction_input(text or "", limit)
+    source = redact_terminal_string_controls(source)
     source = _redact_secret_assignments(source)
     has_removed_control = _RAW_REMOVED_CONTROL.search(source) is not None
     if not has_removed_control:
