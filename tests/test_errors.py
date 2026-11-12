@@ -452,6 +452,7 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
         ("\x98", "\x9c"),
     ]
     suffixes = (" hunter2", "=hunter2", " = hunter2", ": hunter2")
+    payload_c0_suffixes = ("=hunter2", " hunter2", ": hunter2")
     lines: list[str] = []
     for keyword in _SECRET_ASSIGNMENT_KEYWORDS:
         for intermediate in ("", "!", " ", "$", "-"):
@@ -483,6 +484,19 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
                     + keyword[split:]
                 )
                 lines.extend(controlled + suffix for suffix in suffixes)
+            for c0 in ("\x00", "\x08", "\x7f", "\r"):
+                payload_keyword = (
+                    "prefix "
+                    + introducer
+                    + "0;"
+                    + keyword[:split]
+                    + c0
+                    + keyword[split:]
+                    + terminator
+                )
+                lines.extend(
+                    payload_keyword + suffix for suffix in payload_c0_suffixes
+                )
 
         for c0 in ("\x08", "\x00", "\x7f", "\r"):
             split = max(1, len(keyword) // 2)
@@ -1128,6 +1142,11 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "keyword elsewhere on the line, still triggers it" in normalized
         assert "logical line" in normalized
         assert "removable C0" in normalized
+        assert (
+            "Removable control bytes inside retained string-control payloads "
+            "are omitted from every structural view"
+            in normalized
+        )
         assert "introducer" in normalized
         assert "swallows every following physical line" in normalized
 
@@ -1174,8 +1193,13 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in documented
     )
     assert (
-        "Before `task-done` is evaluated for a merged A38 head, `await_merge` also\n"
-        "re-observes the exact-head cumulative GitHub check rollup and Actions workflow"
+        "Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates\n"
+        "the merged-head second-review outcome and starts or checks its timeout on every\n"
+        "tick."
+        in documented
+    )
+    assert (
+        "even\nwhile cumulative CI is pending or temporarily unavailable"
         in documented
     )
     assert (

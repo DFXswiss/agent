@@ -227,7 +227,9 @@ keyword, case-insensitively, the raw logical line is redacted
 from the start of the mapped whitespace token through logical-line end.
 Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
 return, are removed from every structural view but do not activate the rule
-without ESC/C1. Complete and unterminated string-control spans are indexed on
+without ESC/C1. Removable control bytes inside retained string-control payloads
+are omitted from every structural view, so they cannot split a keyword in the
+payload-kept view. Complete and unterminated string-control spans are indexed on
 the full raw input before lines are formed, so payload newlines are not
 boundaries; a mapped start inside such a span moves to its introducer. Following
 normal lines outside the span remain unchanged. An unterminated string control
