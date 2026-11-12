@@ -12300,6 +12300,174 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     assert pushed["status"] == "ja"
 
 
+@pytest.mark.parametrize("live_change", ("unreadable", "head", "base"))
+def test_a38_legacy_report_intent_recovery_uses_stable_live_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    live_change: str,
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    head = "a" * 40
+    base = "b" * 40
+    live_head = "c" * 40 if live_change == "head" else head
+    live_base = "d" * 40 if live_change == "base" else base
+    tid = "33333333-3333-4333-8333-33333333342f"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    body = "validated legacy report"
+    body_sha256 = coordinator_a38._report_body_digest(body)
+    activity_id = coordinator_a38._report_activity_id(
+        tid,
+        head=head,
+        base_sha=base,
+        policy_revision=base,
+    )
+    intent = {
+        "head": head,
+        "base_sha": base,
+        "policy_revision": base,
+        "activity_id": activity_id,
+        "body_sha256": body_sha256,
+        "private": False,
+    }
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "local-check",
+        "title": "Recover A38 report",
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "head_sha": head,
+                "worktree": str(worktree),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {
+                    "enabled": True,
+                    "pending_base_sha": base,
+                    "policy_revision": base,
+                    "report_intent": intent,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": coordinator_a38._report_activity_payload(
+                task,
+                repo="example/project",
+                number=42,
+                body=body,
+                head=head,
+                base_sha=base,
+                policy_revision=base,
+                body_sha256=body_sha256,
+                private=False,
+            ),
+            "execution_status": "pending",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "verify_signed_clean_head", lambda *_a, **_k: head
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_pull_a38_context",
+        lambda *_a, **_k: (base, ["src/app.py"], False, False),
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "git",
+        lambda *_a, **_k: Completed(0, "", ""),
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_load_report_policy",
+        lambda *_a, **_k: (Completed(0, "{}", ""), {}),
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "_repository_visibility", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "_validate_report_body", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_stable_live_pr_context",
+        lambda *_a, **_k: (
+            None
+            if live_change == "unreadable"
+            else {
+                "repo": "example/project",
+                "number": 42,
+                "head": live_head,
+                "base_sha": live_base,
+                "base_name": "develop",
+                "state": "OPEN",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "ensure_draft",
+        lambda *_a, **_k: pytest.fail("draft recovery ran before live validation"),
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "execute_github",
+        lambda *_a, **_k: pytest.fail("legacy report publication was executed"),
+    )
+
+    lines = coordinator_a38.phase_tests(
+        store,
+        worker,
+        store.row("task", tid),
+        fake,
+    )
+
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    activity = store.row("activity", activity_id)
+    assert "report" not in saved["a38"]
+    if live_change == "unreadable":
+        assert lines == [
+            "PR state temporarily unavailable after the A38 suite; retrying"
+        ]
+        assert saved["a38"]["report_intent"] == intent
+        assert saved["a38"]["post_suite_checkpoint"]["body"] == body
+        assert activity["execution_status"] == "pending"
+    else:
+        assert lines == [
+            "PR metadata changed after the A38 suite; invalidating the checkpoint "
+            "and remeasuring"
+        ]
+        assert "report_intent" not in saved["a38"]
+        assert "post_suite_checkpoint" not in saved["a38"]
+        assert activity["execution_status"] == "error"
+        if live_change == "head":
+            assert saved["head_sha"] == live_head
+        else:
+            assert saved["a38"]["pending_base_sha"] == live_base
+
+
 def _claude_first_manifest(home: Path) -> None:
     path = home / "ai-accounts.json"
     data = json.loads(path.read_text())
