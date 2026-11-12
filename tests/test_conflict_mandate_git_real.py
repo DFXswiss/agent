@@ -14,6 +14,7 @@ from agent_cli.conflict_mandate_git import (
     base_is_ancestor,
     branch_ref_valid,
     changed_paths,
+    checkout_head,
     conflict_markers,
     effective_driver_names,
     git_file_snapshot,
@@ -586,6 +587,35 @@ def test_effective_driver_names_reads_conditional_global_include(tmp_path: Path)
     ])
     assert plain.returncode == 1
     assert plain.stdout == ""
+
+
+def test_effective_driver_names_onbranch_activates_after_feature_branch_checkout(
+    tmp_path: Path,
+) -> None:
+    worktree, _git_dir = _separate_git_worktree(tmp_path)
+    included = tmp_path / "onbranch.gitconfig"
+    included.write_text('[filter "branch"]\n\tsmudge = cat\n', encoding="utf-8")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text(
+        f'[includeIf "onbranch:feature"]\n\tpath = {included}\n',
+        encoding="utf-8",
+    )
+    env = {
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    remote_head = _git(worktree, "rev-parse", "refs/remotes/origin/main")
+    _git(worktree, "update-ref", "refs/remotes/publication/feature", remote_head)
+    assert effective_driver_names(runner, str(worktree)) == ()
+    checkout_head(runner, str(worktree), branch="feature")
+    assert effective_driver_names(runner, str(worktree)) == (
+        "filter.branch.smudge",
+    )
 
 
 def test_snapshot_detects_rewritten_git_file(tmp_path: Path) -> None:
