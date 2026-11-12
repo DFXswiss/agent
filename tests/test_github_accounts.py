@@ -70,6 +70,22 @@ def test_network_remote_targets_accepts_lease_for_branch_name_with_equals():
 
 
 @pytest.mark.no_pg
+def test_network_remote_targets_accepts_no_follow_tags_for_push():
+    argv = [
+        'push', '--no-follow-tags', 'origin', 'HEAD:refs/heads/feature',
+    ]
+    assert _network_remote_targets(argv) == ['origin']
+
+
+@pytest.mark.no_pg
+def test_network_remote_targets_rejects_no_follow_tags_for_fetch():
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported git network option'):
+        _network_remote_targets([
+            'fetch', '--no-follow-tags', 'origin', 'refs/heads/feature',
+        ])
+
+
+@pytest.mark.no_pg
 def test_network_remote_targets_requires_lease_capability():
     argv = [
         'push', '--force-with-lease=refs/heads/feature:' + 'a' * 40,

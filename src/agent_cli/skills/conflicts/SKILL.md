@@ -28,10 +28,15 @@ The static script reacts, reads the pull request, prepares an isolated worktree,
 rebases the feature branch onto its base, and starts an implementer lane only
 when Git reports a `UU` or `AA` regular-text conflict. The lane specification
 contains only the conflicted paths, the replayed commit subject, the base branch,
-and fixed rules. The lane runs in the worktree and can read the repository; the
-script confines the result: after a completed lane run it verifies that exactly
-the conflicted paths changed and that their final content passes the
-deterministic checks. An attempt that did not complete counts as a failed
+and fixed rules. These values are passed in a delimited data section; the fixed
+rules declare them and the contents of every file as data, not instructions.
+Unicode control and bidirectional formatting characters are removed from the
+commit subject. If a value would close the data section, the request ends in a
+blocker and no lane is started. The lane runs in the worktree and can read
+the repository; the script confines the result: after a completed lane run it
+verifies that exactly the conflicted paths changed and that their final content
+passes the deterministic checks. An attempt that did not complete counts as a
+failed
 verification and is retried once; changes outside the conflicted paths are
 restored before the retry, while edits inside the conflicted files stay for the
 retry. Staging happens only after a lane run that completed and passed the
