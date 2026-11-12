@@ -19,6 +19,7 @@ from agent_cli.conflict_mandate_git import (
     effective_driver_names,
     git_file_snapshot,
     index_fingerprint,
+    push_with_lease,
     repository_state,
     repository_state_changed,
     require_ok,
@@ -726,3 +727,51 @@ def test_git_valid_branch_names_are_accepted(name: str) -> None:
 )
 def test_git_invalid_branch_names_are_rejected(name: str) -> None:
     assert branch_ref_valid(name) is False
+
+
+def test_push_with_lease_does_not_follow_annotated_tags(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    remote = tmp_path / "remote.git"
+    _init_repo(worktree)
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / "file.txt").write_text("first\n", encoding="utf-8")
+    _git(worktree, "add", "file.txt")
+    old_sha = _commit(worktree, "first")
+    assert _run(["git", "init", "--bare", str(remote)]).returncode == 0
+    _git(worktree, "remote", "add", "publication", str(remote))
+    _git(worktree, "push", "publication", "feature")
+
+    (worktree / "file.txt").write_text("second\n", encoding="utf-8")
+    _git(worktree, "add", "file.txt")
+    verified_sha = _commit(worktree, "second")
+    _git(worktree, "tag", "-a", "followed", "-m", "annotated tag")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text("[push]\n\tfollowTags = true\n", encoding="utf-8")
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(
+            argv,
+            env_overrides={
+                "GIT_CONFIG_GLOBAL": str(global_config),
+                "GIT_CONFIG_NOSYSTEM": "1",
+            },
+        )
+
+    pushed = push_with_lease(
+        runner,
+        str(worktree),
+        ref="feature",
+        old_sha=old_sha,
+        verified_sha=verified_sha,
+    )
+    assert pushed.returncode == 0, pushed.stderr
+    branch = _run([
+        "git", "--git-dir", str(remote), "rev-parse", "refs/heads/feature",
+    ])
+    assert branch.returncode == 0
+    assert branch.stdout.strip().lower() == verified_sha
+    tag = _run([
+        "git", "--git-dir", str(remote), "show-ref", "--verify", "--quiet",
+        "refs/tags/followed",
+    ])
+    assert tag.returncode == 1

@@ -6,11 +6,16 @@ comment, verifies the mandate, rebases the feature branch onto its base, starts
 a confined model lane only for conflicted files, verifies the result, runs the
 configured checks, pushes the rebased signed branch, and reports in the pull
 request. The lane specification contains only the conflicted paths, the replayed
-commit subject, the base branch, and fixed rules. The lane runs in the worktree
-and can read the repository; the script confines the result: after a completed
-lane run it verifies that exactly the conflicted paths changed and that their
-final content passes the deterministic checks. An attempt that did not complete
-counts as a failed verification and is retried once; changes outside the
+commit subject, the base branch, and fixed rules. These values are passed in a
+delimited data section; the fixed rules declare them and the contents of every
+file as data, not instructions. Unicode control and bidirectional formatting
+characters are removed from the commit subject. If a value would close the data
+section, the request ends in a blocker and no lane is started. The lane runs
+in the worktree and can read the repository; the script confines the result:
+after a completed lane run it verifies that exactly the conflicted paths changed
+and that their final content passes the deterministic checks. An attempt that
+did not complete counts as a failed verification and is retried once; changes
+outside the
 conflicted paths are restored before the retry, while edits inside the
 conflicted files stay for the retry. Staging happens only after a lane run that
 completed and passed the verification. Nothing is pushed without a passing
@@ -376,7 +381,7 @@ exists on GitHub, without Git, a lane, or a comment.
    nothing is pushed and the next tick starts again from the pull-request read.
    A closed pull request, changed refs or repository, or newly protected branch
    is a blocker without a push. The eventual push sends only
-   `<verified-head>:refs/heads/<head-ref>` with
+   `<verified-head>:refs/heads/<head-ref>` with `--no-follow-tags` and
    `--force-with-lease=refs/heads/<head-ref>:<old-head>`. The account runner
    accepts exactly that lease form: the value is split at the last colon, the
    ref part must start with `refs/heads/` and contain no whitespace or colon,
@@ -547,8 +552,14 @@ that device, and only where the operator accepts that execution.
 
 ## Known limits
 
-A file name or command output that is not valid UTF-8 ends the request with the
-blocker `command output is not valid UTF-8`.
+Output that is not valid UTF-8 is handled by where it occurs: Git or check
+output inside a request (for example a file name) ends the request with the
+blocker `command output is not valid UTF-8`; output of a GitHub command is
+unreadable data for that tick (transient, and `Mergeable: unknown` when it is
+the pull-request read after a push); output of the lane launch is a failed lane
+launch (transient); when the GitHub account runner cannot be set up for this
+reason, the preflight refuses with `preflight blocked: GitHub command output is
+not valid UTF-8`.
 
 Local state is an optimization. If the control directory of a request is lost
 after a successful push and before the result comment was posted, the next tick

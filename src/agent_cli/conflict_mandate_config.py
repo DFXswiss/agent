@@ -33,7 +33,7 @@ def _text(value: object, label: str) -> str:
     return value
 
 
-def _repo(value: object) -> str:
+def validate_repository_name(value: object) -> str:
     name = _text(value, 'repository')
     if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+', name):
         raise StoreError('repository must be owner/name')
@@ -113,7 +113,7 @@ def load_conflict_config(home: Path) -> dict[str, ConflictWorker]:
             raise StoreError('repositories requires at least one explicit repository')
         repositories: dict[str, ConflictRepository] = {}
         for repo, entry in repos_raw.items():
-            repo = _repo(repo)
+            repo = validate_repository_name(repo)
             if not isinstance(entry, dict):
                 raise StoreError('repository entry must be an object')
             if 'check_argv' not in entry:
@@ -147,4 +147,5 @@ __all__ = [
     'ConflictRepository',
     'ConflictWorker',
     'load_conflict_config',
+    'validate_repository_name',
 ]
