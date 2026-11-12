@@ -1163,8 +1163,18 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "logical line" in normalized
         assert "removable C0" in normalized
         assert (
-            "Removable control bytes inside retained string-control payloads "
-            "are omitted from every structural view"
+            "Nested string controls keep their payload text at every nesting depth"
+            in normalized
+        )
+        assert (
+            "CSI spans (including parameters, intermediates, and finals), other "
+            "ESC sequences, C0 bytes, and lone C1 bytes inside retained "
+            "string-control payloads are omitted from every structural view"
+            in normalized
+        )
+        assert (
+            "An unterminated nested string control fails closed and treats the "
+            "whole logical line as matched"
             in normalized
         )
         assert "introducer" in normalized
@@ -1223,8 +1233,18 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     assert "stored report body" in documented
     assert "live repository value" in documented
     assert "same\ncontrol lexer" in documented
-    for text in (ai_accounts, readme, skill):
-        assert "Nested seven- or eight-bit CSI" in " ".join(text.split())
+    for text in (documented, ai_accounts, readme, skill):
+        normalized = " ".join(text.split())
+        assert (
+            "Nested string controls keep their payload text at every nesting depth"
+            in normalized
+        )
+        assert (
+            "CSI spans (including parameters, intermediates, and finals), other "
+            "ESC sequences, C0 bytes, and lone C1 bytes inside retained "
+            "string-control payloads"
+            in normalized
+        )
     assert (
         "even while cumulative CI is pending or temporarily unavailable"
         in " ".join(documented.split())

@@ -7864,6 +7864,14 @@ def test_a38_merged_base_requires_bound_report_or_waiver(
     task = store.row("task", task_id)
     checkpoint = task["payload"]["coordinator"]
     checkpoint["phase"] = "await_merge"
+    checkpoint["a38"]["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "requirement_satisfied_at": "2026-09-01T11:59:00Z",
+        "reviews": [
+            {"blocks_merge": False, "at": "2026-09-01T11:59:00Z"}
+        ],
+    }
     checkpoint["a38"].pop("report", None)
     store.write(
         "task",
@@ -7906,6 +7914,14 @@ def test_a38_merged_untrusted_evidence_is_a_final_blocker(
     checkpoint["phase"] = "await_merge"
     checkpoint["resume_phase"] = "tests"
     checkpoint["question_activity_id"] = "stale-question"
+    checkpoint["a38"]["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "requirement_satisfied_at": "2026-09-01T11:59:00Z",
+        "reviews": [
+            {"blocks_merge": False, "at": "2026-09-01T11:59:00Z"}
+        ],
+    }
     if failure == "missing-promoted-base":
         checkpoint["a38"].pop("base_sha", None)
         expected = "merged PR has no trusted evidence base"
@@ -11692,7 +11708,11 @@ def test_blocked_post_suite_checkpoint_resumes_after_close_without_reply(
 
 
 def _post_suite_recovery_fixture(
-    tmp_path: Path, *, checkpoint_number: int = 42, private: bool = True
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    checkpoint_number: int = 42,
+    private: bool = True,
 ) -> tuple[Store, Any, str, str, str, str]:
     import hashlib
     from dataclasses import replace
@@ -11700,6 +11720,8 @@ def _post_suite_recovery_fixture(
     from agent_cli import coordinator_a38
 
     store = Store(tmp_path)
+    write_accounts(store.home)
+    patch_account_runners(monkeypatch, FakeGh())
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = replace(make_worker(tmp_path), review_session=None, a38=True)
     tid = "33333333-3333-4333-8333-33333333340f"
@@ -11756,6 +11778,49 @@ def _post_suite_recovery_fixture(
             },
         },
     )
+    checklist = {
+        "session_registered": "ja",
+        "spec_written": "ja",
+        "implementer_done": "ja",
+        "reviewer_approved": "ja",
+        "local_check_pass": "pending",
+        "pushed": "pending",
+        "review_1_quality": "pending",
+        "review_1_logic": "pending",
+        "review_2_quality": "pending",
+        "review_2_logic": "pending",
+        "contributing_ok": "pending",
+        "deviation_declared": "pending",
+        "deviation_granted": "pending",
+    }
+    for key, status in checklist.items():
+        checklist_id = f"post-suite-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            checklist_id,
+            {
+                "id": checklist_id,
+                "task_id": tid,
+                "key": key,
+                "status": status,
+            },
+        )
+    store.write(
+        "local_check",
+        "insert",
+        "post-suite-a38-check",
+        {
+            "id": "post-suite-a38-check",
+            "task_id": tid,
+            "name": "a38",
+            "command": "agent a38 run",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": head,
+        },
+    )
     task = store.row("task", tid)
     assert task is not None
     store.write(
@@ -11790,7 +11855,9 @@ def test_open_post_suite_mismatch_retires_checkpoint_and_remeasures(
     from agent_cli import coordinator_a38
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
-        tmp_path, checkpoint_number=41 if mismatch == "identity" else 42
+        tmp_path,
+        monkeypatch,
+        checkpoint_number=41 if mismatch == "identity" else 42,
     )
     live_head = "c" * 40 if mismatch == "head" else head
     live_base = "d" * 40 if mismatch == "base" else base
@@ -11837,7 +11904,7 @@ def test_post_suite_rereads_live_base_immediately_before_publication(
     from agent_cli import coordinator_a38
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     contexts = iter(
         (
@@ -11898,6 +11965,7 @@ def test_post_suite_visibility_change_retires_report_and_remeasures(
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
         tmp_path,
+        monkeypatch,
         private=report_private,
     )
     monkeypatch.setattr(
@@ -11948,6 +12016,7 @@ def test_post_suite_rereads_visibility_immediately_before_finalization(
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
         tmp_path,
+        monkeypatch,
         private=True,
     )
     monkeypatch.setattr(
@@ -11993,7 +12062,7 @@ def test_post_suite_unreadable_visibility_retries_without_effects(
     from agent_cli import coordinator_a38
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     monkeypatch.setattr(
         coordinator_a38,
@@ -12033,6 +12102,186 @@ def test_post_suite_unreadable_visibility_retries_without_effects(
     assert store.row("activity", activity_id) == before_activity
 
 
+def test_post_suite_visibility_uses_configured_github_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path,
+        monkeypatch,
+        private=True,
+    )
+    live = {
+        "number": 42,
+        "headRefOid": head,
+        "baseRefOid": base,
+        "baseRefName": "develop",
+        "state": "OPEN",
+    }
+    monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
+    scoped_calls: list[str] = []
+    github_calls: list[list[str]] = []
+
+    def configured_runner(argv: list[str]) -> Completed:
+        github_calls.append(argv)
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(0, json.dumps(live), "")
+        if argv[:2] == ["gh", "api"]:
+            return Completed(0, "true", "")
+        raise AssertionError(argv)
+
+    def scoped_runner(_store, _session, _runner):
+        scoped_calls.append("scoped")
+        return configured_runner
+
+    def raw_runner(_argv: list[str]) -> Completed:
+        raise AssertionError("raw runner must not perform GitHub reads")
+
+    monkeypatch.setattr(coordinator_a38, "scoped", scoped_runner)
+    patch_execute_github(monkeypatch)
+
+    lines = coordinator_a38.phase_tests(
+        store, worker, store.row("task", tid), raw_runner
+    )
+
+    assert lines == [f"A38 report already posted on {head[:7]}"]
+    assert scoped_calls == ["scoped"]
+    pr_view = [
+        "gh",
+        "pr",
+        "view",
+        "42",
+        "--repo",
+        "example/project",
+        "--json",
+        "number,headRefOid,baseRefOid,baseRefName,state",
+    ]
+    assert github_calls == [
+        pr_view,
+        pr_view,
+        ["gh", "api", "repos/example/project", "--jq", ".private"],
+        pr_view,
+        pr_view,
+        ["gh", "api", "repos/example/project", "--jq", ".private"],
+        ["gh", "api", "repos/example/project", "--jq", ".private"],
+    ]
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["a38"]["report"]["activity_id"] == activity_id
+
+
+def test_post_suite_final_visibility_failure_retains_published_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path,
+        monkeypatch,
+        private=True,
+    )
+    live = {
+        "repo": "example/project",
+        "number": 42,
+        "head": head,
+        "base_sha": base,
+        "base_name": "develop",
+        "state": "OPEN",
+    }
+    monkeypatch.setattr(
+        coordinator_a38, "_stable_live_pr_context", lambda *_a, **_k: live
+    )
+    monkeypatch.setattr(coordinator_a38, "ensure_draft", lambda *_a, **_k: [])
+    observations = iter((True, True, CoordinatorError("visibility unavailable")))
+
+    def visibility(*_args):
+        observed = next(observations)
+        if isinstance(observed, CoordinatorError):
+            raise observed
+        return observed
+
+    monkeypatch.setattr(coordinator_a38, "_repository_visibility", visibility)
+    patch_execute_github(monkeypatch)
+
+    lines = coordinator_a38.phase_tests(
+        store, worker, store.row("task", tid), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "repository visibility temporarily unavailable before A38 report "
+        "finalization; retrying"
+    ]
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert saved["a38"]["post_suite_checkpoint"]["head"] == head
+    assert saved["a38"]["report_intent"]["activity_id"] == activity_id
+    assert "report" not in saved["a38"]
+    assert store.row("activity", activity_id)["execution_status"] == "done"
+
+
+@pytest.mark.parametrize("live_state", ("MERGED", "CLOSED"))
+def test_post_suite_visibility_change_after_close_retires_without_finalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_state: str
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_common import NonRecoverableCoordinatorError
+
+    store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
+        tmp_path,
+        monkeypatch,
+        private=True,
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": base,
+            "base_name": "develop",
+            "state": live_state,
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "_repository_visibility", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        coordinator_a38,
+        "execute_github",
+        lambda *_a, **_k: pytest.fail("report publication was executed"),
+    )
+
+    if live_state == "MERGED":
+        with pytest.raises(
+            NonRecoverableCoordinatorError,
+            match="merged PR visibility differs from the stored A38 report",
+        ):
+            coordinator_a38.phase_tests(
+                store,
+                worker,
+                store.row("task", tid),
+                lambda _argv: Completed(0, "", ""),
+            )
+    else:
+        assert coordinator_a38.phase_tests(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+        ) == [
+            "PR closed after repository visibility changed; verifying the merge "
+            "without promoting the A38 report"
+        ]
+
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["phase"] == ("tests" if live_state == "MERGED" else "await_merge")
+    assert "post_suite_checkpoint" not in saved["a38"]
+    assert "report_intent" not in saved["a38"]
+    assert "report" not in saved["a38"]
+    assert store.row("activity", activity_id)["execution_status"] == "error"
+
+
 @pytest.mark.parametrize("mismatch", ["head", "base"])
 def test_merged_post_suite_mismatch_clears_checkpoint_before_final_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: str
@@ -12041,7 +12290,7 @@ def test_merged_post_suite_mismatch_clears_checkpoint_before_final_stop(
     from agent_cli.coordinator_common import NonRecoverableCoordinatorError
 
     store, worker, tid, activity_id, head, base = _post_suite_recovery_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     monkeypatch.setattr(
         coordinator_a38,
@@ -12494,13 +12743,9 @@ def test_a38_context_reads_stable_base_and_one_pr_inventory() -> None:
     assert calls[2][-1] == "headRefOid,baseRefOid,baseRefName,state"
 
 
-def test_post_suite_context_requires_two_equal_identity_head_base_state_reads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_post_suite_context_requires_two_equal_identity_head_base_state_reads() -> None:
     from agent_cli import coordinator_a38
 
-    store = Store(tmp_path)
-    worker = make_worker(tmp_path)
     task = {
         "repo": "example/project",
         "ref": 42,
@@ -12511,9 +12756,6 @@ def test_post_suite_context_requires_two_equal_identity_head_base_state_reads(
             }
         },
     }
-    monkeypatch.setattr(
-        coordinator_a38, "scoped", lambda _store, _session, runner: runner
-    )
     snapshots = iter(
         (
             {
@@ -12541,8 +12783,6 @@ def test_post_suite_context_requires_two_equal_identity_head_base_state_reads(
     )
 
     context = coordinator_a38._stable_live_pr_context(
-        store,
-        worker,
         task,
         lambda _argv: Completed(0, json.dumps(next(snapshots)), ""),
     )

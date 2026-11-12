@@ -642,19 +642,16 @@ def _validated_post_suite_checkpoint(value: Any) -> dict[str, Any]:
 
 
 def _stable_live_pr_context(
-    store: Store,
-    worker: WorkerConfig,
     task: Mapping[str, Any],
-    runner: Runner,
+    api: Runner,
 ) -> dict[str, Any] | None:
-    """Read one stable live PR identity, head, base, branch and state snapshot."""
+    """Read one stable live PR snapshot through an already scoped GitHub runner."""
     candidate = dict(task)
     c = coord(candidate)
     number = as_int(c.get("pr_number") or candidate.get("ref"))
     repo = target_repo(candidate)
     if number is None or not repo:
         return None
-    api = scoped(store, worker.session_id, runner)
     previous: dict[str, Any] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS + 1):
         try:
@@ -919,6 +916,7 @@ def _resume_post_suite_report(
     worker: WorkerConfig,
     task: dict[str, Any],
     runner: Runner,
+    api: Runner,
 ) -> list[str]:
     """Finish only live-head validation, publication, and evidence promotion."""
     c = coord(task)
@@ -992,7 +990,7 @@ def _resume_post_suite_report(
             "and remeasuring"
         ]
 
-    live = _stable_live_pr_context(store, worker, task, runner)
+    live = _stable_live_pr_context(task, api)
     if live is None:
         return ["PR state temporarily unavailable after the A38 suite; retrying"]
     mismatch_lines = validate_live_context(live)
@@ -1048,7 +1046,7 @@ def _resume_post_suite_report(
         ]
 
     # A transient visibility lookup must not trigger draft or report effects.
-    visibility_lines = validate_live_visibility(runner)
+    visibility_lines = validate_live_visibility(api)
     if visibility_lines is not None:
         return visibility_lines
     draft_lines: list[str] = []
@@ -1074,7 +1072,7 @@ def _resume_post_suite_report(
 
     # Publication gets a final coherent live join after draft/checklist recovery.
     # No report intent is queued from an unreadable or changed snapshot.
-    live = _stable_live_pr_context(store, worker, task, runner)
+    live = _stable_live_pr_context(task, api)
     if live is None:
         return ["PR state temporarily unavailable before A38 publication; retrying"]
     mismatch_lines = validate_live_context(live)
@@ -1082,7 +1080,7 @@ def _resume_post_suite_report(
         return mismatch_lines
     live_state = str(live["state"])
 
-    visibility_lines = validate_live_visibility(runner)
+    visibility_lines = validate_live_visibility(api)
     if visibility_lines is not None:
         return visibility_lines
 
@@ -1194,7 +1192,7 @@ def _resume_post_suite_report(
 
     # Close the visibility race after publication and immediately before the
     # report becomes completion evidence.
-    visibility_lines = validate_live_visibility(runner)
+    visibility_lines = validate_live_visibility(api)
     if visibility_lines is not None:
         return visibility_lines
 
@@ -1382,8 +1380,9 @@ def phase_tests(
     """Run the optional trusted precheck, complete A38 suite, and publish its report."""
     if not worker.a38:
         raise CoordinatorError("A38 tests phase called for a non-A38 worker")
+    api = scoped(store, worker.session_id, runner)
     if post_suite_checkpoint_pending(task):
-        return _resume_post_suite_report(store, worker, task, runner)
+        return _resume_post_suite_report(store, worker, task, runner, api)
     checkpoint_state = copy.deepcopy(_report_checkpoint_state(task))
     c = coord(task)
     source = c["source"]
@@ -1394,7 +1393,6 @@ def phase_tests(
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 measurement requires a pull request number")
-    api = scoped(store, worker.session_id, runner)
     try:
         base_sha, changed_paths, markdown_only, guard_docs_only = _pull_a38_context(
             api,
@@ -1486,7 +1484,7 @@ def phase_tests(
         def current_waiver_context() -> tuple[
             dict[str, Any] | None, list[str] | None
         ]:
-            live = _stable_live_pr_context(store, worker, task, runner)
+            live = _stable_live_pr_context(task, api)
             if live is None:
                 return None, [
                     "PR state temporarily unavailable before A38 inventory waiver "
@@ -1698,7 +1696,7 @@ def phase_tests(
                 "private": visibility,
             },
         )
-        return _resume_post_suite_report(store, worker, task, runner)
+        return _resume_post_suite_report(store, worker, task, runner, api)
 
     if cfg.check_argv:
         from .coordinator_common import coordinator_env
@@ -1867,7 +1865,7 @@ def phase_tests(
             "private": visibility,
         },
     )
-    return _resume_post_suite_report(store, worker, task, runner)
+    return _resume_post_suite_report(store, worker, task, runner, api)
 
 
 def _summary(task: Mapping[str, Any], language: str) -> str:

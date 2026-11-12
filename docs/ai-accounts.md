@@ -251,12 +251,13 @@ and all other control bytes are dropped. If any view contains a shared secret
 keyword, case-insensitively, the raw logical line is replaced from the start of that
 keyword's mapped whitespace token
 through logical-line end. Standalone removable C0 bytes are removed from every
-view without activating the rule by themselves. Removable control bytes inside
-retained string-control payloads are omitted from every structural view, so
-they cannot split a keyword in the payload-kept view. Nested seven- or
-eight-bit CSI, ESC sequences, C0, and C1 controls are lexed as complete spans
-in the payload view, omitting CSI parameters, intermediates, and finals
-together rather than leaving printable control bytes in the keyword view.
+view without activating the rule by themselves. Nested string controls keep
+their payload text at every nesting depth; their introducers and terminators
+are omitted. CSI spans (including parameters, intermediates, and finals), other
+ESC sequences, C0 bytes, and lone C1 bytes inside retained string-control
+payloads are omitted from every structural view, so they cannot split a keyword
+in the payload-kept view. An unterminated nested string control fails closed and
+treats the whole logical line as matched.
 String-control spans are
 indexed on the complete raw input first, so their payload newlines do not split
 logical lines; a mapped start inside one moves to the introducer and the span is

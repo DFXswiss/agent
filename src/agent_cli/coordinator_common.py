@@ -286,21 +286,8 @@ def _terminal_control_span(
             return index + 1, None
         introducer = text[index + 1]
         if introducer in "]P^_X":
-            is_osc = introducer == "]"
-            cursor = index + 2
-            while cursor < len(text):
-                if text[cursor] == "\x9c" or (
-                    is_osc and text[cursor] == "\x07"
-                ):
-                    return cursor + 1, None
-                if (
-                    text[cursor] == "\x1b"
-                    and cursor + 1 < len(text)
-                    and text[cursor + 1] == "\\"
-                ):
-                    return cursor + 2, None
-                cursor += 1
-            return len(text), None
+            end, _terminated = _terminal_string_control_end(text, index)
+            return end, None
         if introducer == "[":
             cursor = index + 2
             while (
@@ -356,21 +343,8 @@ def _terminal_control_span(
             return cursor + 1, text[cursor]
         return cursor, None
     if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
-        is_osc = codepoint == 0x9D
-        cursor = index + 1
-        while cursor < len(text):
-            if text[cursor] == "\x9c" or (
-                is_osc and text[cursor] == "\x07"
-            ):
-                return cursor + 1, None
-            if (
-                text[cursor] == "\x1b"
-                and cursor + 1 < len(text)
-                and text[cursor + 1] == "\\"
-            ):
-                return cursor + 2, None
-            cursor += 1
-        return len(text), None
+        end, _terminated = _terminal_string_control_end(text, index)
+        return end, None
     if (
         codepoint <= 0x08
         or 0x0B <= codepoint <= 0x1F
@@ -378,6 +352,52 @@ def _terminal_control_span(
     ):
         return index + 1, None
     return index, None
+
+
+def _terminal_string_control_end(
+    text: str, index: int, *, limit: int | None = None
+) -> tuple[int, bool]:
+    """Return a nesting-aware string-control end and whether it terminated."""
+    stop = len(text) if limit is None else min(len(text), limit)
+    if text[index] == "\x1b":
+        if index + 1 >= stop or text[index + 1] not in "]P^_X":
+            return min(index + 1, stop), False
+        stack = [text[index + 1] == "]"]
+        cursor = index + 2
+    else:
+        codepoint = ord(text[index])
+        if codepoint not in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
+            return min(index + 1, stop), False
+        stack = [codepoint == 0x9D]
+        cursor = index + 1
+
+    while cursor < stop:
+        char = text[cursor]
+        if char == "\x1b" and cursor + 1 < stop:
+            introducer = text[cursor + 1]
+            if introducer == "\\":
+                stack.pop()
+                cursor += 2
+                if not stack:
+                    return cursor, True
+                continue
+            if introducer in "]P^_X":
+                stack.append(introducer == "]")
+                cursor += 2
+                continue
+        codepoint = ord(char)
+        if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
+            stack.append(codepoint == 0x9D)
+            cursor += 1
+            continue
+        if char == "\x9c" or (char == "\x07" and stack[-1]):
+            stack.pop()
+            cursor += 1
+            if not stack:
+                return cursor, True
+            continue
+        cursor += 1
+    return stop, False
 
 
 def _is_assignment_key_char(char: str) -> bool:
@@ -487,10 +507,11 @@ def _append_string_control_payload_view(
     view_length: int,
     raw_start: int,
     raw_end: int,
-) -> int:
-    """Append payload bytes while omitting nested control spans and mapping gaps."""
+) -> tuple[int, bool]:
+    """Retain nested string payloads while omitting every control wrapper."""
     cursor = raw_start
-    while True:
+    nested_strings: list[bool] = []
+    while cursor < raw_end:
         control = _RAW_REMOVED_CONTROL.search(text, cursor, raw_end)
         if control is None:
             break
@@ -498,13 +519,37 @@ def _append_string_control_payload_view(
         view_length = _append_control_view(
             text, pieces, spans, view_length, cursor, control_start
         )
+        if _is_terminal_string_control(text, control_start):
+            if text[control_start] == "\x1b":
+                nested_strings.append(text[control_start + 1] == "]")
+                cursor = control_start + 2
+            else:
+                nested_strings.append(ord(text[control_start]) == 0x9D)
+                cursor = control_start + 1
+            continue
+        if nested_strings and (
+            text[control_start] == "\x9c"
+            or (
+                text[control_start] == "\x07"
+                and nested_strings[-1]
+            )
+            or (
+                text[control_start] == "\x1b"
+                and control_start + 1 < raw_end
+                and text[control_start + 1] == "\\"
+            )
+        ):
+            nested_strings.pop()
+            cursor = control_start + (
+                2 if text[control_start] == "\x1b" else 1
+            )
+            continue
         control_end, _final = _terminal_control_span(text, control_start)
-        # A nested unterminated string control may lex through the outer
-        # terminator. The payload view owns only this raw payload slice.
         cursor = min(raw_end, max(control_start + 1, control_end))
-    return _append_control_view(
+    view_length = _append_control_view(
         text, pieces, spans, view_length, cursor, raw_end
     )
+    return view_length, bool(nested_strings)
 
 
 def _is_config_dir_placeholder_token(line: str, raw_offset: int) -> bool:
@@ -542,12 +587,13 @@ def _terminal_keyword_view(
     line: str,
     kind: str,
     control_spans: list[tuple[int, int, bool]],
-) -> tuple[str, list[tuple[int, int, int]]]:
+) -> tuple[str, list[tuple[int, int, int]], bool]:
     """Build one structural keyword view with its raw mapping."""
     pieces: list[str] = []
     spans: list[tuple[int, int, int]] = []
     view_length = 0
     cursor = 0
+    fail_closed = False
     for control_start, control_end, is_string_control in control_spans:
         view_length = _append_control_view(
             line, pieces, spans, view_length, cursor, control_start
@@ -574,7 +620,7 @@ def _terminal_keyword_view(
                 payload_end = control_end - 2
             elif control_end > payload_start and line[control_end - 1] in "\x07\x9c":
                 payload_end = control_end - 1
-            view_length = _append_string_control_payload_view(
+            view_length, unterminated_nested = _append_string_control_payload_view(
                 line,
                 pieces,
                 spans,
@@ -582,6 +628,7 @@ def _terminal_keyword_view(
                 payload_start,
                 payload_end,
             )
+            fail_closed = fail_closed or unterminated_nested
         elif kind == "payload" and line[control_start] == "\x1b":
             payload_start = control_start + 1
             if payload_start < control_end and line[payload_start] == "[":
@@ -618,7 +665,7 @@ def _terminal_keyword_view(
 
     _append_control_view(line, pieces, spans, view_length, cursor, len(line))
 
-    return "".join(pieces), spans
+    return "".join(pieces), spans, fail_closed
 
 
 def _redact_controlled_secret_line(
@@ -636,7 +683,11 @@ def _redact_controlled_secret_line(
 
     token_start: int | None = None
     for kind in ("stripped", "payload", "key-join"):
-        view, spans = _terminal_keyword_view(line, kind, control_spans)
+        view, spans, fail_closed = _terminal_keyword_view(
+            line, kind, control_spans
+        )
+        if fail_closed:
+            return "[redacted]"
         start = _mapped_secret_keyword_start(line, view, spans)
         if start is None:
             continue

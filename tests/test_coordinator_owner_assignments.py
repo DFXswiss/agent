@@ -2074,7 +2074,7 @@ def test_a38_merged_report_visibility_change_blocks_completion(
     assert store.row("task", task_id)["state"] != "done"
 
 
-def test_a38_merged_visibility_unreadable_retries_without_effects(
+def test_a38_merged_visibility_uses_configured_github_runner(
     monkeypatch, tmp_path
 ):
     from agent_cli.coordinator_github import phase_await_merge
@@ -2091,21 +2091,130 @@ def test_a38_merged_visibility_unreadable_retries_without_effects(
         store, worker, explicit_statement=True
     )
     _patch_early_merge_readiness(monkeypatch, head)
+    github_calls: list[list[str]] = []
+
+    def configured_runner(argv):
+        github_calls.append(argv)
+        return Completed(0, "false", "")
+
+    def raw_runner(_argv):
+        raise AssertionError("raw runner must not perform GitHub calls")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped",
+        lambda _store, _session, _runner: configured_runner,
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._repository_visibility",
-        lambda *_args: (_ for _ in ()).throw(
-            CoordinatorError("visibility unavailable")
-        ),
+        lambda api, repo: api(
+            ["gh", "api", f"repos/{repo}", "--jq", ".private"]
+        ).stdout == "true",
     )
-    before = store.row("task", task_id)
 
     assert phase_await_merge(
-        store, worker, store.row("task", task_id), object()
-    ) == [
-        "merge observed but repository visibility is temporarily unavailable; "
-        "retrying await_merge"
+        store, worker, store.row("task", task_id), raw_runner
+    ) == ["human merge verified Example/owned#42; task done"]
+    assert github_calls == [
+        ["gh", "api", "repos/Example/owned", "--jq", ".private"]
     ]
-    assert store.row("task", task_id) == before
+
+
+@pytest.mark.parametrize(
+    ("review", "expected", "blocker_kind", "visibility_calls"),
+    (
+        ("missing", "visibility", None, 1),
+        (
+            "blocking",
+            "blocker merged-with-blocking-second-review",
+            "merged-with-blocking-second-review",
+            0,
+        ),
+        (
+            "late-passing",
+            "blocker merged-without-second-review",
+            "merged-without-second-review",
+            0,
+        ),
+    ),
+    ids=("missing", "blocking", "late-passing"),
+)
+def test_a38_merged_second_review_precedes_unavailable_visibility(
+    monkeypatch, tmp_path, review, expected, blocker_kind, visibility_calls
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        second_review_timeout_seconds=600,
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    task = store.row("task", task_id)
+    a38 = task["payload"]["coordinator"]["a38"]
+    if review == "missing":
+        a38.pop("second_review")
+    elif review == "blocking":
+        a38["second_review"]["reviews"] = [{"blocks_merge": True}]
+    else:
+        a38["second_review"]["requirement_satisfied_at"] = (
+            "2026-10-01T12:11:00Z"
+        )
+        a38["second_review"]["reviews"][-1]["at"] = "2026-10-01T12:11:00Z"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    now = (
+        "2026-10-01T12:05:00Z"
+        if review == "missing"
+        else "2026-10-01T12:12:00Z"
+    )
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: now)
+    visibility_observations: list[str] = []
+
+    def unavailable_visibility(*_args):
+        visibility_observations.append("lookup")
+        raise CoordinatorError("visibility unavailable")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._repository_visibility",
+        unavailable_visibility,
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: (
+            published.append(kind) or [f"blocker {kind}"]
+        ),
+    )
+
+    lines = phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    )
+
+    if expected == "visibility":
+        assert lines == [
+            "merge observed but repository visibility is temporarily unavailable; "
+            "retrying await_merge"
+        ]
+    else:
+        assert lines == [expected]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["a38"]["merged_waiting_since"] == "2026-10-01T12:00:00Z"
+    assert visibility_observations == ["lookup"] * visibility_calls
+    assert published == ([] if blocker_kind is None else [blocker_kind])
+    assert saved["phase"] == ("await_merge" if blocker_kind is None else "blocked")
 
 
 @pytest.mark.parametrize(
@@ -2189,7 +2298,7 @@ def test_a38_merged_task_blocks_non_green_cumulative_ci_before_real_allow(
 
 
 @pytest.mark.parametrize("kind", ("pending", "transport"))
-def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
+def test_a38_merged_task_retries_unavailable_cumulative_ci_after_deadline_check(
     monkeypatch, tmp_path, kind
 ):
     from agent_cli.coordinator_github import _CiObservation, phase_await_merge
@@ -2228,7 +2337,7 @@ def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
     expected_after_first = copy.deepcopy(before)
     expected_after_first["payload"]["coordinator"]["a38"][
         "merged_waiting_since"
-    ] = "2026-11-05T10:00:00Z"
+    ] = "2026-10-01T12:00:00Z"
     expected_after_first["updated_at"] = after_first["updated_at"]
 
     assert "retrying await_merge" in first_lines[0]
@@ -2284,9 +2393,9 @@ def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
     )
     clock = iter(
         (
-            "2026-11-05T10:00:00Z",
-            "2026-11-05T10:05:00Z",
-            "2026-11-05T10:11:00Z",
+            "2026-10-01T12:00:00Z",
+            "2026-10-01T12:05:00Z",
+            "2026-10-01T12:11:00Z",
         )
     )
     monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
@@ -2309,7 +2418,7 @@ def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
     assert observations == ["pending", "pending"]
     assert published == ["merged-without-second-review"]
     saved = store.row("task", task_id)["payload"]["coordinator"]
-    assert saved["a38"]["merged_waiting_since"] == "2026-11-05T10:00:00Z"
+    assert saved["a38"]["merged_waiting_since"] == "2026-10-01T12:00:00Z"
     assert saved["phase"] == "blocked"
 
 

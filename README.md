@@ -217,11 +217,13 @@ keyword, case-insensitively, the raw logical line is redacted
 from the start of the mapped whitespace token through logical-line end.
 Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
 return, are removed from every structural view but do not activate the rule
-without ESC/C1. Removable control bytes inside retained string-control payloads
-are omitted from every structural view, so they cannot split a keyword in the
-payload-kept view. Nested seven- or eight-bit CSI, ESC sequences, C0, and C1
-controls are lexed as complete spans in that payload view; CSI parameters,
-intermediates, and finals are omitted together. Complete and unterminated
+without ESC/C1. Nested string controls keep their payload text at every nesting
+depth; their introducers and terminators are omitted. CSI spans (including
+parameters, intermediates, and finals), other ESC sequences, C0 bytes, and lone
+C1 bytes inside retained string-control payloads are omitted from every
+structural view, so they cannot split a keyword in the payload-kept view. An
+unterminated nested string control fails closed and treats the whole logical
+line as matched. Complete and unterminated
 string-control spans are indexed on
 the full raw input before lines are formed, so payload newlines are not
 boundaries; a mapped start inside such a span moves to its introducer. Following

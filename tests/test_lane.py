@@ -670,6 +670,51 @@ def test_assignment_redaction_classifies_around_raw_string_controls(
         assert cleaned == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key\x07\x1b\\",
+        "\x90prefix \x9dapi_key\x07\x9c",
+    ),
+    ids=("7-bit-nested-string", "8-bit-nested-string"),
+)
+@pytest.mark.parametrize(
+    "suffix",
+    ("=topsecret-value", " topsecret-value", ": topsecret-value"),
+    ids=("equals", "space", "colon-space"),
+)
+def test_assignment_redaction_keeps_nested_string_payload_for_classification(
+    control: str, suffix: str
+) -> None:
+    raw = f"{control}{suffix}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key",
+        "\x90prefix \x9dapi_key",
+    ),
+    ids=("7-bit", "8-bit"),
+)
+def test_assignment_redaction_fails_closed_on_unterminated_nested_string_control(
+    control: str,
+) -> None:
+    raw = f"visible {control}=topsecret-value"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
 def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
     for redact_value in (
         lambda value: redact_shared(value, limit=None),

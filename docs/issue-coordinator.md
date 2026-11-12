@@ -505,7 +505,12 @@ for worker in workers.values():
    `chain.close_allowed` before Ready in the normal route. If A38's guard and a
    human merge move the task from `await_second_review`, `ci`, `readiness`, or
    `await_ready` to `await_merge` first, `await_merge` runs the same trusted
-   readiness closing on the merged head before evaluating `task-done`. Formal
+   readiness closing on the merged head before evaluating `task-done` only
+   when the merged base equals the promoted evidence base, a report or waiver
+   plus the local gate are bound to that base, and `readiness_head` is not yet
+   the merged head. A pending or missing evidence base, or a base move first
+   observed after merge, instead stops at the non-recoverable `task-done`
+   boundary without running readiness. Formal
    `review.post` **APPROVE** from the separate review account with an
    explicitly validated full-SHA `commit_id` in the activity payload
    (executor discover-before-POST and POST both bind that head; verify
@@ -571,11 +576,15 @@ for worker in workers.values():
     merge closes the issue) moves to `await_merge` (an unreadable pull request state
 retries the tick instead of blocking); once its pull request exists, every tick
 of an A38 task, also while blocked or asking, first checks for a merge the same way, which verifies the human merge
-    or blocks a pull request closed without one. Unless readiness already ran on
-    that exact merged head (`readiness_head`), even when its keys were closed on an
-    earlier head, it first runs the owner hub-statement default or the configured
-    trusted readiness command and publishes its blocker with a reply checkpoint
-    when those keys cannot be closed. The exception is a persisted
+    or blocks a pull request closed without one. When the merged base equals the
+    promoted evidence base, a report or waiver plus the local gate are bound to
+    that base, and readiness has not already run on that exact merged head
+    (`readiness_head`), it first runs the owner hub-statement default or the
+    configured trusted readiness command and publishes its blocker with a reply
+    checkpoint when those keys cannot be closed. A pending or missing evidence
+    base, or a base move first observed after merge, instead stops at the
+    non-recoverable `task-done` boundary without running readiness. The
+    exception is a persisted
     `provider-incomplete` checkpoint: even if the pull request becomes merged or
     closed after a crash, it stays in `blocked` until its queued blocker intent
     is verified published and an authorized reply consumes that checkpoint.
@@ -749,10 +758,14 @@ compiled case-insensitive candidate check runs over a control-byte-translated
 view. Only candidate lines build the three views, one at a time: a
 control-stripped view that removes complete or
 unterminated controls with their payloads, a payload-kept view that removes
-the outer control introducer, terminator, and CSI parameter bytes, and a key-join
+string-control introducers and terminators and CSI parameter bytes while
+retaining string-control payload text at every nesting depth, and a key-join
 view. Inside retained string-control payloads, the payload view runs the same
-control lexer again and omits each complete nested CSI (parameters,
-intermediates, and final), ESC sequence, C0, or C1 span with its raw mapping.
+control lexer again. Nested string controls keep their payload text at every
+nesting depth; their introducers and terminators are omitted. CSI spans
+(including parameters, intermediates, and finals), other ESC sequences, C0
+bytes, and lone C1 bytes inside retained string-control payloads are omitted
+from every structural view with their raw mapping.
 The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
@@ -761,11 +774,9 @@ keyword, case-insensitively, the raw logical line is redacted from the start of 
 whitespace token containing the first mapped keyword
 through the end of that logical line. All three views remove standalone
 removable C0 bytes such as backspace, NUL, DEL, and carriage return; those bytes
-do not activate the rule without ESC/C1. Removable control bytes inside retained
-string-control payloads are omitted from every structural view, so they cannot
-split a keyword in the payload-kept view; printable parameter, intermediate,
-and final bytes of a nested control are omitted with that complete span as
-well. Complete and unterminated
+do not activate the rule without ESC/C1. Those omitted controls cannot split a
+keyword in the payload-kept view. An unterminated nested string control fails
+closed and treats the whole logical line as matched. Complete and unterminated
 string-control spans are indexed once on the full raw input before line
 splitting, so newlines inside OSC, DCS, PM, APC, or SOS payloads are not
 boundaries. If a mapped keyword starts inside such a span, redaction starts at
@@ -1113,14 +1124,21 @@ reload that checkpoint under the task lock; publication also holds the
 activity lock and requires the current intent to match the completed activity.
 Only then do the report or waiver, local gate, base promotion, and phase
 transition commit together. Repository visibility is read again before report
-publication and again immediately before that finalisation. The `private` value
-parsed from the stored report body must equal both the checkpoint value and the
-live repository value. An unreadable visibility retries without publication or
-state changes. An open mismatch retires the intent and checkpoint and returns
-to measurement; a mismatch after merge is a non-recoverable completion blocker.
-Merged completion performs the same live lookup and stored-body comparison, so
-a report measured under the opposite visibility cannot satisfy `task-done`.
-Every such conflict reloads the task and retries
+publication and again immediately before that finalisation through the same
+scoped runner for the worker's configured GitHub account that reads the live
+pull-request context. The `private` value parsed from the stored report body
+must equal both the checkpoint value and the live repository value. An
+unreadable lookup before publication has no publication or state effects. An
+unreadable lookup after publication retains the completed idempotent report
+intent, activity, and post-suite checkpoint, then retries finalisation without
+publishing again. Visibility outcomes are separate: `OPEN` with a mismatch
+retires the intent and checkpoint and returns to measurement; `CLOSED` retires
+them and moves to `await_merge` without promoting the report; `MERGED` retires
+them before the runtime handler publishes the non-recoverable completion
+blocker. Merged completion performs the same scoped live lookup and stored-body
+comparison, so a report measured under the opposite visibility cannot satisfy
+`task-done`.
+Every task-lock checkpoint conflict reloads the task and retries
 without saving the stale caller row or publishing a blocker. The checkpoint
 then records the newly verified head on the
 fresh row and, when it differs from the promoted evidence base, records the
@@ -1233,15 +1251,22 @@ worker. The guard may make the pull request Ready while the worker is still in
 in any of these phases goes straight to `await_merge`, which verifies the merge;
 a pull request closed there also goes to `await_merge`, which publishes the
 `closed-unmerged` blocker. Before task completion, `await_merge` runs readiness
-on that merged head with the same readiness source as the ordinary phase unless
-it already ran on exactly that head (`readiness_head`); keys closed on an earlier
-head do not count. An unreadable pull request state is retried on the
+on that merged head with the same readiness source as the ordinary phase only
+when the merged base equals the promoted evidence base, a report or waiver plus
+the local gate are bound to that base, and it has not already run on exactly
+that head (`readiness_head`); keys closed on an earlier head do not count. A
+pending or missing evidence base, or a base move first observed after merge,
+stops at the non-recoverable `task-done` boundary without running readiness. An
+unreadable pull request state is retried on the
 next tick without taking in mail.
 Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
 the merged-head second-review outcome and starts or checks its timeout on every
 tick, including when the newest review is passing. Intake persists the passing
 review record's timestamp as the time the requirement was satisfied; the tick
-time is never substituted. If that timestamp is later than the persisted merge
+time is never substituted. The timeout is anchored at GitHub's valid merge
+timestamp and falls back to the first merged observation only when that
+timestamp is unavailable or invalid, so an observation outage cannot extend
+the review window. If the passing timestamp is later than the persisted merge
 deadline, `await_merge` publishes `merged-without-second-review` and does not
 complete the task. A blocking review or expired timeout publishes its merge
 blocker even while cumulative CI is pending or temporarily unavailable. A non-expired wait

@@ -2871,6 +2871,20 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR base moved after evidence from "
                     f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
                 )
+            second_review = _a38_second_review_outcome(c, expected_head)
+            second_review_wait = _await_second_review_after_merge(
+                store,
+                worker,
+                task,
+                runner,
+                expected_head,
+                outcome=second_review,
+                merged_at=merged_at,
+            )
+            if c.get("phase") == "blocked":
+                return second_review_wait or [
+                    "blocked: merged-head second-review deadline failed"
+                ]
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             clear_reply_recovery(c)
             raise NonRecoverableCoordinatorError(
@@ -2914,19 +2928,6 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR visibility differs from the stored "
                     "A38 report; a merged PR cannot be remeasured"
                 )
-            second_review = _a38_second_review_outcome(c, expected_head)
-            second_review_wait = _await_second_review_after_merge(
-                store,
-                worker,
-                task,
-                runner,
-                expected_head,
-                outcome=second_review,
-            )
-            if c.get("phase") == "blocked":
-                return second_review_wait or [
-                    "blocked: merged-head second-review deadline failed"
-                ]
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -3092,6 +3093,7 @@ def _await_second_review_after_merge(
     head: str,
     *,
     outcome: str,
+    merged_at: str | None = None,
 ) -> list[str] | None:
     """A merge can land before the external second review (the guard sets Ready
     without it). Keep accepting that review for the merged head for one review
@@ -3100,6 +3102,18 @@ def _await_second_review_after_merge(
     including when the current outcome passes. A blocking review stops at once.
     """
     c = coord(task)
+    a38 = c.setdefault("a38", {})
+    stamp = utcnow()
+    now = _parse_coordinator_time(stamp)
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    if now is None:
+        raise CoordinatorError("coordinator clock returned an invalid timestamp")
+    if since is None:
+        merged_since = _parse_coordinator_time(merged_at)
+        waiting_since = merged_at if merged_since is not None else stamp
+        a38["merged_waiting_since"] = waiting_since
+        save_task(store, task)
+        since = merged_since or now
     if outcome == "blocking":
         c["phase"] = "blocked"
         c["blocker"] = f"merged although the external second review blocks the merge on {head}"
@@ -3113,16 +3127,6 @@ def _await_second_review_after_merge(
             f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
             kind="merged-with-blocking-second-review",
         )
-    a38 = c.setdefault("a38", {})
-    stamp = utcnow()
-    now = _parse_coordinator_time(stamp)
-    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
-    if now is None:
-        raise CoordinatorError("coordinator clock returned an invalid timestamp")
-    if since is None:
-        a38["merged_waiting_since"] = stamp
-        save_task(store, task)
-        since = now
     deadline = since + timedelta(seconds=worker.second_review_timeout_seconds)
     satisfied_at = None
     state = a38.get("second_review")
