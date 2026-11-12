@@ -719,7 +719,7 @@ def test_publish_terminals_keeps_capture_beyond_diagnostic_limit(
         published = base64.b64decode(frame["data"]).decode("utf-8")
         assert len(published) > 4000
         assert published.startswith("start-" + ("x" * 4500))
-        assert published.endswith("end [redacted] tail")
+        assert published.endswith("end [redacted]")
         assert "secret-value" not in published
         assert "[truncated]" not in published
         assert "\x1b" not in published
