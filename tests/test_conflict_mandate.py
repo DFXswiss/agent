@@ -15,7 +15,9 @@ from agent_cli.conflict_mandate import (
     ConflictsError,
     REPOSITORY_SELECTING_GIT_ENV_VARS,
     _push_was_refused,
+    discard_script_mandate,
     mandate_matches,
+    run_script_mandate,
     source_lock_key,
     tick,
 )
@@ -47,6 +49,7 @@ from agent_cli.conflict_mandate_state import (
     save_state,
     read_json,
     unfinished_requests,
+    worktree_path,
 )
 from agent_cli.coordinator_common import CoordinatorError, prompt_prohibitions
 from agent_cli.github_accounts import (
@@ -57,6 +60,15 @@ from agent_cli.github_accounts import (
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import make_session, write_accounts
+
+
+SCRIPT_REQ = Request(
+    repo="example/project",
+    number=42,
+    comment_id=1,
+    created_at="2026-09-01T00:00:00Z",
+)
+SCRIPT_HEAD = "a" * 40
 
 
 def config(root: Path) -> dict[str, Any]:
@@ -6386,3 +6398,266 @@ def test_failed_record_store_error_is_still_reported_without_changing_the_result
     assert any(line.startswith("lane record not written: ") for line in lines)
     assert any(line.startswith("pushed") for line in lines)
     assert len(fake.pr_comments) == 1
+
+
+def test_script_mandate_resolves_without_a_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def runner(argv: list[str]) -> Completed:
+        completed = fake(argv)
+        if "rebase" in argv and "--continue" in argv:
+            fake.rev_parse_head = "d" * 40
+        if "push" in argv:
+            fake.pull["head"]["sha"] = "d" * 40
+            fake.remote_head_sha = "d" * 40
+        return completed
+
+    result = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=runner,
+        lane_runner=fake.lane,
+    )
+    assert result.outcome == "finished"
+    assert result.old_head == SCRIPT_HEAD
+    assert result.new_head == "d" * 40
+    assert result.base_sha == "b" * 40
+    assert fake.reactions == []
+    assert len(fake.pr_comments) == 1
+    assert fake.pr_comments[0]["body"].startswith(
+        "<!-- agent-conflicts:result:v1:1 -->"
+    )
+    assert any(
+        "--force-with-lease=refs/heads/feature:" + SCRIPT_HEAD in call
+        for argv in fake.calls
+        for call in [" ".join(argv)]
+    )
+    assert not worktree_path(worker_cfg, SCRIPT_REQ).exists()
+    control = control_dir(worker_cfg, SCRIPT_REQ)
+    assert not (control / "git").exists()
+    assert json.loads((control / "state.json").read_text())["phase"] == "finished"
+    store.close()
+
+
+def test_script_mandate_takes_the_pull_request_lock_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    fake.pull["mergeable"] = True
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    keys: list[str] = []
+    original = store.exclusive
+
+    @contextmanager
+    def exclusive(key: str):
+        keys.append(key)
+        with original(key):
+            yield
+
+    monkeypatch.setattr(store, "exclusive", exclusive)
+    run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert source_lock_key("example/project", 42) in keys
+    assert not any(key.startswith("conflicts-worker:") for key in keys)
+    store.close()
+
+
+def test_script_mandate_refuses_another_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    result = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head="e" * 40,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert result.outcome == "blocked"
+    assert result.reason == "pull request head differs from the mandated head"
+    assert len(fake.pr_comments) == 1
+    assert fake.pr_comments[0]["body"].startswith(
+        "<!-- agent-conflicts:result:v1:1 -->"
+    )
+    assert not any("clone" in call for call in fake.calls)
+    assert fake.lanes == []
+    store.close()
+
+
+def test_script_mandate_reports_an_open_outcome_as_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    fake.pull["mergeable"] = None
+    result = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert result.outcome == "pending"
+    assert result.decided is False
+    assert "still unknown" in result.reason
+    assert fake.pr_comments == []
+    state = json.loads(
+        (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").read_text()
+    )
+    assert state["phase"] == "transient"
+    store.close()
+
+
+def test_script_mandate_after_a_push_is_pending_and_decided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    saved = context(worker_cfg, SCRIPT_REQ, worker_login="worker-bot")
+    save_state(
+        saved,
+        "pushing",
+        old_head=SCRIPT_HEAD,
+        new_head="d" * 40,
+        base_ref="develop",
+        base_sha="b" * 40,
+        replayed_commits=1,
+        resolved_files=[],
+        check_result="passed",
+        mergeable="false",
+    )
+    fake.github_down = True
+    pending = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert pending.outcome == "pending"
+    assert pending.decided is True
+    assert fake.pr_comments == []
+    fake.github_down = False
+    fake.pull["head"]["sha"] = "d" * 40
+    finished = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert finished.outcome == "finished"
+    assert finished.new_head == "d" * 40
+    assert len(fake.pr_comments) == 1
+    store.close()
+
+
+def test_script_mandate_does_not_run_a_terminal_request_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    first = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head="e" * 40,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    reads = fake.pull_reads
+    posts = fake.comment_posts
+    second = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head="e" * 40,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert (second.outcome, second.reason) == (first.outcome, first.reason)
+    assert fake.pull_reads == reads
+    assert fake.comment_posts == posts
+    state = json.loads(
+        (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").read_text()
+    )
+    assert state["phase"] == "blocked"
+    store.close()
+
+
+def test_script_mandate_preflight_refusal_posts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", [])
+    patch_account_runners(monkeypatch, fake)
+    worker_cfg = worker(tmp_path)
+    result = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert result.outcome == "blocked"
+    assert result.reason == "worker session missing skill conflicts"
+    assert fake.pr_comments == []
+    assert not (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").exists()
+    store.close()
+
+
+def test_discard_script_mandate_removes_worktree_and_git_directory(
+    tmp_path: Path,
+) -> None:
+    worker_cfg = worker(tmp_path)
+    worktree = worktree_path(worker_cfg, SCRIPT_REQ)
+    git_dir = control_dir(worker_cfg, SCRIPT_REQ) / "git"
+    state = control_dir(worker_cfg, SCRIPT_REQ) / "state.json"
+    worktree.mkdir(parents=True)
+    git_dir.mkdir(parents=True)
+    state.write_text("{}", encoding="utf-8")
+    discard_script_mandate(worker_cfg, SCRIPT_REQ)
+    assert not worktree.exists()
+    assert not git_dir.exists()
+    assert state.exists()
+
+
+def test_comment_route_still_reacts_and_ignores_the_new_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert fake.reactions == [7]
+    assert fake.pr_comments[0]["body"].startswith(
+        "<!-- agent-conflicts:result:v1:7 -->"
+    )
+    store.close()

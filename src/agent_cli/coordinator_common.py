@@ -1381,6 +1381,9 @@ def evidence_base_sha(coord_data: dict[str, Any], *, a38: bool) -> str:
             base_sha = str(state.get("base_sha") or "").lower()
             if is_sha(base_sha):
                 return base_sha
+    rebased = str(coord_data.get("rebase_base_sha") or "").lower()
+    if is_sha(rebased):
+        return rebased
     return str(coord_data.get("base_sha") or "")
 
 

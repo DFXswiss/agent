@@ -987,6 +987,14 @@ def evaluate_action(
             continue
         check = CHECKS[requirement.check]
         value = read_fact(facts, task, check)
+        remedied = bool(check.remedy) and kind in check.remedy_kinds
+        if remedied and remedy_running(task, check):
+            return REMEDIES[check.remedy](
+                CheckContext(
+                    store, worker, task, runner, lane_runner, check, action
+                ),
+                value,
+            )
         if needs_resolution(check, value):
             outcome = RESOLVERS[check.resolver](
                 CheckContext(store, worker, task, runner, lane_runner, check, action)
@@ -1001,6 +1009,13 @@ def evaluate_action(
             continue
         if value.status == "pending":
             return apply_pending(store, worker, task, runner, check, action=action)
+        if remedied and value.status == "nein":
+            return REMEDIES[check.remedy](
+                CheckContext(
+                    store, worker, task, runner, lane_runner, check, action
+                ),
+                value,
+            )
         return apply_outcome(
             store, worker, task, runner, check, value, action=action
         )
@@ -1300,10 +1315,36 @@ def _duplicates_checked_question(
     return "\n".join(lines)
 
 
+def _pr_mergeable_question(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    check: Check,
+    value: CheckValue,
+) -> str:
+    del worker
+    if not is_order(task):
+        return (
+            f"Check {check.key} failed for {source_label(task)}: "
+            f"{value.evidence}\nReply to continue."
+        )
+    source = coord(task).get("source")
+    source = source if isinstance(source, dict) else {}
+    title = str(source.get("title") or "")[:120]
+    oid = order_id(task)
+    return "\n".join(
+        (
+            f'Check pr_mergeable failed for order "{title}": {value.evidence}',
+            f"Run it again with: agent order reply --id {oid} --body-file PATH",
+            f"Otherwise: agent order cancel --id {oid} --reason TEXT",
+        )
+    )
+
+
 QUESTION_TEXTS: dict[
     str, Callable[[WorkerConfig, dict[str, Any], Check, CheckValue], str]
 ] = {
     "duplicates_checked": _duplicates_checked_question,
+    "pr_mergeable": _pr_mergeable_question,
     "round_budget": _round_budget_question,
 }
 
@@ -1586,6 +1627,34 @@ def _resolve_duplicates_checked(ctx: CheckContext) -> CheckValue | Deferred:
     return resolve_duplicates_checked(ctx)
 
 
+def remedy_running(task: dict[str, Any], check: Check) -> bool:
+    """True while a started remedy of this check has not reached an outcome."""
+    remedies = coord(task).get("remedies")
+    state = remedies.get(check.key) if isinstance(remedies, dict) else None
+    return isinstance(state, dict) and state.get("state") == "running"
+
+
+def _resolve_conflict_mandate(ctx: CheckContext) -> CheckValue:
+    from .coordinator_conflicts import resolve_conflict_mandate
+
+    return resolve_conflict_mandate(ctx)
+
+
+def _conflict_resolution(
+    ctx: CheckContext, value: CheckValue
+) -> list[str]:
+    from .coordinator_conflicts import run_conflict_remedy
+
+    return run_conflict_remedy(ctx, value)
+
+
+REMEDIES: dict[
+    str, Callable[[CheckContext, CheckValue], list[str]]
+] = {
+    "conflict_resolution": _conflict_resolution,
+}
+
+
 RESOLVERS: dict[str, Callable[[CheckContext], CheckValue | Deferred]] = {
     "review_2": resolve_review_2,
     "one_review_permitted": resolve_one_review_permitted,
@@ -1599,4 +1668,5 @@ RESOLVERS: dict[str, Callable[[CheckContext], CheckValue | Deferred]] = {
     "spec_available": resolve_spec_available,
     "checkout_owned": resolve_checkout_owned,
     "head_signed_clean": resolve_head_signed_clean,
+    "conflict_mandate": _resolve_conflict_mandate,
 }

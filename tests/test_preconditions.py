@@ -13,6 +13,7 @@ from agent_cli.preconditions import (
     PHASE_ACTION,
     PHASES,
     REGISTRY_KEYS,
+    REMEDY_ACTIONS,
     ROUTE_ALIASES,
     SKIPPABLE,
     WAITING_PHASES,
@@ -41,6 +42,7 @@ def test_registry_keys_do_not_collide_with_workflow_keys() -> None:
         "round_budget",
         "head_signed_clean",
         "pr_mergeable",
+        "conflict_mandate",
         "review_2",
         "one_review_permitted",
     }
@@ -189,3 +191,45 @@ def test_review_2_replaces_the_dimension_requirements() -> None:
         assert all(item.kinds == (ORDER,) for item in requirements)
     assert action_requiring("review_2", ORDER) == "ci"
     assert action_requiring("one_review_permitted", ORDER) == "waive_second_review"
+
+
+def test_pr_mergeable_declares_the_conflict_remedy() -> None:
+    check = CHECKS["pr_mergeable"]
+    assert check.remedy == "conflict_resolution"
+    assert check.remedy_kinds == (ORDER,)
+    assert check.on_no == "block"
+    assert check.block_kind == "conflict"
+    assert check.overridable is False
+    assert [item.key for item in CHECKS.values() if item.remedy] == [
+        "pr_mergeable"
+    ]
+
+
+def test_every_remedy_names_an_action_without_a_phase() -> None:
+    for check in CHECKS.values():
+        if not check.remedy:
+            assert check.remedy_kinds == ()
+            continue
+        assert check.remedy_kinds
+        assert set(check.remedy_kinds) <= {ORDER, ISSUE}
+        action = ACTIONS[REMEDY_ACTIONS[check.remedy]]
+        assert action.phases == ()
+
+
+def test_resolve_conflicts_check_list() -> None:
+    action = ACTIONS["resolve_conflicts"]
+    assert [item.check for item in action.requires] == [
+        "order_active",
+        "order_authorized",
+        "draft_open",
+        "head_published",
+        "conflict_mandate",
+    ]
+    assert all(item.kinds == (ORDER,) for item in action.requires)
+    check = CHECKS["conflict_mandate"]
+    assert check.fact == "registry"
+    assert check.head_bound is True
+    assert check.recheck is True
+    assert check.on_pending == "resolve"
+    assert check.overridable is False
+    assert check.skippable is False

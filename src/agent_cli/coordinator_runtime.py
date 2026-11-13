@@ -178,6 +178,8 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     for skill in REQUIRED_WORKER_SKILLS:
         if not has_skill(session, skill):
             raise CoordinatorError(f"worker session missing skill {skill}")
+    if worker.conflict_remedy is not None and not has_skill(session, "conflicts"):
+        raise CoordinatorError("worker session missing skill conflicts")
     try:
         accounts = load_accounts(store.home)
         worker_account = accounts.for_session(worker.session_id)

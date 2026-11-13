@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.coordinator_config import load_coordinator_config, resolve_round_limit
+from agent_cli.coordinator_config import (
+    ConflictRemedyConfig,
+    load_coordinator_config,
+    resolve_round_limit,
+)
 from agent_cli.store import StoreError
 
 pytestmark = pytest.mark.no_pg
@@ -427,6 +431,96 @@ def test_pinned_model_name_is_redacted_and_still_matches(tmp_path):
     assert result['origin'] == 'model'
     assert result['max_rounds'] == 3
     assert 'someone' not in result['model']
+
+
+def test_conflict_remedy_is_absent_by_default(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].conflict_remedy is None
+
+    data['workers']['selected-session']['conflict_remedy'] = None
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].conflict_remedy is None
+
+
+def test_conflict_remedy_loads(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['orders'] = True
+    worker['conflict_remedy'] = {
+        'check_argv': ['/operator/conflict-checks'],
+        'max_rebase_steps': 5,
+    }
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.conflict_remedy == ConflictRemedyConfig(
+        ('/operator/conflict-checks',), 5, 2
+    )
+
+    worker['conflict_remedy']['max_attempts'] = 4
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(
+        tmp_path
+    )['selected-session'].conflict_remedy.max_attempts == 4
+
+
+@pytest.mark.parametrize(
+    'value,error',
+    [
+        ([], 'conflict_remedy must be an object'),
+        (
+            {'check_argv': ['x']},
+            'conflict_remedy requires check_argv and max_rebase_steps',
+        ),
+        (
+            {'check_argv': [], 'max_rebase_steps': 5},
+            'check_argv requires an explicit nonempty argv array',
+        ),
+        (
+            {'check_argv': ['x'], 'max_rebase_steps': 0},
+            'max_rebase_steps requires an integer >= 1',
+        ),
+        (
+            {'check_argv': ['x'], 'max_rebase_steps': 201},
+            'max_rebase_steps requires an integer >= 1 and <= 200',
+        ),
+        (
+            {
+                'check_argv': ['x'],
+                'max_rebase_steps': 5,
+                'max_attempts': 0,
+            },
+            'max_attempts requires an integer >= 1',
+        ),
+        (
+            {
+                'check_argv': ['x'],
+                'max_rebase_steps': 5,
+                'request_logins': ['owner'],
+            },
+            'conflict_remedy rejects unknown field request_logins',
+        ),
+    ],
+)
+def test_conflict_remedy_refuses_bad_values(tmp_path, value, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['orders'] = True
+    worker['conflict_remedy'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_conflict_remedy_requires_orders(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['conflict_remedy'] = {
+        'check_argv': ['/operator/conflict-checks'],
+        'max_rebase_steps': 5,
+    }
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='conflict_remedy requires orders'):
+        load_coordinator_config(tmp_path)
 
 
 def test_a38_owner_scope_allows_absent_readiness_argv(tmp_path):

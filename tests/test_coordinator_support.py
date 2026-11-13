@@ -350,6 +350,9 @@ class FakeGh:
         self.ready_calls = 0
         self.numstat = ""
         self.numstat_rc = 0
+        self.published_head: str | None = None
+        self.extra_ancestors: set[str] = set()
+        self.resets: list[str] = []
 
     def __call__(self, argv: list[str]) -> Completed:
         if argv and argv[0] == "env":
@@ -628,6 +631,10 @@ class FakeGh:
                 return Completed(0, "", "")
             return Completed(1, "", "invalid remote mutation")
         if cmd == "fetch":
+            if "publication" in args:
+                return Completed(
+                    0 if "publication" in self.remotes else 1, "", ""
+                )
             return Completed(0 if "origin" in args and "origin" in self.remotes else 1, "", "")
         if cmd == "rev-parse":
             if "--abbrev-ref" in args:
@@ -636,6 +643,12 @@ class FakeGh:
                 return Completed(0, self.base + "\n", "")
             if args[-1] == "HEAD":
                 return Completed(0, self.head + "\n", "")
+            if args[-1].startswith("refs/remotes/publication/"):
+                return Completed(
+                    0,
+                    (self.published_head or self.pr["headRefOid"]) + "\n",
+                    "",
+                )
             return Completed(1, "", "unknown revision")
         if cmd == "checkout":
             if "-b" in args:
@@ -648,7 +661,17 @@ class FakeGh:
                 return Completed(0, "", "")
             return Completed(1, "", "unexpected checkout mutation")
         if cmd == "merge-base" and "--is-ancestor" in args:
-            return Completed(0 if args[-2] == self.base else 1, "", "")
+            return Completed(
+                0
+                if args[-2] == self.base or args[-2] in self.extra_ancestors
+                else 1,
+                "",
+                "",
+            )
+        if cmd == "reset" and args[1:2] == ["--hard"]:
+            self.resets.append(args[-1])
+            self.head = args[-1]
+            return Completed(0, "", "")
         if cmd == "log":
             return Completed(0, f"{self.head} implement\n" if self.commits_ahead else "", "")
         if cmd == "status":

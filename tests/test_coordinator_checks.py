@@ -216,6 +216,7 @@ def test_registered_resolvers_are_declared():
         "spec_available",
         "checkout_owned",
         "head_signed_clean",
+        "conflict_mandate",
     }
 
 

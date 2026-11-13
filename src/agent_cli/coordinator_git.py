@@ -300,6 +300,89 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
     return marker
 
 
+def adopt_published_head(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    expected_old: str,
+    expected_new: str | None,
+    base_sha: str | None,
+) -> str | None:
+    """Bring the owned checkout to the head a script-owned rebase published.
+
+    Returns the adopted head, or None when the published head is still
+    ``expected_old``. It changes no field of the task.
+    """
+    c = coord(task)
+    worktree = str(c.get("worktree") or "")
+    branch = str(c.get("branch") or "")
+    if not worktree or not branch:
+        raise CoordinatorError("checkout is missing")
+    verify_checkout_identity(store, worker, runner, worktree)
+    local = verify_signed_clean_head(store, worker, runner, worktree)
+    fetched = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "fetch",
+        "--no-tags",
+        "publication",
+        f"+refs/heads/{branch}:refs/remotes/publication/{branch}",
+    )
+    require_git_ok(fetched, "fetch published head")
+    read_remote = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "rev-parse",
+        f"refs/remotes/publication/{branch}",
+    )
+    require_git_ok(read_remote, "read published head")
+    remote = (read_remote.stdout or "").strip().lower()
+    if not is_sha(remote):
+        raise CoordinatorError("cannot read the published head")
+    if remote == expected_old:
+        if local != expected_old:
+            raise CoordinatorError("checkout head differs from the published head")
+        return None
+    if expected_new is None or remote != expected_new:
+        raise CoordinatorError(
+            "published head changed outside the recorded conflict resolution"
+        )
+    if local not in (expected_old, expected_new):
+        raise CoordinatorError(
+            "checkout head differs from the head the conflict resolution replaced"
+        )
+    if is_sha(str(base_sha or "")):
+        require_git_ok(
+            git(
+                store,
+                worker,
+                runner,
+                worktree,
+                "merge-base",
+                "--is-ancestor",
+                str(base_sha),
+                remote,
+            ),
+            "rebased base ancestry",
+        )
+    if local != remote:
+        require_git_ok(
+            git(store, worker, runner, worktree, "reset", "--hard", remote),
+            "adopt rebased head",
+        )
+    head = verify_signed_clean_head(store, worker, runner, worktree)
+    if head != remote:
+        raise CoordinatorError("checkout did not reach the published head")
+    verify_checkout_identity(store, worker, runner, worktree)
+    return head
+
+
 def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]

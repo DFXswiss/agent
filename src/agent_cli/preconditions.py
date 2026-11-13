@@ -24,6 +24,8 @@ class Check:
     n_a_ok: bool = False
     recheck: bool = False
     block_kind: str = ""
+    remedy: str = ""  # name in coordinator_checks.REMEDIES; on a no the script runs it before on_no applies
+    remedy_kinds: tuple[str, ...] = ()  # source kinds for which the script starts the remedy on its own
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,16 @@ _CHECKS = (
         head_bound=True,
         recheck=True,
         block_kind="conflict",
+        remedy="conflict_resolution",
+        remedy_kinds=(ORDER,),
+    ),
+    Check(
+        "conflict_mandate",
+        "registry",
+        resolver="conflict_mandate",
+        on_pending="resolve",
+        head_bound=True,
+        recheck=True,
     ),
     Check("draft_open", "checkpoint", on_pending="route:start_draft"),
     Check("implementer_outcome", "checkpoint"),
@@ -445,12 +457,24 @@ _ACTIONS = (
         (),
         (R("order_active"), R("draft_open"), R("one_review_permitted")),
     ),
+    Action(
+        "resolve_conflicts",
+        (),
+        (
+            R("order_active"),
+            R("order_authorized"),
+            R("draft_open"),
+            R("head_published"),
+            R("conflict_mandate"),
+        ),
+    ),
 )
 ACTIONS = {action.name: action for action in _ACTIONS}
 PHASE_ACTION = {phase: action.name for action in _ACTIONS for phase in action.phases}
 REGISTRY_KEYS = frozenset(check.key for check in _CHECKS if check.fact == "registry")
 OVERRIDABLE = frozenset(check.key for check in _CHECKS if check.overridable)
 SKIPPABLE = frozenset(check.key for check in _CHECKS if check.skippable)
+REMEDY_ACTIONS = {"conflict_resolution": "resolve_conflicts"}
 
 
 def action_requiring(key: str, kind: str) -> str | None:
@@ -479,5 +503,6 @@ __all__ = [
     "REGISTRY_KEYS",
     "OVERRIDABLE",
     "SKIPPABLE",
+    "REMEDY_ACTIONS",
     "action_requiring",
 ]

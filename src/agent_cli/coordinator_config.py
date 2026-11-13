@@ -16,6 +16,7 @@ _GITHUB_LOGIN = re.compile(
 DEFAULT_PARK_POLL_SECONDS = 120
 DEFAULT_LANE_RETRIES = 2
 DEFAULT_MAX_ROUNDS = 10
+DEFAULT_CONFLICT_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,13 @@ class RepositoryConfig:
     publication_repo: str
     check_argv: tuple[str, ...]
     readiness_argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConflictRemedyConfig:
+    check_argv: tuple[str, ...]
+    max_rebase_steps: int
+    max_attempts: int = DEFAULT_CONFLICT_ATTEMPTS
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,7 @@ class WorkerConfig:
     max_rounds_by_model: dict[str, int] = field(default_factory=dict)
     draft_on_accept: bool = False
     a38_second_review: str = "external"
+    conflict_remedy: ConflictRemedyConfig | None = None
 
 
 def _text(value: object, label: str) -> str:
@@ -136,7 +145,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'second_review_timeout_seconds', 'park_poll_seconds',
                     'lane_retries', 'orders', 'max_rounds',
                     'max_rounds_by_model', 'draft_on_accept',
-                    'a38_second_review'}
+                    'a38_second_review', 'conflict_remedy'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -150,6 +159,42 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         orders = item.get('orders', False)
         if not isinstance(orders, bool):
             raise StoreError('orders must be a boolean')
+        raw_remedy = item.get('conflict_remedy')
+        if raw_remedy is None:
+            conflict_remedy = None
+        else:
+            if not isinstance(raw_remedy, dict):
+                raise StoreError('conflict_remedy must be an object')
+            unknown = set(raw_remedy) - {
+                'check_argv', 'max_rebase_steps', 'max_attempts'
+            }
+            if unknown:
+                raise StoreError(
+                    'conflict_remedy rejects unknown field '
+                    + ', '.join(sorted(unknown))
+                )
+            if not {'check_argv', 'max_rebase_steps'} <= set(raw_remedy):
+                raise StoreError(
+                    'conflict_remedy requires check_argv and max_rebase_steps'
+                )
+            remedy_argv = _argv(raw_remedy['check_argv'], 'check_argv')
+            steps = _at_least(
+                raw_remedy['max_rebase_steps'], 'max_rebase_steps', 1
+            )
+            if steps > 200:
+                raise StoreError(
+                    'max_rebase_steps requires an integer >= 1 and <= 200'
+                )
+            attempts = _at_least(
+                raw_remedy.get('max_attempts', DEFAULT_CONFLICT_ATTEMPTS),
+                'max_attempts',
+                1,
+            )
+            conflict_remedy = ConflictRemedyConfig(
+                remedy_argv, steps, attempts
+            )
+        if conflict_remedy is not None and not orders:
+            raise StoreError('conflict_remedy requires orders')
         review_raw = item.get('review_session')
         if not a38 and review_raw is None:
             raise StoreError('non-A38 workers require an explicit review_session')
@@ -259,7 +304,8 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    max_rounds=max_rounds,
                                    max_rounds_by_model=by_model,
                                    draft_on_accept=draft_on_accept,
-                                   a38_second_review=mode)
+                                   a38_second_review=mode,
+                                   conflict_remedy=conflict_remedy)
     return result
 
 

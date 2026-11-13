@@ -39,6 +39,7 @@ from .conflict_mandate_state import (
     INITIAL_LOOKBACK,
     NO_CONFLICTS,
     TRANSIENT_BLOCK_AFTER,
+    TERMINAL_PHASES,
     Context,
     Request,
     StateUnreadable,
@@ -48,6 +49,7 @@ from .conflict_mandate_state import (
     atomic_write,
     bounded_tail,
     comment_body,
+    control_dir,
     context,
     iso,
     iso_ceiling,
@@ -57,6 +59,7 @@ from .conflict_mandate_state import (
     save_state,
     session_component,
     unfinished_requests,
+    worktree_path,
 )
 from .conflict_mandate_git import (
     ambient_driver_names,
@@ -1591,7 +1594,7 @@ def _run_request(
                 facts=[],
                 dry_run=dry_run,
             )
-        if not dry_run:
+        if not dry_run and ctx.mandated_head is None:
             add_eyes(
                 request_runtime.github,
                 ctx.request.repo,
@@ -1609,6 +1612,8 @@ def _run_request(
             base_sha,
             mergeable,
         ) = _pull_fields(pull)
+        if ctx.mandated_head is not None and head_sha != ctx.mandated_head:
+            raise _Blocker("pull request head differs from the mandated head")
         for branch_ref, reason in (
             (head_ref, "unsupported head branch name"),
             (base_ref, "unsupported base branch name"),
@@ -1975,6 +1980,96 @@ def _run_request(
             )
         return [f"transient: {safe(ctx.worker, exc)}"]
 
+
+@dataclass(frozen=True)
+class MandateRun:
+    """Result of one advancement of a request the script mandated itself."""
+
+    outcome: str  # finished | blocked | pending
+    reason: str = ""  # blocker reason, or why the request is not finished yet
+    decided: bool = False  # pending only: a push may already have happened; the caller must not give up
+    old_head: str | None = None  # finished: the head the request replaced, when a push was recorded
+    new_head: str | None = None  # finished: the pushed head, when a push was recorded
+    base_sha: str | None = None  # finished: the verified base revision of the pushed head
+    lines: tuple[str, ...] = ()  # observation lines of the run, already masked
+
+
+def run_script_mandate(
+    store: Store,
+    worker: ConflictWorker,
+    request: Request,
+    *,
+    mandated_head: str,
+    runner: Runner,
+    lane_runner: LaneRunner | None = None,
+) -> MandateRun:
+    """Advance one request that the script mandated itself, without a comment."""
+    try:
+        runtime = _preflight(store, worker, runner)
+        ctx = context(worker, request, worker_login=runtime.account.login)
+    except StateUnreadable as exc:
+        return MandateRun("blocked", reason=safe(worker, str(exc)))
+    except (ConflictsError, CoordinatorError, AccountError) as exc:
+        return MandateRun("blocked", reason=safe(worker, str(exc)))
+    if ctx.foreign_state:
+        return MandateRun(
+            "blocked", reason="request state belongs to another worker"
+        )
+    ctx.mandated_head = mandated_head
+    if ctx.state.get("phase") not in TERMINAL_PHASES:
+        observations: list[str] = []
+        with store.exclusive(source_lock_key(request.repo, request.number)):
+            lines = _run_request(
+                store,
+                ctx,
+                runtime,
+                lane_runner,
+                dry_run=False,
+                observations=observations,
+            )
+        lines = [*lines, *observations]
+    else:
+        lines = []
+    phase = ctx.state.get("phase")
+    if phase == "finished":
+        remove_repository(ctx.worktree)
+        remove_repository(ctx.control / "git")
+        old_head = ctx.state.get("old_head")
+        new_head = ctx.state.get("new_head")
+        base_sha = ctx.state.get("base_sha")
+        return MandateRun(
+            "finished",
+            old_head=old_head if isinstance(old_head, str) else None,
+            new_head=new_head if isinstance(new_head, str) else None,
+            base_sha=base_sha if isinstance(base_sha, str) else None,
+            lines=tuple(lines),
+        )
+    if phase == "blocked":
+        remove_repository(ctx.worktree)
+        remove_repository(ctx.control / "git")
+        return MandateRun(
+            "blocked",
+            reason=str(
+                ctx.state.get("blocker") or "conflict resolution is blocked"
+            ),
+            lines=tuple(lines),
+        )
+    return MandateRun(
+        "pending",
+        reason=lines[-1] if lines else "request is not finished",
+        decided=phase in MARKER_LOOKUP_BLOCKER_EXEMPT_PHASES,
+        lines=tuple(lines),
+    )
+
+
+def discard_script_mandate(
+    worker: ConflictWorker, request: Request
+) -> None:
+    """Remove the worktree and the Git directory of a script-mandated request; its state file stays."""
+    remove_repository(worktree_path(worker, request))
+    remove_repository(control_dir(worker, request) / "git")
+
+
 def tick(
     store: Store,
     worker: ConflictWorker,
@@ -2109,6 +2204,9 @@ def tick(
 
 __all__ = [
     "ConflictsError",
+    "MandateRun",
+    "discard_script_mandate",
     "mandate_matches",
+    "run_script_mandate",
     "tick",
 ]

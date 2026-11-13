@@ -121,6 +121,7 @@ class Context:
     state: dict[str, Any] = field(default_factory=dict)
     git_runner: Any = None
     foreign_state: bool = False
+    mandated_head: str | None = None  # set for a request the script mandated itself: no comment exists, and the request holds for this head only
 
 
 class StateUnreadable(StoreError):
