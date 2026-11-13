@@ -1335,6 +1335,24 @@ def recover_working_lanes(
     return "none"
 
 
+def implementer_model_id(
+    store: Store, worker: WorkerConfig, task: dict[str, Any] | None = None
+) -> str:
+    """The configured model identifier of the implementer role of this worker."""
+    try:
+        ai = load_ai_accounts(store.home)
+        vendor = (
+            models_for_new_record(task).first
+            if task is not None
+            else ai.models.first
+        )
+        return ai.for_lane(
+            worker.session_id, "implementer", vendor, require_execution=False
+        ).model
+    except (AIAccountError, ModelSlotsError) as exc:
+        raise CoordinatorError(str(exc)) from exc
+
+
 def _post_issue_status(
     store: Store,
     worker: WorkerConfig,
@@ -1437,27 +1455,7 @@ def launch_lane(
                     store, worker, str(task["id"]), existing
                 ),
             )
-        committed_task = copy.deepcopy(task)
-        committed_c = coord(committed_task)
-        committed_c["phase"] = "blocked"
-        committed_c["blocker"] = (
-            "uncertain prior lane outcome; refusing second model start"
-        )
-        committed_c["uncertain_lane"] = True
-        committed_c.pop("resume_phase", None)
-        with store.conn.transaction():
-            save_task(store, committed_task)
-        task.clear()
-        task.update(committed_task)
-        _post_issue_status(
-            store,
-            worker,
-            runner,
-            task,
-            "Blocked: previous model lane outcome is uncertain; operator intervention required.",
-            "uncertain-lane",
-        )
-        raise CoordinatorError("uncertain prior lane outcome")
+        raise LaneFailedError("a lane record of an earlier tick is still open")
     worktree = str(c.get("worktree") or "")
     if not worktree or not Path(worktree).is_dir():
         raise CoordinatorError("worktree missing; cannot launch lane")
@@ -2511,7 +2509,7 @@ def _prepare_pr_review_agent(
     worktree = str(c["worktree"])
     existing = blocking_working_agent(store, task["id"], role=role, vendor=vendor)
     if existing is not None:
-        raise CoordinatorError("uncertain prior lane outcome")
+        raise LaneFailedError("a lane record of an earlier tick is still open")
     try:
         ai = load_ai_accounts(store.home)
         selected = ai.for_lane(
@@ -2996,14 +2994,6 @@ def phase_pr_gates(
             "database checkpoint will be retried"
         ]
     if missing_spool:
-        committed_task = copy.deepcopy(task)
-        committed_c = coord(committed_task)
-        committed_c["phase"] = "blocked"
-        committed_c["blocker"] = (
-            "uncertain prior lane outcome; refusing second model start"
-        )
-        committed_c["uncertain_lane"] = True
-        committed_c.pop("resume_phase", None)
         committed_agents = []
         for pending_agent in missing_spool:
             _discard_failed_reviewer_spool(
@@ -3028,43 +3018,12 @@ def phase_pr_gates(
                     str(committed_agent["id"]),
                     strip_row(committed_agent),
                 )
-            save_task(store, committed_task)
-        task.clear()
-        task.update(committed_task)
-        _post_issue_status(
-            store,
-            worker,
-            runner,
-            task,
-            "Blocked: previous model lane outcome is uncertain; refusing new parallel stage.",
-            "uncertain-lane",
-        )
-        raise CoordinatorError("uncertain prior lane outcome for vendor stage")
+        raise LaneFailedError("a lane record of an earlier tick is still open")
 
     # Recheck prior working agents for the whole vendor stage BEFORE any inserts.
     prior = vendor_stage_has_working_agents(store, task["id"], vendor=vendor)
     if prior is not None:
-        committed_task = copy.deepcopy(task)
-        committed_c = coord(committed_task)
-        committed_c["phase"] = "blocked"
-        committed_c["blocker"] = (
-            "uncertain prior lane outcome; refusing second model start"
-        )
-        committed_c["uncertain_lane"] = True
-        committed_c.pop("resume_phase", None)
-        with store.conn.transaction():
-            save_task(store, committed_task)
-        task.clear()
-        task.update(committed_task)
-        _post_issue_status(
-            store,
-            worker,
-            runner,
-            task,
-            "Blocked: previous model lane outcome is uncertain; refusing new parallel stage.",
-            "uncertain-lane",
-        )
-        raise CoordinatorError("uncertain prior lane outcome for vendor stage")
+        raise LaneFailedError("a lane record of an earlier tick is still open")
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
     ordering_phase = "pr_gates_codex" if second_stage else "pr_gates_grok"

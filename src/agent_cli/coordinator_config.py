@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .store import StoreError
 
@@ -14,6 +15,7 @@ _GITHUB_LOGIN = re.compile(
 )
 DEFAULT_PARK_POLL_SECONDS = 120
 DEFAULT_LANE_RETRIES = 2
+DEFAULT_MAX_ROUNDS = 10
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ class WorkerConfig:
     park_poll_seconds: int = DEFAULT_PARK_POLL_SECONDS
     lane_retries: int = DEFAULT_LANE_RETRIES
     orders: bool = False
+    max_rounds: int | None = None
+    max_rounds_by_model: dict[str, int] = field(default_factory=dict)
 
 
 def _text(value: object, label: str) -> str:
@@ -128,7 +132,8 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'owner_check_argv', 'owner_readiness_argv',
                     'require_hub_assignment', 'a38', 'second_reviewers',
                     'second_review_timeout_seconds', 'park_poll_seconds',
-                    'lane_retries', 'orders'}
+                    'lane_retries', 'orders', 'max_rounds',
+                    'max_rounds_by_model'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -204,6 +209,19 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         require_hub = item.get('require_hub_assignment', False)
         if not isinstance(require_hub, bool):
             raise StoreError('require_hub_assignment must be a boolean')
+        max_rounds = (
+            _at_least(item['max_rounds'], 'max_rounds', 1)
+            if 'max_rounds' in item else None
+        )
+        raw = item.get('max_rounds_by_model', {})
+        if not isinstance(raw, dict):
+            raise StoreError('max_rounds_by_model must be an object')
+        by_model = {
+            _text(key, 'max_rounds_by_model'): _at_least(
+                value, 'max_rounds_by_model', 1
+            )
+            for key, value in raw.items()
+        }
         result[sid] = WorkerConfig(sid, review, root, repos, logins,
                                    _positive(item['poll_seconds'], 'poll_seconds'),
                                    _positive(item['lane_timeout'], 'lane_timeout'),
@@ -226,5 +244,29 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                        'lane_retries',
                                        0,
                                    ),
-                                   orders=orders)
+                                   orders=orders,
+                                   max_rounds=max_rounds,
+                                   max_rounds_by_model=by_model)
     return result
+
+
+def resolve_round_limit(
+    worker: WorkerConfig, model: str, submitted: int | None = None
+) -> dict[str, Any]:
+    """The round limit of a task and where it came from."""
+    from .lane import LANE_MODEL_LIMIT, redact_lane_text
+
+    if submitted is not None:
+        value, origin = submitted, "submit"
+    elif model in worker.max_rounds_by_model:
+        value, origin = worker.max_rounds_by_model[model], "model"
+    elif worker.max_rounds is not None:
+        value, origin = worker.max_rounds, "worker"
+    else:
+        value, origin = DEFAULT_MAX_ROUNDS, "default"
+    return {
+        "max_rounds": value,
+        "origin": origin,
+        "model": redact_lane_text(model, limit=LANE_MODEL_LIMIT),
+        "limit": value,
+    }

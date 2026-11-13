@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import types
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 
 from agent_cli import coordinator_checks
 from agent_cli.allow import SECOND_REVIEW_NOT_POSTED
+from agent_cli.coordinator import tick
 from agent_cli.coordinator_checks import (
     READERS,
     RESOLVERS,
@@ -27,21 +29,24 @@ from agent_cli.coordinator_checks import (
     read_fact,
     record_check,
     registry_row_id,
+    resolve_pr_mergeable,
     resolve_spec_available,
     route_phase,
 )
 from agent_cli.coordinator_common import CoordinatorError, coord, save_task, task_text_path
 from agent_cli.coordinator_lanes import record_gate
 from agent_cli.coordinator_runtime import _ensure_checklist_rows, _ensure_round
-from agent_cli.preconditions import CHECKS
+from agent_cli.preconditions import CHECKS, REGISTRY_KEYS
 from agent_cli.store import Store, StoreError
 from test_coordinator import patch_execute_github, seed_task
 from test_coordinator_support import (
     FakeGh,
+    lane_runner,
     make_order_worker,
     make_session,
     make_worker,
     patch_account_runners,
+    patch_command_runner,
     seed_order_task,
     write_accounts,
 )
@@ -199,6 +204,9 @@ def test_registered_resolvers_are_declared():
     declared = {check.resolver for check in CHECKS.values()}
     assert set(RESOLVERS) <= declared
     assert set(RESOLVERS) == {
+        "no_live_lane",
+        "round_budget",
+        "pr_mergeable",
         "session_registered",
         "spec_written",
         "order_authorized",
@@ -866,3 +874,198 @@ def test_question_for_an_order_without_draft_is_local(tmp_path, monkeypatch):
         'Check round_budget failed for order "'
     )
     assert "question_activity_id" not in coord(task)
+
+
+@pytest.mark.no_pg
+def test_gate_does_not_touch_the_store_for_an_issue_task_in_ci(tmp_path):
+    task = {
+        "id": "task-1",
+        "state": "open",
+        "payload": {
+            "coordinator": {
+                "phase": "ci",
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    assert evaluate_action(
+        types.SimpleNamespace(home=tmp_path),
+        make_worker(tmp_path),
+        task,
+        object(),
+        None,
+        action="ci",
+    ) is None
+
+
+def test_issue_task_evaluates_only_the_shared_checks(tmp_path, monkeypatch):
+    from test_coordinator_flow import _drive_through_ci_to
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, "leave_draft")
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    assert coord(task)["phase"] == "await_merge"
+
+    rows = [
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task["id"]
+        and row.get("key") in REGISTRY_KEYS
+    ]
+    assert {row["key"] for row in rows} == {
+        "no_live_lane",
+        "round_budget",
+        "pr_mergeable",
+    }
+    assert all(row["status"] == "ja" and row["registry"] is True for row in rows)
+    assert all(
+        row["id"] == registry_row_id(str(task["id"]), str(row["key"]))
+        for row in rows
+    )
+
+
+def test_commit_push_gate_blocks_an_order_without_checkout(tmp_path, monkeypatch):
+    store, worker, fake = _setup(tmp_path, monkeypatch, orders=True)
+    worktree = tmp_path / "plain-checkout"
+    worktree.mkdir()
+    agent_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    task = _order(
+        store,
+        worker,
+        phase="implement",
+        worktree=str(worktree),
+        lane_outcome={
+            "role": "implementer",
+            "round": 0,
+            "agent_id": agent_id,
+            "status": "complete",
+            "result": "done",
+            "applied": False,
+        },
+    )
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "session_id": worker.session_id,
+            "task_id": ORDER_ID,
+            "round": 0,
+            "role": "implementer",
+            "vendor": "grok",
+            "status": "done",
+        },
+    )
+    lines = evaluate_action(
+        store, worker, task, fake, None, action="commit_push"
+    )
+    assert lines is not None
+    c = coord(task)
+    assert c["failed_check"] == "checkout_owned"
+    assert c["resume_phase"] == "implement"
+    assert isinstance(c["lane_outcome"], dict)
+
+
+def test_pr_mergeable_without_a_pull_request_raises_the_phase_error(
+    tmp_path, monkeypatch
+):
+    store, worker, fake = _setup(tmp_path, monkeypatch)
+    task = _issue(store, worker, phase="readiness")
+    task["ref"] = None
+    with pytest.raises(CoordinatorError, match="readiness requires PR number"):
+        resolve_pr_mergeable(
+            CheckContext(
+                store,
+                worker,
+                task,
+                fake,
+                None,
+                CHECKS["pr_mergeable"],
+                "readiness",
+            )
+        )
+    assert store.row("checklist_item", registry_row_id(ISSUE_ID, "pr_mergeable")) is None
+
+
+@pytest.mark.parametrize(
+    "mergeable,status,evidence",
+    [
+        ("MERGEABLE", "ja", f"mergeable on {H}"),
+        (
+            "CONFLICTING",
+            "nein",
+            "pull request has merge conflicts with develop; resolve them on the "
+            "branch or cancel, then reply",
+        ),
+    ],
+)
+def test_pr_mergeable_classifies_computed_values(
+    tmp_path, monkeypatch, mergeable, status, evidence
+):
+    store, worker, fake = _setup(tmp_path, monkeypatch)
+    task = _issue(
+        store,
+        worker,
+        phase="readiness",
+        pr_number=42,
+        head_sha=H,
+    )
+    monkeypatch.setattr(
+        coordinator_checks,
+        "_fetch_pr_json",
+        lambda *args, **kwargs: {"mergeable": mergeable},
+    )
+    value = resolve_pr_mergeable(
+        CheckContext(
+            store,
+            worker,
+            task,
+            fake,
+            None,
+            CHECKS["pr_mergeable"],
+            "readiness",
+        )
+    )
+    assert value.status == status
+    assert value.evidence == evidence
+    assert value.head == H
+
+
+def test_unknown_mergeability_is_a_same_phase_retry(tmp_path, monkeypatch):
+    store, worker, fake = _setup(tmp_path, monkeypatch)
+    task = _issue(
+        store,
+        worker,
+        phase="leave_draft",
+        pr_number=42,
+        head_sha=H,
+    )
+    monkeypatch.setattr(
+        coordinator_checks,
+        "_fetch_pr_json",
+        lambda *args, **kwargs: {"mergeable": "UNKNOWN"},
+    )
+    value = resolve_pr_mergeable(
+        CheckContext(
+            store,
+            worker,
+            task,
+            fake,
+            None,
+            CHECKS["pr_mergeable"],
+            "ready",
+        )
+    )
+    assert value.lines == [
+        f"PR mergeability not yet computed on {H[:7]}; retrying leave_draft"
+    ]

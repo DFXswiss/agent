@@ -8,9 +8,11 @@ from typing import Any
 import pytest
 
 from agent_cli.coordinator import tick
-from agent_cli.coordinator_common import coord, infra_failure
+from agent_cli.coordinator_checks import registry_row_id
+from agent_cli.coordinator_common import LaneFailedError, coord, infra_failure
 from agent_cli.coordinator_config import WorkerConfig
 from agent_cli.coordinator_lanes import (
+    launch_lane,
     lane_retry,
     retry_remaining,
     schedule_retry,
@@ -28,6 +30,8 @@ from test_coordinator_support import (
     lane_runner,
     make_session,
     make_worker,
+    patch_command_runner,
+    scan_done,
     write_accounts,
 )
 
@@ -66,6 +70,29 @@ def _tick_to_implement(
     task = store.rows("task")[0]
     assert coord(task)["phase"] == "implement"
     return store, worker, fake, str(task["id"])
+
+
+def _drive_to_ready_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> tuple[Store, WorkerConfig, FakeGh, Any]:
+    from agent_cli import github_act
+    from test_coordinator_flow import _drive_through_ci_to
+    from test_coordinator_support import patch_account_runners as patch_accounts
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_accounts(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, phase)
+    return store, worker, fake, lane
 
 
 def _tests_task(
@@ -727,3 +754,454 @@ def test_a38_precheck_that_could_not_run_blocks_before_the_suite(
     ]
     assert calls == []
     assert not [row for row in store.rows("local_check") if row.get("task_id") == tid]
+
+
+def _working_implementer(store: Store, worker: WorkerConfig, task_id: str, agent_id: str):
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "session_id": worker.session_id,
+            "task_id": task_id,
+            "round": 1,
+            "role": "implementer",
+            "vendor": "grok",
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+        },
+    )
+
+
+def test_working_row_without_process_is_recovered_and_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, tid = _tick_to_implement(
+        tmp_path, monkeypatch, lane_retries=1
+    )
+    agent_id = "aaaaaaaa-0000-4000-8000-000000000001"
+    _working_implementer(store, worker, tid, agent_id)
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    assert any(
+        line.startswith(
+            "retry 1/1 of implement after a lane left running by an earlier "
+            "tick ended without a result"
+        )
+        for line in lines
+    )
+    agent = store.row("agent", agent_id)
+    assert agent["status"] == "done"
+    assert agent["note"] == "recovered: no live process"
+    row = store.row("checklist_item", registry_row_id(tid, "no_live_lane"))
+    assert row["status"] == "nein"
+    assert "implementer" not in fake.launched
+
+    _expire_retry(store, tid)
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    row = store.row("checklist_item", registry_row_id(tid, "no_live_lane"))
+    assert row["status"] == "ja"
+    assert "implementer" in fake.launched
+
+
+def test_working_row_blocks_as_lane_failed_without_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, tid = _tick_to_implement(
+        tmp_path, monkeypatch, lane_retries=0
+    )
+    _working_implementer(
+        store, worker, tid, "aaaaaaaa-0000-4000-8000-000000000002"
+    )
+
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    c = coord(store.row("task", tid))
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "implement"
+    assert c["blocker"] == (
+        "Model lane interrupted in implement; not a code rejection."
+    )
+    assert c["failed_check"] == "no_live_lane"
+    assert "uncertain_lane" not in c
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and "<!-- agent-coordinator:status:v1:lane-failed:"
+        in row["payload"]["body"]
+    ]
+    assert len(comments) == 1
+
+
+def test_live_orphan_lane_parks_the_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import lane_start_recorder
+    from agent_cli.coordinator_runtime import parked
+    from test_lane_process import sleeping_process
+
+    store, worker, fake, tid = _tick_to_implement(
+        tmp_path, monkeypatch, lane_retries=1
+    )
+    agent_id = "aaaaaaaa-0000-4000-8000-000000000005"
+    _working_implementer(store, worker, tid, agent_id)
+    with sleeping_process() as proc:
+        lane_start_recorder(worker, tid, agent_id)(proc.pid)
+        lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+        assert "a lane of an earlier tick is still running; waiting" in lines
+        task = store.row("task", tid)
+        assert coord(task)["lane_wait"] is True
+        assert parked(task, worker) is True
+        assert "implementer" not in fake.launched
+
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    agent = store.row("agent", agent_id)
+    assert agent["status"] == "done"
+    assert agent["note"] == "recovered: no live process"
+
+
+def test_launch_refuses_an_open_lane_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker, fake, tid = _tick_to_implement(
+        tmp_path, monkeypatch, lane_retries=0
+    )
+    agent_id = "aaaaaaaa-0000-4000-8000-000000000003"
+    _working_implementer(store, worker, tid, agent_id)
+    task = store.row("task", tid)
+    from copy import deepcopy
+
+    before = deepcopy(store.row("task", tid))
+    comments_before = {
+        row["id"]
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    }
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *args, **kwargs: {}
+    )
+
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="grok",
+            round_num=1,
+            spec_body="Implement.",
+            runner=fake,
+            lane_runner=lambda *_args: pytest.fail("lane was started"),
+        )
+    assert store.row("task", tid) == before
+    assert {
+        row["id"]
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    } == comments_before
+
+
+def test_stored_uncertain_flag_resumes_the_phase_of_the_newest_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, tid = _tick_to_implement(
+        tmp_path, monkeypatch, lane_retries=1
+    )
+    task = store.row("task", tid)
+    c = coord(task)
+    c.update(
+        phase="blocked",
+        uncertain_lane=True,
+        resume_phase="implement",
+        blocker="uncertain prior lane outcome",
+    )
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    store.write(
+        "agent",
+        "insert",
+        "aaaaaaaa-0000-4000-8000-000000000004",
+        {
+            "id": "aaaaaaaa-0000-4000-8000-000000000004",
+            "session_id": worker.session_id,
+            "task_id": tid,
+            "round": None,
+            "role": "pr-reviewer-logic",
+            "vendor": "codex",
+            "stage": "review-2",
+            "status": "done",
+            "started_at": "2026-02-01T00:00:00Z",
+        },
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+    assert (
+        "retry 1/1 of pr_gates_codex after lane outcome was uncertain; "
+        "next attempt in 30s"
+    ) in lines
+    c = coord(store.row("task", tid))
+    assert c["phase"] == "pr_gates_codex"
+    assert "uncertain_lane" not in c
+    assert "resume_phase" not in c
+    assert "blocker" not in c
+
+
+def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
+    from agent_cli.lane import LaneResult
+    from test_coordinator import _codex_prelaunch_fixture
+
+    tid = "aa000001-0000-4000-8000-000000000301"
+    store, base_worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    worker = replace(base_worker, lane_retries=1)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    Path(coord(task)["worktree"]).mkdir(parents=True, exist_ok=True)
+    head = str(coord(task)["head_sha"])
+    quality_id = "aa000001-0000-4000-8000-000000000302"
+    logic_id = "aa000001-0000-4000-8000-000000000303"
+    common = {
+        "session_id": worker.session_id,
+        "task_id": tid,
+        "round": None,
+        "vendor": "codex",
+        "provider": "codex",
+        "model": "codex-model",
+        "head_sha": head,
+        "stage": "review-2",
+        "status": "working",
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+        "note": None,
+    }
+    store.write(
+        "agent",
+        "insert",
+        quality_id,
+        {
+            **common,
+            "id": quality_id,
+            "role": "pr-reviewer-quality",
+            "dimension": "quality",
+        },
+    )
+    spool = coordinator_lanes._write_reviewer_spool(
+        store,
+        worker,
+        task,
+        {"id": quality_id},
+        LaneResult(
+            role="pr-reviewer-quality",
+            vendor="codex",
+            model="codex-model",
+            status="complete",
+            argv=[],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: approved\n",
+            stderr="",
+            config_dir=None,
+            protocol_result="approved",
+        ),
+        round_num=None,
+        head=head,
+        dimension="quality",
+        stage="review-2",
+        output_file=None,
+    )
+    store.write(
+        "agent",
+        "insert",
+        logic_id,
+        {
+            **common,
+            "id": logic_id,
+            "role": "pr-reviewer-logic",
+            "dimension": "logic",
+        },
+    )
+
+    lines = advance_one(
+        store,
+        worker,
+        runner=fake,
+        lane_runner=lambda *_args: pytest.fail("reviewer was started before retry"),
+    )
+    assert any(
+        line.startswith(
+            "retry 1/1 of pr_gates_codex after a lane left running by an "
+            "earlier tick ended without a result"
+        )
+        for line in lines
+    )
+    assert store.row("agent", logic_id)["status"] == "done"
+    assert store.row("agent", logic_id)["note"] == "recovered: no live process"
+    assert store.row("agent", quality_id)["status"] == "working"
+    assert spool.exists()
+
+    _expire_retry(store, tid)
+    starts: list[str] = []
+
+    def reviewer(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        role = (
+            "pr-reviewer-logic"
+            if "pr-reviewer-logic" in material
+            else "pr-reviewer-quality"
+        )
+        starts.append(role)
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    advance_one(store, worker, runner=fake, lane_runner=reviewer)
+    assert starts == ["pr-reviewer-logic"]
+    assert store.row("agent", quality_id)["status"] == "done"
+    saved = coord(store.row("task", tid))
+    assert "uncertain_lane" not in saved
+    assert saved["phase"] != "blocked"
+
+
+def test_unknown_mergeability_retries_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _drive_to_ready_phase(
+        tmp_path, monkeypatch, "readiness"
+    )
+    task = store.rows("task")[0]
+    comments_before = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+    fake.pr["mergeable"] = "UNKNOWN"
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.row("task", str(task["id"]))
+    assert any(line.startswith("PR mergeability not yet computed on") for line in lines)
+    assert coord(task)["phase"] == "readiness"
+    assert "resume_phase" not in coord(task)
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == comments_before
+    assert store.row(
+        "checklist_item", registry_row_id(str(task["id"]), "pr_mergeable")
+    ) is None
+
+    fake.pr["mergeable"] = "MERGEABLE"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.row("task", str(task["id"]))
+    assert coord(task)["phase"] == "formal_approve"
+    assert store.row(
+        "checklist_item", registry_row_id(str(task["id"]), "pr_mergeable")
+    )["status"] == "ja"
+
+
+def test_unknown_mergeability_retries_leave_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _drive_to_ready_phase(
+        tmp_path, monkeypatch, "leave_draft"
+    )
+    fake.pr["mergeable"] = "UNKNOWN"
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    assert any(line.startswith("PR mergeability not yet computed on") for line in lines)
+    assert coord(task)["phase"] == "leave_draft"
+    assert "resume_phase" not in coord(task)
+    assert fake.pr["isDraft"] is True
+
+
+def test_pr_view_transport_error_retries_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _drive_to_ready_phase(
+        tmp_path, monkeypatch, "readiness"
+    )
+    fake.pr_view_rc = 1
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    assert lines[0] == (
+        f"PR metadata temporarily unavailable on {fake.head[:7]}; "
+        "retrying readiness"
+    )
+    assert coord(task)["phase"] == "readiness"
+    assert "resume_phase" not in coord(task)
+
+
+def test_conflict_publishes_a_resumable_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _drive_to_ready_phase(
+        tmp_path, monkeypatch, "readiness"
+    )
+    fake.pr["mergeable"] = "CONFLICTING"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    c = coord(task)
+    evidence = (
+        "pull request has merge conflicts with develop; resolve them on the "
+        "branch or cancel, then reply"
+    )
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "readiness"
+    assert c["failed_check"] == "pr_mergeable"
+    assert c["blocker"] == f"Check pr_mergeable failed: {evidence}"
+    assert c.get("question_activity_id")
+    assert any(
+        "<!-- agent-coordinator:status:v1:conflict:" in str(comment.get("body"))
+        for comment in fake.comments
+    )
+    row = store.row(
+        "checklist_item", registry_row_id(str(task["id"]), "pr_mergeable")
+    )
+    assert row["status"] == "nein"
+
+
+def test_conflict_resolved_after_a_reply_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _drive_to_ready_phase(
+        tmp_path, monkeypatch, "readiness"
+    )
+    fake.pr["mergeable"] = "CONFLICTING"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    assert coord(task)["phase"] == "blocked"
+    fake.pr["mergeable"] = "MERGEABLE"
+    fake.comments.append(
+        {
+            "id": max(int(comment["id"]) for comment in fake.comments) + 1,
+            "body": "The branch conflict is resolved.",
+            "user": {"login": "human-owner"},
+        }
+    )
+
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.row("task", str(task["id"]))
+    assert coord(task)["phase"] == "readiness"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.row("task", str(task["id"]))
+    assert coord(task)["phase"] == "formal_approve"
+    assert "failed_check" not in coord(task)
+    row = store.row(
+        "checklist_item", registry_row_id(str(task["id"]), "pr_mergeable")
+    )
+    assert row["status"] == "ja"

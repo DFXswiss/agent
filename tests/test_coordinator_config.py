@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from agent_cli.coordinator_config import load_coordinator_config
+from agent_cli.coordinator_config import load_coordinator_config, resolve_round_limit
 from agent_cli.store import StoreError
 
 pytestmark = pytest.mark.no_pg
@@ -276,6 +277,82 @@ def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='owner_readiness_argv'):
         load_coordinator_config(tmp_path)
+
+
+def test_max_rounds_is_optional(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.max_rounds is None
+    assert worker.max_rounds_by_model == {}
+
+    selected = data['workers']['selected-session']
+    selected['max_rounds'] = 7
+    selected['max_rounds_by_model'] = {'grok-model': 3}
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.max_rounds == 7
+    assert worker.max_rounds_by_model == {'grok-model': 3}
+
+
+@pytest.mark.parametrize('value', [0, -1, '8', True])
+def test_max_rounds_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['max_rounds'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='max_rounds requires an integer >= 1'):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    'value,error',
+    [
+        ([], 'max_rounds_by_model must be an object'),
+        ({'m': 0}, 'max_rounds_by_model requires an integer >= 1'),
+        ({'m': '3'}, 'max_rounds_by_model requires an integer >= 1'),
+        ({'': 3}, 'max_rounds_by_model requires a nonempty single-line string'),
+    ],
+)
+def test_max_rounds_by_model_is_validated(tmp_path, value, error):
+    data = config(tmp_path)
+    data['workers']['selected-session']['max_rounds_by_model'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_resolve_round_limit_order(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    base = load_coordinator_config(tmp_path)['selected-session']
+    worker = replace(
+        base,
+        max_rounds=7,
+        max_rounds_by_model={'grok-model': 3},
+    )
+    cases = [
+        (resolve_round_limit(worker, 'grok-model', 2), 2, 'submit'),
+        (resolve_round_limit(worker, 'grok-model'), 3, 'model'),
+        (resolve_round_limit(worker, 'other-model'), 7, 'worker'),
+        (resolve_round_limit(base, 'other-model'), 10, 'default'),
+    ]
+    for result, limit, origin in cases:
+        assert set(result) == {'max_rounds', 'origin', 'model', 'limit'}
+        assert result['max_rounds'] == result['limit'] == limit
+        assert result['origin'] == origin
+        assert result['model'] in {'grok-model', 'other-model'}
+
+
+def test_pinned_model_name_is_redacted_and_still_matches(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    base = load_coordinator_config(tmp_path)['selected-session']
+    model = '/home/someone/models/x'
+    worker = replace(base, max_rounds_by_model={model: 3})
+    result = resolve_round_limit(worker, model)
+    assert result['origin'] == 'model'
+    assert result['max_rounds'] == 3
+    assert 'someone' not in result['model']
 
 
 def test_a38_owner_scope_allows_absent_readiness_argv(tmp_path):

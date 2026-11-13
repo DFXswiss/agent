@@ -426,6 +426,10 @@ def test_order_implement_prompt_and_commit_message(
         "agent_cli.coordinator_lanes.verify_checkout_identity", lambda *args, **kwargs: {}
     )
     monkeypatch.setattr(
+        "agent_cli.coordinator_checks.verify_checkout_identity",
+        lambda *args, **kwargs: {"branch": "task-11111111", "base_sha": "b" * 40},
+    )
+    monkeypatch.setattr(
         "agent_cli.coordinator_runtime.review_rules_bound", lambda *args, **kwargs: False
     )
     monkeypatch.setattr(
@@ -459,18 +463,37 @@ def test_order_recovery_commit_uses_the_order_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = prepare(tmp_path, monkeypatch)
+    wt = worker.workspace_root / OID
+    wt.mkdir()
+    agent_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     task = seed_order_task(
         store,
         worker,
         OID,
         phase="implement",
+        worktree=str(wt),
         lane_outcome={
             "role": "implementer",
             "round": 1,
+            "agent_id": agent_id,
             "status": "complete",
             "result": "done",
             "stdout": "done",
             "applied": False,
+        },
+    )
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "session_id": worker.session_id,
+            "task_id": OID,
+            "round": 1,
+            "role": "implementer",
+            "vendor": "grok",
+            "status": "done",
         },
     )
     messages = []
@@ -486,6 +509,10 @@ def test_order_recovery_commit_uses_the_order_message(
 
     monkeypatch.setattr("agent_cli.coordinator_runtime.stage_sign_commit_if_changes", sign)
     monkeypatch.setattr("agent_cli.coordinator_runtime.ensure_draft", draft_pending)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_checks.verify_checkout_identity",
+        lambda *args, **kwargs: {"branch": "task-11111111", "base_sha": "b" * 40},
+    )
     phase_implement(store, worker, task, fake, None)
     assert messages == ["Implement the order."]
 

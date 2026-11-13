@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from agent_cli import coordinator_runtime
+from agent_cli import coordinator_checks, coordinator_runtime
 from agent_cli.coordinator import login_cached, tick
 from agent_cli.coordinator_common import CoordinatorError
 from agent_cli.runtime import Completed
@@ -248,8 +248,24 @@ def test_step_two_takes_the_oldest_runnable_task(
     store = Store(tmp_path)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
-    _task(store, "10000000-0000-0000-0000-000000000006", "readiness", "2026-01-01T00:00:00Z")
+    _task(
+        store,
+        "10000000-0000-0000-0000-000000000006",
+        "readiness",
+        "2026-01-01T00:00:00Z",
+        pr_number=7,
+    )
     _task(store, "10000000-0000-0000-0000-000000000007", "ci", "2026-01-02T00:00:00Z")
+    monkeypatch.setattr(
+        coordinator_checks,
+        "_fetch_pr_json",
+        lambda *args, **kwargs: {"mergeable": "MERGEABLE"},
+    )
+    monkeypatch.setattr(
+        coordinator_checks,
+        "scoped",
+        lambda store, session_id, runner, **kwargs: runner,
+    )
     monkeypatch.setattr(
         coordinator_runtime,
         "phase_readiness",

@@ -16,6 +16,7 @@ from .allow import (
 )
 from .chain import close_allowed
 from .coordinator_common import (
+    CiObservationTransportError,
     CoordinatorError,
     LaneRunner,
     Runner,
@@ -31,20 +32,28 @@ from .coordinator_common import (
     owned_session,
     redact,
     save_task,
+    scoped,
     source_kind,
     source_label,
     target_repo,
     task_text_path,
 )
-from .coordinator_config import WorkerConfig
+from .coordinator_config import WorkerConfig, resolve_round_limit
 from .coordinator_git import verify_checkout_identity, verify_signed_clean_head
 from .coordinator_github import (
+    _fetch_pr_json,
     _readiness_keys_closed,
     clear_reply_recovery,
     post_issue_comment,
     publish_blocker,
 )
-from .coordinator_lanes import _handled_rejected_gate_ids, lane_retry, set_checklist
+from .coordinator_lanes import (
+    _handled_rejected_gate_ids,
+    implementer_model_id,
+    lane_retry,
+    recover_working_lanes,
+    set_checklist,
+)
 from .gate_order import latest_gates
 from .model_slots import ModelSlotsError, canonical_key, models_from_snapshot
 from .preconditions import ACTIONS, CHECKS, Check
@@ -137,6 +146,44 @@ def current_phase(task: dict[str, Any]) -> str:
 
 def head_of(task: dict[str, Any]) -> str:
     return str(coord(task).get("head_sha") or "")
+
+
+def next_round(store: Store, task: dict[str, Any]) -> int:
+    """The round number the next implementer start would use."""
+    current = int(task.get("current_round") or 0)
+    if current > 0:
+        for row in store.rows("task_round"):
+            if (
+                row.get("task_id") == task["id"]
+                and int(row.get("round") or 0) == current
+            ):
+                if row.get("implementer_verdict") is None:
+                    return current
+                break
+    return current + 1
+
+
+def round_limit_pin(
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
+) -> dict[str, Any]:
+    """The round limit pinned on the task.
+
+    Pins it now for a task created before the pin existed.
+    """
+    pin = coord(task).get("round_limit")
+    if (
+        isinstance(pin, dict)
+        and isinstance(pin.get("limit"), int)
+        and isinstance(pin.get("max_rounds"), int)
+    ):
+        return pin
+    try:
+        model = implementer_model_id(store, worker, task)
+    except CoordinatorError:
+        model = ""
+    pin = resolve_round_limit(worker, model)
+    _commit(store, task, lambda t: coord(t).__setitem__("round_limit", pin))
+    return coord(task)["round_limit"]
 
 
 def applies(when: str, task: dict[str, Any]) -> bool:
@@ -896,9 +943,42 @@ def apply_outcome(
     )
 
 
+def _round_budget_question(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    check: Check,
+    value: CheckValue,
+) -> str:
+    del worker, check, value
+    c = coord(task)
+    if is_order(task):
+        source = c.get("source") if isinstance(c.get("source"), dict) else {}
+        subject = f'order "{str(source.get("title") or "")[:120]}"'
+    else:
+        subject = source_label(task)
+    pin = c["round_limit"]
+    question = c["round_limit_question"]
+    origins = {
+        "submit": "given at submit",
+        "model": f"configured for model {pin['model']}",
+        "worker": "configured for the worker",
+        "default": "default",
+    }
+    origin = origins.get(str(pin.get("origin") or ""), "default")
+    findings = redact(str(c.get("findings") or "none recorded"), limit=1000)
+    return (
+        f"Round limit reached for {subject}: {question['limit']} implementation "
+        "rounds ended without an approved result.\n"
+        f"Limit: {pin['max_rounds']} rounds per grant ({origin}).\n"
+        f"Latest findings:\n{findings}\n"
+        f"An authorized reply grants {pin['max_rounds']} more rounds; its text "
+        "is passed to the implementer."
+    )
+
+
 QUESTION_TEXTS: dict[
     str, Callable[[WorkerConfig, dict[str, Any], Check, CheckValue], str]
-] = {}
+] = {"round_budget": _round_budget_question}
 
 
 def question_text(
@@ -964,6 +1044,88 @@ def raise_check_question(
             c.pop("replies_consumed_through", None)
 
     _commit(store, task, change)
+
+
+def resolve_no_live_lane(ctx: CheckContext) -> CheckValue | Deferred:
+    state = recover_working_lanes(ctx.store, ctx.worker, ctx.task)
+    if state == "waiting":
+        return Deferred(["a lane of an earlier tick is still running; waiting"])
+    if state == "recovered":
+        return CheckValue(
+            "nein", "a lane left running by an earlier tick ended without a result"
+        )
+    return CheckValue("ja", "no working lane record")
+
+
+def resolve_round_budget(ctx: CheckContext) -> CheckValue:
+    store, worker, task = ctx.store, ctx.worker, ctx.task
+    pin = round_limit_pin(store, worker, task)
+    c = coord(task)
+    question = c.get("round_limit_question")
+    replies = len(c.get("authorized_replies") or [])
+    if isinstance(question, dict) and replies > int(question.get("replies") or 0):
+        limit = int(question.get("limit") or pin["limit"]) + pin["max_rounds"]
+
+        def grant(t: dict[str, Any]) -> None:
+            coord(t)["round_limit"]["limit"] = limit
+            coord(t).pop("round_limit_question", None)
+
+        _commit(store, task, grant)
+        pin = coord(task)["round_limit"]
+    upcoming = next_round(store, task)
+    if upcoming <= pin["limit"]:
+        return CheckValue("ja", f"rounds within limit {pin['limit']}")
+    if not isinstance(coord(task).get("round_limit_question"), dict):
+        asked = {"limit": pin["limit"], "replies": replies}
+        _commit(
+            store,
+            task,
+            lambda t: coord(t).__setitem__("round_limit_question", asked),
+        )
+    return CheckValue(
+        "nein",
+        f"round {upcoming} exceeds the limit of {pin['limit']} implementation rounds",
+    )
+
+
+def resolve_pr_mergeable(ctx: CheckContext) -> CheckValue | Deferred:
+    store, worker, task = ctx.store, ctx.worker, ctx.task
+    c = coord(task)
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    head = head_of(task)
+    phase = current_phase(task)
+    label = "leave-draft" if phase == "leave_draft" else phase
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError(f"{label} requires PR number")
+    try:
+        view = _fetch_pr_json(
+            scoped(store, worker.session_id, ctx.runner),
+            target_repo(task),
+            number,
+            "mergeable",
+        )
+    except CiObservationTransportError:
+        return Deferred(
+            [
+                f"PR metadata temporarily unavailable on {head[:7]}; "
+                f"retrying {label}"
+            ]
+        )
+    value = str(view.get("mergeable") or "").upper() if isinstance(view, dict) else ""
+    if value == "MERGEABLE":
+        return CheckValue("ja", f"mergeable on {head}", head=head or None)
+    if value == "CONFLICTING":
+        base = str(source.get("base") or "the base branch")
+        return CheckValue(
+            "nein",
+            f"pull request has merge conflicts with {base}; resolve them on the "
+            "branch or cancel, then reply",
+            head=head or None,
+        )
+    return Deferred(
+        [f"PR mergeability not yet computed on {head[:7]}; retrying {phase}"]
+    )
 
 
 def resolve_session_registered(context: CheckContext) -> CheckValue:
@@ -1081,6 +1243,9 @@ def resolve_head_signed_clean(context: CheckContext) -> CheckValue:
 
 
 RESOLVERS: dict[str, Callable[[CheckContext], CheckValue | Deferred]] = {
+    "no_live_lane": resolve_no_live_lane,
+    "round_budget": resolve_round_budget,
+    "pr_mergeable": resolve_pr_mergeable,
     "session_registered": resolve_session_registered,
     "spec_written": resolve_spec_written,
     "order_authorized": resolve_order_authorized,

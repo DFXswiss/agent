@@ -2998,11 +2998,23 @@ def test_uncertain_lane_authorized_reply_does_not_resume_model(
     )
     lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
     task = store.row("task", tid)
-    assert task["payload"]["coordinator"]["phase"] == "blocked"
-    assert task["payload"]["coordinator"].get("uncertain_lane") is True
-    assert task["payload"]["coordinator"].get("phase") != "implement"
+    c = task["payload"]["coordinator"]
+    assert "uncertain_lane" not in c
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "implement"
+    assert c["blocker"] == (
+        "Model lane interrupted in implement; not a code rejection."
+    )
+    assert c["question_activity_id"] != qid
     assert "implementer" not in fake.launched
-    assert any("uncertain" in line.lower() or "blocked" in line.lower() for line in lines)
+    assert any(
+        line.startswith("blocked: Model lane interrupted") for line in lines
+    )
+
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+    assert "implementer" not in fake.launched
 
 
 @pytest.mark.parametrize(
@@ -4718,7 +4730,10 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
     patch_account_runners(monkeypatch, fake)
     patch_execute_github(monkeypatch)
 
-    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
         phase_pr_gates(
             store,
             worker,
@@ -4730,9 +4745,14 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
         )
 
     checkpoint = store.row("task", tid)["payload"]["coordinator"]
-    assert checkpoint["phase"] == "blocked"
-    assert checkpoint["uncertain_lane"] is True
-    assert checkpoint.get("resume_phase") is None
+    assert checkpoint["phase"] == "pr_gates_codex"
+    assert checkpoint["resume_phase"] == "implement"
+    assert "uncertain_lane" not in checkpoint
+    agent = store.row("agent", "aa000001-0000-4000-8000-000000000066")
+    assert agent["status"] == "working"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ]
 
 
 def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
@@ -7958,7 +7978,11 @@ def test_a38_uncertain_lane_with_stale_resume_is_final_after_merge(
 
     saved = store.row("task", task_id)["payload"]["coordinator"]
     assert saved["phase"] == "blocked"
-    assert saved["uncertain_lane"] is True
+    assert "uncertain_lane" not in saved
+    assert saved["resume_phase"] == "implement"
+    assert saved["blocker"] == (
+        "Model lane interrupted in implement; not a code rejection."
+    )
     assert states == []
 
 
@@ -15671,7 +15695,10 @@ def test_parallel_reviewer_restart_removes_unspooled_managed_output(
         coordinator_lanes, "_post_issue_status", lambda *_a, **_k: "comment"
     )
 
-    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
         coordinator_lanes.phase_pr_gates(
             store,
             worker,
@@ -15683,6 +15710,9 @@ def test_parallel_reviewer_restart_removes_unspooled_managed_output(
         )
 
     assert not raw_path.exists()
+    assert store.row("agent", prepared["agent_id"])["status"] == "done"
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert "uncertain_lane" not in checkpoint
 
 
 @pytest.mark.parametrize(
@@ -16146,7 +16176,10 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
         },
     )
 
-    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
         coordinator_lanes.phase_pr_gates(
             store,
             worker,
@@ -16160,7 +16193,8 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
     assert store.row("agent", quality_id)["status"] == "done"
     assert store.row("agent", logic_id)["status"] == "done"
     saved = store.row("task", task["id"])["payload"]["coordinator"]
-    assert saved["uncertain_lane"] is True
+    assert "uncertain_lane" not in saved
+    assert saved["phase"] == "pr_gates_codex"
     assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "quality"
 
 
@@ -16255,7 +16289,10 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
     assert store.row("agent", quality_id)["status"] == "working"
     assert store.row("agent", logic_id)["status"] == "working"
 
-    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
         coordinator_lanes.phase_pr_gates(
             store,
             worker,
@@ -16264,12 +16301,11 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
             None,
             vendor="codex",
             stage="review-2",
-    )
+        )
     assert store.row("agent", quality_id)["status"] == "done"
     assert store.row("agent", logic_id)["status"] == "done"
-    assert (
-        store.row("task", task["id"])["payload"]["coordinator"]["uncertain_lane"]
-        is True
+    assert "uncertain_lane" not in (
+        store.row("task", task["id"])["payload"]["coordinator"]
     )
 
 
@@ -16333,7 +16369,10 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
     saved = store.row("task", task["id"])["payload"]["coordinator"]
     assert saved.get("uncertain_lane") is not True
 
-    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+    with pytest.raises(
+        LaneFailedError,
+        match="a lane record of an earlier tick is still open",
+    ):
         coordinator_lanes.phase_pr_gates(
             store,
             worker,
@@ -16360,8 +16399,8 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
     ]
     assert len(runs) == 1
     saved = store.row("task", task["id"])["payload"]["coordinator"]
-    assert saved["phase"] == "blocked"
-    assert saved["uncertain_lane"] is True
+    assert saved["phase"] == "pr_gates_codex"
+    assert "uncertain_lane" not in saved
     assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "logic"
 
 

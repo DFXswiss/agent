@@ -23,12 +23,15 @@ from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
 from .model_slots import (
     LEGACY_RECORDED_SLOTS,
+    SLOT_STAGES,
     ModelSlotsError,
     canonical_key,
+    canonical_stage,
     implementer_for_new_record,
     model_pins,
     models_for_new_record,
 )
+from .coordinator_checks import evaluate_action
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     FINDINGS_SPEC_BOUND,
@@ -73,7 +76,7 @@ from .coordinator_common import (
     task_text_reference,
     write_task_text,
 )
-from .coordinator_config import RepositoryConfig, WorkerConfig
+from .coordinator_config import RepositoryConfig, WorkerConfig, resolve_round_limit
 from .coordinator_a38 import (
     A38ReportCheckpointConflict,
     fresh_pr_head,
@@ -126,6 +129,7 @@ from .coordinator_lanes import (
     phase_pr_gates_codex,
     phase_pr_gates_grok,
     reconcile_rejection_review_intents,
+    recover_working_lanes,
     reviewer_replay_outcomes,
     retry_remaining,
     review_rules_bound,
@@ -133,6 +137,7 @@ from .coordinator_lanes import (
     write_review_context,
     write_review_diff,
 )
+from .preconditions import PHASE_ACTION
 from .github_accounts import AccountError, load_accounts
 from .skills import has_skill
 from .store import Store, StoreError, utcnow
@@ -497,6 +502,15 @@ def _create_implement_task(
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first, ai.implementer)
     _require_second_for_worker(ai.models.second, worker.a38)
+    try:
+        implementer_model = ai.for_lane(
+            worker.session_id,
+            "implementer",
+            ai.models.first,
+            require_execution=False,
+        ).model
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
     source = {
         "repo": repo,
         "number": number,
@@ -521,6 +535,7 @@ def _create_implement_task(
         )} if repository_config is not None else {}),
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
+        "round_limit": resolve_round_limit(worker, implementer_model),
         **({"a38": {"enabled": True}} if worker.a38 else {}),
     }
     held: dict[str, Any] = {"existing": None}
@@ -1440,6 +1455,18 @@ def phase_implement(
         model_result = str(pending_outcome.get("result") or "")
         stdout = str(pending_outcome.get("stdout") or "")
         worktree = str(c.get("worktree") or "")
+        if is_order(task):
+            gate = evaluate_action(
+                store,
+                worker,
+                task,
+                runner,
+                lane_runner,
+                action="commit_push",
+            )
+            if gate is not None:
+                return gate
+            c = coord(task)
         sha = stage_sign_commit_if_changes(
             store,
             worker,
@@ -1579,6 +1606,18 @@ def phase_implement(
     save_task(store, task)
 
     worktree = str(c["worktree"])
+    if is_order(task):
+        gate = evaluate_action(
+            store,
+            worker,
+            task,
+            runner,
+            lane_runner,
+            action="commit_push",
+        )
+        if gate is not None:
+            return gate
+        c = coord(task)
     sha = stage_sign_commit_if_changes(
         store,
         worker,
@@ -2169,6 +2208,80 @@ def phase_handlers(
     }
 
 
+_LANE_PHASES = ("implement", "inner_review", "pr_gates_grok", "pr_gates_codex")
+
+
+def _phase_of_newest_lane(store: Store, task: dict[str, Any]) -> str:
+    """The phase that starts the lane whose outcome was uncertain."""
+    lanes = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == task["id"]
+        and (
+            row.get("role") in ("implementer", "reviewer")
+            or str(row.get("role") or "").startswith("pr-reviewer")
+        )
+    ]
+    if not lanes:
+        stored = str(coord(task).get("resume_phase") or "")
+        return stored if stored in _LANE_PHASES else "implement"
+    row = max(lanes, key=lambda value: str(value.get("started_at") or ""))
+    role = str(row.get("role") or "")
+    if role == "implementer":
+        return "implement"
+    if role == "reviewer":
+        return "inner_review"
+    stage = canonical_stage(str(row.get("stage") or ""))
+    return (
+        "pr_gates_codex"
+        if stage == SLOT_STAGES["second"]
+        else "pr_gates_grok"
+    )
+
+
+def _recover_uncertain_lane(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Recover a task that an earlier version stopped with the flag uncertain_lane."""
+    if recover_working_lanes(store, worker, task) == "waiting":
+        return ["a lane of an earlier tick is still running; waiting"]
+    resume = _phase_of_newest_lane(store, task)
+
+    def clear(cp: dict[str, Any]) -> None:
+        cp.pop("uncertain_lane", None)
+        cp.pop("resume_phase", None)
+        cp.pop("blocker", None)
+
+    lines = lane_retry(
+        store,
+        worker,
+        task,
+        phase=resume,
+        reason="lane outcome was uncertain",
+        before_save=clear,
+    )
+    if lines is not None:
+        return lines
+    c = coord(task)
+    clear(c)
+    c["phase"] = "blocked"
+    c["resume_phase"] = resume
+    c["blocker"] = f"Model lane interrupted in {resume}; not a code rejection."
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        c["blocker"],
+        kind="lane-failed",
+        reply_checkpoint=True,
+    )
+
+
 def _advance_task(
     store: Store,
     worker: WorkerConfig,
@@ -2180,6 +2293,8 @@ def _advance_task(
     c = coord(task)
     if retry_remaining(c, worker) > 0:
         return []
+    if c.get("uncertain_lane"):
+        return _recover_uncertain_lane(store, worker, task, runner)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)
@@ -2447,6 +2562,26 @@ def _advance_task(
                     return intake_lines or [
                         "blocking external second review; routing to implementer"
                     ]
+        finalizing = pending_post_suite and pending_post_suite_state in (
+            "MERGED",
+            "CLOSED",
+        )
+        action = None if finalizing else PHASE_ACTION.get(phase)
+        if action is not None:
+            gate = evaluate_action(
+                store,
+                worker,
+                task,
+                runner,
+                lane_runner,
+                action=action,
+            )
+            if gate is not None:
+                return [
+                    *rejection_publication_lines,
+                    *(intake_lines or []),
+                    *gate,
+                ]
         handler_lines = handler()
         c = coord(task)
         if pending_post_suite and c.get("phase") == "await_merge":
@@ -2619,6 +2754,11 @@ def _after_advance(
     if isinstance(retry, dict) and retry.get("phase") != now:
         c.pop("retry", None)
         changed = True
+    if now not in ("ask", "blocked"):
+        for key in ("failed_check", "question_text"):
+            if key in c:
+                c.pop(key, None)
+                changed = True
     if _terminal(task):
         if changed:
             save_task(store, task)
