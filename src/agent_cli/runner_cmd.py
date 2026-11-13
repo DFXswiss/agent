@@ -139,12 +139,19 @@ def expected_login(policy: dict[str, Any]) -> str:
     return raw.strip()
 
 
-def verify_gh_login(runner: Callable[[list[str]], Completed], expected: str) -> None:
-    """Stop unless `gh` is authenticated as `expected`, case-insensitively.
+def verify_gh_login(runner: Callable[[list[str]], Completed], expected: str) -> str:
+    """Stop unless `gh` is authenticated as `expected`; return the login to use.
 
     Fail closed: a runner under the wrong identity must not ingest or supervise
     anything, because every action it takes would be attributed to that other
     account.
+
+    The match is case-insensitive, but the returned spelling is exactly what
+    `gh api user` printed. `outputs._is_new` compares an output's author login
+    case-sensitively against the value handed down, so using the policy's
+    spelling (`Example-Bot`) where GitHub says `example-bot` would reject every
+    real output and record performed work as failed. Callers pass the return
+    value on, not the policy's spelling.
     """
     from .main import die
 
@@ -156,6 +163,7 @@ def verify_gh_login(runner: Callable[[list[str]], Completed], expected: str) -> 
     if completed.returncode != 0 or actual.lower() != expected.lower():
         shown = actual or (completed.stderr or "").strip() or "unknown"
         die(f"gh is authenticated as {shown}, policy expects {expected}")
+    return actual
 
 
 class OwnJobs:
@@ -266,10 +274,12 @@ def exit_code_of(paths: RunnerPaths, job_id: str) -> int | None:
 
     A missing file means "no result yet". A half-written or non-numeric file is
     also "no result yet": guessing a code would record an invented outcome.
+    Undecodable bytes are treated the same way — `ValueError` covers
+    `UnicodeDecodeError`, and an unreadable file is never a guessed code.
     """
     try:
         text = (paths.logs / f"{job_id}.exit").read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return None
     stripped = text.strip()
     if _EXIT_CODE_RE.match(stripped) is None:
@@ -361,8 +371,10 @@ def _cmd_ingest(args: list[str]) -> None:
             return
         _ensure_state_dirs(paths)
         policy = load_json(paths.policy, "policy")
-        login = expected_login(policy)
-        verify_gh_login(run_argv, login)
+        # Use the spelling GitHub reports: `outputs._is_new` compares an
+        # author login case-sensitively, so the policy's spelling would reject
+        # this runner's own outputs whenever the two differ in case.
+        login = verify_gh_login(run_argv, expected_login(policy))
         store = open_store()
         try:
             # Plain Store, not OwnJobs: scan_mentions de-duplicates against every
@@ -449,8 +461,9 @@ def _cmd_supervise(args: list[str]) -> None:
         # Supervise needs the policy only for expected_gh_user; its job settings
         # all come from runner.json.
         policy = load_json(paths.policy, "policy")
-        login = expected_login(policy)
-        verify_gh_login(run_argv, login)
+        # Same rule as ingest: finalize compares author logins
+        # case-sensitively, so the login GitHub reports is the one to use.
+        login = verify_gh_login(run_argv, expected_login(policy))
         _ensure_state_dirs(paths)
         now = int(time.time())
         store = open_store()
@@ -923,8 +936,26 @@ def run_worker(
                     # The stall watchdog reads this size; flush every chunk so
                     # a live worker is never mistaken for a quiet one.
                     transcript.flush()
-    except OSError as exc:
-        return _worker_fail(paths, job_id, f"worker output failed: {exc}")
+    except BaseException as exc:
+        # A started agent must never be left running when the worker gives up:
+        # supervise will remove the worktree it is running in. Terminate and
+        # reap it before the failure is recorded, so the exit file cannot
+        # appear while the process is still alive.
+        try:
+            process.kill()
+        except (ProcessLookupError, OSError):
+            # Already gone: nothing left to terminate.
+            pass
+        try:
+            process.wait()
+        except OSError:
+            pass
+        code = _worker_fail(paths, job_id, f"worker output failed: {exc}")
+        if isinstance(exc, OSError):
+            return code
+        # Any other exception is not ours to swallow; the failure is recorded
+        # so finalize can end the attempt, and the error still propagates.
+        raise
 
     code = process.wait()
     if not isinstance(code, int) or isinstance(code, bool):

@@ -233,7 +233,9 @@ def test_ingest_passes_the_policy_to_scan_mentions(
         (home / "runner" / "policy.json").read_text(encoding="utf-8")
     )
     assert seen["policy"] == expected
-    assert seen["login"] == "Example-Bot"
+    # The login is the spelling GitHub reports, not the policy's spelling:
+    # `outputs._is_new` compares author logins case-sensitively.
+    assert seen["login"] == "example-bot"
     assert seen["session_id"] == "session-1"
     assert capsys.readouterr().out.strip() == "job.queued none"
 
@@ -788,6 +790,16 @@ def test_exit_code_of_returns_none_when_the_file_is_missing(tmp_path: Path) -> N
     assert exit_code_of(runner_paths(tmp_path / "runner"), "j") is None
 
 
+def test_exit_code_of_returns_none_for_undecodable_bytes(tmp_path: Path) -> None:
+    # A file that is not UTF-8 is not a result: reading it must answer None,
+    # never raise and never guess a code.
+    paths = runner_paths(tmp_path / "runner")
+    paths.logs.mkdir(parents=True)
+    (paths.logs / "j.exit").write_bytes(b"\xff\xfe")
+
+    assert exit_code_of(paths, "j") is None
+
+
 # ------------------------------------------------------------- log helpers
 
 
@@ -1021,6 +1033,49 @@ def test_worker_preserves_a_nonzero_agent_result(tmp_path: Path) -> None:
 
     assert code == 3
     assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "3\n"
+
+
+def test_worker_kills_a_started_agent_when_copying_the_output_fails(
+    tmp_path: Path,
+) -> None:
+    # Giving up on the copy must not leave the agent running in a worktree that
+    # supervise is about to remove. The child is killed and reaped before the
+    # failure is recorded.
+    paths, job_id_value = _worker_home(tmp_path)
+    exit_path = paths.logs / f"{job_id_value}.exit"
+    events: list[str] = []
+
+    class FailingStream:
+        def read1(self, _size: int) -> bytes:
+            events.append("read1")
+            raise OSError("transcript filesystem is full")
+
+    class Process:
+        stdout = FailingStream()
+
+        def kill(self) -> None:
+            events.append("kill")
+            assert not exit_path.exists()
+
+        def wait(self) -> int:
+            events.append("wait")
+            assert not exit_path.exists()
+            return -9
+
+    def popen(*_args: Any, **_kwargs: Any) -> Process:
+        events.append("popen")
+        return Process()
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=popen,
+    )
+
+    assert code == 2
+    assert events == ["popen", "read1", "kill", "wait"]
+    assert exit_path.read_text(encoding="utf-8") == "2\n"
 
 
 def test_worker_writes_exit_two_when_the_job_cannot_be_identified(
@@ -1263,6 +1318,47 @@ def test_supervise_only_finalizes_this_devices_jobs(
     finally:
         store.close()
     assert f"job.finalized {own['id']}" in capsys.readouterr().out
+
+
+def test_supervise_uses_the_login_spelling_gh_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The identity check is case-insensitive, but finalize compares author
+    # logins case-sensitively: the policy's Example-Bot must not be passed on
+    # when GitHub says example-bot.
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "Example-Bot"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    seen: dict[str, Any] = {}
+
+    def finalize_running(
+        _store: Any,
+        _runner: Callable[[list[str]], Completed],
+        *,
+        login: str,
+        **_kwargs: Any,
+    ) -> tuple[list[str], int]:
+        seen["login"] = login
+        return [], 0
+
+    monkeypatch.setattr("agent_cli.finalize.finalize_running", finalize_running)
+
+    def run(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        if "list-sessions" in joined:
+            return _completed(0, "")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    cmd_runner(["supervise"])
+
+    assert seen["login"] == "example-bot"
 
 
 # ------------------------------------------------------------------- doctor
