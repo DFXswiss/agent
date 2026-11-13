@@ -423,6 +423,16 @@ REGISTRY_KEYS = frozenset(check.key for check in _CHECKS if check.fact == "regis
 OVERRIDABLE = frozenset(check.key for check in _CHECKS if check.overridable)
 SKIPPABLE = frozenset(check.key for check in _CHECKS if check.skippable)
 
+
+def action_requiring(key: str, kind: str) -> str | None:
+    """Return the first registry action requiring this check for this source kind."""
+    for action in _ACTIONS:
+        for requirement in action.requires:
+            if requirement.check == key and kind in requirement.kinds:
+                return action.name
+    return None
+
+
 __all__ = [
     "ORDER",
     "ISSUE",
@@ -440,4 +450,5 @@ __all__ = [
     "REGISTRY_KEYS",
     "OVERRIDABLE",
     "SKIPPABLE",
+    "action_requiring",
 ]

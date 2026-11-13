@@ -45,7 +45,13 @@ from .coordinator_github import (
     reply_checkpoint_eligible,
 )
 from .model_slots import model_pins
-from .preconditions import CHECKS, PHASE_ACTION
+from .preconditions import (
+    CHECKS,
+    ORDER,
+    PHASE_ACTION,
+    SKIPPABLE,
+    action_requiring,
+)
 from .store import Store, StoreError, utcnow
 
 
@@ -75,12 +81,16 @@ def create_order_task(
     requested_base: str | None = None,
     notify_session: str | None = None,
     max_rounds: int | None = None,
+    skipped_checks: tuple[dict[str, str], ...] = (),
 ) -> dict[str, Any]:
     """Insert one queued order task for this worker; returns the stored task row."""
     if not worker.orders:
         raise CoordinatorError(f"worker {worker.session_id} does not accept orders")
     if not serves_repo(worker, repo):
         raise CoordinatorError(f"worker {worker.session_id} does not serve {repo}")
+    for entry in skipped_checks:
+        if entry["key"] not in SKIPPABLE:
+            raise CoordinatorError(f"check {entry['key']} cannot be skipped")
 
     owned_session(store, worker.session_id)
 
@@ -156,6 +166,16 @@ def create_order_task(
             source["require_hub_assignment"] = worker.require_hub_assignment
             if requested_base is not None:
                 source["requested_base"] = requested_base
+        if skipped_checks:
+            source["skipped_checks"] = [
+                {
+                    "key": entry["key"],
+                    "reason": redact(entry["reason"], limit=500),
+                    "by": submitted_by.casefold(),
+                    "at": now,
+                }
+                for entry in skipped_checks
+            ]
 
         c = {
             "phase": "queued",
@@ -204,6 +224,39 @@ def create_order_task(
     return store.row("task", tid)
 
 
+def record_submitted_skips(store: Store, task: dict[str, Any]) -> list[str]:
+    """Write the waivers given at submit as registry facts. Idempotent."""
+    source = coord(task).get("source")
+    entries = (
+        source.get("skipped_checks") or [] if isinstance(source, dict) else []
+    )
+    lines: list[str] = []
+    for entry in entries:
+        key = str(entry.get("key") or "-") if isinstance(entry, dict) else "-"
+        check = CHECKS.get(key)
+        action = action_requiring(key, ORDER)
+        if check is None or not check.skippable or action is None:
+            raise CoordinatorError(f"check {key} cannot be skipped")
+        by = str(entry.get("by") or "")
+        reason = str(entry.get("reason") or "")
+        at = str(entry.get("at") or "")
+        written = record_check(
+            store,
+            task,
+            check,
+            CheckValue(
+                "ja",
+                f"skipped at submit by {by}: {reason}",
+                source="human",
+            ),
+            action=action,
+            skip={"by": by, "reason": reason, "at": at},
+        )
+        if written:
+            lines.append(f"check {key} skipped at submit by {by}")
+    return lines
+
+
 def phase_accept_order(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -225,10 +278,11 @@ def phase_accept_order(
         if pinned is not None:
             return pinned
         c = coord(task)
+    skip_lines = record_submitted_skips(store, task)
     c["accepted_at"] = utcnow()
     c["phase"] = "checkout"
     save_task(store, task)
-    return [f"order accepted {order_id(task)}"]
+    return [*skip_lines, f"order accepted {order_id(task)}"]
 
 
 def order_state(task: dict[str, Any]) -> str:

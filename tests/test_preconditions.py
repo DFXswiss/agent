@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli import allow, main, model_slots
+from agent_cli import allow, main, model_slots, preconditions
 from agent_cli.preconditions import (
     ACTIONS,
     CHECKS,
@@ -17,6 +17,7 @@ from agent_cli.preconditions import (
     SKIPPABLE,
     WAITING_PHASES,
     WHEN_NAMES,
+    action_requiring,
 )
 
 pytestmark = pytest.mark.no_pg
@@ -82,6 +83,20 @@ def test_only_duplicates_checked_is_overridable() -> None:
 
 def test_only_duplicates_checked_is_skippable() -> None:
     assert SKIPPABLE == {"duplicates_checked"}
+
+
+def test_action_requiring() -> None:
+    assert action_requiring("duplicates_checked", ORDER) == "open_draft"
+    assert action_requiring("round_budget", ISSUE) == "implement"
+    assert action_requiring("round_budget", ORDER) == "implement"
+    assert action_requiring("duplicates_checked", ISSUE) is None
+    assert action_requiring("no_such_check", ORDER) is None
+    assert "action_requiring" in preconditions.__all__
+
+
+def test_every_skippable_check_has_an_order_action() -> None:
+    for key in SKIPPABLE:
+        assert action_requiring(key, ORDER) in ACTIONS
 
 
 def test_issue_tasks_share_exactly_three_checks() -> None:

@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,11 +14,12 @@ import pytest
 from agent_cli import order_ops, orders
 from agent_cli.coordinator import tick
 from agent_cli.coordinator_checks import CheckValue, record_check, registry_row_id
-from agent_cli.coordinator_common import redact, save_task
+from agent_cli.coordinator_common import coord, redact, save_task
 from agent_cli.coordinator_config import load_coordinator_config
 from agent_cli.coordinator_orders import (
     own_order_events,
     post_order_event,
+    record_submitted_skips,
     reconcile_order_events,
 )
 from agent_cli.main import main
@@ -35,6 +37,16 @@ from test_coordinator_support import (
     submit_order,
     write_accounts,
     write_check_lane,
+)
+
+
+BASE = (
+    "submit",
+    "--repo",
+    "example/project",
+    "--title",
+    "t",
+    "--body-file",
 )
 
 
@@ -143,7 +155,7 @@ def test_group_usage() -> None:
 
 
 USAGE_LINES = {
-    "submit": "Usage: agent order submit --repo OWNER/NAME --title TEXT --body-file PATH [--base BRANCH] [--worker SESSION] [--notify-session ID] [--json]",
+    "submit": "Usage: agent order submit --repo OWNER/NAME --title TEXT --body-file PATH [--base BRANCH] [--worker SESSION] [--notify-session ID] [--skip-check KEY --reason TEXT]... [--max-rounds N] [--json]",
     "list": "Usage: agent order list [--open] [--json]",
     "show": "Usage: agent order show --id UUID [--json]",
     "events": "Usage: agent order events [--after CURSOR] [--notify-session ID] [--wake-only] [--unacked] [--json]",
@@ -305,12 +317,26 @@ def test_submit_prints_the_order_id(device, capsys) -> None:
         "--json",
     )
     result = json.loads(capsys.readouterr().out)
-    assert set(result) == {"order_id", "repo", "state", "worker"}
+    assert set(result) == {
+        "order_id",
+        "repo",
+        "state",
+        "worker",
+        "round_limit",
+        "skipped_checks",
+    }
     assert result | {"order_id": "ignored"} == {
         "order_id": "ignored",
         "repo": "example/project",
         "state": "queued",
         "worker": "worker-session",
+        "round_limit": {
+            "limit": 10,
+            "max_rounds": 10,
+            "model": "grok-model",
+            "origin": "default",
+        },
+        "skipped_checks": [],
     }
     task = device.store.row("task", result["order_id"])
     assert task["payload"]["coordinator"]["source"]["notify_session"] == "concierge-1"
@@ -443,6 +469,357 @@ def test_submit_requires_a_paired_device(device) -> None:
     assert device.store.rows("task") == []
 
 
+def test_submit_with_a_skipped_check_and_a_round_limit(device, capsys) -> None:
+    path = body_file(device.home)
+    order(
+        *BASE,
+        path,
+        "--skip-check",
+        "duplicates_checked",
+        "--reason",
+        "none exists",
+        "--max-rounds",
+        "4",
+        "--json",
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["round_limit"] == {
+        "max_rounds": 4,
+        "origin": "submit",
+        "model": "grok-model",
+        "limit": 4,
+    }
+    task = device.store.row("task", result["order_id"])
+    source = coord(task)["source"]
+    assert result["skipped_checks"] == [
+        {
+            "key": "duplicates_checked",
+            "reason": "none exists",
+            "by": "human-owner",
+            "at": source["submitted_at"],
+        }
+    ]
+    assert coord(task)["round_limit"] == result["round_limit"]
+    assert source["skipped_checks"] == result["skipped_checks"]
+    assert device.store.rows("checklist_item") == []
+
+    order(
+        *BASE,
+        path,
+        "--skip-check",
+        "duplicates_checked",
+        "--reason",
+        "none exists",
+        "--max-rounds",
+        "4",
+    )
+    assert re.fullmatch(
+        r"order [0-9a-f-]{36}\n?", capsys.readouterr().out
+    )
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    (
+        (
+            ("--skip-check", "duplicates_checked"),
+            "--skip-check KEY must be followed by --reason TEXT",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--reason"),
+            "--skip-check KEY must be followed by --reason TEXT",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--max-rounds", "4"),
+            "--skip-check KEY must be followed by --reason TEXT",
+        ),
+        (("--reason", "x"), "--reason must follow --skip-check KEY"),
+        (
+            (
+                "--skip-check",
+                "duplicates_checked",
+                "--reason",
+                "x",
+                "--reason",
+                "y",
+            ),
+            "--reason must follow --skip-check KEY",
+        ),
+        (
+            ("--skip-check=duplicates_checked", "--reason", "x"),
+            USAGE_LINES["submit"],
+        ),
+        (("--max-rounds=4",), USAGE_LINES["submit"]),
+        (
+            ("--max-rounds", "4", "--max-rounds", "5"),
+            USAGE_LINES["submit"],
+        ),
+        (("--max-rounds",), "--max-rounds needs a value"),
+    ),
+)
+def test_submit_pair_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: tuple[str, ...],
+    message: str,
+) -> None:
+    from agent_cli import main as cli
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        cli,
+        "open_store",
+        lambda: pytest.fail("the store must not be opened for syntax errors"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        order(*BASE, "unused.md", *extra)
+    assert message in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    (
+        (("--skip-check", "nope", "--reason", "x"), "unknown check nope"),
+        (
+            ("--skip-check", "spec_available", "--reason", "x"),
+            "check spec_available cannot be skipped",
+        ),
+        (
+            (
+                "--skip-check",
+                "duplicates_checked",
+                "--reason",
+                "x",
+                "--skip-check",
+                "duplicates_checked",
+                "--reason",
+                "y",
+            ),
+            "check duplicates_checked is skipped twice",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--reason", "a\nb"),
+            "reason must be one line of 1..500 characters",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--reason", ""),
+            "reason must be one line of 1..500 characters",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--reason", "   "),
+            "reason must be one line of 1..500 characters",
+        ),
+        (
+            ("--skip-check", "duplicates_checked", "--reason", "x" * 501),
+            "reason must be one line of 1..500 characters",
+        ),
+    ),
+)
+def test_submit_skip_errors(
+    device, extra: tuple[str, ...], message: str
+) -> None:
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        order(*BASE, body_file(device.home), *extra)
+    assert device.store.rows("task") == []
+    control = device.worker.workspace_root / ".coordinator-control"
+    assert list(control.glob("*/task-text.md")) == []
+
+
+@pytest.mark.parametrize("value", ("0", "-1", "x", "1.5", "+3"))
+def test_submit_max_rounds_errors(device, value: str) -> None:
+    with pytest.raises(
+        SystemExit, match="--max-rounds requires a positive integer"
+    ):
+        order(
+            *BASE,
+            body_file(device.home),
+            "--max-rounds",
+            value,
+        )
+    assert device.store.rows("task") == []
+
+
+def test_submit_max_rounds_is_not_capped(device, capsys) -> None:
+    order(
+        *BASE,
+        body_file(device.home),
+        "--max-rounds",
+        "1000",
+        "--json",
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["round_limit"]["limit"] == 1000
+    assert result["round_limit"]["max_rounds"] == 1000
+    assert result["round_limit"]["origin"] == "submit"
+
+
+def test_submit_values_of_another_front_end(device) -> None:
+    base = {
+        "repo": "example/project",
+        "title": "t",
+        "body": "Do it",
+    }
+    malformed = (
+        "duplicates_checked",
+        [{"key": "duplicates_checked"}],
+        [{"key": "duplicates_checked", "reason": "x", "by": "someone"}],
+        [{"key": 5, "reason": "x"}],
+    )
+    for value in malformed:
+        with pytest.raises(
+            order_ops.OrderError,
+            match="skip_checks must be a list of objects with key and reason",
+        ):
+            order_ops.run(
+                "submit",
+                device.store,
+                device.home,
+                {**base, "skip_checks": value},
+            )
+    for value in (True, 1.5, 0):
+        with pytest.raises(
+            order_ops.OrderError,
+            match="--max-rounds requires a positive integer",
+        ):
+            order_ops.run(
+                "submit",
+                device.store,
+                device.home,
+                {**base, "max_rounds": value},
+            )
+    assert device.store.rows("task") == []
+
+    result = order_ops.run(
+        "submit",
+        device.store,
+        device.home,
+        {**base, "skip_checks": [], "max_rounds": 3},
+    )
+    assert result["round_limit"]["limit"] == 3
+    assert result["round_limit"]["origin"] == "submit"
+    assert result["skipped_checks"] == []
+    task = device.store.row("task", result["order_id"])
+    assert "skipped_checks" not in coord(task)["source"]
+
+
+def test_show_prints_the_round_limit_and_the_skips(device, capsys) -> None:
+    order(
+        *BASE,
+        body_file(device.home),
+        "--skip-check",
+        "duplicates_checked",
+        "--reason",
+        "none exists",
+        "--max-rounds",
+        "4",
+        "--json",
+    )
+    submitted = json.loads(capsys.readouterr().out)
+    order_id = submitted["order_id"]
+    order("show", "--id", order_id)
+    lines = capsys.readouterr().out.splitlines()
+    head_index = next(i for i, line in enumerate(lines) if line.startswith("head "))
+    assert lines[head_index + 1] == "round-limit 4 per-grant 4 origin submit"
+    assert lines[head_index + 2] == (
+        "skipped duplicates_checked by human-owner: none exists"
+    )
+    order("show", "--id", order_id, "--json")
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["round_limit"] == submitted["round_limit"]
+    assert shown["skipped_checks"] == submitted["skipped_checks"]
+
+    task = device.store.row("task", order_id)
+    record_submitted_skips(device.store, task)
+    coord(task)["phase"] = "start_draft"
+    coord(task)["round_limit"]["limit"] = 8
+    save_task(device.store, task)
+    order("show", "--id", order_id)
+    text = capsys.readouterr().out
+    assert "round-limit 8 per-grant 4 origin submit" in text
+    assert (
+        "check duplicates_checked ja skipped at submit by human-owner: none exists"
+        in text
+    )
+    order("show", "--id", order_id, "--json")
+    shown = json.loads(capsys.readouterr().out)
+    checks = {item["key"]: item for item in shown["checks"]}
+    assert checks["duplicates_checked"] == {
+        "key": "duplicates_checked",
+        "status": "ja",
+        "source": "human",
+        "evidence": "skipped at submit by human-owner: none exists",
+    }
+    assert checks["order_active"]["source"] == "script"
+
+
+def test_show_round_limit_names_the_model(device, capsys) -> None:
+    config = order_config(device.home)
+    config["workers"]["worker-session"]["max_rounds_by_model"] = {
+        "grok-model": 3
+    }
+    (device.home / "coordinator.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    order(*BASE, body_file(device.home))
+    order_id = capsys.readouterr().out.split()[1]
+    order("show", "--id", order_id)
+    assert (
+        "round-limit 3 per-grant 3 origin model grok-model"
+        in capsys.readouterr().out
+    )
+
+
+def test_show_without_a_pin_or_a_waiver(device, capsys) -> None:
+    order_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store, device.worker, order_id, phase="implement"
+    )
+    before = deepcopy(task)
+    order("show", "--id", order_id)
+    lines = capsys.readouterr().out.splitlines()
+    assert "round-limit -" in lines
+    assert not any(line.startswith("skipped ") for line in lines)
+    order("show", "--id", order_id, "--json")
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["round_limit"] is None
+    assert shown["skipped_checks"] == []
+    assert device.store.row("task", order_id) == before
+
+
+@pytest.mark.no_pg
+def test_operations_table_declares_the_new_parameters() -> None:
+    submit = next(op for op in order_ops.OPERATIONS if op.name == "submit")
+    show = next(op for op in order_ops.OPERATIONS if op.name == "show")
+    assert [param.name for param in submit.params[-2:]] == [
+        "skip_checks",
+        "max_rounds",
+    ]
+    assert submit.params[-2].flag == "--skip-check"
+    assert submit.params[-2].kind == "skips"
+    assert submit.params[-2].required is False
+    assert submit.params[-1].flag == "--max-rounds"
+    assert submit.params[-1].kind == "int"
+    assert submit.params[-1].required is False
+    assert submit.fields[-2:] == ("round_limit", "skipped_checks")
+    assert show.fields[-2:] == ("round_limit", "skipped_checks")
+
+    views = order_ops.view_operations()
+    expected = {
+        "round_limit": ["max_rounds", "origin", "model", "limit"],
+        "skipped_checks": ["key", "reason", "by", "at"],
+    }
+    assert views["submit"]["nested"] == expected
+    assert views["show"]["nested"]["checks"] == [
+        "key",
+        "status",
+        "source",
+        "evidence",
+    ]
+    for key, value in expected.items():
+        assert views["show"]["nested"][key] == value
+
+
 def test_list_and_show_are_bounded(device, capsys) -> None:
     order("list")
     assert capsys.readouterr().out.strip() == "order list none"
@@ -473,12 +850,13 @@ def test_list_and_show_are_bounded(device, capsys) -> None:
 
     order("show", "--id", str(first["id"]))
     text = capsys.readouterr().out
-    assert [line.split()[0] for line in text.splitlines()[:9]] == [
+    assert [line.split()[0] for line in text.splitlines()[:10]] == [
         "order",
         "state",
         "repo",
         "pr",
         "head",
+        "round-limit",
         "last-event",
         "checkpoint",
         "last-answer",

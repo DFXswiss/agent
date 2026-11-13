@@ -69,6 +69,8 @@ class Operation:
 REASON_BOUND = 500
 OPEN_STATES = ("queued", "running", "waiting", "ready")
 ENDED_STATES = ("merged", "failed", "cancelled")
+ROUND_LIMIT_KEYS = ("max_rounds", "origin", "model", "limit")
+SKIPPED_CHECK_KEYS = ("key", "reason", "by", "at")
 
 
 def int_param(value: object, flag: str, *, minimum: int) -> int | None:
@@ -113,6 +115,55 @@ def require_reason(reason: object) -> str:
     ):
         raise OrderError("reason must be one line of 1..500 characters")
     return reason
+
+
+def skip_checks_param(value: object) -> tuple[dict[str, str], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, dict)
+        or set(item) != {"key", "reason"}
+        or not isinstance(item["key"], str)
+        or not isinstance(item["reason"], str)
+        for item in value
+    ):
+        raise OrderError("skip_checks must be a list of objects with key and reason")
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for item in value:
+        key = item["key"]
+        reason = item["reason"]
+        if key not in CHECKS:
+            raise OrderError(f"unknown check {key}")
+        if not CHECKS[key].skippable:
+            raise OrderError(f"check {key} cannot be skipped")
+        if key in seen:
+            raise OrderError(f"check {key} is skipped twice")
+        require_reason(reason)
+        if not reason.strip():
+            raise OrderError("reason must be one line of 1..500 characters")
+        seen.add(key)
+        result.append({"key": key, "reason": reason})
+    return tuple(result)
+
+
+def round_limit_view(c: dict[str, Any]) -> dict[str, Any] | None:
+    pin = c.get("round_limit")
+    if (
+        not isinstance(pin, dict)
+        or not isinstance(pin.get("limit"), int)
+        or not isinstance(pin.get("max_rounds"), int)
+    ):
+        return None
+    return {key: pin.get(key) for key in ROUND_LIMIT_KEYS}
+
+
+def skipped_checks_view(source: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {key: item.get(key) for key in SKIPPED_CHECK_KEYS}
+        for item in source.get("skipped_checks") or []
+        if isinstance(item, dict)
+    ]
 
 
 def pr_url(task: dict[str, Any]) -> str | None:
@@ -213,6 +264,8 @@ def op_submit(
     base: str | None = None,
     worker: str | None = None,
     notify_session: str | None = None,
+    skip_checks: object = None,
+    max_rounds: object = None,
 ) -> dict[str, Any]:
     from . import main as cli
 
@@ -221,6 +274,8 @@ def op_submit(
         raise OrderError("title must be one line")
     if base is not None:
         validate_base(base)
+    skips = skip_checks_param(skip_checks)
+    limit = int_param(max_rounds, "--max-rounds", minimum=1)
     config = load_coordinator_config(home)
     if worker is not None:
         if worker not in config:
@@ -252,12 +307,18 @@ def op_submit(
         submitted_by=by,
         requested_base=base,
         notify_session=notify_session,
+        max_rounds=limit,
+        skipped_checks=skips,
     )
+    c = coord(task)
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
     return {
         "order_id": str(task["id"]),
         "repo": target_repo(task),
         "state": order_state(task),
         "worker": selected.session_id,
+        "round_limit": round_limit_view(c),
+        "skipped_checks": skipped_checks_view(source),
     }
 
 
@@ -336,6 +397,7 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
             {
                 "key": declared.key,
                 "status": value.status,
+                "source": value.source,
                 "evidence": value.evidence,
             }
             for declared, value in action_checks(facts, task, action)
@@ -373,6 +435,8 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
         "action": action,
         "checks": checks,
         "overridable_checks": overridable_checks,
+        "round_limit": round_limit_view(checkpoint_data),
+        "skipped_checks": skipped_checks_view(source),
     }
 
 
@@ -554,8 +618,26 @@ OPERATIONS: tuple[Operation, ...] = (
             Param("base", "--base", "BRANCH"),
             Param("worker", "--worker", "SESSION"),
             _NOTIFY,
+            Param(
+                "skip_checks",
+                "--skip-check",
+                "KEY --reason TEXT",
+                kind="skips",
+            ),
+            Param("max_rounds", "--max-rounds", "N", kind="int"),
         ),
-        fields=("order_id", "repo", "state", "worker"),
+        fields=(
+            "order_id",
+            "repo",
+            "state",
+            "worker",
+            "round_limit",
+            "skipped_checks",
+        ),
+        nested=(
+            ("round_limit", ROUND_LIMIT_KEYS),
+            ("skipped_checks", SKIPPED_CHECK_KEYS),
+        ),
         func=op_submit,
         identity=True,
         json_flag=True,
@@ -603,6 +685,8 @@ OPERATIONS: tuple[Operation, ...] = (
             "action",
             "checks",
             "overridable_checks",
+            "round_limit",
+            "skipped_checks",
         ),
         nested=(
             ("last_event", ("id", "seq", "kind", "at", "acked")),
@@ -611,8 +695,10 @@ OPERATIONS: tuple[Operation, ...] = (
                 ("event_id", "seq", "kind", "check", "acked", "answers"),
             ),
             ("last_intent", ("id", "kind", "status", "error", "at")),
-            ("checks", ("key", "status", "evidence")),
+            ("checks", ("key", "status", "source", "evidence")),
             ("overridable_checks", ("key", "status")),
+            ("round_limit", ROUND_LIMIT_KEYS),
+            ("skipped_checks", SKIPPED_CHECK_KEYS),
         ),
         func=op_show,
         json_flag=True,

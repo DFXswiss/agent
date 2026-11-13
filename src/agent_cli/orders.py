@@ -23,7 +23,10 @@ def usage_line(operation: order_ops.Operation) -> str:
     parts = ["Usage:", "agent", "order", operation.name]
     for param in operation.params:
         part = param.flag if param.kind == "bool" else f"{param.flag} {param.meta}"
-        parts.append(part if param.required else f"[{part}]")
+        if param.kind == "skips":
+            parts.append(f"[{part}]...")
+        else:
+            parts.append(part if param.required else f"[{part}]")
     if operation.json_flag:
         parts.append("[--json]")
     return " ".join(parts)
@@ -35,6 +38,9 @@ def parse_order_args(
     params: dict[str, Any] = {}
     as_json = False
     by_flag = {param.flag: param for param in operation.params}
+    skips_param = next(
+        (param for param in operation.params if param.kind == "skips"), None
+    )
     index = 0
     while index < len(rest):
         argument = rest[index]
@@ -43,6 +49,20 @@ def parse_order_args(
             index += 1
             continue
         param = by_flag.get(argument)
+        if param is not None and param.kind == "skips":
+            if index + 3 >= len(rest) or rest[index + 2] != "--reason":
+                cli.die(f"{param.flag} KEY must be followed by --reason TEXT")
+            params.setdefault(param.name, []).append(
+                {"key": rest[index + 1], "reason": rest[index + 3]}
+            )
+            index += 4
+            continue
+        if (
+            argument == "--reason"
+            and skips_param is not None
+            and "--reason" not in by_flag
+        ):
+            cli.die(f"--reason must follow {skips_param.flag} KEY")
         if param is None or param.name in params:
             cli.die(usage_line(operation))
         if param.kind == "bool":
@@ -96,6 +116,25 @@ def _render_show(result: dict[str, Any]) -> list[str]:
         f"pr {result['pr_url'] or '-'}",
         f"head {result['head'] or '-'}",
     ]
+    round_limit = result["round_limit"]
+    if round_limit is None:
+        lines.append("round-limit -")
+    else:
+        origin = str(round_limit.get("origin") or "-")
+        model = (
+            f" {round_limit.get('model')}"
+            if origin == "model" and round_limit.get("model")
+            else ""
+        )
+        lines.append(
+            f"round-limit {round_limit.get('limit')} "
+            f"per-grant {round_limit.get('max_rounds')} origin {origin}{model}"
+        )
+    lines.extend(
+        f"skipped {item.get('key')} by {item.get('by')}: "
+        f"{one_line(item.get('reason') or '', 160)}"
+        for item in result["skipped_checks"]
+    )
     last_event = result["last_event"]
     if last_event is None:
         lines.append("last-event -")

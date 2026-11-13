@@ -55,6 +55,7 @@ from agent_cli.coordinator_orders import (
     pending_order_intents,
     phase_accept_order,
     post_order_event,
+    record_submitted_skips,
     reconcile_order_events,
     serves_repo,
     sweep_terminal_orders,
@@ -72,9 +73,9 @@ from agent_cli.coordinator_runtime import (
     phase_implement,
     refresh_execution_binding,
 )
+from agent_cli.preconditions import CHECKS
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
-from agent_cli.preconditions import CHECKS
 from test_coordinator_support import (
     FakeGh,
     insert_order_intent,
@@ -101,6 +102,16 @@ OWNERS = dict(
     owner_check_argv=("/operator/check",),
     owner_readiness_argv=("/operator/ready",),
 )
+SKIP = ({"key": "duplicates_checked", "reason": "none exists"},)
+FOREIGN = [
+    {
+        "number": 5,
+        "title": "Other work",
+        "body": "Something else",
+        "head": {"ref": "feature"},
+        "user": {"login": "someone"},
+    }
+]
 
 
 def prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1688,6 +1699,233 @@ def test_order_with_an_open_pull_request_runs_the_check_lane_once(
             break
     assert checkpoint(store, order["id"])["phase"] == "implement"
     assert fake.launched.count("check") == 1
+    store.close()
+
+
+def test_create_order_task_stores_the_skipped_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = submit_order(store, worker, skipped_checks=SKIP)
+    source = coord(task)["source"]
+    assert source["skipped_checks"] == [
+        {
+            "key": "duplicates_checked",
+            "reason": "none exists",
+            "by": "human-owner",
+            "at": source["submitted_at"],
+        }
+    ]
+    assert store.rows("checklist_item") == []
+    plain = submit_order(store, worker)
+    assert "skipped_checks" not in coord(plain)["source"]
+    store.close()
+
+
+def test_create_order_task_refuses_a_non_skippable_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    with pytest.raises(
+        CoordinatorError, match="check spec_available cannot be skipped"
+    ):
+        submit_order(
+            store,
+            worker,
+            skipped_checks=({"key": "spec_available", "reason": "x"},),
+        )
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_skip_is_recorded_as_a_fact_at_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    task = submit_order(store, worker, skipped_checks=SKIP)
+    source = coord(task)["source"]
+    lines = run_tick(store, worker, fake, lane)
+    saved = store.row("task", task["id"])
+    assert coord(saved)["phase"] == "checkout"
+    row = store.row(
+        "checklist_item", registry_row_id(task["id"], "duplicates_checked")
+    )
+    assert row["status"] == "ja"
+    assert row["source"] == "human"
+    assert row["granted_by"] == "human-owner"
+    assert row["registry"] is True
+    assert row["override"] is None
+    assert row["skip"] == {
+        "by": "human-owner",
+        "reason": "none exists",
+        "at": source["submitted_at"],
+    }
+    assert row["evidence"] == "skipped at submit by human-owner: none exists"
+    skipped = "check duplicates_checked skipped at submit by human-owner"
+    accepted = f"order accepted {task['id']}"
+    assert skipped in lines
+    assert accepted in lines
+    assert lines.index(skipped) < lines.index(accepted)
+    store.close()
+
+
+def test_skipped_duplicate_check_never_starts_its_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingGh(FakeGh):
+        def __init__(self) -> None:
+            super().__init__()
+            self.argvs: list[list[str]] = []
+
+        def __call__(self, argv: list[str]) -> Completed:
+            self.argvs.append(list(argv))
+            return super().__call__(argv)
+
+    fake = RecordingGh()
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake
+    )
+    fake.issues = []
+    fake.open_pulls = FOREIGN
+    task = submit_order(store, worker, skipped_checks=SKIP)
+    for _ in range(6):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, task["id"])["phase"] == "implement":
+            break
+    assert checkpoint(store, task["id"])["phase"] == "implement"
+    assert "check" not in fake.launched
+    assert fake.check_prompts == []
+    assert not any(
+        any("/pulls?state=open" in element for element in argv)
+        for argv in fake.argvs
+    )
+    assert fake.empty_commits == 1
+    assert checkpoint(store, task["id"])["pr_number"] == 42
+    row = store.row(
+        "checklist_item", registry_row_id(task["id"], "duplicates_checked")
+    )
+    assert row["source"] == "human"
+    store.close()
+
+
+def test_order_without_a_skip_runs_the_duplicate_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingGh(FakeGh):
+        def __init__(self) -> None:
+            super().__init__()
+            self.argvs: list[list[str]] = []
+
+        def __call__(self, argv: list[str]) -> Completed:
+            self.argvs.append(list(argv))
+            return super().__call__(argv)
+
+    fake = RecordingGh()
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake
+    )
+    fake.issues = []
+    fake.open_pulls = FOREIGN
+    task = submit_order(store, worker)
+    for _ in range(6):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, task["id"])["phase"] == "implement":
+            break
+    assert checkpoint(store, task["id"])["phase"] == "implement"
+    assert fake.launched.count("check") == 1
+    assert any(
+        any("/pulls?state=open" in element for element in argv)
+        for argv in fake.argvs
+    )
+    store.close()
+
+
+def test_skip_recording_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = submit_order(store, worker, skipped_checks=SKIP)
+    before = deepcopy(task)
+    assert record_submitted_skips(store, task) == [
+        "check duplicates_checked skipped at submit by human-owner"
+    ]
+    ledger_before = store.conn.execute(
+        "SELECT COUNT(*) AS n FROM ledger_event"
+    ).fetchone()["n"]
+    assert record_submitted_skips(store, task) == []
+    ledger_after = store.conn.execute(
+        "SELECT COUNT(*) AS n FROM ledger_event"
+    ).fetchone()["n"]
+    assert ledger_after == ledger_before
+    assert task == before
+    store.close()
+
+
+def test_record_submitted_skips_refuses_a_waiver_the_registry_does_not_allow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    source = order_source(
+        OID,
+        skipped_checks=[
+            {
+                "key": "spec_available",
+                "reason": "x",
+                "by": "human-owner",
+                "at": "2026-01-01T00:00:00Z",
+            }
+        ],
+    )
+    task = seed_order_task(store, worker, OID, phase="accept", source=source)
+    with pytest.raises(
+        CoordinatorError, match="check spec_available cannot be skipped"
+    ):
+        record_submitted_skips(store, task)
+    assert store.rows("checklist_item") == []
+
+    other = seed_order_task(
+        store,
+        worker,
+        OID2,
+        phase="accept",
+        source=order_source(OID2, skipped_checks=["not a dictionary"]),
+    )
+    with pytest.raises(CoordinatorError, match="check - cannot be skipped"):
+        record_submitted_skips(store, other)
+    assert store.rows("checklist_item") == []
+    store.close()
+
+
+def test_a_waiver_without_a_reason_is_refused_by_the_closing_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="accept",
+        source=order_source(
+            OID,
+            skipped_checks=[
+                {
+                    "key": "duplicates_checked",
+                    "reason": "  ",
+                    "by": "human-owner",
+                    "at": "2026-01-01T00:00:00Z",
+                }
+            ],
+        ),
+    )
+    with pytest.raises(
+        CoordinatorError, match="close_allowed denied for duplicates_checked"
+    ):
+        record_submitted_skips(store, task)
+    assert store.row(
+        "checklist_item", registry_row_id(OID, "duplicates_checked")
+    ) is None
     store.close()
 
 
