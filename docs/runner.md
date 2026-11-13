@@ -209,9 +209,14 @@ command holds the lock.
 
 Every command acts on job rows this device owns. Rows replicated from another
 device are ignored by `dispatch`, `supervise`, `prune`, `retry` and `status`,
-and a retry of such a row is refused. `ingest` is the deliberate exception: it
-reads the whole store for de-duplication, because a mention already queued by
-another device must not be inserted again.
+and a retry of such a row is refused. Rows whose id is not a plain name
+(`[A-Za-z0-9_-]`) are ignored by every command as well, because a job id
+becomes a file name under `state/logs` and `state/work`. The commands that
+run jobs also ignore a row whose stored `worktree` is anything but
+`state/work/<id>`, since supervision hands that path to
+`git worktree remove --force`. `ingest` is the
+deliberate exception: it reads the whole store for de-duplication, because a
+mention already queued by another device must not be inserted again.
 
 ## Not yet
 

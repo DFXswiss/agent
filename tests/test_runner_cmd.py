@@ -32,6 +32,7 @@ from agent_cli.runner_cmd import (
     load_json,
     runner_paths,
     run_worker,
+    safe_job_id,
     transcript_of,
     transcript_size_of,
     work_dirs,
@@ -83,6 +84,23 @@ def test_load_json_stops_on_undecodable_bytes(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="policy"):
         load_json(path, "policy")
+
+
+# --------------------------------------------------------------- safe_job_id
+
+
+def test_safe_job_id_accepts_a_real_job_id() -> None:
+    assert safe_job_id(job_id("owner/name", "7", "pr-review")) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", ".", "..", "a/b", "/tmp/x", "a.b", "a" * 201, 7, None, ["a"]],
+)
+def test_safe_job_id_rejects_anything_that_is_not_a_plain_name(value: Any) -> None:
+    # A job id becomes a file name; `.`, separators and overlong names must
+    # never reach the filesystem.
+    assert safe_job_id(value) is False
 
 
 # -------------------------------------------------------------- expected_login
@@ -238,6 +256,31 @@ def test_ingest_passes_the_policy_to_scan_mentions(
     assert seen["login"] == "example-bot"
     assert seen["session_id"] == "session-1"
     assert capsys.readouterr().out.strip() == "job.queued none"
+
+
+def test_ingest_stops_when_the_policy_does_not_name_the_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without expected_gh_user there is no identity to act under. The check must
+    # run before anything is collected or queued.
+    home = tmp_path / "home"
+    _write_policy(home, expected_gh_user=None)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed(0, "example-bot\n"))[1],
+    )
+
+    with pytest.raises(SystemExit, match="expected_gh_user"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+    assert calls == []
+    store = Store(home)
+    try:
+        assert store.rows("job") == []
+    finally:
+        store.close()
 
 
 # ---------------------------------------------------------------------- lock
@@ -420,6 +463,17 @@ def test_the_worker_wrapper_runs_this_installation(
     ]
 
 
+def test_the_worker_wrapper_passes_an_absolute_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker starts in the job's worktree; a relative home would name
+    # another directory there.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", "home")
+
+    assert shlex.split(worker_wrapper())[1] == f"AGENT_HOME={tmp_path / 'home'}"
+
+
 def test_dispatch_only_starts_this_devices_jobs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -456,6 +510,39 @@ def test_dispatch_only_starts_this_devices_jobs(
         store.close()
     assert not any(foreign["id"] in " ".join(argv) for argv in calls)
     assert f"job.started {own['id']}" in capsys.readouterr().out
+
+
+def test_dispatch_ignores_a_queued_row_with_an_unsafe_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The store accepts any id, but an id that is not a plain name would become
+    # a worktree path outside the work root. It never reaches the runner.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row["id"] = "unsafe/id"
+    row.update({"state": "queued", "attempts": 0})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
+
+    cmd_runner(["dispatch"])
+
+    assert calls == []
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+    finally:
+        store.close()
+    assert "job.started none" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------- prune
@@ -598,6 +685,40 @@ def test_prune_honours_the_retention_boundary(
         assert not (logs / f"{old['id']}{suffix}").exists()
         assert (logs / f"{recent['id']}{suffix}").exists()
     assert f"job.pruned {old['id']}" in capsys.readouterr().out
+
+
+def test_prune_ignores_a_row_whose_id_is_not_a_plain_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `../escape` would make prune unlink `state/logs/../escape.exit`, a file
+    # outside the logs directory. Such a row is never handed to the queue rules.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"done": 0}})
+    state = home / "runner" / "state"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row["id"] = "../escape"
+    row.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    # This is the sibling file `logs/../escape.exit` resolves to.
+    sibling = state / "escape.exit"
+    sibling.write_text("keep me", encoding="utf-8")
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", row["id"]) is not None
+    finally:
+        store.close()
+    assert sibling.read_text(encoding="utf-8") == "keep me"
+    assert "job.pruned none" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------- retry
@@ -759,6 +880,30 @@ def test_retry_refuses_a_symlink_that_points_outside_the_work_root(
         store.close()
     assert link.is_symlink()
     assert (outside / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_retry_refuses_an_id_that_is_not_a_plain_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `../escape` would make retry remove a path outside the work root. The id
+    # is refused before the lock, the store or any git command.
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    def failing_open_store(**_kwargs: Any) -> Any:
+        pytest.fail("must not open the store for an invalid job id")
+
+    monkeypatch.setattr("agent_cli.main.open_store", failing_open_store)
+
+    with pytest.raises(SystemExit, match="not a valid job id"):
+        cmd_runner(["retry", "../escape"])
+
+    assert calls == []
 
 
 # --------------------------------------------------------------- exit_code_of
@@ -1318,6 +1463,64 @@ def test_supervise_only_finalizes_this_devices_jobs(
     finally:
         store.close()
     assert f"job.finalized {own['id']}" in capsys.readouterr().out
+
+
+def test_supervise_never_hands_git_a_worktree_outside_the_work_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # finalize removes the stored `worktree` with `git worktree remove --force`.
+    # Only the path dispatch writes, `<work>/<id>`, may ever reach git.
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    logs = home / "runner" / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    elsewhere = tmp_path / "elsewhere"
+    row = _job_row()
+    row.update(
+        {
+            "state": "running",
+            "session": dispatch.session_name(row["id"]),
+            "worktree": str(elsewhere),
+            "baseline_output_ids": [],
+            "started": "2026-08-13T12:00:00Z",
+        }
+    )
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    # A failed exit needs no output check, so finalize would go straight to
+    # the worktree cleanup if the row reached it.
+    (logs / f"{row['id']}.exit").write_text("1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> Completed:
+        calls.append(argv)
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        if "list-sessions" in joined:
+            return _completed(0, "")
+        return _completed()
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    cmd_runner(["supervise"])
+
+    assert not any(str(elsewhere) in " ".join(argv) for argv in calls)
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+    finally:
+        store.close()
+    assert "job.finalized none" in capsys.readouterr().out
 
 
 def test_supervise_uses_the_login_spelling_gh_reports(
