@@ -866,6 +866,42 @@ def _seed_one_review_merge(
     return store, worker, fake
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        pytest.param("mergeCommit", {"oid": "pending"}, id="merge-sha"),
+        pytest.param("mergedAt", "2026-11-13 10:00:00", id="merged-at"),
+    ),
+)
+def test_non_a38_invalid_merge_metadata_retries_without_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task_id = "55555555-5555-4555-8555-555555555554"
+    store, worker, fake = _seed_one_review_merge(
+        tmp_path,
+        monkeypatch,
+        tid=task_id,
+        stored_login="alice",
+    )
+    fake.pr[field] = value
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), fake
+    ) == ["merge observed but incomplete metadata"]
+
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
 def test_human_merge_done_reads_the_live_one_review_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

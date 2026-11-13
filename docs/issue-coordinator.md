@@ -1291,8 +1291,13 @@ extend the review window. This matching-head second-review evaluation and
 timeout persistence happen before merged-report visibility and cumulative-CI
 lookups. The checkpoint records whether the persisted anchor came
 from `merged_at` or `first_observation`; a later valid merge timestamp always
-replaces a fallback anchor. If the passing timestamp is later than the
-persisted merge deadline, `await_merge` publishes
+replaces a fallback anchor. Merge completion metadata is fail-closed: the
+coordinator accepts `merge_commit_sha` only as a 40-character hexadecimal SHA
+and `merged_at` only as a parseable timezone-aware timestamp. Invalid values
+are treated as missing. An A38 first-observation fallback may drive only the
+second-review deadline; neither A38 nor ordinary workers record `pr.merged` or
+complete the task until a later tick supplies both valid values. If the passing
+timestamp is later than the persisted merge deadline, `await_merge` publishes
 `merged-without-second-review` and does not complete the task. A blocking
 review or expired timeout publishes its merge
 blocker even while cumulative CI is pending or temporarily unavailable. A non-expired wait

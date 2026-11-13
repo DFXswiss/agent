@@ -2791,10 +2791,17 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
         second_review_wait: list[str] | None = None
-        sha = str(info.get("merge_commit_sha") or "")
-        merged_at = str(info.get("merged_at") or "") or None
+        reported_sha = str(info.get("merge_commit_sha") or "")
+        normalized_sha = reported_sha.lower()
+        sha = normalized_sha if is_sha(normalized_sha) else None
+        reported_merged_at = str(info.get("merged_at") or "") or None
+        merged_at = (
+            reported_merged_at
+            if parse_utc_timestamp(reported_merged_at) is not None
+            else None
+        )
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
-        if not sha or (not worker.a38 and merged_at is None):
+        if sha is None or (not worker.a38 and merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
             return ["merge observed but mergedBy missing"]
