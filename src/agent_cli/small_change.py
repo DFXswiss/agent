@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import fnmatch
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -27,6 +26,9 @@ VERDICT_SMALL = "small"
 VERDICT_NOT_SMALL = "not-small"
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
+_RAW_MODE = re.compile(rb"[0-7]{6}")
+_RAW_SHA = re.compile(rb"[0-9a-f]+")
+_RAW_STATUS = re.compile(rb"[A-Z]")
 # Each alphanumeric run: uppercase word before a lowercase tail, then words and digits.
 _TOKEN = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
@@ -54,6 +56,7 @@ _WORKFLOW_BASENAMES = frozenset({"contributing.md", "review.md", "agents.md"})
 
 _DEPENDENCY_BASENAMES = frozenset(
     {
+        ".gitmodules",
         "package.json",
         "package-lock.json",
         "npm-shrinkwrap.json",
@@ -259,10 +262,9 @@ def _is_migration(low: str, parts: Sequence[str]) -> bool:
 
 
 def _is_security(path: str) -> bool:
-    parts = path.split("/")
-    base = parts[-1] if parts else ""
-    stem = os.path.splitext(base)[0] or base
-    for component in [*parts[:-1], stem]:
+    # The full basename: the dot already separates tokens, so ``server.key``
+    # and ``session.token`` are caught just like ``server_key``.
+    for component in path.split("/"):
         for token in _TOKEN.findall(component):
             if token.lower() in _SECURITY_TOKENS:
                 return True
@@ -417,6 +419,45 @@ def parse_numstat_z(blob: bytes) -> list[FileStat] | None:
     return stats
 
 
+def parse_raw_z(blob: bytes) -> list[str] | None:
+    """Gitlink paths from ``git diff --raw -z --no-renames`` output.
+
+    Each record is ``:<old mode> <new mode> <old sha> <new sha> <status>\\0
+    <path>\\0``. Incomplete or unreadable records return None.
+    """
+    if not blob:
+        return []
+    if not blob.endswith(b"\0"):
+        return None
+    fields = blob.split(b"\0")[:-1]
+    if len(fields) % 2 != 0:
+        return None
+    gitlinks: list[str] = []
+    for index in range(0, len(fields), 2):
+        meta, path_raw = fields[index], fields[index + 1]
+        if not meta.startswith(b":") or not path_raw:
+            return None
+        pieces = meta[1:].split(b" ")
+        if len(pieces) != 5:
+            return None
+        old_mode, new_mode, old_sha, new_sha, status = pieces
+        if (
+            _RAW_MODE.fullmatch(old_mode) is None
+            or _RAW_MODE.fullmatch(new_mode) is None
+            or _RAW_SHA.fullmatch(old_sha) is None
+            or _RAW_SHA.fullmatch(new_sha) is None
+            or _RAW_STATUS.fullmatch(status) is None
+        ):
+            return None
+        try:
+            path = path_raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        if old_mode == b"160000" or new_mode == b"160000":
+            gitlinks.append(path)
+    return gitlinks
+
+
 def _numstat_from(repo: Path, merge_base: str, head: str) -> list[FileStat] | None:
     proc = _run_git(
         repo,
@@ -447,6 +488,22 @@ def _paths_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
     if proc is None or proc.returncode != 0:
         return None
     return parse_name_status_z(proc.stdout)
+
+
+def _gitlinks_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
+    proc = _run_git(
+        repo,
+        "diff",
+        "--raw",
+        "-z",
+        "--no-renames",
+        "--ignore-submodules=none",
+        merge_base,
+        head,
+    )
+    if proc is None or proc.returncode != 0:
+        return None
+    return parse_raw_z(proc.stdout)
 
 
 def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
@@ -491,6 +548,7 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
 
     paths: list[str] | None = None
     stats: list[FileStat] | None = None
+    gitlinks: list[str] | None = None
     if head and merge_base:
         paths = _paths_from(repo, merge_base, head)
         if paths is None:
@@ -498,6 +556,9 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
         stats = _numstat_from(repo, merge_base, head)
         if stats is None:
             reasons.append("line inventory unreadable")
+        gitlinks = _gitlinks_from(repo, merge_base, head)
+        if gitlinks is None:
+            reasons.append("submodule inventory unreadable")
         if (
             paths is not None
             and stats is not None
@@ -515,6 +576,8 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
 
     if paths is not None or stats is not None:
         reasons.extend(evaluate(stats, paths, extra_globs))
+    if gitlinks is not None:
+        reasons.extend(f"submodule pointer {path}" for path in gitlinks)
     if stats is not None:
         files = tuple(stats)
 

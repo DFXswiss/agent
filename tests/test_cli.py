@@ -6497,3 +6497,34 @@ def test_close_from_pr_requires_the_verdict_at_the_merged_head(
     out = capsys.readouterr().out
     assert f"task {tid} not closed: small change was not measured at the merged head" in out
     _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull())
+
+
+def test_small_change_does_not_overwrite_a_concurrent_state_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_cli import small_change
+
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+
+    def racing_check_repo(repo_path, base_sha, expected_head):
+        store = Store(tmp_path)
+        try:
+            row = store.row("task", tid)
+            assert row is not None
+            row["state"] = "done"
+            store.write("task", "update", tid, row)
+        finally:
+            store.close()
+        return small_change.check_repo(repo_path, base_sha, expected_head)
+
+    monkeypatch.setattr("agent_cli.main.check_repo", racing_check_repo)
+    with pytest.raises(SystemExit, match="task changed during small-change; retry"):
+        run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    row = _task_row(tmp_path, tid)
+    assert row["state"] == "done"
+    assert "small_change" not in row

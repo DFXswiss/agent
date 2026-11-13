@@ -1482,6 +1482,7 @@ def cmd_small_change(args: list[str]) -> None:
     store = open_store()
     try:
         task = _need(store, "task", tid)
+        original = _strip(task)
         session = _need(store, "session", str(task.get("session_id") or ""))
         if session.get("status") != "active":
             die(f"session {session.get('id')} is not active")
@@ -1522,9 +1523,18 @@ def cmd_small_change(args: list[str]) -> None:
         verdict = check_repo(repo_path, base_sha, head_sha)
         record = verdict.to_json()
         record["recorded_at"] = utcnow()
-        task["small_change"] = record
-        task["updated_at"] = utcnow()
-        store.write("task", "update", tid, _strip(task))
+        written = dict(original)
+        written["small_change"] = record
+        written["updated_at"] = utcnow()
+
+        def check() -> None:
+            row = store.row("task", tid)
+            if row is None or _strip(row) != original:
+                die("task changed during small-change; retry")
+            if str(row.get("state") or "") in TERMINAL_STATES:
+                die("cannot record a small-change verdict on a terminal task")
+
+        store.write_many([("task", "update", tid, written)], check=check)
     finally:
         store.close()
 
