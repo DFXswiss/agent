@@ -54,8 +54,9 @@ case-insensitively. A runner authenticated as another account would attribute
 every action to that account, so the check is fail-closed rather than a warning.
 
 `runner.json` answers *how this device runs work*. `dispatch`, `supervise`,
-`prune` and `retry` read this file; they do not read the policy, with the one
-exception that `supervise` reads `expected_gh_user`.
+`prune` and the worker read this file; they do not read the policy, with the
+one exception that `supervise` reads `expected_gh_user`. `retry` needs no
+setting and reads neither file.
 
 ```json
 {
@@ -155,9 +156,12 @@ job.running <job-id> 2026-11-13T10:00:00Z
 
 Reads all four configuration files and the environment, and reports every
 problem it can find rather than stopping at the first. It runs the three
-health checks, verifies `max_concurrent`, requires the binaries `gh`, `git`,
-`tmux` and `ps` on `PATH`, checks that the runner directories are writable,
-and checks the authenticated GitHub login.
+health checks, verifies `max_concurrent`, and validates the `agent` block
+(`command`, `args` and `prompt_flag`). It requires the binaries `gh`, `git`,
+`tmux` and `ps` on `PATH`, and the agent command too when the block is usable.
+For every skill id in the catalogue it checks that `prompts/<id>.md` exists.
+It checks that the runner directories are writable, and that the authenticated
+GitHub login matches the policy.
 
 Output: one `doctor problem: <text>` line per problem followed by
 `doctor <n> problems`, exiting 1; or `doctor ok`.
@@ -176,6 +180,11 @@ output and to `state/logs/<id>.transcript` as it arrives. Every failure after
 job identification appends a line to the transcript and writes exit status 2
 (127 when the command cannot start), so supervision never waits forever on a
 worker that died early. The worker returns the agent's own exit status.
+
+The worker session inherits the environment of the runner's tmux server, so
+settings such as `AGENT_PG_DSN` must be present in the environment that runs
+`dispatch`. The wrapper passes `AGENT_HOME` explicitly and puts nothing else
+on the command line, because a command line is visible to every local user.
 
 ## The runner lock
 
@@ -209,5 +218,8 @@ another device must not be inserted again.
 - Prompt templates shipped with the package.
 - A schedule or service unit for the subcommands.
 - Container packaging.
+- Owner wildcards (`owner/*`) in `repos_allow` and job-type detection from the
+  catalogue. Until this lands, a policy that lists only `owner/*` admits
+  nothing: admission is fail-closed.
 - The mergeable probe for `pr-mergeable` jobs; those jobs record
   `work_performed` as `unknown` until it is ported.

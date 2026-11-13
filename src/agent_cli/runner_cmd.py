@@ -240,17 +240,25 @@ def worker_wrapper() -> str:
     The worker derives its job from its working directory (`tmux -c
     <worktree>`), so no job id is embedded here and one string serves every
     job, which is the shape `dispatch_queued` takes.
-    """
-    from .main import die, home
 
-    agent_exe = shutil.which("agent")
-    if agent_exe is None:
-        candidate = Path(sys.argv[0]).resolve()
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            agent_exe = str(candidate)
-    if agent_exe is None:
-        die("cannot locate the agent executable for the worker")
-    return shlex.join(["env", f"AGENT_HOME={home()}", agent_exe, "runner", "work"])
+    The interpreter that runs this installation is used rather than looking up
+    `agent` on `PATH`: another program may ship a binary of that name, and it
+    would then be started for every job. Running `main.py` with `-m` starts the
+    same code that dispatched the job, whatever its installation is called.
+    """
+    from .main import home
+
+    return shlex.join(
+        [
+            "env",
+            f"AGENT_HOME={home()}",
+            sys.executable,
+            "-m",
+            "agent_cli.main",
+            "runner",
+            "work",
+        ]
+    )
 
 
 def exit_code_of(paths: RunnerPaths, job_id: str) -> int | None:
@@ -474,7 +482,7 @@ def _cmd_supervise(args: list[str]) -> None:
     for name in killed:
         print(f"session.killed {name}")
     for item in failed:
-        print(f"reap failed {item}")
+        print(f"reap failed {item}", file=sys.stderr)
     total_skipped = finalize_skipped + reap_skipped
     if total_skipped > 0:
         print(f"supervise skipped {total_skipped}", file=sys.stderr)
@@ -579,10 +587,6 @@ def _cmd_retry(args: list[str]) -> None:
         if not acquired:
             print("runner busy")
             return
-        # Retry takes its settings from runner.json and nothing from the policy.
-        # Reading it here fails closed on a broken configuration before a row
-        # is put back into the queue.
-        load_json(paths.runner_config, "runner config")
         _ensure_state_dirs(paths)
         store = open_store()
         try:
@@ -635,6 +639,30 @@ def _cmd_status(args: list[str]) -> None:
 # --------------------------------------------------------------------- doctor
 
 
+def _catalogue_skill_ids(catalog: dict[str, Any]) -> list[str]:
+    """Non-empty skill ids the catalogue publishes.
+
+    The catalogue is read exactly as `health.unresolved_skills` reads it: a
+    list, or a mapping read by its values. Non-dict entries and ids that are
+    not strings are skipped; `unresolved_skills` already reports those shapes.
+    """
+    raw_entries = catalog.get("skills") if isinstance(catalog, dict) else None
+    if isinstance(raw_entries, list):
+        entries = raw_entries
+    elif isinstance(raw_entries, dict):
+        entries = list(raw_entries.values())
+    else:
+        return []
+    ids: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_id = entry.get("id")
+        if isinstance(raw_id, str) and raw_id:
+            ids.append(raw_id)
+    return ids
+
+
 def _cmd_doctor(args: list[str]) -> None:
     """Report every configuration and environment problem. Read-only."""
     from .main import home
@@ -657,6 +685,8 @@ def _cmd_doctor(args: list[str]) -> None:
 
     # All three health checks run whenever their inputs loaded. An empty answer
     # from one does not make another unnecessary.
+    agent: dict[str, Any] | None = None
+    agent_problems: list[str] = []
     if runner_config is not None:
         problems.extend(health.runner_config_problems(runner_config))
         max_concurrent = runner_config.get("max_concurrent")
@@ -666,8 +696,17 @@ def _cmd_doctor(args: list[str]) -> None:
             or max_concurrent < 1
         ):
             problems.append("max_concurrent is not a positive integer")
+        agent, agent_problems = _agent_settings(runner_config)
+        problems.extend(agent_problems)
     if catalog is not None and runner_config is not None:
         problems.extend(health.unresolved_skills(catalog, runner_config))
+    if catalog is not None:
+        # A skill the catalogue publishes without its prompt template would
+        # only fail when its first job runs; report it here instead.
+        for skill_id in _catalogue_skill_ids(catalog):
+            template = paths.prompts / f"{skill_id}.md"
+            if not template.is_file():
+                problems.append(f"prompt template {template} is missing")
     if agent_config is not None:
         problems.extend(health.agent_config_problems(agent_config))
 
@@ -682,6 +721,12 @@ def _cmd_doctor(args: list[str]) -> None:
     for binary in ("gh", "git", "tmux", "ps"):
         if shutil.which(binary) is None:
             problems.append(f"{binary} is not on PATH")
+    # Only a usable agent block names a command worth looking for; a broken
+    # one has already been reported above.
+    if agent is not None and not agent_problems:
+        command = agent["command"]
+        if shutil.which(command) is None:
+            problems.append(f"{command} is not on PATH")
     if not os.access(paths.base, os.W_OK):
         problems.append(f"runner directory {paths.base} is not writable")
     if paths.state.exists() and not os.access(paths.state, os.W_OK):
@@ -790,6 +835,10 @@ def run_worker(
     row = store.row("job", job_id)
     if row is None:
         return _worker_fail(paths, job_id, f"job {job_id} is not in the store")
+    if row.get("_origin_device_id") != store.device_id():
+        return _worker_fail(
+            paths, job_id, f"job {job_id} belongs to another device"
+        )
     repo = row.get("repo")
     ref = row.get("ref")
     job_type = row.get("job_type")

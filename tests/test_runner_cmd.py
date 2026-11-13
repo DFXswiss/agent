@@ -10,7 +10,9 @@ from __future__ import annotations
 import fcntl
 import io
 import json
+import shlex
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,7 @@ from agent_cli.runner_cmd import (
     transcript_of,
     transcript_size_of,
     work_dirs,
+    worker_wrapper,
 )
 from agent_cli.store import Store
 
@@ -196,6 +199,44 @@ def test_ingest_fails_closed_when_gh_is_another_account(
     assert not any("notifications" in " ".join(argv) for argv in calls)
 
 
+def test_ingest_passes_the_policy_to_scan_mentions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The policy answers "who may ask"; handing the runner config over instead
+    # would enforce the wrong rules without failing.
+    home = tmp_path / "home"
+    _write_policy(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    seen: dict[str, Any] = {}
+
+    def scan_mentions(
+        _store: Any,
+        _runner: Callable[[list[str]], Completed],
+        *,
+        session_id: str,
+        login: str,
+        policy: Any,
+    ) -> tuple[list[str], int]:
+        seen.update(session_id=session_id, login=login, policy=policy)
+        return [], 0
+
+    monkeypatch.setattr("agent_cli.ingest.scan_mentions", scan_mentions)
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    expected = json.loads(
+        (home / "runner" / "policy.json").read_text(encoding="utf-8")
+    )
+    assert seen["policy"] == expected
+    assert seen["login"] == "Example-Bot"
+    assert seen["session_id"] == "session-1"
+    assert capsys.readouterr().out.strip() == "job.queued none"
+
+
 # ---------------------------------------------------------------------- lock
 
 
@@ -342,6 +383,25 @@ def test_dispatch_removes_stale_logs_before_starting(
     assert f"job.started {row['id']}" in capsys.readouterr().out
 
 
+def test_the_worker_wrapper_runs_this_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another program named `agent` may be earlier on PATH, so the worker must
+    # start the interpreter that dispatched it, not a looked-up binary.
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    assert shlex.split(worker_wrapper()) == [
+        "env",
+        f"AGENT_HOME={home}",
+        sys.executable,
+        "-m",
+        "agent_cli.main",
+        "runner",
+        "work",
+    ]
+
+
 # ---------------------------------------------------------------------- prune
 
 
@@ -486,6 +546,90 @@ def test_retry_refuses_a_job_owned_by_another_device(
         cmd_runner(["retry", "foreign-job"])
 
 
+def test_retry_refuses_a_running_job_and_leaves_it_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `running` cannot transition to `queued`; rewriting the row would make the
+    # supervisor's current attempt silently become a queue entry.
+    home = tmp_path / "home"
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "running", "session": "job-running", "attempts": 1})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="cannot be retried from state running"):
+        cmd_runner(["retry", row["id"]])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+        assert saved["attempts"] == 1
+        assert saved["session"] == "job-running"
+    finally:
+        store.close()
+    assert calls == []
+    for suffix in (".exit", ".transcript", ".prompt"):
+        assert (logs / f"{row['id']}{suffix}").exists()
+
+
+def test_retry_refuses_a_symlink_that_points_outside_the_work_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `shutil.rmtree` must never follow a symlink: the target is data the
+    # runner does not own, and the row must stay exactly as it was.
+    home = tmp_path / "home"
+    runner_dir = home / "runner"
+    work = runner_dir / "state" / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("keep me", encoding="utf-8")
+    row = _job_row()
+    row.update({"state": "failed", "attempts": 0})
+    link = work / row["id"]
+    link.symlink_to(outside, target_is_directory=True)
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    # The fake git leaves the path in place, so the fallback delete is reached.
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv", lambda _argv: _completed()
+    )
+
+    with pytest.raises(SystemExit, match="symlink"):
+        cmd_runner(["retry", row["id"]])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "failed"
+        assert saved["attempts"] == 0
+    finally:
+        store.close()
+    assert link.is_symlink()
+    assert (outside / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
 # --------------------------------------------------------------- exit_code_of
 
 
@@ -548,13 +692,21 @@ def test_work_dirs_lists_sorted_immediate_directories(tmp_path: Path) -> None:
 class _FakeStore:
     """The two reads the worker makes, without a database."""
 
-    def __init__(self, row: dict[str, Any] | None, device: str = "this-device") -> None:
+    def __init__(
+        self,
+        row: dict[str, Any] | None,
+        device: str = "this-device",
+        origin: str | None = None,
+    ) -> None:
         self._row = row
         self._device = device
+        # By default the row belongs to this device; a test can claim it for
+        # another one to exercise the ownership check.
+        self._origin = device if origin is None else origin
 
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
         if table == "job" and self._row is not None and row_id == self._row["id"]:
-            return {**self._row, "_origin_device_id": self._device}
+            return {**self._row, "_origin_device_id": self._origin}
         return None
 
     def device_id(self) -> str:
@@ -738,6 +890,32 @@ def test_worker_writes_exit_two_when_the_prompt_template_is_missing(
     ).read_text(encoding="utf-8")
 
 
+def test_worker_refuses_a_row_owned_by_another_device(tmp_path: Path) -> None:
+    # Another device's row is not this worker's job; starting the agent would
+    # run work the store cannot attribute to this instance.
+    paths, job_id_value = _worker_home(tmp_path)
+    row = {
+        "id": job_id_value,
+        "repo": "owner/name",
+        "ref": "7",
+        "job_type": "pr-review",
+    }
+    store = _FakeStore(row, origin="other-device")
+
+    code = run_worker(
+        paths,
+        store,
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
+    )
+
+    assert code == 2
+    assert "belongs to another device" in (
+        paths.logs / f"{job_id_value}.transcript"
+    ).read_text(encoding="utf-8")
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
+
+
 # ---------------------------------------------------------------- supervise
 
 
@@ -769,7 +947,9 @@ def test_supervise_exits_one_when_a_reap_step_fails(
     assert raised.value.code == 1
     captured = capsys.readouterr()
     assert "job.finalized none" in captured.out
-    assert "reap failed job-orphan" in captured.out
+    # Reap failures are reported on standard error, like the other failures.
+    assert "reap failed job-orphan" in captured.err
+    assert "reap failed job-orphan" not in captured.out
 
 
 # ------------------------------------------------------------------- doctor
@@ -862,6 +1042,36 @@ def test_doctor_reports_every_problem_and_exits_one(
     assert "doctor problem:" in out
     assert "max_concurrent is not a positive integer" in out
     assert "cli is not 'agent'" in out
+    assert "doctor 2 problems" in out
+
+
+def test_doctor_reports_a_missing_prompt_template_and_a_broken_agent_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The three health functions are clean here; these two rules are what the
+    # doctor has to catch on its own.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+    (paths.prompts / "pr-review.md").unlink()
+    config = json.loads(paths.runner_config.read_text(encoding="utf-8"))
+    config["agent"]["args"] = "not a list"
+    paths.runner_config.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "agent.args is not a list of strings" in out
+    assert f"prompt template {paths.prompts / 'pr-review.md'} is missing" in out
     assert "doctor 2 problems" in out
 
 
