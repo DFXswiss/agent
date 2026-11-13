@@ -71,6 +71,7 @@ class CheckValue:
     source: str = "script"
     at: str = ""
     head: str | None = None
+    opinion: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,7 @@ def _value(
     source: Any = "script",
     at: Any = "",
     head: str | None = None,
+    opinion: dict[str, Any] | None = None,
 ) -> CheckValue:
     return CheckValue(
         status,
@@ -250,6 +252,7 @@ def _value(
         str(source or "script"),
         str(at or ""),
         head,
+        opinion,
     )
 
 
@@ -624,6 +627,7 @@ def read_fact(facts: TaskFacts, task: dict[str, Any], check: Check) -> CheckValu
         row.get("source"),
         row.get("updated_at"),
         row.get("head_sha"),
+        row.get("opinion") if isinstance(row.get("opinion"), dict) else None,
     )
 
 
@@ -680,8 +684,21 @@ def record_check(
         "head_sha": value.head,
         "override": override,
         "skip": skip,
+        "opinion": (
+            value.opinion
+            if value.opinion is not None
+            else (existing or {}).get("opinion")
+        ),
     }
-    compared = ("status", "evidence", "source", "head_sha", "override", "skip")
+    compared = (
+        "status",
+        "evidence",
+        "source",
+        "head_sha",
+        "override",
+        "skip",
+        "opinion",
+    )
     if existing is not None and all(existing.get(key) == new.get(key) for key in compared):
         return False
     verdict = close_allowed(
@@ -949,7 +966,7 @@ def _round_budget_question(
     check: Check,
     value: CheckValue,
 ) -> str:
-    del worker, check, value
+    del worker, check
     c = coord(task)
     if is_order(task):
         source = c.get("source") if isinstance(c.get("source"), dict) else {}
@@ -957,7 +974,15 @@ def _round_budget_question(
     else:
         subject = source_label(task)
     pin = c["round_limit"]
-    question = c["round_limit_question"]
+    question = c.get("round_limit_question")
+    question = question if isinstance(question, dict) else {}
+    opinion = (
+        value.opinion
+        if isinstance(value.opinion, dict)
+        else question.get("assessment")
+        if isinstance(question.get("assessment"), dict)
+        else None
+    )
     origins = {
         "submit": "given at submit",
         "model": f"configured for model {pin['model']}",
@@ -965,15 +990,41 @@ def _round_budget_question(
         "default": "default",
     }
     origin = origins.get(str(pin.get("origin") or ""), "default")
-    findings = redact(str(c.get("findings") or "none recorded"), limit=1000)
-    return (
-        f"Round limit reached for {subject}: {question['limit']} implementation "
-        "rounds ended without an approved result.\n"
-        f"Limit: {pin['max_rounds']} rounds per grant ({origin}).\n"
-        f"Latest findings:\n{findings}\n"
-        f"An authorized reply grants {pin['max_rounds']} more rounds; its text "
-        "is passed to the implementer."
-    )
+    limit = question.get("limit") or pin["limit"]
+    lines = [
+        f"Round limit reached for {subject}: {limit} implementation rounds "
+        "ended without an approved result.",
+        f"Limit: {pin['max_rounds']} rounds per grant ({origin}).",
+    ]
+    if isinstance(opinion, dict):
+        result = str(opinion.get("result") or "")
+        reasoning = str(opinion.get("reasoning") or "")
+        if result == "unavailable":
+            lines.append(f"Assessment: not available ({reasoning})")
+        else:
+            lines.append(f"Assessment ({result}): {reasoning}")
+        if result == "change-approach":
+            lines.append(
+                f"Proposed approach: {str(opinion.get('approach') or '')}"
+            )
+    if is_order(task):
+        oid = order_id(task)
+        lines.extend(
+            [
+                "Continue: agent order reply "
+                f"--id {oid} --body-file PATH grants {pin['max_rounds']} "
+                "more rounds; the text is passed to the implementer.",
+                f"Stop: agent order cancel --id {oid} --reason TEXT",
+            ]
+        )
+    else:
+        lines.append(
+            f"An authorized reply grants {pin['max_rounds']} more rounds; "
+            "its text is passed to the implementer."
+        )
+    findings = redact(str(c.get("findings") or "none recorded"), limit=300)
+    lines.extend(["Latest findings:", findings])
+    return "\n".join(lines)
 
 
 def _duplicates_checked_question(
@@ -1094,7 +1145,7 @@ def resolve_no_live_lane(ctx: CheckContext) -> CheckValue | Deferred:
     return CheckValue("ja", "no working lane record")
 
 
-def resolve_round_budget(ctx: CheckContext) -> CheckValue:
+def resolve_round_budget(ctx: CheckContext) -> CheckValue | Deferred:
     store, worker, task = ctx.store, ctx.worker, ctx.task
     pin = round_limit_pin(store, worker, task)
     c = coord(task)
@@ -1112,8 +1163,17 @@ def resolve_round_budget(ctx: CheckContext) -> CheckValue:
     upcoming = next_round(store, task)
     if upcoming <= pin["limit"]:
         return CheckValue("ja", f"rounds within limit {pin['limit']}")
-    if not isinstance(coord(task).get("round_limit_question"), dict):
-        asked = {"limit": pin["limit"], "replies": replies}
+    limit = pin["limit"]
+    question = coord(task).get("round_limit_question")
+    opinion = question.get("assessment") if isinstance(question, dict) else None
+    if not isinstance(opinion, dict):
+        from .coordinator_check_lane import assess_approach
+
+        outcome = assess_approach(ctx, limit=limit, rounds=upcoming - 1)
+        if isinstance(outcome, Deferred):
+            return outcome
+        opinion = outcome
+        asked = {"limit": limit, "replies": replies, "assessment": opinion}
         _commit(
             store,
             task,
@@ -1121,7 +1181,9 @@ def resolve_round_budget(ctx: CheckContext) -> CheckValue:
         )
     return CheckValue(
         "nein",
-        f"round {upcoming} exceeds the limit of {pin['limit']} implementation rounds",
+        f"round {upcoming} exceeds the limit of {limit} implementation rounds; "
+        f"assessment {opinion['result']}",
+        opinion=opinion,
     )
 
 

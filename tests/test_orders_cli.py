@@ -49,6 +49,16 @@ BASE = (
     "--body-file",
 )
 
+OPINION = {
+    "result": "change-approach",
+    "reasoning": "The same finding returns.",
+    "approach": "Use an allowlist.",
+    "limit": 2,
+    "rounds": 2,
+    "agent_id": None,
+    "at": "2026-01-01T00:00:00Z",
+}
+
 
 def order_config(root: Path) -> dict:
     return {
@@ -802,7 +812,11 @@ def test_operations_table_declares_the_new_parameters() -> None:
     assert submit.params[-1].kind == "int"
     assert submit.params[-1].required is False
     assert submit.fields[-2:] == ("round_limit", "skipped_checks")
-    assert show.fields[-2:] == ("round_limit", "skipped_checks")
+    assert show.fields[-3:] == (
+        "round_limit",
+        "skipped_checks",
+        "assessment",
+    )
 
     views = order_ops.view_operations()
     expected = {
@@ -863,6 +877,7 @@ def test_list_and_show_are_bounded(device, capsys) -> None:
         "action",
     ]
     assert marker not in text and "DIGEST-MARKER" not in text
+    assert not any(line.startswith("assessment ") for line in text.splitlines())
     order("show", "--id", str(first["id"]), "--json")
     text = capsys.readouterr().out
     assert marker not in text and "DIGEST-MARKER" not in text
@@ -1026,7 +1041,7 @@ def test_events_filters(device, capsys) -> None:
     order("events", "--json")
     result = json.loads(capsys.readouterr().out)
     assert [item["seq"] for item in result["events"]] == [1, 2]
-    assert all(len(item) == 15 for item in result["events"])
+    assert all(len(item) == 16 for item in result["events"])
     order("events", "--after", "1", "--json")
     assert [item["seq"] for item in json.loads(capsys.readouterr().out)["events"]] == [2]
     order("events", "--notify-session", "concierge-1", "--json")
@@ -1579,7 +1594,155 @@ def test_submit_then_tick_then_events_round_trip(device, capsys, monkeypatch) ->
         "at": "ignored",
         "acked": False,
         "answers": [],
+        "opinion": None,
     }
     order_id = result["events"][0]["order_id"]
     order("show", "--id", order_id)
     assert "last-event 1 accepted" in capsys.readouterr().out
+
+
+def test_show_prints_the_assessment(device, capsys) -> None:
+    order_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="ask",
+        resume_phase="implement",
+        failed_check="round_budget",
+        question_text="Round limit reached",
+        round_limit={
+            "max_rounds": 2,
+            "origin": "submit",
+            "model": "grok-model",
+            "limit": 2,
+        },
+        round_limit_question={
+            "limit": 2,
+            "replies": 0,
+            "assessment": OPINION,
+        },
+    )
+    record_check(
+        device.store,
+        task,
+        CHECKS["round_budget"],
+        CheckValue(
+            "nein",
+            "round 3 exceeds the limit of 2 implementation rounds; "
+            "assessment change-approach",
+            opinion=OPINION,
+        ),
+        action="implement",
+    )
+
+    order("show", "--id", order_id)
+    lines = capsys.readouterr().out.splitlines()
+    assessment = (
+        "assessment change-approach at-limit 2: "
+        "The same finding returns."
+    )
+    assert assessment in lines
+    assert "approach Use an allowlist." in lines
+    assert lines.index(assessment) > max(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("overridable ")
+    )
+
+    order("show", "--id", order_id, "--json")
+    shown = json.loads(capsys.readouterr().out)
+    assert set(shown["assessment"]) == {
+        "result",
+        "reasoning",
+        "approach",
+        "limit",
+        "rounds",
+        "at",
+    }
+
+    reconcile_order_events(device.store, device.worker, task)
+    order("events", "--json")
+    events = json.loads(capsys.readouterr().out)["events"]
+    event = next(item for item in events if item["order_id"] == order_id)
+    assert event["kind"] == "question"
+    assert event["opinion"] == {
+        "result": "change-approach",
+        "reasoning": "The same finding returns.",
+        "approach": "Use an allowlist.",
+    }
+
+    other_id = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        other_id,
+        phase="ask",
+        resume_phase="implement",
+        failed_check="round_budget",
+        question_text="Round limit reached",
+    )
+    order("show", "--id", other_id)
+    assert not any(
+        line.startswith("assessment ")
+        for line in capsys.readouterr().out.splitlines()
+    )
+    order("show", "--id", other_id, "--json")
+    assert json.loads(capsys.readouterr().out)["assessment"] is None
+
+
+def test_show_prints_an_unavailable_assessment_without_an_approach(
+    device, capsys
+) -> None:
+    order_id = str(uuid.uuid4())
+    opinion = {
+        **OPINION,
+        "result": "unavailable",
+        "reasoning": "check lane failed 1 times: exit 2",
+        "approach": "",
+    }
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="ask",
+        resume_phase="implement",
+        failed_check="round_budget",
+        question_text="Round limit reached",
+    )
+    record_check(
+        device.store,
+        task,
+        CHECKS["round_budget"],
+        CheckValue("nein", "round limit reached", opinion=opinion),
+        action="implement",
+    )
+
+    order("show", "--id", order_id)
+    lines = capsys.readouterr().out.splitlines()
+    assert (
+        "assessment unavailable at-limit 2: "
+        "check lane failed 1 times: exit 2"
+    ) in lines
+    assert not any(line.startswith("approach ") for line in lines)
+
+
+@pytest.mark.no_pg
+def test_operations_table_declares_the_assessment_fields() -> None:
+    show = next(op for op in order_ops.OPERATIONS if op.name == "show")
+    assert "assessment" in show.fields
+    views = order_ops.view_operations()
+    assert views["show"]["nested"]["assessment"] == [
+        "result",
+        "reasoning",
+        "approach",
+        "limit",
+        "rounds",
+        "at",
+    ]
+    for name in ("events", "wait"):
+        operation = next(
+            op for op in order_ops.OPERATIONS if op.name == name
+        )
+        assert operation.nested[0][1][-1] == "opinion"
+    assert "wait" not in views

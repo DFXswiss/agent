@@ -390,6 +390,7 @@ def post_order_event(
     occurrence: str,
     digest: str,
     check: str | None = None,
+    opinion: dict[str, Any] | None = None,
 ) -> str:
     """Insert one deterministic, sequenced event for an order."""
     event_id = order_event_id(order_id(task), kind, occurrence)
@@ -451,6 +452,7 @@ def post_order_event(
                 "round": as_int(task.get("current_round")) or 0,
                 "check": check_key,
                 "answers": answers,
+                "opinion": opinion,
                 "failed_kind": c.get("failed_kind") if kind == "failed" else None,
                 "notify_session": source.get("notify_session"),
                 "at": utcnow(),
@@ -502,7 +504,12 @@ def reconcile_order_events(
     )
 
     def post(
-        *, kind: str, occurrence: str, digest: str, check: str | None = None
+        *,
+        kind: str,
+        occurrence: str,
+        digest: str,
+        check: str | None = None,
+        opinion: dict[str, Any] | None = None,
     ) -> str:
         return post_order_event(
             store,
@@ -512,6 +519,7 @@ def reconcile_order_events(
             occurrence=occurrence,
             digest=digest,
             check=check,
+            opinion=opinion,
         )
 
     def acknowledge_checkpoint(via: str) -> None:
@@ -602,11 +610,28 @@ def reconcile_order_events(
                 digest = f"Order failed (blocked): {c.get('blocker') or ''}"
             if o.get("refused"):
                 digest = f"Previous answer refused: {o['refused']}\n{digest}"
+            question = c.get("round_limit_question")
+            assessment = (
+                question.get("assessment")
+                if isinstance(question, dict)
+                else None
+            )
             event_id = post(
                 kind=kind,
                 occurrence=str(seq),
                 digest=digest,
                 check=c.get("failed_check"),
+                opinion=(
+                    {
+                        "result": assessment.get("result"),
+                        "reasoning": assessment.get("reasoning"),
+                        "approach": assessment.get("approach"),
+                    }
+                    if kind == "question"
+                    and c.get("failed_check") == "round_budget"
+                    and isinstance(assessment, dict)
+                    else None
+                ),
             )
             o["checkpoint_seq"] = seq
             o["checkpoint"] = {"event_id": event_id, "kind": kind, "key": key}

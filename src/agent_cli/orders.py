@@ -172,6 +172,17 @@ def _render_show(result: dict[str, Any]) -> list[str]:
         f"overridable {item['key']} {item['status']}"
         for item in result["overridable_checks"]
     )
+    assessment = result["assessment"]
+    if assessment is not None:
+        reasoning = one_line(assessment.get("reasoning") or "", 160) or "-"
+        lines.append(
+            f"assessment {assessment.get('result') or '-'} "
+            f"at-limit {assessment.get('limit') or '-'}: {reasoning}"
+        )
+        if assessment.get("result") == "change-approach":
+            lines.append(
+                f"approach {one_line(assessment.get('approach') or '', 300)}"
+            )
     return lines
 
 

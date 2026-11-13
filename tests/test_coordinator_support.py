@@ -265,6 +265,7 @@ class FakeGh:
         self.open_pulls: list[dict[str, Any]] = []
         self.open_pulls_rc: int = 0
         self.check_prompts: list[str] = []
+        self.assessment_prompts: list[str] = []
         # Optional multi-page shapes for --paginate --slurp regression coverage.
         # When set, each entry is one GitHub API page (list of items).
         self.issue_pages: list[list[dict[str, Any]]] | None = None
@@ -787,6 +788,10 @@ def order_lane_runner(
         "RESULT: no-duplicate\n"
         "REASON: No listed pull request has the same goal.\n"
     ),
+    assessment_output: str = (
+        "RESULT: continue\n"
+        "REASON: The findings get narrower.\n"
+    ),
 ):
     ordinary = lane_runner(fake)
 
@@ -798,11 +803,17 @@ def order_lane_runner(
             )
         if not (prompt or "").startswith("# Role: check"):
             return ordinary(argv, stdin)
-        fake.launched.append("check")
-        fake.check_prompts.append(prompt or "")
+        if "BEGIN FINDINGS BY ROUND" in (prompt or ""):
+            fake.launched.append("assessment")
+            fake.assessment_prompts.append(prompt or "")
+            output = assessment_output
+        else:
+            fake.launched.append("check")
+            fake.check_prompts.append(prompt or "")
+            output = check_output
         if "claude" in argv:
             stream = json.dumps(
-                {"type": "result", "result": check_output, "usage": {}}
+                {"type": "result", "result": output, "usage": {}}
             ) + "\n"
             if "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
                 wrapper_index = next(
@@ -813,7 +824,7 @@ def order_lane_runner(
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
-        return Completed(0, check_output, "")
+        return Completed(0, output, "")
 
     return run
 

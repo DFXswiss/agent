@@ -68,6 +68,7 @@ ACCEPT_BODY = (
 QUESTION_MARKER_PREFIX = "<!-- agent-coordinator:question:v1:"
 STATUS_MARKER_PREFIX = "<!-- agent-coordinator:status:v1:"
 OUTPUT_BOUND = 4000
+ROUND_FINDINGS_BOUND = 2000
 TASK_TEXT_BOUND = 60_000
 TASK_TEXT_FILE = "task-text.md"
 TASK_TEXT_RECORD_BOUND = 2_000
@@ -75,6 +76,7 @@ FINDINGS_SPEC_BOUND = 2 * OUTPUT_BOUND + 200
 URL_SCHEME_LIMIT = 64
 REDACTION_BOUND_MARGIN = 256
 _TRUNCATION_MARKER = "\n…[truncated]"
+_MIDDLE_CUT = "\n…[cut]…\n"
 _SECRET_ASSIGNMENT_KEYWORDS = (
     "authorization",
     "signing_key",
@@ -1197,6 +1199,14 @@ def redact_tail(text: str, *, limit: int = OUTPUT_BOUND) -> str:
         return cleaned
     keep = max(0, limit - 20)
     return _TRUNCATION_MARKER.strip() + "\n" + cleaned[len(cleaned) - keep:]
+
+
+def clip_middle(text: str, limit: int) -> str:
+    """Keep the start and the end of a text that is longer than limit."""
+    if len(text) <= limit:
+        return text
+    half = max(0, (limit - 12) // 2)
+    return text[:half] + _MIDDLE_CUT + text[len(text) - half:]
 
 
 def reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:

@@ -36,9 +36,11 @@ from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     FINDINGS_SPEC_BOUND,
     ORDER_KIND,
+    ROUND_FINDINGS_BOUND,
     TASK_TEXT_BOUND,
     TASK_TEXT_RECORD_BOUND,
     check_label,
+    clip_middle,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
     REQUIRED_WORKER_SKILLS,
@@ -1001,6 +1003,25 @@ def _find_round(store: Store, task_id: str, round_num: int) -> dict[str, Any]:
     raise CoordinatorError(f"round {round_num} missing")
 
 
+def record_round_findings(
+    store: Store, tr: dict[str, Any], c: dict[str, Any]
+) -> None:
+    """Keep the findings this round's implementer is started with on its round row."""
+    text = str(c.get("findings") or "")
+    stored = (
+        clip_middle(redact(text, limit=None), ROUND_FINDINGS_BOUND)
+        if text
+        else None
+    )
+    if tr.get("findings") == stored:
+        return
+    committed = copy.deepcopy(tr)
+    committed["findings"] = stored
+    store.write("task_round", "update", committed["id"], strip_row(committed))
+    tr.clear()
+    tr.update(committed)
+
+
 def _implementer_instruction(
     store: Store,
     worker: WorkerConfig,
@@ -1693,6 +1714,7 @@ def phase_implement(
         if len(task_text) > TASK_TEXT_RECORD_BOUND
         else None
     )
+    record_round_findings(store, tr, c)
     agent, result = launch_lane(
         store,
         worker,

@@ -71,6 +71,8 @@ OPEN_STATES = ("queued", "running", "waiting", "ready")
 ENDED_STATES = ("merged", "failed", "cancelled")
 ROUND_LIMIT_KEYS = ("max_rounds", "origin", "model", "limit")
 SKIPPED_CHECK_KEYS = ("key", "reason", "by", "at")
+OPINION_KEYS = ("result", "reasoning", "approach")
+ASSESSMENT_KEYS = ("result", "reasoning", "approach", "limit", "rounds", "at")
 
 
 def int_param(value: object, flag: str, *, minimum: int) -> int | None:
@@ -166,6 +168,15 @@ def skipped_checks_view(source: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def assessment_view(store: Store, order_id: str) -> dict[str, Any] | None:
+    row = store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )
+    if row is None or not isinstance(row.get("opinion"), dict):
+        return None
+    return {key: row["opinion"].get(key) for key in ASSESSMENT_KEYS}
+
+
 def pr_url(task: dict[str, Any]) -> str | None:
     number = as_int(coord(task).get("pr_number"))
     if number is None:
@@ -198,6 +209,11 @@ def event_view(row: dict[str, Any]) -> dict[str, Any]:
         "at": payload.get("at"),
         "acked": payload.get("ack") is not None,
         "answers": list(payload.get("answers") or []),
+        "opinion": (
+            {key: payload["opinion"].get(key) for key in OPINION_KEYS}
+            if isinstance(payload.get("opinion"), dict)
+            else None
+        ),
     }
 
 
@@ -437,6 +453,7 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
         "overridable_checks": overridable_checks,
         "round_limit": round_limit_view(checkpoint_data),
         "skipped_checks": skipped_checks_view(source),
+        "assessment": assessment_view(store, order_id),
     }
 
 
@@ -605,6 +622,7 @@ _EVENT_KEYS = (
     "at",
     "acked",
     "answers",
+    "opinion",
 )
 
 OPERATIONS: tuple[Operation, ...] = (
@@ -687,6 +705,7 @@ OPERATIONS: tuple[Operation, ...] = (
             "overridable_checks",
             "round_limit",
             "skipped_checks",
+            "assessment",
         ),
         nested=(
             ("last_event", ("id", "seq", "kind", "at", "acked")),
@@ -699,6 +718,7 @@ OPERATIONS: tuple[Operation, ...] = (
             ("overridable_checks", ("key", "status")),
             ("round_limit", ROUND_LIMIT_KEYS),
             ("skipped_checks", SKIPPED_CHECK_KEYS),
+            ("assessment", ASSESSMENT_KEYS),
         ),
         func=op_show,
         json_flag=True,
