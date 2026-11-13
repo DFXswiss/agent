@@ -976,9 +976,46 @@ def _round_budget_question(
     )
 
 
+def _duplicates_checked_question(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    check: Check,
+    value: CheckValue,
+) -> str:
+    del worker, check
+    source = coord(task).get("source")
+    source = source if isinstance(source, dict) else {}
+    title = str(source.get("title") or "")[:120]
+    oid = order_id(task)
+    if value.status == "unavailable":
+        first = (
+            f'Check duplicates_checked could not run for order "{title}": '
+            f"{value.evidence}"
+        )
+    else:
+        first = (
+            f'Check duplicates_checked failed for order "{title}": '
+            f"{value.evidence}"
+        )
+    lines = [
+        first,
+        "Continue only with: agent order override "
+        f"--id {oid} --check duplicates_checked --reason TEXT",
+        f"Otherwise: agent order cancel --id {oid} --reason TEXT",
+    ]
+    if value.status == "unavailable":
+        lines.append(
+            f"Run it again with: agent order reply --id {oid} --body-file PATH"
+        )
+    return "\n".join(lines)
+
+
 QUESTION_TEXTS: dict[
     str, Callable[[WorkerConfig, dict[str, Any], Check, CheckValue], str]
-] = {"round_budget": _round_budget_question}
+] = {
+    "duplicates_checked": _duplicates_checked_question,
+    "round_budget": _round_budget_question,
+}
 
 
 def question_text(
@@ -1242,7 +1279,14 @@ def resolve_head_signed_clean(context: CheckContext) -> CheckValue:
     return _value("ja", f"signed clean head {sha}", head=sha)
 
 
+def _resolve_duplicates_checked(ctx: CheckContext) -> CheckValue | Deferred:
+    from .coordinator_check_lane import resolve_duplicates_checked
+
+    return resolve_duplicates_checked(ctx)
+
+
 RESOLVERS: dict[str, Callable[[CheckContext], CheckValue | Deferred]] = {
+    "duplicates_checked": _resolve_duplicates_checked,
     "no_live_lane": resolve_no_live_lane,
     "round_budget": resolve_round_budget,
     "pr_mergeable": resolve_pr_mergeable,

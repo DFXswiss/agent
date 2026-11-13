@@ -204,6 +204,7 @@ def test_registered_resolvers_are_declared():
     declared = {check.resolver for check in CHECKS.values()}
     assert set(RESOLVERS) <= declared
     assert set(RESOLVERS) == {
+        "duplicates_checked",
         "no_live_lane",
         "round_budget",
         "pr_mergeable",

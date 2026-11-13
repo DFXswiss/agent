@@ -88,6 +88,15 @@ def write_accounts(home: Path) -> None:
     )
 
 
+def write_check_lane(
+    home: Path, vendor: str = "grok", role: str = "rev"
+) -> None:
+    path = home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["sessions"]["worker-session"]["lanes"][f"{vendor}:check"] = role
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
 def make_session(store: Store, sid: str, skills: list[str]) -> None:
     store.write(
         "session",
@@ -203,6 +212,9 @@ class FakeGh:
     def __init__(self) -> None:
         self.comments: list[dict[str, Any]] = []
         self.pr_comments: list[dict[str, Any]] = []
+        self.open_pulls: list[dict[str, Any]] = []
+        self.open_pulls_rc: int = 0
+        self.check_prompts: list[str] = []
         # Optional multi-page shapes for --paginate --slurp regression coverage.
         # When set, each entry is one GitHub API page (list of items).
         self.issue_pages: list[list[dict[str, Any]]] | None = None
@@ -307,6 +319,13 @@ class FakeGh:
 
         if argv == ["gh", "api", "user", "--jq", ".login"]:
             return Completed(0, "worker-bot", "")
+
+        if argv[:2] == ["gh", "api"] and "/pulls?state=open" in argv[-1]:
+            if self.open_pulls_rc != 0:
+                return Completed(self.open_pulls_rc, "", "connection reset")
+            if "--slurp" in argv:
+                return Completed(0, json.dumps([self.open_pulls]), "")
+            return Completed(0, json.dumps(self.open_pulls), "")
 
         joined = " ".join(argv)
 
@@ -708,6 +727,43 @@ def lane_runner(fake: FakeGh):
             output.write_text(out, encoding="utf-8")
             return Completed(0, "", "")
         return Completed(0, out, "")
+
+    return run
+
+
+def order_lane_runner(
+    fake: FakeGh,
+    check_output: str = (
+        "RESULT: no-duplicate\n"
+        "REASON: No listed pull request has the same goal.\n"
+    ),
+):
+    ordinary = lane_runner(fake)
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        prompt = stdin
+        if prompt is None and "--prompt-file" in argv:
+            prompt = Path(argv[argv.index("--prompt-file") + 1]).read_text(
+                encoding="utf-8"
+            )
+        if not (prompt or "").startswith("# Role: check"):
+            return ordinary(argv, stdin)
+        fake.launched.append("check")
+        fake.check_prompts.append(prompt or "")
+        if "claude" in argv:
+            stream = json.dumps(
+                {"type": "result", "result": check_output, "usage": {}}
+            ) + "\n"
+            if "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+                wrapper_index = next(
+                    i
+                    for i, value in enumerate(argv)
+                    if "openrouter-api-key" in value
+                )
+                Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
+                return Completed(0, "", "")
+            return Completed(0, stream, "")
+        return Completed(0, check_output, "")
 
     return run
 

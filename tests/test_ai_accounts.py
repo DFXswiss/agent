@@ -207,6 +207,28 @@ def test_read_only_workflow_kinds_reject_writable_bindings(
         loaded.for_lane("chosen-session", kind, "grok")
 
 
+def test_check_kind_resolves_a_read_only_binding(tmp_path: Path) -> None:
+    data = sample_config()
+    data["sessions"]["chosen-session"]["lanes"]["grok:check"] = "reader"
+    write_config(tmp_path, data)
+    assert (
+        load_ai_accounts(tmp_path)
+        .for_lane("chosen-session", "check", "grok")
+        .name
+        == "reader"
+    )
+
+    data["sessions"]["chosen-session"]["lanes"]["grok:check"] = "builder"
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path).for_lane(
+            "chosen-session", "check", "grok"
+        )
+    assert str(excinfo.value) == (
+        "Workflow kind check requires read-only access; refusing writable binding"
+    )
+
+
 def test_wrong_provider_on_lane_resolution_fails(tmp_path: Path) -> None:
     data = sample_config()
     data["sessions"]["chosen-session"]["lanes"]["grok:implementer"] = "codex-builder"

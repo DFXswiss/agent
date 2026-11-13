@@ -18,6 +18,7 @@ from agent_cli.coordinator_common import (
     redact as redact_shared,
 )
 from agent_cli.lane import (
+    CODEX_CHECK_LANE_REFUSED,
     LANE_GITHUB_TOKEN_ENV,
     LANE_STRIP_ENV,
     LANE_VENDORS,
@@ -31,6 +32,7 @@ from agent_cli.lane import (
     finalize_lane_output,
     grok_argv,
     hide_config_dir,
+    judgment_argv,
     launch,
     openrouter_argv,
     redact_diagnostic,
@@ -61,6 +63,95 @@ OPERATOR_GROK_HOME_B = "/operator/path/grok-lane-b"
 OPERATOR_GROK_MODEL_B = "operator-lane-grok-model-b"
 DEFAULT_SESSION = "sess-1"
 ALT_SESSION = "sess-2"
+
+
+def test_judgment_argv_grok_denies_every_tool() -> None:
+    argv = judgment_argv(
+        "grok", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+    )
+    assert argv[argv.index("grok") :] == [
+        "grok",
+        "--prompt-file",
+        "/tmp/spec.md",
+        "-m",
+        "m",
+        "--deny",
+        "Read",
+        "--deny",
+        "Grep",
+        "--deny",
+        "Glob",
+        "--deny",
+        "Write",
+        "--deny",
+        "Edit",
+        "--deny",
+        "Bash",
+        "--no-subagents",
+        "--disable-web-search",
+        "--output-format",
+        "plain",
+        "--cwd",
+        "/empty",
+    ]
+    assert "--allow" not in argv
+    for key in LANE_STRIP_ENV:
+        assert argv[argv.index(key) - 1] == "-u"
+
+
+def test_judgment_argv_claude_has_no_tools() -> None:
+    argv = judgment_argv(
+        "claude", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+    )
+    assert argv[argv.index("--tools") + 1] == ""
+    assert "--restricted" in argv
+    assert argv[argv.index("--permission-mode") + 1] == "default"
+    assert "--add-dir" not in argv
+
+
+def test_judgment_argv_openrouter_has_no_tools() -> None:
+    argv = judgment_argv(
+        "openrouter",
+        spec_file="/tmp/spec.md",
+        cwd="/empty",
+        model="m",
+        output_file="/tmp/out",
+    )
+    assert argv[argv.index("--tools") + 1] == ""
+    assert argv[argv.index(_OPENROUTER_WRAPPER) + 2] == "/tmp/out"
+    with pytest.raises(
+        SystemExit, match="openrouter lane requires an output file"
+    ):
+        judgment_argv(
+            "openrouter", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+        )
+
+
+def test_judgment_argv_refuses_codex_and_unknown_vendors() -> None:
+    with pytest.raises(SystemExit, match="codex cannot run a check lane") as exc:
+        judgment_argv(
+            "codex", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+        )
+    assert str(exc.value) == CODEX_CHECK_LANE_REFUSED
+    with pytest.raises(SystemExit, match="vendor must be"):
+        judgment_argv(
+            "gemini", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+        )
+
+
+def test_tools_argument_replaces_the_tool_list() -> None:
+    claude = claude_argv(
+        cwd="/w", write=False, model="m", tools=("Read",)
+    )
+    assert claude[claude.index("--tools") + 1] == "Read"
+    openrouter = openrouter_argv(
+        cwd="/w",
+        write=False,
+        model="m",
+        output_file="/o",
+        tools=(),
+    )
+    assert openrouter[openrouter.index("--tools") + 1] == ""
 
 
 def write_operator_ai_accounts(

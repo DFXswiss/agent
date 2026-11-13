@@ -211,7 +211,12 @@ def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[s
 
 
 def claude_argv(
-    *, cwd: str, write: bool, model: str, read_dirs: tuple[str, ...] = ()
+    *,
+    cwd: str,
+    write: bool,
+    model: str,
+    read_dirs: tuple[str, ...] = (),
+    tools: tuple[str, ...] | None = None,
 ) -> list[str]:
     """Restricted Claude Code lane with only explicit file tools."""
     if write and read_dirs:
@@ -232,7 +237,13 @@ def claude_argv(
             "--strict-mcp-config",
             "--disable-slash-commands",
             "--tools",
-            ",".join((*_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS) if write else _CLAUDE_READ_TOOLS),
+            ",".join(tools)
+            if tools is not None
+            else ",".join(
+                (*_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS)
+                if write
+                else _CLAUDE_READ_TOOLS
+            ),
             "--permission-mode",
             "acceptEdits" if write else "default",
         ]
@@ -261,8 +272,15 @@ def openrouter_argv(
     model: str,
     output_file: str,
     read_dirs: tuple[str, ...] = (),
+    tools: tuple[str, ...] | None = None,
 ) -> list[str]:
-    claude = claude_argv(cwd=cwd, write=write, model=model, read_dirs=read_dirs)
+    claude = claude_argv(
+        cwd=cwd,
+        write=write,
+        model=model,
+        read_dirs=read_dirs,
+        tools=tools,
+    )
     inner = claude[len(_env_strip_prefix()) :]
     return [
         *_env_strip_prefix(),
@@ -360,6 +378,64 @@ def provider_argv(
             output_file=output_file,
             read_dirs=read_dirs,
         )
+    raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
+
+
+CODEX_CHECK_LANE_REFUSED = (
+    "codex cannot run a check lane: its sandbox cannot remove file access"
+)
+
+
+def judgment_argv(
+    vendor: str,
+    *,
+    spec_file: str,
+    cwd: str,
+    model: str,
+    output_file: str | None = None,
+) -> list[str]:
+    """argv of a lane without tools and without file access, for one judgment."""
+    if vendor == "grok":
+        return [
+            *_env_strip_prefix(),
+            "grok",
+            "--prompt-file",
+            spec_file,
+            "-m",
+            model,
+            "--deny",
+            "Read",
+            "--deny",
+            "Grep",
+            "--deny",
+            "Glob",
+            "--deny",
+            "Write",
+            "--deny",
+            "Edit",
+            "--deny",
+            "Bash",
+            "--no-subagents",
+            "--disable-web-search",
+            "--output-format",
+            "plain",
+            "--cwd",
+            cwd,
+        ]
+    if vendor == "claude":
+        return claude_argv(cwd=cwd, write=False, model=model, tools=())
+    if vendor == "openrouter":
+        if not output_file:
+            raise SystemExit("openrouter lane requires an output file")
+        return openrouter_argv(
+            cwd=cwd,
+            write=False,
+            model=model,
+            output_file=output_file,
+            tools=(),
+        )
+    if vendor == "codex":
+        raise SystemExit(CODEX_CHECK_LANE_REFUSED)
     raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
 
 
