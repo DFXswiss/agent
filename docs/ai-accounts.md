@@ -117,8 +117,11 @@ for a lane started elsewhere does not need it.
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
-`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`) and from the supported
-provider adapters (`grok`, `codex`, `claude`, `openrouter`). Those workflow kinds and adapters
+`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, `check`) and from the supported
+provider adapters (`grok`, `codex`, `claude`, `openrouter`). The `check` kind is
+read-only and is required for the provider of model slot `first` when a worker
+enables orders, through lane slot `<first>:check`. The implementer and first
+review roles of that worker must name one model. Those workflow kinds and adapters
 are protocol capabilities used when resolving a lane slot, not preinstalled user
 roles.
 
@@ -132,7 +135,8 @@ of each review slot:
 - `first`: `grok`, `codex`, `claude` or `openrouter`
 - `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
   or JSON `null` when an A38 coordinator worker obtains the second review
-  externally
+  externally. An A38 worker with `a38_second_review: "model"` sets `second` to
+  a provider.
 
 The optional top-level `implementer` names the implementation provider. It may
 be `grok`, `codex`, `claude`, `openrouter`, or `deepseek`. It must differ from
@@ -164,7 +168,8 @@ cannot start a new lane or write a new agent or gate row.
 `agent models` prints `second=external` (or `external` for the selected slot)
 for a pinned null second slot; JSON output preserves `null`. A null second slot
 does not authorize an ordinary workflow to omit a review. The issue coordinator
-accepts it only for a worker with explicit A38 mode and external reviewers.
+accepts it only for a worker with explicit A38 mode and external reviewers. An
+A38 worker with `a38_second_review: "model"` sets `second` to a provider.
 
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). When the configured implementer differs from
@@ -365,8 +370,9 @@ session on the device, not an implicit identity.
 Lane slots are arbitrary non-empty single-line strings. Resolvers look up the
 explicit key `vendor:workflow-kind` (for example `claude:implementer`) and
 require the bound role's account provider to match `vendor`. For workflow kinds
-`reviewer`, `pr-reviewer-quality`, and `pr-reviewer-logic`, the bound role must
-use `access: read-only`; a writable binding is refused.
+`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, and `check`, the bound
+role must use `access: read-only`; a writable binding is refused. The `check`
+kind is required at `<first>:check` when a coordinator worker enables orders.
 
 Unknown top-level, account, role, or session fields are rejected. Dangling
 account or role references are rejected. Credentials and API tokens must not

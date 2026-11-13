@@ -134,7 +134,7 @@ agent mail pending|ingest
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
-agent dashboard
+agent dashboard  # local dashboard with the orders view; 127.0.0.1 only
 agent cli-bridge
 agent pg status
 agent pg stop
@@ -163,6 +163,7 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
+agent order submit|list|show|events|wait|ack|reply|override|cancel|report  # local orders for the coordinator; coordinator.json "orders": true
 agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
@@ -181,6 +182,10 @@ starts configured workers on startup; changing its worker set requires a restart
 Workers may select explicit repositories, approved GitHub owners, or both;
 explicit entries win. They may require matching hub-issued assignments before
 acceptance.
+A worker with `"orders": true` also accepts orders submitted on the device with
+`agent order submit` or in the dashboard. A front end learns about questions
+and results through `agent order wait` or `agent order events`; the coordinator
+does not depend on any front end.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 
 The optional [comment mandate `conflicts`](docs/conflict-mandate.md) worker is

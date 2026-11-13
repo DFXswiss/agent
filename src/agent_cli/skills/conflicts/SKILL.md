@@ -17,6 +17,10 @@ agent session skill attach --id <session-id> --skill conflicts
 The worker is enabled only by an explicit `$AGENT_HOME/conflicts.json` entry.
 Nothing is installed or enabled by default.
 
+A coordinator worker that sets `conflict_remedy` in `coordinator.json` uses the
+same resolution for the pull requests of its orders, without a comment. The
+mandate is the order, and such a worker session needs this skill.
+
 ## Comment mandate
 
 A human writes exactly one pull-request issue comment whose normalized body is

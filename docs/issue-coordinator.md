@@ -4,6 +4,9 @@ The assignment-to-PR workflow is specified in
 [DESIGN.md §19.7](../DESIGN.md#197-issue-assignment-to-human-merge). The
 coordinator connects the existing session store, task spine, GitHub executor,
 and bounded model lanes on the execution device. It never merges.
+The same coordinator runs local orders under the rules of
+[DESIGN.md §19.10](../DESIGN.md#1910-orders-and-the-precondition-registry); see
+[Orders](#orders).
 
 ## Implemented versus deployed
 
@@ -12,6 +15,7 @@ and bounded model lanes on the execution device. It never merges.
 | Configuration schema (`coordinator_config.py`, `$AGENT_HOME/coordinator.json`) | Implemented. Absent/empty config enables **no** worker. |
 | Runtime `coordinator.tick` / `coordinator_runtime` (+ `coordinator_*.py` helpers) | Implemented in this repository. |
 | CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
+| Orders, precondition registry, check lanes, dashboard order routes | Implemented in this repository. A worker accepts orders only with `"orders": true`. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
 | Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude and OpenRouter use Claude Code restricted mode with only worktree file tools, disabled slash commands and strict MCP configuration; Codex is refused as slot `first`. That is process argv hardening only. |
@@ -30,7 +34,7 @@ existing session IDs, bound explicitly in `github-accounts.json` and
 Each configured worker explicitly names `workspace_root`, `reply_logins`,
 `poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
 `repositories` or `repository_owners`.
-Non-A38 workers also name `review_session`; A38 workers use the external-review
+Non-A38 workers also name `review_session`; A38 workers use the second-review
 configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. The two argv arrays belong to trusted
 device configuration, never issue text or model output. They run the target
@@ -65,7 +69,7 @@ refused. Outside A38 mode,
 mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 Both stay in the local worker config: the task stores only repository, base and
 publication target, and the execution binding pins the commands' hash.
-In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
+For an issue task in A38 mode, an absent owner readiness argv may set `contributing_ok` only when
 the latest recorded first-slot quality gate (`review-1` / `quality`) is approved
 on the exact current head; it then records `conformity-a approved at <head>` and
 closes the deviation keys only from the accepted hub `assignment.created` row.
@@ -77,6 +81,9 @@ otherwise malformed statement closes neither deviation key and publishes
 `mandate has no explicit deviation statement; issue the assignment through the
 hub with "no deviation authorized"`. No grant is ever inferred; a declared
 deviation still needs an explicit grant through `owner_readiness_argv`.
+For an order, no hub assignment row is used. On this default the local
+submission closes `deviation_declared` and `deviation_granted` as `n_a`, with
+evidence `order <id> submitted by <who>: orders declare no deviation`.
 
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
@@ -106,13 +113,16 @@ hub may create that named website origin. The hub's
 row top level; it does not use the `_github_login` copy produced by other hub
 state endpoints.
 
-The owner-scoped A38 default without `owner_readiness_argv` always performs
-that hub-mandate verification even when `require_hub_assignment` is false.
+For an issue task, the owner-scoped A38 default without `owner_readiness_argv`
+always performs that hub-mandate verification even when
+`require_hub_assignment` is false.
 Without a matching hub row it cannot reach implementation; after the normal
 visibility grace it publishes the explicit-deviation blocker above. A matching
 row without the exact no-deviation statement blocks acceptance at once with the
 same blocker, drops the pinned mandate and resumes at `accept`, so the next
 query picks up a corrected hub assignment; readiness checks the statement again.
+An order on that default performs no hub-mandate verification. Its local
+submission closes both deviation keys as `n_a` with the evidence above.
 
 A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
@@ -127,8 +137,29 @@ and publish a blocker at most once per hour according to
 check rather than a definite mismatch. Both blockers post fixed texts, and the
 task records only a fixed `hub_assignment_retry` class; the hub error detail,
 which can name the hub host, appears only in the worker's local output line.
-An A38 worker takes its second review from people, so do not point one at a
-repository whose own rules require model slot `second`, such as this one.
+An A38 worker with the external route takes its second review from people; do
+not point one at a repository whose own rules require model slot `second`. An
+A38 worker with `a38_second_review: "model"` runs model slot `second` itself
+and can serve such a repository.
+
+Eight optional worker keys control orders and scheduling. `orders` enables
+orders and defaults to `false`. `draft_on_accept` opens the immediate draft for
+issue tasks and defaults to `false`. `park_poll_seconds` is an integer at least
+zero and defaults to 120. `lane_retries` is an integer at least zero and
+defaults to 2. `max_rounds` is an optional positive worker-wide limit.
+`max_rounds_by_model` maps model identifiers to positive limits and defaults to
+`{}`. `a38_second_review` is `"external"` or `"model"`, only for an A38 worker,
+and defaults to `"external"`. `conflict_remedy` is available only with orders;
+it contains nonempty `check_argv`, `max_rebase_steps` from 1 to 200, and optional
+positive `max_attempts`, which defaults to 2.
+
+Only `a38_second_review: "model"` enters the execution binding. The other seven
+keys are operating parameters; changing them does not stop an accepted task.
+For an existing issue worker that sets none of them, waiting tasks are observed
+every 120 seconds, incomplete lanes are retried twice, and the round limit is
+10. `"park_poll_seconds": 0` and `"lane_retries": 0` restore the earlier
+timing. The round limit has no off value; `max_rounds` and
+`max_rounds_by_model` can only raise or lower it.
 
 Example device configuration (illustrative values, **not installation defaults**):
 
@@ -153,7 +184,11 @@ Example device configuration (illustrative values, **not installation defaults**
       "reply_logins": ["AuthorizedHuman"],
       "poll_seconds": 30,
       "lane_timeout": 1800,
-      "check_timeout": 600
+      "check_timeout": 600,
+      "orders": true,
+      "park_poll_seconds": 120,
+      "lane_retries": 2,
+      "max_rounds_by_model": {"<model identifier>": 10}
     }
   }
 }
@@ -185,6 +220,10 @@ for worker in workers.values():
 - **`tick(store, worker, *, runner=run_argv, lane_runner=None) -> list[str]`**
   performs **one** bounded, resumable advancement. It is not a monitoring loop.
   The outer CLI owns polling (`poll_seconds`) and invokes workers.
+  A tick observes eligible waiting tasks, then advances the oldest runnable
+  task by one phase. It admits at most one discovered issue, and only when the
+  worker has no runnable task and no queued order. Several workers form the
+  pool.
 - A Postgres session advisory lock (`coordinator-worker:<session_id>`) is held
   for the whole tick and released on success and on error, so concurrent
   same-session ticks across processes are excluded. Device-wide source
@@ -195,8 +234,10 @@ for worker in workers.values():
   `review_session` owned/active with `pr-review` for non-A38 workers; all required AI lane slots
   present for the worker session. Non-A38 workers require configured,
   authenticated worker and review GitHub accounts bound to **different** logins.
-  A38 workers require the worker account plus `second_reviewers` that exclude
-  its login. The worker account has git
+  A38 workers with the external second review require the worker account plus
+  `second_reviewers` that exclude its login. A worker with `orders` also needs
+  a read-only `<first>:check` binding and one model across the implementer,
+  inner reviewer, and first quality and logic review roles. The worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
   provider. A missing `models` block reuses the shared error and is reported as
   `preflight blocked: models is not configured: the device's ai-accounts.json
@@ -207,7 +248,9 @@ for worker in workers.values():
   model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
   `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
   plus `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic` when the
-  second slot is not external. The coordinator
+  second slot is not external. This includes an A38 worker with
+  `a38_second_review: "model"`. A worker with `orders` also requires
+  `<first>:check`. The coordinator
   pins `models` on each task it accepts and refuses `models.first = codex`,
   because a codex implementer can run commands. It requires `implementer` to
   be absent or equal to `models.first`; a separate implementer is refused at
@@ -222,6 +265,14 @@ for worker in workers.values():
   `lane_execution` accepts only `this-device-is-lane-host`: the local harness's
   lane starter starts the coordinator on the external lane host. The Agent
   coordinator does not SSH, mirror, or copy a lane from a work device.
+- Successful GitHub login verification is cached within one tick, for at most
+  `poll_seconds` per account.
+- Waiting phases are `queued`, `ask`, `blocked`, `await_merge`, `await_ready`,
+  and `await_second_review`; `ci` waits while its last observation is pending.
+  A task also waits while its execution binding is blocked, an earlier lane
+  process is alive, or retry backoff applies. A waiting task does not block the
+  worker. It is observed at most once per `park_poll_seconds`, except that zero
+  observes it every tick. A queued order and a task in backoff are not observed.
 - Checkpoints live in `task.payload['coordinator']` and activity `result`
   fields. An accepted A38 task records `coordinator.a38.enabled=true`; external
   second-review evidence is refused without that marker. There is **no** second
@@ -269,6 +320,31 @@ for worker in workers.values():
 
 ## Workflow (script-owned)
 
+One head follows this order:
+
+| # | Step | Phase | Lanes |
+|---|---|---|---|
+| 1 | implementation; signed commit; push | `implement` | one implementer lane, slot `first` |
+| 2 | inner review of the worktree | `inner_review` | one reviewer lane, slot `first`; for an order the same model as the implementer |
+| 3 | local checks; A38 report comment | `tests` | none |
+| 4 | first review pair on the checked head | `pr_gates_grok` | quality and logic, slot `first` |
+| 5 | first review comment (A38) | `a38_first_comment` | none |
+| 6 | second review pair | `pr_gates_codex` | quality and logic, slot `second` |
+| 7 | second review comment (A38 model route) | `a38_second_comment` | none |
+| 8 | CI, readiness, Ready | `ci` … | none |
+
+Steps 1 and 2 repeat with fresh implementer and reviewer lanes until approval.
+A rejection at step 3, 4, 6 or 8 returns to step 1 with the findings. Every
+implementer start counts against the round limit. Every lane is a fresh process
+without memory of earlier lanes.
+
+The first recorded pull-request review runs after local checks. The checklist
+chain is `reviewer_approved` → `local_check_pass` → `pushed` →
+`review_1_quality`, `review_1_logic`; a key that is not next cannot close. Inner
+implement/review rounds are not pull-request reviews. Review gates are bound to
+a head, and a failed check produces a new commit that invalidates an earlier
+pair.
+
 1. **Discover** explicit repositories and approved owners for open issues assigned to the
    configured GitHub login (`gh api --paginate --slurp`). For every approved
    owner, discovery first reads `users/<owner>` to distinguish an organization
@@ -294,17 +370,22 @@ for worker in workers.values():
    verified on GitHub; forged model activity payloads are not trusted. Issue
    bodies are redacted/bounded before persistence. `updated_at` is not treated
    as `assigned_at`.
+   Discovery admits at most one issue per tick, and none while the worker has a
+   runnable task or a queued order. The tick observes waiting tasks first and
+   then advances the oldest runnable task by one phase.
 2. **Accept** only after verifying the GitHub assignment event and, when
    `require_hub_assignment=true`, the matching hub-created mandate. Resolve and
    pin an owner-scoped repository's default branch, checks, readiness command,
    and direct-push/fork route at this point. Then publish a deterministic issue comment (fixed wording + idempotency
    marker) via `comment.post` / `scan_github` **before** any model start. A
    failed comment never starts a model. Effects are discovered on retry.
+   An order is accepted without reading an issue and without posting an
+   acceptance comment.
 3. **Checkout** under `workspace_root/<task-id>` with named remotes `origin` /
    `publication`, ownership marker, pinned base revision from origin, and a
    deterministic feature branch. Clone, fetch, push, and signed commits use the
    explicit GitHub account runner. Never push a protected branch, never
-   force-push, never reuse an arbitrary dirty/wrong directory as a fresh
+   force-push outside the conflict remedy of step 9, never reuse an arbitrary dirty/wrong directory as a fresh
    checkout. Interrupted clones are refused without deleting unrelated content.
    The checkout marker and `coordinator.base_sha` remain the immutable checkout
    identity. In A38 mode, the current pull-request evidence base is stored
@@ -312,7 +393,18 @@ for worker in workers.values():
    in `coordinator.a38.pending_base_sha` until a report or inventory waiver and
    its local gate are recorded against that base.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
-   and config home. No round cap. Rejection routes findings to a fresh
+   and config home. Each implementer start is a round. The limit is pinned when
+   the task is created: submitted `--max-rounds`, then the implementer model's
+   `max_rounds_by_model` entry, then worker `max_rounds`, then 10. Its origin is
+   `submit`, `model`, `worker`, or `default`; no value disables it. Before the
+   next round would exceed it, the script starts one assessment check lane over
+   the task text and bounded findings from every round. Its fixed result is
+   `continue`, `change-approach`, or `abort`, with a reason and an approach only
+   for `change-approach`. The script stores the opinion and asks the human; it
+   never acts on it. A reply grants the same number of rounds and becomes
+   untrusted implementer guidance. It does not pass the proposed approach.
+   Cancellation ends the order. An issue-only worker without `<first>:check`
+   records the opinion as `unavailable`. Rejection routes findings to a fresh
    implementer. The transaction that first marks an implementer agent finished
    also stores its bounded output prefix and the validated English/German
    summaries plus reused/added lines extracted from the full output. Recovery
@@ -335,23 +427,52 @@ for worker in workers.values():
      for CI authorization or acceptance. `publish_blocker` also derives
      checkpoint eligibility from `resume_phase` + non-failed / non-done /
      non-uncertain state so a missed boolean cannot wedge another recoverable
-     path; status re-publishes keep the existing checkpoint. Uncertain lane
-     outcomes refuse a second model start (a human reply must not silently
-     duplicate an uncertain process), clear any stale `resume_phase`, and
-     publish a GitHub-visible blocker. `uncertain_lane` remains final even for
-     an older stored task that still contains recovery metadata.
+     path; status re-publishes keep the existing checkpoint.
+   Incomplete implementer output and incomplete inner or pull-request reviews
+   reach that checkpoint only after automatic retries under `lane_retries`.
+   The default is two retries; zero disables them. One budget applies per phase,
+   with `poll_seconds` doubled for each backoff. A human reply starts a fresh
+   retry budget. A retry consumes the saved incomplete result, so the next visit
+   starts a lane. A saved complete sibling result is replayed. A completed
+   implementer result that lacks summaries or its
+   reused and added list is not retried. Pull-request review-pair preparation
+   failure is not retried.
+   A lane exception closes its agent row and retries under the same bound.
+   After the retries it becomes a resumable `lane-failed` blocker with fixed
+   text `Model lane interrupted in <phase>; not a code rejection.`. Exception
+   text is never published. Before a real lane start, `no_live_lane` checks the
+   saved process id and start time. A live process makes the task wait; one past
+   `lane_timeout` is killed. A working row with no live process and no result is
+   closed with `recovered: no live process` and retried under the same bound.
+   A finished reviewer result awaiting its transaction is replayed. A legacy
+   `uncertain_lane` flag is removed on the next visit unless a lane is alive,
+   and the phase retries under the same bound.
+   Each real lane start records its process id and start time in a small file in
+   the task control directory. No code sets `uncertain_lane` any more.
    Incomplete, invalid-result, and blocked implementer outcomes stage the task
    and task-round on copies, commit both together, and consume the checkpoint
    only after that commit succeeds.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
-   to the existing PR before later stages. No empty fake PR when there is no
-   patch and no existing PR. Crash after commit/push before draft reconciles
+   to the existing PR before later stages. An empty start commit is allowed only
+   for `draft_on_accept` and orders. Without them there is no pull request
+   before the first patch, and a `no-change` result on the start commit closes
+   the draft and ends the task as failed with kind `no-change`. In phase
+   `start_draft`, between checkout and implement, the script
+   creates one signed empty commit with message `Open the draft pull request.`,
+   pushes it, and opens the draft through `pr.open`. Crash after commit/push before draft reconciles
    without starting another implementer. `task.ref` holds the **PR** number
    only (never the issue number).
 6. **Tests** run only via script `check_argv` on the exact clean signed head
    (cwd = worktree). Failure routes bounded output to the implementer. Stale
-   passes from another head are not reused.
+   passes from another head are not reused. A check command that times out with
+   124, is missing with 127, or ends by signal is infrastructure failure. It is
+   retried under the same bound and then blocks with kind `check-unavailable`,
+   a reply checkpoint, and fixed text `Check command could not run on <head7>
+   (exit <rc>); not a code failure.`. It creates no `local_check` row and is not
+   sent to the implementer as findings. This applies to the repository check,
+   trusted precheck and A38 suite. Test, check and CI output is shortened from
+   the start so its end is retained.
 7. **PR gates**: model slot `first` quality+logic in **parallel** (fresh
    independent invocations; agent rows prepared on the main thread, subprocesses
    in threads, results persisted on the main thread), then model slot `second`
@@ -366,7 +487,12 @@ for worker in workers.values():
    `question_activity_id` — not a rejected complete gate and not an implementer
    fix loop. Every complete dimension is persisted before incomplete dimensions
    are handled; a complete rejection always routes back to implementation even
-   when its parallel peer is unavailable. Rejections publish
+   when its parallel peer is unavailable. The next implementer receives every
+   rejecting dimension under `Quality review findings:` or `Logic review
+   findings:`. An incomplete pair is retried only when no dimension rejected;
+   only incomplete dimensions start again, while a finished sibling is
+   replayed. The unavailable gates and checklist values are written for each
+   retried attempt. Rejections publish
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence. A successful second-slot lane still starts when the
    checklist keys are `n_a`. Every cached approved gate attempts to reconcile
@@ -474,6 +600,8 @@ for worker in workers.values():
    `/logs` archive bytes). Inaccessible logs, including successful fetches with
    empty or whitespace-only output, are a reply-recoverable blocker.
    Transient pending returns without an idle model.
+   While CI is pending the task waits and does not block the worker. A failed
+   run's bounded log keeps its end.
 9. **Ready**: first read the live pull-request base. In A38 mode the script
    reconciles a pending base and invalidates evidence for a moved base before
    it runs `readiness_argv`; the command runs only when the observed base still
@@ -482,7 +610,41 @@ for worker in workers.values():
    readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
-   head, author/base/mergeability, tests, and all four same-head gates. The two
+   head, author/base/mergeability, tests, and all four same-head gates.
+   Mergeability is the check `pr_mergeable`, required before `readiness` and
+   `leave_draft` for orders and issues. GitHub `UNKNOWN` is a same-phase retry;
+   `CONFLICTING` is no. For an issue task, no creates a resumable blocker of kind
+   `conflict`; the script starts nothing. The comment mandate of DESIGN §19.9 is
+   a separate worker and is not connected to the task.
+
+   For an order, `pr_mergeable` declares remedy `conflict_resolution`. The
+   coordinator starts the script-owned resolution without a human comment:
+   rebase in an isolated worktree, a confined lane for conflicted files,
+   deterministic verification, the configured check, and a
+   `--force-with-lease` push. The action `resolve_conflicts` requires
+   `order_authorized`, `draft_open`, `head_published`, and `conflict_mandate`.
+   The mandate fact binds the order, submitter, pull request and head. Worker
+   `conflict_remedy` supplies `check_argv`, `max_rebase_steps`, and optional
+   `max_attempts`; `conflicts.json` is not read. The session needs the
+   `conflicts` skill. Control state is below
+   `<workspace_root>/.coordinator-control/<task id>/conflict-remedy/`.
+
+   After a remedy push the coordinator adopts the published head in its own
+   checkout, removes old-head evidence and resumes at `tests`. Tests, report,
+   both review pairs and CI return to pending and run on the new head. Recorded
+   overrides and skips remain. An open remedy outcome retries under
+   `lane_retries` with its backoff. Only a final remedy blocker blocks the
+   order. It posts a pull-request status comment of kind `conflict` and a
+   `question` event for `pr_mergeable`, offering `reply` and `cancel`.
+
+   A reply measures mergeability again and starts resolution again while the
+   conflict remains. At most `max_attempts` resolutions start between two human
+   decisions. Starting or succeeding writes no order event. Without
+   `conflict_remedy`, no resolution starts and the same question is published.
+
+   For an order the second review is the check `review_2`. It means that review
+   2 is free of findings on the current head or that a human used the declared
+   one-review waiver. It is required by CI and readiness. For an issue task, the two
    `review-2` gates are omitted on readiness, formal approve, and leave-draft
    only when both `review_2_*` checklist keys are already `n_a`, the evidence is
    exactly `second review not posted`, and the opener is listed in
@@ -555,7 +717,9 @@ for worker in workers.values():
     stale reply recovery is cleared. It cannot remeasure a
     merged pull request; a human decides the outcome. Then existing `task-done`
     checklist / summary guard (summaries must already describe the actual
-    result — no boilerplate invented at merge), then `issue.assigned.ack`. A
+    result — no boilerplate invented at merge), then `issue.assigned.ack`. An
+    order has no assignment row, so it writes no `issue.assigned.ack`; the
+    script writes the `merged` order event. A
     Ready PR closed unmerged, or a non-human merge, is an intentionally
     non-recoverable user-facing blocker: stale `question_activity_id` /
     `resume_phase` checkpoints are cleared, and later authorized comments must
@@ -657,16 +821,15 @@ final spool before recording the failed outcome; the main thread marks the
 agent finished only after that cleanup. Structurally valid incomplete, unavailable, and
 malformed-protocol results are recovered and then classified by the normal
 verdict path; they are
-not converted into uncertain outcomes. An audit-only rollback retries only this
-checkpoint on the next tick, visits every saved sibling before classifying a
-working row without a checkpoint as uncertain, and never discards an already
+not converted into failed lane runs. An audit-only rollback retries only this
+checkpoint on the next tick, visits every saved sibling before a working row
+without a checkpoint is closed as a failed lane run, and never discards an already
 committed parallel sibling. A saved sibling or failed checkpoint defers that
-classification until a later tick. A reviewer execution failure is marked
-finished only in the same transaction that records the task's `uncertain_lane`;
-if that transaction fails, the agent remains a fresh working start. This
-terminal transition waits until every successful sibling checkpoint commits;
-if such a checkpoint rolls back, the task remains recoverable so the next tick
-can commit that sibling before classifying the failed lane as uncertain. Before
+classification until a later tick. A reviewer execution failure closes its
+agent row and is then retried under `lane_retries`. The failure is raised only
+after every successful sibling checkpoint is committed, so the retry replays
+the sibling's result instead of starting that reviewer again. When the retries
+are used up, the task gets the resumable `lane-failed` blocker. Before
 starting a reviewer, the coordinator replays a matching saved outcome. It also
 sweeps and verifies absence of the deterministic raw output and spool paths for
 already finished reviewers, covering a crash after the outcome transaction
@@ -703,11 +866,261 @@ replies (`reply_logins` only), listed with
 `question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
 (not blindly `implement` for CI authorization / incomplete review / checkout
 blockers, and not at all for terminal failed / done / uncertain /
-closed-unmerged / non-human-merge outcomes). Uncertain prior agents refuse a
-second model start even when a human replies. Inner and PR reviewers receive a
+closed-unmerged / non-human-merge outcomes). An `order.reply` row is consumed
+like an authorized comment reply. Before any model start, `no_live_lane` makes
+the task wait for a live process, kills one past `lane_timeout`, and recovers a
+working row with no process or result under the same bound. Inner and PR reviewers receive a
 script-generated merge-base diff artifact (`base...head`) outside the worktree,
 so commits added only to the base branch are not presented as pull-request
 deletions.
+
+## Orders
+
+A reply, override or cancel acknowledges the question or blocker it answers.
+
+`agent order submit --repo OWNER/NAME --title TEXT --body-file PATH` submits a
+local order. Optional arguments are `--base BRANCH`, `--worker SESSION`,
+`--notify-session ID`, repeated `--skip-check KEY --reason TEXT`,
+`--max-rounds N`, and `--json`. Every option takes its value as the next
+argument. The printed order id is the task UUID.
+
+The task uses `payload.coordinator.source.kind=order`. An issue task has no kind
+and is read as `github-issue`. The same task state machine and tables serve
+both. A worker accepts orders only with `"orders": true`, and only for a
+repository it already serves. An explicit repository accepts only its
+configured base. An owner-scoped repository pins the submitted base.
+
+Without `--worker`, the order-enabled worker serving the repository with the
+fewest runnable tasks receives the order. A new order stays `queued` while that
+worker has runnable work. The oldest queued order moves to `accept` when a tick
+finds none. Acceptance reads no issue and posts no GitHub comment.
+
+The order text is at most 60,000 characters and is stored once at
+`<workspace_root>/.coordinator-control/<task id>/task-text.md`. The full text is
+in the implementer prompt for orders and issue tasks. Reviewers use the
+review-context file. The task row retains a 2,000-character preview. The text
+is untrusted specification data.
+
+The mandate is local submission by the device's paired GitHub login. Acting
+operations refuse an unpaired device with `device is not paired`. An order does
+not verify a hub assignment, even under `require_hub_assignment`. On the
+owner-scoped A38 default without `owner_readiness_argv`, submission closes the
+two deviation keys as `n_a` with evidence `order <id> submitted by <who>:
+orders declare no deviation`. Submission cannot declare a deviation.
+
+The other commands are:
+
+```text
+agent order list [--open] [--json]
+agent order show --id UUID [--json]
+agent order events [--after CURSOR] [--notify-session ID] [--wake-only] [--unacked] [--json]
+agent order wait [--after CURSOR] [--notify-session ID] [--timeout SECONDS]
+agent order ack --event ID
+agent order reply --id UUID --body-file PATH
+agent order override --id UUID --check KEY --reason TEXT
+agent order cancel --id UUID --reason TEXT
+agent order report --id UUID [--json]
+```
+
+`show` prints state, phase, round, pull request, head, last event, pending
+checkpoint, last answer and its fate, the current action's checks, overridable
+checks, round limit and origin, and submit-time skips. It never prints raw lane
+output. `wait` polls the local store at `poll_seconds`; it exits 0 with events
+and 3 on timeout.
+
+Order states are derived: `queued`, `running`, `waiting`, `ready`, `merged`,
+`failed`, and `cancelled`. Order `merged` derives from task `done`. It is not
+the spine task state `merged`, which only `agent task close-from-pr` writes;
+that command refuses coordinator tasks.
+
+The coordinator writes one `order.event` for `accepted`, `draft-opened`,
+`question`, `blocked`, `resumed`, `ready`, `merged`, `failed`, and `cancelled`.
+The event includes order id, kind, wake, per-device `seq`, a redacted digest of
+at most 1,500 characters, pull-request URL, phase, round, failed check,
+`answers`, `opinion`, notification session, time and acknowledgement.
+
+Wake is true for `question`, `blocked`, `ready`, `failed`, and `cancelled`.
+`merged` never wakes. A merge observed before Ready writes `ready` together
+with `merged`. Events persist until acknowledged. Notification session is only
+a filter. Any later concierge or the dashboard can list unacknowledged wake
+events and acknowledge one.
+
+Reply, override and cancel insert `order.reply`; the next tick consumes it. A
+reply resumes the exact `resume_phase`, like an authorized GitHub reply. A
+repeated question needs a new reply. Cancel closes the draft with the fixed
+comment and ends the order as failed with kind `cancelled`. These writes and
+`order.event` are script-only; `agent activity add` refuses them with `<type>
+is written by a script, not agent activity add`. Models never write them.
+
+Wherever this document says a blocker or question is published on the issue,
+an order publishes it on its pull request. Before the draft exists it is only
+an order event. Once the draft exists, authorized comments from
+`reply_logins` also resume the order.
+
+An event's `answers` are `ack` for `ready`, `failed`, and `cancelled`. A
+`question` or `blocked` event offers `reply` unless the failed check allows only
+override, `override` when the check is overridable, and always `cancel`. A
+configuration-only blocked event offers only `cancel`. A refused pending answer
+creates a new unacknowledged question whose digest starts `Previous answer
+refused: <text>`. A refused override that answers no question creates no event.
+`show` still names its fate in `last-answer` and always prints the pending
+checkpoint and overridable check statuses.
+
+`--skip-check` must be followed by its key, literal `--reason`, and a one-line
+reason of 1 to 500 characters. Only `duplicates_checked` is skippable. The
+paired login is the actor. Acceptance records one fact per skip with status
+`ja`, source `human`, and evidence `skipped at submit by <who>: <reason>`. Its
+resolver never starts. `show` and the acceptance report list every skip.
+
+`agent order report` reads only the store. It makes no GitHub call, runs no
+lane and starts no Git process. In every state it prints a bounded dossier:
+order id, title, state, phase, repository, base, pull-request URL and head;
+English and German summaries; at most 50 changed files and counts; rounds and
+limit origin; every skip or override with actor and reason; the last 40
+review runs, each with stage, round, head, provider, model, lanes, verdict and
+defect count; the last 12 review comment URLs with at most 600 visible
+characters each;
+A38 report outcome and local checks; and CI state.
+
+A review run is one inner lane or one review-pair start. Its verdict is
+`rejected` when a lane rejected, `incomplete` when a verdict is absent, and
+otherwise `approved`. Its defects count rejecting lanes; external second review
+uses the published defects value. A38 report outcome is `pass`, `fail`,
+`unreadable`, `missing`, or `waived`; a waiver is printed with its reason. CI is `green`, `failed`, `pending`, or
+`unknown`. Text is at most 12,000 characters, with single-line facts first and
+list details last. A cut ends with `report truncated`. A concierge may use the
+report for a plausibility recommendation; it does not perform a full review.
+
+## Precondition registry
+
+The script is the orchestrator. Every side-effecting coordinator action has an
+ordered list of checks in `preconditions.py`. Adding a check to an action is one
+registry entry and one resolver. Each check has exactly one resolver: a static
+script function or one check lane. Script first.
+
+Each fact has status `ja`, `nein`, `n_a`, `pending`, or `unavailable`, always
+with evidence, source and time. `n_a` is valid only where declared.
+`unavailable` means the resolver could not run. There is no implicit yes. An
+action runs only when every check is `ja` or allowed `n_a`. Pending starts its
+resolver or routes to the producing phase. No follows its declaration: remedy,
+retry, question, reply checkpoint, or task end.
+
+Existing checklist keys, round verdicts, gate rows and checkpoint values are
+referenced. The registry-only `checklist_item` keys are `order_authorized`,
+`spec_available`, `checkout_owned`, `duplicates_checked`, `no_live_lane`,
+`round_budget`, `head_signed_clean`, `pr_mergeable`, `conflict_mandate`,
+`review_2`, and `one_review_permitted`. Only the coordinator writes them via
+`chain.close_allowed`. They are not workflow keys and do not affect `done`.
+`agent checklist set` and `agent close-step` refuse them with `<key> is a
+coordinator precondition check; its resolver or agent order override closes
+it`.
+
+Except for `close_draft`, every row below also starts with `order_active`:
+
+| Action | Phases | Checks |
+|---|---|---|
+| `accept` | `accept` | `session_registered`, `order_authorized`, `spec_available`, `spec_written` |
+| `checkout` | `checkout` | `spec_written` |
+| `open_draft` | `start_draft` | `checkout_owned`, `duplicates_checked` |
+| `implement` | `implement` | `spec_available`, `draft_open`, `checkout_owned`, `no_live_lane`, `round_budget` |
+| `commit_push` | inside `implement`; `publish_draft` | `implementer_outcome` in implement; `checkout_owned` |
+| `inner_review` | `inner_review` | `draft_open`, `implementer_done`, `checkout_owned`, `no_live_lane` |
+| `tests` | `tests` | `reviewer_approved`, `head_signed_clean`, `checkout_owned` |
+| `first_review` | `pr_gates_grok` | `tests_green`, `head_published`, `report_posted` for A38, `head_signed_clean`, `checkout_owned`, `no_live_lane` |
+| `first_review_comment` | `a38_first_comment` | `review_1_quality`, `review_1_logic`, `report_posted` |
+| `second_review` | `pr_gates_codex`, `await_second_review` | `review_1_quality`, `review_1_logic`, `first_comment_posted` for A38; in `pr_gates_codex`, `head_signed_clean`, `checkout_owned`, `no_live_lane`; waived by `review_2` |
+| `second_review_comment` | `a38_second_comment` | `first_comment_posted`, `review_2_recorded`; waived by `review_2` |
+| `ci` | `ci` | `draft_open`, `review_2` |
+| `readiness` | `readiness` | `tests_green`, `ci_green`, `review_1_quality`, `review_1_logic`, `review_2`, `head_signed_clean`, `pr_mergeable` |
+| `ready` | `formal_approve`, `leave_draft`, `await_ready` | `contributing_ok`, `deviation_declared`, `deviation_granted`, `readiness_on_head`, `ci_green`, `ready_allowed`; in `leave_draft`, `formal_approved`, `pr_mergeable` |
+| `merge_observation` | `await_merge` | `draft_open` |
+| `waive_second_review` | — | `draft_open`, `one_review_permitted` |
+| `close_draft` | — | `draft_open` |
+| `resolve_conflicts` | — | `order_authorized`, `draft_open`, `head_published`, `conflict_mandate` |
+
+`duplicates_checked` and `review_2` are overridable; only
+`duplicates_checked` is skippable. An override is available only through
+`agent order override --id UUID --check KEY --reason TEXT`. Each human decision
+records actor and reason on the fact, is final, is not head-bound, and prevents
+another resolver run.
+
+For order tasks the table covers the full flow. For issue tasks the registry
+checks `no_live_lane` before `implement`, `inner_review`, `pr_gates_grok`, and
+`pr_gates_codex`; `round_budget` before `implement`; and `pr_mergeable` before
+`readiness` and `leave_draft`. Other issue preconditions remain in phase
+handlers.
+
+Every order pull request gets review 1 and review 2. The roles bound to
+`<first>:implementer`, `<first>:reviewer`, `<first>:pr-reviewer-quality`, and
+`<first>:pr-reviewer-logic` must name one model. Review 2 uses model slot
+`second`. `review_2` means that the current-head second review has no findings,
+or a human waived it for this order. CI and readiness require it.
+
+Only `agent order override --id UUID --check review_2 --reason TEXT` waives it,
+also while pending. The override is refused with `check review_2 cannot be
+waived: <reason>` unless the task has a nonexternal second review, review 1 is
+complete, no second review is approved, no blocking second comment exists, and
+the pull-request opener is in `one_review_authors` in the trusted default-branch
+configuration. It cannot be skipped at submit. Manual `n_a` review keys do not
+count. The script never drops review 2 itself.
+
+Step 9 describes the `pr_mergeable` check and its declared conflict remedy for
+orders. Issue conflicts remain a resumable blocker.
+
+## Check lane
+
+A check lane makes one judgment. Its whole input is a script-compiled prompt
+with untrusted data between marker lines carrying a nonce. It has no tools or
+file access, runs in an empty directory, and answers in a fixed grammar that the
+script validates. The script never interprets free text. This is process argv
+hardening, not a sandbox.
+
+The lane uses model slot `first` through `<first>:check`, bound to a read-only
+role. `codex` cannot run it. It has no `STATUS` line; each check defines its
+grammar.
+
+`duplicates_checked` is required before opening an order draft. The script
+lists open pull requests: number, title up to 200 characters, and description
+up to 500 characters. With none it records yes without a lane. With at most 200
+it passes that list, title and order text to the lane. The only results are
+`RESULT: duplicate <number>` or `RESULT: no-duplicate`, followed by one
+`REASON:` sentence. A duplicate number must be in the supplied list.
+
+A duplicate records no, creates no start commit or pull request, and raises a
+question naming the suspected pull request and check. Only an override or
+cancel resolves it, unless skipped at submit. Invalid answers retry with
+backoff under `lane_retries`. More than 200 open pull requests, or exhausted
+lane retries, records `unavailable`; a plain reply runs it again.
+
+The round assessment is another check lane. Before the next round would exceed
+the pinned limit, its input is only the task text and bounded findings from each
+round. It returns `RESULT: continue`, `RESULT: change-approach`, or `RESULT:
+abort`, then `REASON:` and, only for change, `APPROACH:`. The script validates
+and stores the opinion on `round_budget`, publishes it with the question, and
+never acts on it. An authorized reply grants the same number of rounds and its
+text becomes untrusted implementer guidance. The proposed approach is not
+passed to the implementer. An issue-only worker without the check binding
+stores `unavailable` and asks without an opinion.
+
+## Front ends
+
+The model between the human and the script is the concierge. It submits the
+request, reads status and the report, relays questions, returns the human's
+answer, and recommends whether closer inspection is useful. It is not an
+orchestrator; the script is. The command line, dashboard orders view and
+concierge call the operation table in `order_ops.py`. Every readable field and
+operation available to a concierge is available in the dashboard.
+The device daemon runs `agent coordinate --session ID --follow` for each
+configured worker. The coordinator does not depend on a living front end.
+
+The dashboard binds `127.0.0.1`. Read operations use
+`GET /api/orders/<name>`, writes use `POST /api/orders/<name>` with a JSON object,
+and `GET /api/orders/schema` returns `enabled`, `skippable`, and `operations`.
+Every route under `/api/orders/` accepts only `Host` equal to
+`127.0.0.1:<port>` or `localhost:<port>`, with any port. A present, nonempty
+`Origin` must equal `http://` plus that Host. Otherwise it returns 403 and
+`cross-origin request refused`. `wait` has no dashboard route; the dashboard
+polls `events`.
 
 ## Model output protocol
 
@@ -717,6 +1130,9 @@ Every lane prompt includes strict prohibitions and requires:
 STATUS: complete|partial|timeout|unavailable
 RESULT: done|blocked|ask|approved|rejected|no-change
 ```
+
+A check lane is the exception: it answers in the fixed grammar of its check and
+has no `STATUS` line.
 
 The parser first counts every `STATUS:` and `RESULT:` line, including lines
 whose values are malformed, and requires exactly one of each. It then validates
@@ -859,7 +1275,8 @@ in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
 sanitization, the second redaction pass, and the replicated-row length bound.
 User-facing blockers and questions are
-published on the source issue only when `execution_status=done` is verified;
+published on the source issue, or on the pull request of an order, only when
+`execution_status=done` is verified;
 otherwise they remain locally visible (`CoordinatorError` / `StoreError`
 subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
@@ -885,13 +1302,16 @@ rule above for a validly terminated span.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
-and the normal provider-incomplete retry checkpoint (`resume_phase`, never
-`uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
+and the normal incomplete-output path applies: automatic retries under
+`lane_retries`, then the provider-incomplete reply checkpoint (`resume_phase`,
+never `uncertain_lane`) in both the sequential and the parallel PR-gate path.
 Parallel PR-review preparation exceptions remain reply-gated and publish only
-`PR review lane preparation failed`. A parallel execution exception is a final
-uncertain-lane stop: the agent note alone says `PR review lane execution failed`,
-while the task blocker and issue comment publish only the fixed uncertain-outcome
-text. Raw exception text, worktree paths, and account configuration paths do not
+`PR review lane preparation failed`. A parallel execution exception is a failed
+lane run. It is retried under `lane_retries` and then becomes the resumable
+`lane-failed` blocker. The agent note alone says `PR review lane execution failed`,
+while the task blocker and the published comment carry only this fixed text:
+`Model lane interrupted in <phase>; not a code rejection.` Raw exception text,
+worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
 A reviewer spool write failure, in either the sequential inner-review path or
 the parallel PR-review path, removes the provider's raw output and any partial
@@ -899,22 +1319,24 @@ the parallel PR-review path, removes the provider's raw output and any partial
 For output-file providers, each reviewer uses an agent-bound deterministic raw
 path in the managed reviewer-spool directory. A path-free ownership marker is
 committed on the working agent before the provider starts. On restart, raw
-output without a valid committed recovery spool is removed before the uncertain
-lane stop; raw output is retained only alongside such a spool. Spool-write
+output without a valid committed recovery spool is removed before the lane
+record is closed as failed; raw output is retained only alongside such a spool. Spool-write
 failures expose only fixed categories (the sequential checkpoint-failure
-category or the parallel uncertain-lane text), never filesystem exception text
+category or the fixed lane-interrupted text), never filesystem exception text
 or its local path.
 For a sequential lane execution exception, the finished agent and the task's
-terminal uncertain-lane state commit in one transaction. A rollback leaves the
+failed-lane state commit in one transaction; the run is then retried under
+`lane_retries`. A rollback leaves the
 agent working and the task in its prior runnable phase.
 Failure to write an implementer audit row itself is an observation and does not
 rewrite the lane verdict. A reviewer audit failure rolls back its finished agent
 and replicated outcome checkpoint because all three records share one
 transaction; the local finished-result checkpoint and provider output remain
-for the next tick's transaction retry, without a model relaunch or an
-`uncertain_lane` stop. An unavailable sequential inner reviewer uses the same
+for the next tick's transaction retry, without a model relaunch and without
+counting as a failed lane run. An unavailable sequential inner reviewer uses the same
 published-once `provider-incomplete` reply checkpoint as unavailable
-implementers and parallel gates, so an early merge cannot bypass the blocker.
+implementers and parallel gates after the automatic retries, so an early merge
+cannot bypass the blocker.
 File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
@@ -945,22 +1367,36 @@ worktree-relative and may contain glob `*`, `?`, `[` and `]` characters.
 | `timestamps.py` | Shared aware ISO-8601 parsing and UTC normalization |
 | `text_sanitize.py` | Shared terminal escape/control matching and sanitization between redaction passes |
 | `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
+| `preconditions.py` | Declarative precondition registry data |
+| `coordinator_checks.py` | Precondition evaluation and static resolvers |
+| `coordinator_check_lane.py` | Check lane, duplicate check, round assessment |
+| `coordinator_orders.py` | Order creation, events and answers |
+| `order_ops.py` | Shared table of order operations |
+| `orders.py` | `agent order` command line generated from the operation table |
+| `order_report.py` | Bounded order acceptance report |
+| `dashboard_orders.py` | Local dashboard order routes |
+| `coordinator_conflicts.py` | Conflict remedy of `pr_mergeable` for orders |
 | `hub_assign.py` | Paired-device client for operator assignment creation |
 | `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |
 
 ## A38 mode
 
 A worker opts in explicitly with `"a38": true`. This is never an installation
-default. The worker then requires a nonempty, distinct, lowercased
-`second_reviewers` list that excludes its own configured GitHub login. Optional
+default. With the external second review, the worker requires a nonempty,
+distinct, lowercased `second_reviewers` list that excludes its own configured
+GitHub login. Optional
 `second_review_timeout_seconds` (default `86400`) must be at least 600.
 `review_session` is unused and optional;
 `check_argv` may be empty, while `readiness_argv` remains required for
 configured repositories; owner-scoped repositories may omit
 `owner_readiness_argv` only with the explicit hub deviation statement described
 above. The device's
-models must pin a non-Codex first provider and `"second": null`. A null second
-slot is refused for every non-A38 worker.
+models must pin a non-Codex first provider. The external route pins
+`"second": null`. With `a38_second_review: "model"`, model slot `second` must be
+set and `second_reviewers` is not required. A null second slot is refused for
+every non-A38 worker. The task pins the A38 second-review mode at creation. The
+`model` value enters its execution binding; the default external value is
+omitted for compatibility with existing bindings.
 
 Illustrative worker fragment:
 
@@ -972,6 +1408,12 @@ Illustrative worker fragment:
 }
 ```
 
+Model-route fragment:
+
+```json
+{"a38": true, "a38_second_review": "model"}
+```
+
 On each new clean signed head, the script optionally runs `check_argv`, then
 validates the trusted-base A38 policy, runs the complete A38 suite in
 `workspace_root/.coordinator-control/<task-id>/a38/<head>/`, verifies its
@@ -980,7 +1422,7 @@ failure returns bounded findings to the implementer. The first-slot quality and
 logic gates then run as usual. Their approved result is rendered and validated
 as the `conformity-a` / `logic-a` author comment.
 
-The coordinator does not launch model slot `second`. It sends one
+On the external route, the coordinator does not launch model slot `second`. It sends one
 `review-request` person ping to every configured reviewer. A reviewer returns a
 strict result through session mail without calling GitHub:
 
@@ -1074,6 +1516,16 @@ reconciliation; its declared head and pass count must equal the checkpoint.
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
+With `a38_second_review: "model"`, the route after the first comment is
+`pr_gates_codex` → `a38_second_comment` → `ci` → `readiness` → `await_ready`.
+The script runs the second-slot quality and logic lanes, renders their comment
+through the same guard renderer without a reviewer line, and posts it as the
+pull-request author. A rejected pair posts a blocking second comment with
+`blocks_merge: true` and defects equal to the number of rejecting dimensions;
+all rejecting findings return to the implementer. The `review_2_*` checklist
+keys close from the gate rows. Readiness requires the report, the first comment,
+a non-blocking second comment on the head, and all four approved gates. The
+guard still owns Ready; the coordinator never marks an A38 pull request Ready.
 The tests phase reads pull-request metadata, the paginated file inventory, and
 the metadata again. Head SHA, base SHA, base name, and open state must match
 across both metadata reads; a race is retried a bounded number of times and
@@ -1201,7 +1653,8 @@ move
 first observed after merge is different: the new base is never recorded as
 verified, the old/new pair is retained in `base_moved_after_evidence`, and the
 task stops at the non-recoverable completion boundary described above.
-An incomplete parallel PR review commits its `unavailable` gates, checklist
+When the retries of `lane_retries` are used up, an incomplete parallel PR
+review commits its `unavailable` gates, checklist
 values, blocked phase, exact resume phase, reply checkpoint, and deterministic
 issue-comment intent in one transaction. GitHub execution happens only after
 that commit, so a process restart remains blocked until the queued checkpoint
@@ -1246,10 +1699,13 @@ reopens work. After the merge every waiting review is taken in before
 non-recoverable blocker `merged-without-second-review` after that, and publishes
 `merged-with-blocking-second-review` at once when the newest posted review blocks the merge.
 Both merge blockers are final like `closed-unmerged`: the task stays blocked, and a
-review that arrives after that blocker is published is not taken in. A new head invalidates its report, both comment checkpoints, and
+review that arrives after that blocker is published is not taken in. A model-route
+task merged before its second comment was posted is a final blocker at once. A new head invalidates its report, both comment checkpoints, and
 external-review state. A blocking review that arrives after the guard set Ready
 is fixed on the same pull request: an A38 worker pushes the new head to the open
 pull request whether or not it is still a draft, and the guard decides Ready again.
 
-These A38 settings enter the task execution binding only for A38 workers, so
-the binding hashes of existing non-A38 workers remain stable.
+`a38_second_review: "model"` enters the task execution binding. The default
+external mode does not, so existing A38 hashes remain stable. Other A38
+settings enter the task execution binding only for A38 workers, so the binding
+hashes of existing non-A38 workers remain stable.
