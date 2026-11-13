@@ -723,6 +723,34 @@ class Store:
             out.append(payload)
         return out
 
+    @_wrap_pg_errors
+    def activity_of_types(self, types: tuple[str, ...]) -> list[dict[str, Any]]:
+        """This device's activity rows whose top-level type is one of ``types``."""
+        if not types:
+            return []
+        filters = " OR ".join("payload LIKE %s" for _ in types)
+        with self._lock:
+            params = (
+                "activity",
+                self.device_id(),
+                *(f'%"type":"{activity_type}"%' for activity_type in types),
+            )
+            found = self.conn.execute(
+                "SELECT row_id, origin_device_id, payload, updated_at FROM row_data "
+                "WHERE table_name = %s AND origin_device_id = %s "
+                f"AND ({filters}) ORDER BY updated_at ASC, row_id ASC",
+                params,
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in found:
+            payload = loads(row["payload"])
+            if not isinstance(payload, dict) or payload.get("type") not in types:
+                continue
+            payload["_origin_device_id"] = row["origin_device_id"]
+            payload["_updated_at"] = str(row["updated_at"] or "")
+            out.append(payload)
+        return out
+
     def claim_wake(self, activity_id: str) -> bool:
         with self._lock:
             found = self.conn.execute(

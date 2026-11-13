@@ -13,7 +13,7 @@ import pytest
 from agent_cli import coordinator_runtime, github_act
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.coordinator import tick
-from agent_cli.coordinator_checks import registry_row_id
+from agent_cli.coordinator_checks import CheckValue, record_check, registry_row_id
 from agent_cli.coordinator_common import (
     CoordinatorError,
     comment_target,
@@ -41,12 +41,23 @@ from agent_cli.coordinator_github import (
 )
 from agent_cli.coordinator_lanes import _post_issue_status, phase_pr_gates, write_review_context
 from agent_cli.coordinator_orders import (
+    CANCEL_CLOSE_BODY,
+    acknowledge_event,
+    consume_order_intents,
     create_order_task,
+    event_answers,
     find_order,
+    latest_order_intent,
     list_orders,
+    order_event_id,
     order_state,
+    own_order_events,
+    pending_order_intents,
     phase_accept_order,
+    post_order_event,
+    reconcile_order_events,
     serves_repo,
+    sweep_terminal_orders,
 )
 from agent_cli.coordinator_runtime import (
     _apply_implementer_outcome,
@@ -63,8 +74,10 @@ from agent_cli.coordinator_runtime import (
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
+from agent_cli.preconditions import CHECKS
 from test_coordinator_support import (
     FakeGh,
+    insert_order_intent,
     lane_runner,
     make_order_worker,
     make_session,
@@ -1741,4 +1754,1038 @@ def test_failed_acceptance_blocks_with_a_resumable_checkpoint(
     assert "repository_config" not in c["source"]
     assert order_state(store.row("task", order["id"])) == "waiting"
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
+    store.close()
+
+
+def _events_for(store, oid: str) -> list[dict]:
+    return [
+        row
+        for row in own_order_events(store)
+        if row["payload"].get("order_id") == oid
+    ]
+
+
+def _waiting_order(store, worker, oid: str = OID) -> tuple[dict, str]:
+    task = seed_order_task(
+        store,
+        worker,
+        oid,
+        phase="blocked",
+        resume_phase="ci",
+        blocker="stop",
+        pr_number=42,
+    )
+    reconcile_order_events(store, worker, task)
+    current = coord(task)["order"]["checkpoint"]["event_id"]
+    return task, current
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("kind", "key", "status", "expected"),
+    [
+        ("ready", None, None, ["ack"]),
+        ("accepted", None, None, []),
+        ("question", "duplicates_checked", "nein", ["override", "cancel"]),
+        (
+            "question",
+            "duplicates_checked",
+            "unavailable",
+            ["reply", "override", "cancel"],
+        ),
+        ("question", "round_budget", "nein", ["reply", "cancel"]),
+        ("blocked", None, None, ["reply", "cancel"]),
+    ],
+)
+def test_event_answers(kind, key, status, expected) -> None:
+    assert event_answers(kind, key, status) == expected
+
+
+def test_event_sequence_is_monotonic_across_orders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    one = seed_order_task(store, worker, OID, phase="checkout", accepted_at="x")
+    two = seed_order_task(store, worker, OID2, phase="checkout", accepted_at="x")
+    reconcile_order_events(store, worker, one)
+    reconcile_order_events(store, worker, two)
+    assert [row["payload"]["seq"] for row in own_order_events(store)] == [1, 2]
+    reconcile_order_events(store, worker, one)
+    reconcile_order_events(store, worker, two)
+    assert len(own_order_events(store)) == 2
+    store.close()
+
+
+def test_events_follow_the_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    order = submit_order(store, worker)
+    for _ in range(8):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "implement":
+            break
+    assert checkpoint(store, order["id"])["phase"] == "implement"
+    events = _events_for(store, order["id"])
+    assert [row["payload"]["kind"] for row in events] == [
+        "accepted",
+        "draft-opened",
+    ]
+    seqs = [row["payload"]["seq"] for row in events]
+    assert all(before < after for before, after in zip(seqs, seqs[1:]))
+    assert all(row["payload"]["wake"] is False for row in events)
+    assert all(row["payload"]["answers"] == [] for row in events)
+    assert all(row["payload"]["ack"] is None for row in events)
+    assert events[1]["payload"]["pr_url"] == (
+        "https://github.com/example/project/pull/42"
+    )
+    store.close()
+
+
+def test_duplicate_question_event_carries_the_check_and_wakes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    fake.open_pulls = [
+        {
+            "number": 5,
+            "title": "Same goal",
+            "body": "Same goal",
+            "head": {"ref": "other"},
+            "user": {"login": "someone"},
+        }
+    ]
+    lane = order_lane_runner(
+        fake,
+        check_output="RESULT: duplicate 5\nREASON: Same goal.\n",
+    )
+    order = submit_order(store, worker)
+    for _ in range(8):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "ask":
+            break
+    questions = [
+        row
+        for row in _events_for(store, order["id"])
+        if row["payload"]["kind"] == "question"
+    ]
+    assert len(questions) == 1
+    payload = questions[0]["payload"]
+    assert payload["wake"] is True
+    assert payload["check"] == "duplicates_checked"
+    assert payload["answers"] == ["override", "cancel"]
+    assert "agent order override --id" in payload["digest"]
+    assert checkpoint(store, order["id"])["order"]["checkpoint"]["kind"] == "question"
+    store.close()
+
+
+def test_changed_blocker_text_creates_no_new_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, _event_id = _waiting_order(store, worker)
+    coord(task)["blocker"] = "changed"
+    save_task(store, task)
+    calls = []
+    from agent_cli import coordinator_orders
+
+    original = coordinator_orders.save_task
+    monkeypatch.setattr(
+        coordinator_orders,
+        "save_task",
+        lambda *args, **kwargs: (calls.append(args), original(*args, **kwargs))[1],
+    )
+    reconcile_order_events(store, worker, task)
+    assert [row["payload"]["kind"] for row in _events_for(store, OID)].count("blocked") == 1
+    assert calls == []
+    store.close()
+
+
+def test_resumed_event_acknowledges_the_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, event_id = _waiting_order(store, worker)
+    coord(task)["phase"] = "ci"
+    coord(task).pop("resume_phase")
+    save_task(store, task)
+    reconcile_order_events(store, worker, task)
+    resumed = [row for row in _events_for(store, OID) if row["payload"]["kind"] == "resumed"]
+    assert resumed[0]["payload"]["digest"] == "Resumed in phase ci."
+    assert store.row("activity", event_id)["payload"]["ack"]["via"] == "resumed"
+    order = checkpoint(store, OID)["order"]
+    assert "checkpoint" not in order
+    assert order["checkpoint_seq"] == 1
+    store.close()
+
+
+def test_ready_event_wakes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="await_merge",
+        evidence={"ready_head": "a" * 40},
+        pr_number=42,
+    )
+    reconcile_order_events(store, worker, task)
+    ready = [row for row in _events_for(store, OID) if row["payload"]["kind"] == "ready"]
+    assert ready[0]["payload"]["wake"] is True
+    assert ready[0]["payload"]["answers"] == ["ack"]
+    before = len(own_order_events(store))
+    reconcile_order_events(store, worker, task)
+    assert len(own_order_events(store)) == before
+    store.close()
+
+
+def test_merged_order_gets_ready_before_merged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store, worker, OID, phase="done", pr_number=42, head_sha="a" * 40
+    )
+    task["state"] = "done"
+    save_task(store, task)
+    assert sweep_terminal_orders(store, worker) == []
+    events = _events_for(store, OID)
+    ready = next(row for row in events if row["payload"]["kind"] == "ready")
+    merged = next(row for row in events if row["payload"]["kind"] == "merged")
+    assert ready["payload"]["seq"] < merged["payload"]["seq"]
+    assert ready["payload"]["wake"] is True
+    assert ready["payload"]["digest"].startswith(
+        "Pull request left draft and was merged"
+    )
+    assert merged["payload"]["wake"] is False
+    assert checkpoint(store, OID)["order"]["closed"] is True
+    before = len(own_order_events(store))
+    assert sweep_terminal_orders(store, worker) == []
+    assert len(own_order_events(store)) == before
+    store.close()
+
+
+def test_terminal_event_is_created_after_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="blocked",
+        failed_kind="cancelled",
+        blocker="not needed",
+    )
+    task["state"] = "failed"
+    save_task(store, task)
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    cancelled = [
+        row for row in _events_for(store, OID) if row["payload"]["kind"] == "cancelled"
+    ]
+    assert len(cancelled) == 1
+    assert cancelled[0]["payload"]["digest"] == "Order cancelled: not needed"
+    store.close()
+
+
+def test_ended_order_supersedes_its_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, event_id = _waiting_order(store, worker)
+    task["state"] = "failed"
+    coord(task)["failed_kind"] = "no-change"
+    save_task(store, task)
+    reconcile_order_events(store, worker, task)
+    assert store.row("activity", event_id)["payload"]["ack"]["via"] == "superseded"
+    failed = [row for row in _events_for(store, OID) if row["payload"]["kind"] == "failed"]
+    assert failed[0]["payload"]["failed_kind"] == "no-change"
+    assert "checkpoint" not in checkpoint(store, OID)["order"]
+    store.close()
+
+
+def test_binding_blocker_is_a_blocked_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    text = "task execution configuration changed or is unpinned"
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="implement",
+        binding_blocker=text,
+        blocker="old text",
+    )
+    assert order_state(task) == "waiting"
+    reconcile_order_events(store, worker, task)
+    event = _events_for(store, OID)[0]["payload"]
+    assert event["digest"] == f"Blocked: {text}"
+    assert event["answers"] == ["cancel"]
+    second = seed_order_task(
+        store,
+        worker,
+        OID2,
+        phase="blocked",
+        binding_blocker=text,
+        resume_phase="ci",
+        blocker="stop",
+    )
+    reconcile_order_events(store, worker, second)
+    assert _events_for(store, OID2)[0]["payload"]["answers"] == ["reply", "cancel"]
+    store.close()
+
+
+def test_final_blocker_is_a_failed_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="blocked",
+        blocker="Ready PR closed without merge",
+    )
+    reconcile_order_events(store, worker, task)
+    event = _events_for(store, OID)[0]["payload"]
+    assert event["kind"] == "failed"
+    assert event["wake"] is True
+    assert event["answers"] == ["ack"]
+    assert event["digest"] == "Order failed (blocked): Ready PR closed without merge"
+    store.close()
+
+
+def test_blocked_order_with_a_question_text_is_a_question(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="blocked",
+        resume_phase="readiness",
+        failed_check="pr_mergeable",
+        question_text="Resolve the conflict, then reply.",
+    )
+    reconcile_order_events(store, worker, task)
+    event = _events_for(store, OID)[0]["payload"]
+    assert event["kind"] == "question"
+    assert event["check"] == "pr_mergeable"
+    assert event["answers"] == ["reply", "cancel"]
+    assert event["digest"] == "Resolve the conflict, then reply."
+    store.close()
+
+
+def test_event_insert_before_a_lost_save_is_not_duplicated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store, worker, OID, phase="blocked", resume_phase="ci", blocker="stop"
+    )
+    post_order_event(
+        store,
+        worker,
+        task,
+        kind="blocked",
+        occurrence="1",
+        digest="Blocked: stop",
+    )
+    reconcile_order_events(store, worker, task)
+    assert len(_events_for(store, OID)) == 1
+    assert checkpoint(store, OID)["order"]["checkpoint_seq"] == 1
+    store.close()
+
+
+def test_foreign_row_with_an_event_id_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="checkout")
+    event_id = order_event_id(OID, "accepted", "")
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": event_id,
+            "origin_device_id": "other-device",
+            "payload": {"id": event_id, "type": "order.event", "payload": {}},
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    with pytest.raises(CoordinatorError, match="held by a foreign row"):
+        post_order_event(
+            store,
+            worker,
+            task,
+            kind="accepted",
+            occurrence="",
+            digest="x",
+        )
+    assert own_order_events(store) == []
+    store.close()
+
+
+def test_local_reply_resumes_like_a_comment_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingGh(FakeGh):
+        def __init__(self) -> None:
+            super().__init__()
+            self.argvs: list[list[str]] = []
+
+        def __call__(self, argv: list[str]) -> Completed:
+            self.argvs.append(list(argv))
+            return super().__call__(argv)
+
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=RecordingGh()
+    )
+    _task, event_id = _waiting_order(store, worker)
+    intent_id = insert_order_intent(
+        store, worker, OID, "reply", body="Go on.", answers=event_id
+    )
+    before = len(fake.argvs)
+    lines = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    )
+    assert lines == ["consumed 1 authorized reply(ies); resuming ci"]
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "ci"
+    assert saved["authorized_replies"] == ["Go on."]
+    intent = store.row("activity", intent_id)
+    assert intent["execution_status"] == "done"
+    assert intent["result"]["effect"] == "reply"
+    assert any(
+        row["payload"]["kind"] == "resumed"
+        for row in _events_for(store, OID)
+    )
+    assert not any(
+        "issues/42/comments" in " ".join(argv)
+        for argv in fake.argvs[before:]
+    )
+    store.close()
+
+
+def test_local_reply_waits_for_the_blocker_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="blocked",
+        resume_phase="pr_gates_grok",
+        pr_number=42,
+        blocker="First-stage review output is unavailable",
+        blocker_publish_once=True,
+        blocker_publish_kind="provider-incomplete",
+    )
+    reconcile_order_events(store, worker, task)
+    event_id = coord(task)["order"]["checkpoint"]["event_id"]
+    intent_id = insert_order_intent(
+        store, worker, OID, "reply", body="try again", answers=event_id
+    )
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert store.row("activity", intent_id)["execution_status"] == "pending"
+    assert checkpoint(store, OID)["phase"] == "blocked"
+    assert checkpoint(store, OID)["blocker_activity_id"]
+    assert len(fake.pr_comments) == 1
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert checkpoint(store, OID)["phase"] == "pr_gates_grok"
+    assert store.row("activity", intent_id)["execution_status"] == "done"
+    assert fake.launched == []
+    store.close()
+
+
+@pytest.mark.parametrize("answers", ["another-event", None])
+def test_stale_local_reply_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, _event_id = _waiting_order(store, worker)
+    intent_id = insert_order_intent(
+        store, worker, OID, "reply", body="Go on.", answers=answers
+    )
+    intent = store.row("activity", intent_id)
+    before = len(own_order_events(store))
+    assert consume_order_intents(store, worker, task, fake, [intent]) is None
+    assert store.row("activity", intent_id)["execution_error"] == "stale reply"
+    assert checkpoint(store, OID)["phase"] == "blocked"
+    assert len(own_order_events(store)) == before
+    store.close()
+
+
+def test_reply_to_a_running_order_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    before = deepcopy(task)
+    intent_id = insert_order_intent(store, worker, OID, "reply", body="Go on.")
+    assert consume_order_intents(
+        store, worker, task, fake, [store.row("activity", intent_id)]
+    ) is None
+    assert store.row("activity", intent_id)["execution_error"] == "no pending question"
+    assert checkpoint(store, OID) == coord(before)
+    assert own_order_events(store) == []
+    store.close()
+
+
+def _duplicate_question(store, worker) -> tuple[dict, str]:
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="ask",
+        resume_phase="start_draft",
+        failed_check="duplicates_checked",
+        question_text="Use agent order override --id to continue.",
+    )
+    record_check(
+        store,
+        task,
+        CHECKS["duplicates_checked"],
+        CheckValue("nein", "Same goal."),
+        action="open_draft",
+    )
+    reconcile_order_events(store, worker, task)
+    return task, coord(task)["order"]["checkpoint"]["event_id"]
+
+
+def test_reply_to_a_duplicate_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    _task, event_id = _duplicate_question(store, worker)
+    intent_id = insert_order_intent(
+        store, worker, OID, "reply", body="continue", answers=event_id
+    )
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert store.row("activity", intent_id)["execution_error"] == (
+        "check duplicates_checked needs an override"
+    )
+    assert checkpoint(store, OID)["phase"] == "ask"
+    assert store.row(
+        "checklist_item", registry_row_id(OID, "duplicates_checked")
+    )["status"] == "nein"
+    store.close()
+
+
+def test_refused_answer_renews_the_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    _task, event_id = _duplicate_question(store, worker)
+    assert acknowledge_event(store, event_id, by="human-owner", via="reply")
+    insert_order_intent(
+        store, worker, OID, "reply", body="continue", answers=event_id
+    )
+    lines = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    )
+    error = "check duplicates_checked needs an override"
+    assert lines == [f"answer refused for order {OID}: {error}"]
+    questions = [
+        row for row in _events_for(store, OID) if row["payload"]["kind"] == "question"
+    ]
+    assert len(questions) == 2
+    assert questions[1]["payload"]["ack"] is None
+    assert questions[1]["payload"]["seq"] > questions[0]["payload"]["seq"]
+    assert questions[1]["payload"]["digest"].startswith(
+        f"Previous answer refused: {error}"
+    )
+    order = checkpoint(store, OID)["order"]
+    assert "refused" not in order
+    assert order["checkpoint_seq"] == 2
+    store.close()
+
+
+def test_reply_reruns_an_unavailable_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    fake.open_pulls = [
+        {
+            "number": number,
+            "title": f"Pull {number}",
+            "body": "Other work",
+            "head": {"ref": f"branch-{number}"},
+            "user": {"login": "someone"},
+        }
+        for number in range(1, 202)
+    ]
+    order = submit_order(store, worker)
+    for _ in range(8):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "ask":
+            break
+    row = store.row(
+        "checklist_item", registry_row_id(order["id"], "duplicates_checked")
+    )
+    assert row["status"] == "unavailable"
+    c = checkpoint(store, order["id"])
+    event_id = c["order"]["checkpoint"]["event_id"]
+    event = store.row("activity", event_id)
+    assert event["payload"]["answers"] == ["reply", "override", "cancel"]
+    fake.open_pulls = []
+    insert_order_intent(
+        store,
+        worker,
+        order["id"],
+        "reply",
+        body="Try the scan again.",
+        answers=event_id,
+    )
+    for _ in range(8):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "implement":
+            break
+    row = store.row(
+        "checklist_item", registry_row_id(order["id"], "duplicates_checked")
+    )
+    assert row["status"] == "ja"
+    assert checkpoint(store, order["id"])["phase"] == "implement"
+    store.close()
+
+
+def test_override_closes_a_failed_check_with_who_and_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    fake.open_pulls = [
+        {
+            "number": 5,
+            "title": "Same goal",
+            "body": "Same goal",
+            "head": {"ref": "other"},
+            "user": {"login": "someone"},
+        }
+    ]
+    lane = order_lane_runner(
+        fake,
+        check_output="RESULT: duplicate 5\nREASON: Same goal.\n",
+    )
+    order = submit_order(store, worker)
+    for _ in range(8):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "ask":
+            break
+    assert checkpoint(store, order["id"])["phase"] == "ask"
+    event_id = checkpoint(store, order["id"])["order"]["checkpoint"]["event_id"]
+    intent_id = insert_order_intent(
+        store,
+        worker,
+        order["id"],
+        "override",
+        check="duplicates_checked",
+        reason="different goal",
+        answers=event_id,
+    )
+    assert "check duplicates_checked overridden by human-owner" in run_tick(
+        store, worker, fake, lane
+    )
+    row = store.row(
+        "checklist_item",
+        registry_row_id(order["id"], "duplicates_checked"),
+    )
+    assert row["status"] == "ja"
+    assert row["source"] == "human"
+    assert row["granted_by"] == "human-owner"
+    assert row["override"]["by"] == "human-owner"
+    assert row["override"]["reason"] == "different goal"
+    assert row["override"]["intent_id"] == intent_id
+    assert row["override"]["at"]
+    assert row["evidence"] == "override by human-owner: different goal"
+    saved = checkpoint(store, order["id"])
+    assert saved["phase"] == "start_draft"
+    for key in ("failed_check", "question_text", "blocker"):
+        assert key not in saved
+    assert any(
+        row["payload"]["kind"] == "resumed"
+        for row in _events_for(store, order["id"])
+    )
+    run_tick(store, worker, fake, lane)
+    assert fake.empty_commits == 1
+    store.close()
+
+
+def test_override_is_resumed_after_a_crash_between_fact_and_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    task, event_id = _duplicate_question(store, worker)
+    intent_id = insert_order_intent(
+        store,
+        worker,
+        OID,
+        "override",
+        check="duplicates_checked",
+        reason="different goal",
+        answers=event_id,
+    )
+    record_check(
+        store,
+        task,
+        CHECKS["duplicates_checked"],
+        CheckValue("ja", "override by human-owner: different goal", source="human"),
+        action="open_draft",
+        override={
+            "by": "human-owner",
+            "reason": "different goal",
+            "at": "2026-01-01T00:00:00Z",
+            "intent_id": intent_id,
+        },
+    )
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert checkpoint(store, OID)["phase"] == "start_draft"
+    assert store.row("activity", intent_id)["execution_status"] == "done"
+    store.close()
+
+
+def test_override_of_a_non_overridable_check_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="blocked",
+        resume_phase="accept",
+        failed_check="spec_available",
+    )
+    record_check(
+        store,
+        task,
+        CHECKS["spec_available"],
+        CheckValue("nein", "missing"),
+        action="accept",
+    )
+    intent_id = insert_order_intent(
+        store, worker, OID, "override", check="spec_available", reason="ok"
+    )
+    assert consume_order_intents(
+        store, worker, task, fake, [store.row("activity", intent_id)]
+    ) is None
+    assert store.row("activity", intent_id)["execution_error"] == (
+        "check spec_available cannot be overridden"
+    )
+    assert store.row(
+        "checklist_item", registry_row_id(OID, "spec_available")
+    )["status"] == "nein"
+    store.close()
+
+
+def test_override_of_a_check_that_is_not_failed_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="start_draft")
+    record_check(
+        store,
+        task,
+        CHECKS["duplicates_checked"],
+        CheckValue("ja", "clear"),
+        action="open_draft",
+    )
+    for current in (
+        task,
+        seed_order_task(store, worker, OID2, phase="start_draft"),
+    ):
+        intent_id = insert_order_intent(
+            store,
+            worker,
+            str(current["id"]),
+            "override",
+            check="duplicates_checked",
+            reason="ok",
+        )
+        assert consume_order_intents(
+            store, worker, current, fake, [store.row("activity", intent_id)]
+        ) is None
+        assert store.row("activity", intent_id)["execution_error"] == (
+            "check duplicates_checked is not failed"
+        )
+    store.close()
+
+
+def test_cancel_closes_the_draft_and_fails_the_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    intent_id = insert_order_intent(
+        store, worker, OID, "cancel", reason="not needed"
+    )
+    lines = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    )
+    assert lines == [f"order cancelled {OID}"]
+    assert fake.close_calls == 1
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert comments[0]["payload"]["target"] == "pr"
+    assert comments[0]["payload"]["body"] == CANCEL_CLOSE_BODY
+    task = store.row("task", OID)
+    assert task["state"] == "failed"
+    assert coord(task)["phase"] == "blocked"
+    assert coord(task)["failed_kind"] == "cancelled"
+    assert coord(task)["blocker"] == "not needed"
+    assert order_state(task) == "cancelled"
+    cancelled = [
+        row
+        for row in _events_for(store, OID)
+        if row["payload"]["kind"] == "cancelled"
+    ]
+    assert len(cancelled) == 1
+    assert cancelled[0]["payload"]["wake"] is True
+    assert store.row("activity", intent_id)["result"]["effect"] == "cancel"
+    assert fake.launched == []
+    store.close()
+
+
+def test_open_cancel_stops_the_order_until_the_draft_is_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    intent_id = insert_order_intent(store, worker, OID, "cancel", reason="stop")
+
+    def fail_implement(*_args, **_kwargs) -> None:
+        pytest.fail("implement handler ran while a cancel was pending")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(coordinator_runtime, "phase_implement", fail_implement)
+        patch.setattr(
+            "agent_cli.coordinator_orders.close_pull_request",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                CoordinatorError("close failed")
+            ),
+        )
+        for _ in range(2):
+            assert coordinator_runtime.advance_one(
+                store, worker, runner=fake, lane_runner=lane
+            ) == ["blocked: close failed"]
+            assert store.row("activity", intent_id)["execution_status"] == "pending"
+            assert store.row("task", OID)["state"] == "open"
+            assert checkpoint(store, OID)["phase"] == "implement"
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert store.row("task", OID)["state"] == "failed"
+    store.close()
+
+
+def test_failed_task_save_leaves_the_intent_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    _waiting_order(store, worker)
+    intent_id = insert_order_intent(store, worker, OID, "cancel", reason="stop")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "agent_cli.coordinator_orders.save_task",
+            lambda *args, **kwargs: (_ for _ in ()).throw(StoreError("boom")),
+        )
+        assert coordinator_runtime.advance_one(
+            store, worker, runner=fake, lane_runner=lane
+        ) == ["store error: boom"]
+        assert store.row("activity", intent_id)["execution_status"] == "pending"
+        assert store.row("task", OID)["state"] == "open"
+        assert checkpoint(store, OID)["phase"] == "blocked"
+        assert fake.close_calls == 1
+    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
+    assert store.row("activity", intent_id)["execution_status"] == "done"
+    assert fake.close_calls == 1
+    store.close()
+
+
+def test_cancel_after_merge_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="await_merge", pr_number=42)
+    fake.pr["state"] = "MERGED"
+    intent_id = insert_order_intent(store, worker, OID, "cancel", reason="stop")
+    assert consume_order_intents(
+        store, worker, task, fake, [store.row("activity", intent_id)]
+    ) is None
+    assert store.row("activity", intent_id)["execution_error"] == (
+        "pull request already merged"
+    )
+    assert store.row("task", OID)["state"] == "open"
+    assert "failed_kind" not in checkpoint(store, OID)
+    assert fake.close_calls == 0
+    store.close()
+
+
+def test_cancel_of_a_queued_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_issue_task(store, worker, TID, phase="tests")
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_tests",
+        lambda *args, **kwargs: ["tests handler"],
+    )
+    order = submit_order(store, worker)
+    insert_order_intent(store, worker, order["id"], "cancel", reason="stop")
+    lines = run_tick(store, worker, fake, lane)
+    assert f"order cancelled {order['id']}" in lines
+    assert "tests handler" in lines
+    saved = store.row("task", order["id"])
+    assert saved["state"] == "failed"
+    assert coord(saved)["failed_kind"] == "cancelled"
+    assert "accepted_at" not in coord(saved)
+    assert store.row(
+        "checklist_item", registry_row_id(order["id"], "order_authorized")
+    ) is None
+    assert fake.close_calls == 0
+    store.close()
+
+
+def test_intents_after_a_cancel_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, event_id = _waiting_order(store, worker)
+    cancel_id = insert_order_intent(
+        store,
+        worker,
+        OID,
+        "cancel",
+        reason="stop",
+        created_at="2026-01-01T00:00:01Z",
+    )
+    reply_id = insert_order_intent(
+        store,
+        worker,
+        OID,
+        "reply",
+        body="continue",
+        answers=event_id,
+        created_at="2026-01-01T00:00:02Z",
+    )
+    consume_order_intents(
+        store,
+        worker,
+        task,
+        fake,
+        [store.row("activity", cancel_id), store.row("activity", reply_id)],
+    )
+    assert store.row("activity", reply_id)["execution_error"] == (
+        "order is already cancelled"
+    )
+    store.close()
+
+
+def test_foreign_order_reply_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": "foreign",
+            "origin_device_id": "other-device",
+            "payload": {
+                "id": "foreign",
+                "session_id": worker.session_id,
+                "type": "order.reply",
+                "execution_status": "pending",
+                "payload": {"order_id": OID, "kind": "cancel"},
+            },
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    assert pending_order_intents(store, worker) == {}
+    assert latest_order_intent(store, OID) is None
+    store.close()
+
+
+def test_latest_order_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    insert_order_intent(
+        store, worker, OID, "reply", created_at="2026-01-01T00:00:01Z"
+    )
+    second = insert_order_intent(
+        store, worker, OID, "cancel", created_at="2026-01-01T00:00:02Z"
+    )
+    insert_order_intent(
+        store, worker, OID2, "cancel", created_at="2026-01-01T00:00:03Z"
+    )
+    assert latest_order_intent(store, OID)["id"] == second
+    assert latest_order_intent(store, "missing") is None
+    store.close()
+
+
+def test_pull_request_comment_cannot_pass_an_override_only_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="ask",
+        resume_phase="start_draft",
+        failed_check="duplicates_checked",
+    )
+
+    def fail(_argv):
+        raise AssertionError("GitHub must not be called")
+
+    assert phase_read_replies(store, worker, task, fail) == [
+        "waiting for override of duplicates_checked"
+    ]
+    store.close()
+
+
+def test_sweep_error_does_not_stop_the_sweep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    for oid in (OID, OID2):
+        task = seed_order_task(store, worker, oid, phase="done")
+        task["state"] = "done"
+        save_task(store, task)
+    from agent_cli import coordinator_orders
+
+    original = coordinator_orders.reconcile_order_events
+
+    def reconcile(store_, worker_, task_):
+        if task_["id"] == OID:
+            raise StoreError("boom")
+        return original(store_, worker_, task_)
+
+    monkeypatch.setattr(coordinator_orders, "reconcile_order_events", reconcile)
+    assert sweep_terminal_orders(store, worker) == ["store error: boom"]
+    assert "closed" not in checkpoint(store, OID).get("order", {})
+    assert checkpoint(store, OID2)["order"]["closed"] is True
+    store.close()
+
+
+def test_plain_visit_passes_no_intent_keywords(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_issue_task(store, worker, TID, phase="ci")
+
+    def fake_task(store, worker, task, *, runner, lane_runner):
+        return ["x"]
+
+    monkeypatch.setattr(coordinator_runtime, "_advance_task", fake_task)
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    ) == ["x"]
     store.close()

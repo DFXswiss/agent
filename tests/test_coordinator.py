@@ -38,6 +38,7 @@ from test_coordinator_support import (
     lane_runner,
     make_session,
     make_worker,
+    order_source,
     write_accounts,
 )
 
@@ -3784,6 +3785,67 @@ def test_leave_draft_skips_review_2_when_opener_is_listed(
     assert not any("missing approved gate review-2/" in line for line in lines)
     assert any("left draft" in line for line in lines)
     assert fake.ready_calls == 1
+
+
+def test_already_ready_pull_request_sets_ready_head_for_an_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(
+        tmp_path, monkeypatch, patch_github=True
+    )
+    _list_opener(fake)
+    fake.pr["isDraft"] = False
+    order_tid = "aa000001-0000-4000-8000-000000000052"
+    _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=order_tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    order = store.row("task", order_tid)
+    order["payload"]["coordinator"]["source"] = order_source(order_tid)
+    store.write(
+        "task",
+        "update",
+        order_tid,
+        {key: value for key, value in order.items() if not key.startswith("_")},
+    )
+    lines = phase_leave_draft(
+        store, worker, store.row("task", order_tid), fake
+    )
+    assert lines == ["already ready example/project#42; awaiting human merge"]
+    saved = store.row("task", order_tid)["payload"]["coordinator"]
+    assert saved["phase"] == "await_merge"
+    assert saved["evidence"]["ready_head"] == fake.head
+    assert fake.ready_calls == 0
+
+    issue_tid = "aa000001-0000-4000-8000-000000000053"
+    issue = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=issue_tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    assert phase_leave_draft(store, worker, issue, fake) == [
+        "already ready example/project#42; awaiting human merge"
+    ]
+    saved = store.row("task", issue_tid)["payload"]["coordinator"]
+    assert saved["phase"] == "await_merge"
+    assert "ready_head" not in saved["evidence"]
 
 
 def test_leave_draft_does_not_ready_when_the_exception_is_revoked_after_the_comment(

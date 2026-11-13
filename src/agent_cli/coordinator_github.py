@@ -83,6 +83,7 @@ from .pr_lifecycle import (
     a38_passed_job_names_from_comment,
     required_check_matches,
 )
+from .preconditions import CHECKS
 from .store import Store, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
 
@@ -2570,6 +2571,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if pr.get("isDraft") is not True:
         # Already left draft — verify and continue only with matching head.
         if pr.get("isDraft") is False and str(pr.get("state") or "").upper() == "OPEN":
+            if is_order(task):
+                c.setdefault("evidence", {})["ready_head"] = head
             c["phase"] = "await_merge"
             save_task(store, task)
             return [f"already ready {target}#{number}; awaiting human merge"]
@@ -3243,6 +3246,10 @@ def phase_read_replies(
         return [
             f"blocked: no eligible resume_phase for reply recovery on {label}"
         ]
+    failed_key = str(c.get("failed_check") or "")
+    failed = CHECKS.get(failed_key)
+    if failed is not None and failed.on_no == "question:override":
+        return [f"waiting for override of {failed_key}"]
     target = comment_target(task)
     if target is None:
         return [f"waiting for order reply on {order_id(task)}"]

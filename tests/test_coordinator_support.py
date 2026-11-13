@@ -7,11 +7,12 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agent_cli.coordinator_common import redact, write_task_text
 from agent_cli.coordinator_config import RepositoryConfig, WorkerConfig
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, utcnow
 from agent_cli.github_act import scan_github as _REAL_SCAN
 
 
@@ -226,6 +227,33 @@ def submit_order(
         submitted_by="human-owner",
         **kwargs,
     )
+
+
+def insert_order_intent(
+    store, worker, order_id: str, kind: str, **payload
+) -> str:
+    intent_id = str(uuid4())
+    values = {
+        "order_id": order_id,
+        "kind": kind,
+        "by": "human-owner",
+        "answers": None,
+        "created_at": utcnow(),
+        **payload,
+    }
+    store.write(
+        "activity",
+        "insert",
+        intent_id,
+        {
+            "id": intent_id,
+            "session_id": worker.session_id,
+            "type": "order.reply",
+            "execution_status": "pending",
+            "payload": values,
+        },
+    )
+    return intent_id
 
 
 class FakeGh:

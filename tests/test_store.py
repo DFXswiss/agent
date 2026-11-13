@@ -716,3 +716,67 @@ def test_reconnect_opens_a_fresh_connection(tmp_path: Path) -> None:
 
     assert store.conn is not old_conn
     assert store.meta("device_id") == store.device_id()
+
+
+def test_activity_of_types_returns_own_rows_of_the_given_types(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        for row_id, activity_type in (
+            ("event", "order.event"),
+            ("reply", "order.reply"),
+            ("mail", "message"),
+        ):
+            store.write(
+                "activity",
+                "insert",
+                row_id,
+                {"id": row_id, "type": activity_type, "payload": {}},
+            )
+        event = store.activity_of_types(("order.event",))
+        assert [row["id"] for row in event] == ["event"]
+        both = store.activity_of_types(("order.event", "order.reply"))
+        assert {row["id"] for row in both} == {"event", "reply"}
+        assert store.activity_of_types(()) == []
+        assert event[0]["_origin_device_id"] == store.device_id()
+        assert event[0]["_updated_at"]
+    finally:
+        store.close()
+
+
+def test_activity_of_types_ignores_foreign_rows(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-reply",
+                "origin_device_id": "other-device",
+                "payload": {
+                    "id": "foreign-reply",
+                    "type": "order.reply",
+                    "payload": {},
+                },
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        )
+        assert store.activity_of_types(("order.reply",)) == []
+    finally:
+        store.close()
+
+
+def test_activity_of_types_ignores_a_nested_type_match(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "nested",
+            {
+                "id": "nested",
+                "type": "message",
+                "payload": {"type": "order.event"},
+            },
+        )
+        assert store.activity_of_types(("order.event",)) == []
+    finally:
+        store.close()

@@ -140,7 +140,13 @@ from .coordinator_lanes import (
     write_review_context,
     write_review_diff,
 )
-from .coordinator_orders import phase_accept_order
+from .coordinator_orders import (
+    consume_order_intents,
+    pending_order_intents,
+    phase_accept_order,
+    reconcile_order_events,
+    sweep_terminal_orders,
+)
 from .preconditions import PHASE_ACTION
 from .github_accounts import AccountError, load_accounts
 from .skills import has_skill
@@ -2412,7 +2418,18 @@ def _advance_task(
     *,
     runner: Runner,
     lane_runner: LaneRunner | None,
+    intents=(),
+    intents_only: bool = False,
 ) -> list[str]:
+    if is_order(task):
+        if intents:
+            consumed = consume_order_intents(
+                store, worker, task, runner, list(intents)
+            )
+            if consumed is not None:
+                return consumed
+        if intents_only:
+            return []
     c = coord(task)
     if str(c.get("phase") or "accept") == "queued":
         return [f"order queued {order_id(task)}"]
@@ -2874,31 +2891,30 @@ def _after_advance(
     store: Store, worker: WorkerConfig, task: dict[str, Any], before: str
 ) -> list[str]:
     """Maintain the scheduler flags of one visited task; save only on a change."""
-    c = coord(task)
-    now = str(c.get("phase") or "accept")
-    changed = False
-    retry = c.get("retry")
-    if isinstance(retry, dict) and retry.get("phase") != now:
-        c.pop("retry", None)
-        changed = True
-    if now not in ("ask", "blocked"):
-        for key in ("failed_check", "question_text"):
-            if key in c:
-                c.pop(key, None)
+    if not _terminal(task):
+        c = coord(task)
+        now = str(c.get("phase") or "accept")
+        changed = False
+        retry = c.get("retry")
+        if isinstance(retry, dict) and retry.get("phase") != now:
+            c.pop("retry", None)
+            changed = True
+        if now not in ("ask", "blocked"):
+            for key in ("failed_check", "question_text"):
+                if key in c:
+                    c.pop(key, None)
+                    changed = True
+        if now == "ci":
+            if before == "ci" and c.get("ci_wait") is not True:
+                c["ci_wait"] = True
                 changed = True
-    if _terminal(task):
+        elif "ci_wait" in c:
+            del c["ci_wait"]
+            changed = True
         if changed:
             save_task(store, task)
-        return []
-    if now == "ci":
-        if before == "ci" and c.get("ci_wait") is not True:
-            c["ci_wait"] = True
-            changed = True
-    elif "ci_wait" in c:
-        del c["ci_wait"]
-        changed = True
-    if changed:
-        save_task(store, task)
+    if is_order(task):
+        reconcile_order_events(store, worker, task)
     return []
 
 
@@ -2909,11 +2925,26 @@ def _advance_guarded(
     *,
     runner: Runner,
     lane_runner: LaneRunner | None,
+    intents=(),
+    intents_only: bool = False,
 ) -> list[str]:
     """Visit one task; an error of this task must not stop the tick."""
     before = str(coord(task).get("phase") or "accept")
     try:
-        lines = _advance_task(store, worker, task, runner=runner, lane_runner=lane_runner)
+        if intents or intents_only:
+            lines = _advance_task(
+                store,
+                worker,
+                task,
+                runner=runner,
+                lane_runner=lane_runner,
+                intents=intents,
+                intents_only=intents_only,
+            )
+        else:
+            lines = _advance_task(
+                store, worker, task, runner=runner, lane_runner=lane_runner
+            )
     except CoordinatorError as exc:
         lines = [f"blocked: {redact(str(exc))}"]
     except StoreError as exc:
@@ -2924,6 +2955,8 @@ def _advance_guarded(
         lines = [*lines, *_after_advance(store, worker, task, before)]
     except StoreError as exc:
         lines = [*lines, f"store error: {redact(str(exc))}"]
+    except Exception as exc:  # noqa: BLE001
+        lines = [*lines, f"error: {redact(str(exc))}"]
     return lines
 
 
@@ -2935,16 +2968,42 @@ def advance_one(
     lane_runner: LaneRunner | None,
 ) -> list[str]:
     lines: list[str] = []
+    if worker.orders:
+        lines.extend(sweep_terminal_orders(store, worker))
     tasks = _open_tasks(store, worker.session_id)
+    intents = pending_order_intents(store, worker) if worker.orders else {}
     touched: set[str] = set()
-    for task in tasks:  # 1. observe waiting tasks
+    for task in tasks:  # 1. waiting tasks and pending intents
+        tid = str(task["id"])
+        task_intents = intents.pop(tid, []) if is_order(task) else []
         if not parked(task, worker):
+            if task_intents:
+                lines.extend(
+                    _advance_guarded(
+                        store,
+                        worker,
+                        task,
+                        runner=runner,
+                        lane_runner=lane_runner,
+                        intents=task_intents,
+                        intents_only=True,
+                    )
+                )
+                if any(
+                    intent["payload"].get("kind") == "cancel"
+                    for intent in task_intents
+                ):
+                    touched.add(tid)
             continue
-        if retry_remaining(coord(task), worker) > 0:
+        idle = (
+            coord(task).get("phase") == "queued"
+            or retry_remaining(coord(task), worker) > 0
+        )
+        if idle and not task_intents:
             continue
-        if coord(task).get("phase") == "queued":
-            continue
-        if not observation_due(store, task, worker):
+        if not observation_due(
+            store, task, worker, has_intent=bool(task_intents)
+        ):
             continue
         lines.extend(
             _advance_guarded(
@@ -2953,10 +3012,12 @@ def advance_one(
                 task,
                 runner=runner,
                 lane_runner=lane_runner,
+                intents=task_intents,
+                intents_only=idle,
             )
         )
         mark_observed(store, task, worker)
-        touched.add(str(task["id"]))
+        touched.add(tid)
     runnable = [t for t in tasks if not _terminal(t) and not parked(t, worker)]
     if not runnable:
         queued = [
