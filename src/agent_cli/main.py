@@ -82,6 +82,7 @@ from .model_slots import (
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
+from .runner_cmd import cmd_runner
 from .runtime import (
     PreflightRuntime,
     Runtime,
@@ -5008,6 +5009,7 @@ COMMANDS = {
     "assign": cmd_assign,
     "subscribe": cmd_subscribe,
     "mail": cmd_mail,
+    "runner": cmd_runner,
 }
 
 
@@ -5017,7 +5019,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|assign|subscribe|mail|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate|runner> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

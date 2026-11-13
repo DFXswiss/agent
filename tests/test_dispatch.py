@@ -104,7 +104,18 @@ def test_the_worktree_path_places_the_job_under_the_work_root() -> None:
 
 def test_the_session_name_is_safe_for_tmux() -> None:
     # Job punctuation must not leak into the tmux session name.
-    assert session_name("job/7") == "agent-job-7"
+    assert session_name("job/7") == "job-job-7"
+
+
+def test_long_job_ids_keep_distinct_session_names() -> None:
+    # reap_orphans reconstructs the name from the row id, so truncation would
+    # let two jobs share a name and get a live worker killed.
+    first = "owner__pull-request__" + "a" * 40
+    second = "owner__pull-request__" + "b" * 40
+
+    assert session_name(first) == f"job-{first}"
+    assert session_name(second) == f"job-{second}"
+    assert session_name(first) != session_name(second)
 
 
 # --------------------------------------------------------------- slots
