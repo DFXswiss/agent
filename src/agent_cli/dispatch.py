@@ -12,11 +12,11 @@ silent-failure check pass every job.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
 from . import outputs
-from . import runtime
 from . import workspace
 from .runtime import Completed
 from .store import Store, utcnow
@@ -31,9 +31,18 @@ def worktree_path(work_root: str, job_id: str) -> str:
     return f"{work_root}/{job_id}"
 
 
+SESSION_PREFIX = "job-"
+
+
 def session_name(job_id: str) -> str:
-    """tmux session name for the given job."""
-    return runtime.tmux_name(job_id)
+    """tmux session name for the given job: the whole id, never truncated.
+
+    `reap_orphans` rebuilds the name from the row id and compares it against a
+    listing of live sessions, so the mapping must be injective. Replacing
+    unsafe characters keeps it so; truncating (as a generic name helper does)
+    would make two long ids share a session name and let a live job be reaped.
+    """
+    return SESSION_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "-", job_id)
 
 
 def running_slots(store: Store, runner: Callable[[list[str]], Completed], *, socket: str) -> int:

@@ -1,0 +1,885 @@
+"""Tests for the `agent runner` command layer.
+
+Every external effect is faked: `run_argv` is replaced so no `gh`, `git`, `ps`
+or `tmux` runs, and the worker receives an injected `popen`. The store is the
+real PostgreSQL store the rest of the suite uses.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import io
+import json
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from agent_cli import dispatch
+from agent_cli.ingest import job_id, job_row
+from agent_cli.runtime import Completed
+from agent_cli.runner_cmd import (
+    OwnJobs,
+    RunnerPaths,
+    cmd_runner,
+    exit_code_of,
+    expected_login,
+    load_json,
+    runner_paths,
+    run_worker,
+    transcript_of,
+    transcript_size_of,
+    work_dirs,
+)
+from agent_cli.store import Store
+
+
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> Completed:
+    return Completed(returncode, stdout, stderr)
+
+
+# ------------------------------------------------------------------ load_json
+
+
+def test_load_json_returns_a_json_object(tmp_path: Path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_text('{"enabled": true}', encoding="utf-8")
+
+    assert load_json(path, "policy") == {"enabled": True}
+
+
+def test_load_json_stops_on_a_missing_file(tmp_path: Path) -> None:
+    # A missing configuration must stop the command, not read as an empty one.
+    with pytest.raises(SystemExit, match="policy"):
+        load_json(tmp_path / "policy.json", "policy")
+
+
+def test_load_json_stops_on_invalid_json(tmp_path: Path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="invalid JSON"):
+        load_json(path, "policy")
+
+
+def test_load_json_stops_on_a_non_object(tmp_path: Path) -> None:
+    # A list or scalar is readable JSON but not a configuration.
+    path = tmp_path / "policy.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="not a JSON object"):
+        load_json(path, "policy")
+
+
+def test_load_json_stops_on_undecodable_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(SystemExit, match="policy"):
+        load_json(path, "policy")
+
+
+# -------------------------------------------------------------- expected_login
+
+
+def test_expected_login_is_read_and_trimmed() -> None:
+    assert expected_login({"expected_gh_user": " example-bot "}) == "example-bot"
+
+
+@pytest.mark.parametrize("policy", [{}, {"expected_gh_user": ""}, {"expected_gh_user": 7}])
+def test_expected_login_stops_when_the_policy_does_not_name_one(
+    policy: dict[str, Any],
+) -> None:
+    # Acting under whatever identity `gh` happens to carry is not this runner.
+    with pytest.raises(SystemExit, match="expected_gh_user"):
+        expected_login(policy)
+
+
+# -------------------------------------------------------------------- ingest
+
+
+def _ingest_runner(
+    *,
+    login: str,
+    calls: list[list[str]],
+    notifications: list[dict[str, Any]] | None = None,
+    comments: list[dict[str, Any]] | None = None,
+) -> Callable[[list[str]], Completed]:
+    def run(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, f"{login}\n")
+        if joined.endswith("--slurp notifications"):
+            return _completed(0, json.dumps([notifications or []]))
+        if "/comments" in joined:
+            return _completed(0, json.dumps([comments or []]))
+        if "--jq .private" in joined:
+            return _completed(0, "false\n")
+        raise AssertionError(argv)
+
+    return run
+
+
+def _write_policy(home: Path, **overrides: Any) -> None:
+    policy: dict[str, Any] = {
+        "expected_gh_user": "Example-Bot",
+        "enabled": True,
+        "actors_allow": ["alice"],
+        "repos_allow": ["owner/name"],
+        "job_types_allow": ["pr-review"],
+        "default_skill_on_mention": "pr-review",
+    }
+    policy.update(overrides)
+    runner_dir = home / "runner"
+    runner_dir.mkdir(parents=True, exist_ok=True)
+    (runner_dir / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+
+
+def test_ingest_creates_a_job_for_an_admitted_mention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        _ingest_runner(
+            # The check is case-insensitive; the policy says Example-Bot.
+            login="example-bot",
+            calls=calls,
+            notifications=[
+                {
+                    "repository": {"full_name": "owner/name"},
+                    "subject": {"url": "https://api.github.com/repos/owner/name/issues/7"},
+                }
+            ],
+            comments=[
+                {"body": "@example-bot pr-review please", "user": {"login": "alice"}}
+            ],
+        ),
+    )
+
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    expected = job_id("owner/name", "7", "pr-review")
+    store = Store(home)
+    try:
+        row = store.row("job", expected)
+        assert row is not None
+        assert row["state"] == "queued"
+        assert row["actor"] == "alice"
+    finally:
+        store.close()
+    assert f"job.queued {expected}" in capsys.readouterr().out
+
+
+def test_ingest_fails_closed_when_gh_is_another_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        _ingest_runner(login="someone-else", calls=calls),
+    )
+
+    with pytest.raises(SystemExit, match="gh is authenticated as someone-else"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+    # The notifications call must not happen under the wrong identity.
+    assert not any("notifications" in " ".join(argv) for argv in calls)
+
+
+# ---------------------------------------------------------------------- lock
+
+
+def test_a_held_lock_makes_a_mutating_command_report_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    state = home / "runner" / "state"
+    state.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with (state / "runner.lock").open("w") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        cmd_runner(["prune"])
+
+    assert "runner busy" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------- OwnJobs
+
+
+def _job_row(job_type: str = "pr-review") -> dict[str, Any]:
+    return job_row(
+        session_id="s",
+        repo="owner/name",
+        ref="7",
+        job_type=job_type,
+        actor="alice",
+    )
+
+
+def test_own_jobs_hides_and_refuses_foreign_rows(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    store = Store(home)
+    try:
+        own_row = _job_row()
+        store.write("job", "insert", own_row["id"], own_row)
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "job",
+                "op": "insert",
+                "row_id": "foreign-job",
+                "payload": {"id": "foreign-job", "state": "queued"},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+        own = OwnJobs(store)
+
+        assert [row["id"] for row in own.rows("job")] == [own_row["id"]]
+        assert own.row("job", "foreign-job") is None
+        assert own.row("job", own_row["id"]) is not None
+
+        extra = _job_row("merge-conflict")
+        own.write("job", "insert", extra["id"], extra)
+        assert store.row("job", extra["id"]) is not None
+    finally:
+        store.close()
+
+
+# ------------------------------------------------------------------- dispatch
+
+
+_BASELINE = json.dumps(
+    {
+        "data": {
+            "repository": {
+                "issueOrPullRequest": {
+                    "__typename": "PullRequest",
+                    "comments": {"nodes": [{"id": "C_1"}]},
+                    "reviews": {"nodes": []},
+                }
+            }
+        }
+    }
+)
+
+
+def _dispatch_runner(calls: list[list[str]]) -> Callable[[list[str]], Completed]:
+    def run(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        joined = " ".join(argv)
+        if "rev-parse --is-bare-repository" in joined:
+            return _completed(1, "false")
+        if "clone --bare" in joined:
+            return _completed()
+        if "config remote.origin.fetch" in joined:
+            return _completed()
+        if "fetch --prune" in joined:
+            return _completed()
+        if "worktree add" in joined:
+            return _completed()
+        if "graphql" in joined:
+            return _completed(0, _BASELINE)
+        if "new-session" in joined:
+            return _completed()
+        raise AssertionError(argv)
+
+    return run
+
+
+def test_dispatch_removes_stale_logs_before_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    runner_dir = home / "runner"
+    (runner_dir / "state" / "logs").mkdir(parents=True)
+    (runner_dir / "runner.json").write_text(
+        json.dumps({"max_concurrent": 1}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    # A stale exit code would be read by finalize as this attempt's result.
+    stale_exit = runner_dir / "state" / "logs" / f"{row['id']}.exit"
+    stale_transcript = runner_dir / "state" / "logs" / f"{row['id']}.transcript"
+    stale_exit.write_text("0\n", encoding="utf-8")
+    stale_transcript.write_text("old attempt\n", encoding="utf-8")
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda _name: "/usr/bin/agent"
+    )
+
+    cmd_runner(["dispatch"])
+
+    assert not stale_exit.exists()
+    assert not stale_transcript.exists()
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+        assert saved["session"] == dispatch.session_name(row["id"])
+    finally:
+        store.close()
+    assert f"job.started {row['id']}" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- prune
+
+
+def _write_runner_config(home: Path, config: dict[str, Any]) -> None:
+    runner_dir = home / "runner"
+    runner_dir.mkdir(parents=True, exist_ok=True)
+    (runner_dir / "runner.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+def test_prune_removes_old_finished_jobs_and_their_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"done": 0}})
+    logs = home / "runner" / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", row["id"]) is None
+    finally:
+        store.close()
+    assert not any(logs.iterdir())
+    out = capsys.readouterr().out
+    assert f"job.pruned {row['id']}" in out
+    # An absent retention setting must not be read as zero.
+    assert "prune failed not configured" in out
+
+
+def test_prune_does_not_delete_when_retention_is_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", row["id"]) is not None
+    finally:
+        store.close()
+    out = capsys.readouterr().out
+    assert "prune done not configured" in out
+    assert "prune failed not configured" in out
+
+
+# ---------------------------------------------------------------------- retry
+
+
+def test_retry_requeues_and_removes_the_previous_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z", "attempts": 0})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    worktree = runner_dir / "state" / "work" / row["id"]
+    worktree.mkdir(parents=True)
+    (worktree / "file.txt").write_text("stale", encoding="utf-8")
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    cmd_runner(["retry", row["id"]])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved["attempts"] == 1
+        assert saved["started"] is None
+        assert saved["exit_code"] is None
+    finally:
+        store.close()
+    assert not any(logs.iterdir())
+    assert not worktree.exists()
+    joined = [" ".join(argv) for argv in calls]
+    assert any("worktree remove" in command for command in joined)
+    assert any("worktree prune" in command for command in joined)
+    assert f"job.retried {row['id']}" in capsys.readouterr().out
+
+
+def test_retry_refuses_a_job_owned_by_another_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    store = Store(home)
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "job",
+                "op": "insert",
+                "row_id": "foreign-job",
+                "payload": {"id": "foreign-job", "state": "failed"},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="belongs to another device"):
+        cmd_runner(["retry", "foreign-job"])
+
+
+# --------------------------------------------------------------- exit_code_of
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("0\n", 0),
+        (" 7 \n", 7),
+        ("-1\n", -1),
+        ("", None),
+        ("abc", None),
+        ("1.0", None),
+        ("0x10", None),
+    ],
+)
+def test_exit_code_of_accepts_only_a_complete_integer(
+    tmp_path: Path, content: str, expected: int | None
+) -> None:
+    paths = runner_paths(tmp_path / "runner")
+    paths.logs.mkdir(parents=True)
+    (paths.logs / "j.exit").write_text(content, encoding="utf-8")
+
+    assert exit_code_of(paths, "j") is expected
+
+
+def test_exit_code_of_returns_none_when_the_file_is_missing(tmp_path: Path) -> None:
+    assert exit_code_of(runner_paths(tmp_path / "runner"), "j") is None
+
+
+# ------------------------------------------------------------- log helpers
+
+
+def test_transcript_helpers_tolerate_missing_and_undecodable_files(
+    tmp_path: Path,
+) -> None:
+    paths = runner_paths(tmp_path / "runner")
+    paths.logs.mkdir(parents=True)
+
+    assert transcript_of(paths, "j") == ""
+    assert transcript_size_of(paths, "j") is None
+
+    (paths.logs / "j.transcript").write_bytes(b"ok \xff")
+    assert transcript_of(paths, "j").startswith("ok ")
+    assert transcript_size_of(paths, "j") == 4
+
+
+def test_work_dirs_lists_sorted_immediate_directories(tmp_path: Path) -> None:
+    paths = runner_paths(tmp_path / "runner")
+    paths.work.mkdir(parents=True)
+    (paths.work / "b").mkdir()
+    (paths.work / "a").mkdir()
+    (paths.work / "file").write_text("x", encoding="utf-8")
+
+    assert work_dirs(paths) == ["a", "b"]
+
+
+# --------------------------------------------------------------------- worker
+
+
+class _FakeStore:
+    """The two reads the worker makes, without a database."""
+
+    def __init__(self, row: dict[str, Any] | None, device: str = "this-device") -> None:
+        self._row = row
+        self._device = device
+
+    def row(self, table: str, row_id: str) -> dict[str, Any] | None:
+        if table == "job" and self._row is not None and row_id == self._row["id"]:
+            return {**self._row, "_origin_device_id": self._device}
+        return None
+
+    def device_id(self) -> str:
+        return self._device
+
+
+class _Stream:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+
+class _Process:
+    def __init__(self, code: int, chunks: list[bytes]) -> None:
+        self.stdout = _Stream(chunks)
+        self._code = code
+
+    def wait(self) -> int:
+        return self._code
+
+
+def _worker_home(tmp_path: Path, *, deny: Any = None) -> tuple[RunnerPaths, str]:
+    paths = runner_paths(tmp_path / "home" / "runner")
+    paths.prompts.mkdir(parents=True)
+    (paths.prompts / "pr-review.md").write_text(
+        "repo {{REPO}} ref {{REF}} job {{JOB_ID}}", encoding="utf-8"
+    )
+    skills: dict[str, Any] = {}
+    if deny is not None:
+        skills["pr-review"] = {"deny": deny}
+    config = {
+        "agent": {"command": "agent-cli", "args": ["run"], "prompt_flag": "--prompt"},
+        "defaults": {"deny": ["Bash"]},
+        "skills": skills,
+    }
+    paths.runner_config.write_text(json.dumps(config), encoding="utf-8")
+    job_id_value = job_id("owner/name", "7", "pr-review")
+    (paths.work / job_id_value).mkdir(parents=True)
+    return paths, job_id_value
+
+
+def _worker_store(job_id_value: str) -> _FakeStore:
+    row = {
+        "id": job_id_value,
+        "repo": "owner/name",
+        "ref": "7",
+        "job_type": "pr-review",
+    }
+    return _FakeStore(row)
+
+
+def test_worker_runs_the_agent_and_records_its_output(tmp_path: Path) -> None:
+    paths, job_id_value = _worker_home(tmp_path, deny=["Bash", "Edit"])
+    out = io.BytesIO()
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    chunks = [b"hello ", b"world\n"]
+
+    def popen(argv: list[str], **kwargs: Any) -> _Process:
+        calls.append((argv, kwargs))
+        return _Process(0, chunks)
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=popen,
+        out=out,
+    )
+
+    assert code == 0
+    prompt = paths.logs / f"{job_id_value}.prompt"
+    assert calls[0][0] == [
+        "agent-cli",
+        "run",
+        "--deny",
+        "Bash",
+        "--deny",
+        "Edit",
+        "--prompt",
+        str(prompt),
+    ]
+    # The agent's streams are merged so one transcript holds everything.
+    assert calls[0][1] == {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+    # The substituted prompt must name this job, its repository and its ref.
+    assert prompt.read_text(encoding="utf-8") == (
+        f"repo owner/name ref 7 job {job_id_value}"
+    )
+    assert out.getvalue() == b"hello world\n"
+    assert (paths.logs / f"{job_id_value}.transcript").read_bytes() == b"hello world\n"
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "0\n"
+
+
+def test_worker_inherits_the_default_deny_list(tmp_path: Path) -> None:
+    # A job type without its own deny list uses the runner's defaults.
+    paths, job_id_value = _worker_home(tmp_path, deny=None)
+    calls: list[list[str]] = []
+
+    def popen(argv: list[str], **_kwargs: Any) -> _Process:
+        calls.append(argv)
+        return _Process(0, [])
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=popen,
+    )
+
+    assert code == 0
+    assert calls[0][:4] == ["agent-cli", "run", "--deny", "Bash"]
+
+
+def test_worker_writes_exit_two_when_the_job_cannot_be_identified(
+    tmp_path: Path,
+) -> None:
+    paths, job_id_value = _worker_home(tmp_path)
+
+    code = run_worker(
+        paths,
+        _FakeStore(None),
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
+    )
+
+    assert code == 2
+    assert "not in the store" in (
+        paths.logs / f"{job_id_value}.transcript"
+    ).read_text(encoding="utf-8")
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
+
+
+def test_worker_writes_exit_127_when_the_command_cannot_start(
+    tmp_path: Path,
+) -> None:
+    paths, job_id_value = _worker_home(tmp_path)
+
+    def popen(_argv: list[str], **_kwargs: Any) -> Any:
+        raise FileNotFoundError("agent-cli")
+
+    code = run_worker(
+        paths, _worker_store(job_id_value), str(paths.work / job_id_value), popen=popen
+    )
+
+    assert code == 127
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "127\n"
+
+
+def test_worker_refuses_a_directory_that_is_not_directly_under_the_work_root(
+    tmp_path: Path,
+) -> None:
+    paths, job_id_value = _worker_home(tmp_path)
+    nested = paths.work / job_id_value / "nested"
+    nested.mkdir()
+
+    for cwd in (str(paths.work), str(nested), str(tmp_path / "elsewhere")):
+        code = run_worker(paths, _worker_store(job_id_value), cwd)
+        assert code == 2
+
+    # Nothing may be written when the worker cannot name its job.
+    assert not paths.logs.exists()
+
+
+def test_worker_writes_exit_two_when_the_prompt_template_is_missing(
+    tmp_path: Path,
+) -> None:
+    paths, job_id_value = _worker_home(tmp_path)
+    (paths.prompts / "pr-review.md").unlink()
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
+    )
+
+    assert code == 2
+    assert "prompt template" in (
+        paths.logs / f"{job_id_value}.transcript"
+    ).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- supervise
+
+
+def test_supervise_exits_one_when_a_reap_step_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    def run(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        if "list-sessions" in joined:
+            return _completed(0, "job-orphan\n")
+        if "kill-session" in joined:
+            return _completed(1, "", "no such session")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["supervise"])
+
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    assert "job.finalized none" in captured.out
+    assert "reap failed job-orphan" in captured.out
+
+
+# ------------------------------------------------------------------- doctor
+
+
+def _healthy_runner_files(home: Path) -> RunnerPaths:
+    paths = runner_paths(home / "runner")
+    paths.prompts.mkdir(parents=True)
+    (paths.prompts / "pr-review.md").write_text("prompt", encoding="utf-8")
+    paths.policy.write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    paths.runner_config.write_text(
+        json.dumps(
+            {
+                "max_concurrent": 1,
+                "clone_stall_minutes": 5,
+                "defaults": {"timeout_minutes": 30, "stall_minutes": 5, "deny": ["Bash"]},
+                "skills": {"pr-review": {"done_kind": "pr-reviewed"}},
+                "agent": {
+                    "command": "agent-cli",
+                    "args": ["run"],
+                    "prompt_flag": "--prompt",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.skills_catalog.write_text(
+        json.dumps({"skills": [{"id": "pr-review"}]}), encoding="utf-8"
+    )
+    paths.agent_config.write_text(
+        json.dumps(
+            {
+                "cli": "agent",
+                "session_kind": "runner",
+                "skills": ["spine", "review-loop", "pr-review"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return paths
+
+
+def test_doctor_reports_a_healthy_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+
+    cmd_runner(["doctor"])
+
+    assert capsys.readouterr().out.strip() == "doctor ok"
+
+
+def test_doctor_reports_every_problem_and_exits_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+    # Two independent problems must both be reported, not just the first.
+    config = json.loads(paths.runner_config.read_text(encoding="utf-8"))
+    config["max_concurrent"] = 0
+    paths.runner_config.write_text(json.dumps(config), encoding="utf-8")
+    agent_config = json.loads(paths.agent_config.read_text(encoding="utf-8"))
+    agent_config["cli"] = "other"
+    paths.agent_config.write_text(json.dumps(agent_config), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem:" in out
+    assert "max_concurrent is not a positive integer" in out
+    assert "cli is not 'agent'" in out
+    assert "doctor 2 problems" in out
+
+
+def test_doctor_reports_missing_configuration_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    (home / "runner").mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: policy" in out
+    assert "doctor problem: runner config" in out
+    assert "not writable" not in out
