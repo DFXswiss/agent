@@ -316,5 +316,65 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertTrue(any("gate:review-1/quality" in b for b in blocking))
 
 
+class TestSmallChangeGate(unittest.TestCase):
+    HEAD = "a" * 40
+    OTHER = "b" * 40
+
+    def _task(
+        self,
+        *,
+        verdict: str | None = "small",
+        small_head: str | None = None,
+        gate_head: str | None = None,
+        evidence: bool = True,
+        workflow: str = "implement",
+    ) -> dict:
+        task = _ready_task(workflow=workflow)
+        task["gates"] = _approved_gates(gate_head or self.HEAD)
+        task["checklist_evidence"] = (
+            {"implementer_done": f"small change at {self.HEAD}"} if evidence else {}
+        )
+        if verdict is not None:
+            task["small_change"] = {
+                "verdict": verdict,
+                "head": small_head or self.HEAD,
+            }
+        return task
+
+    def test_matching_verdict_does_not_block(self) -> None:
+        self.assertEqual(ready_for_done_blocking(self._task()), [])
+
+    def test_not_small_blocks(self) -> None:
+        blocking = ready_for_done_blocking(self._task(verdict="not-small"))
+        self.assertIn("1:small_change=not-small", blocking)
+
+    def test_other_head_blocks(self) -> None:
+        blocking = ready_for_done_blocking(self._task(small_head=self.OTHER))
+        self.assertIn("1:small_change=head_mismatch", blocking)
+
+    def test_short_gate_head_blocks(self) -> None:
+        task = self._task(gate_head="abc123", small_head="abc123")
+        self.assertIn(
+            "1:small_change=gate_head_not_full_sha", ready_for_done_blocking(task)
+        )
+
+    def test_missing_verdict_blocks(self) -> None:
+        blocking = ready_for_done_blocking(self._task(verdict=None))
+        self.assertIn("1:small_change=missing", blocking)
+
+    def test_task_without_small_evidence_is_unchanged(self) -> None:
+        self.assertEqual(
+            ready_for_done_blocking(self._task(verdict=None, evidence=False)), []
+        )
+
+    def test_resolve_conflicts_is_not_gated(self) -> None:
+        task = self._task(verdict=None, evidence=False, workflow="resolve-conflicts")
+        task["checklist_evidence"] = {
+            "reviewer_approved": f"small change at {self.HEAD}"
+        }
+        blocking = ready_for_done_blocking(task)
+        self.assertFalse(any("small_change" in entry for entry in blocking))
+
+
 if __name__ == "__main__":
     unittest.main()

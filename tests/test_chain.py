@@ -762,6 +762,73 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("not the next step", denied.reason)
 
 
+class TestSmallChangeLateStamp(unittest.TestCase):
+    HEAD = "a" * 40
+    OTHER = "b" * 40
+
+    def _checklist(self) -> dict[str, str]:
+        cl = _pending("implement")
+        cl["session_registered"] = "ja"
+        cl["spec_written"] = "ja"
+        return cl
+
+    def _snapshot(self, small: dict | None) -> dict:
+        snapshot: dict = {
+            "state": "local-check",
+            "workflow": "implement",
+            "agents": [],
+        }
+        if small is not None:
+            snapshot["small_change"] = small
+        return snapshot
+
+    def _close(self, small: dict | None, head: str | None = None):
+        return close_allowed(
+            "implement",
+            "implementer_done",
+            checklist=self._checklist(),
+            source="script",
+            evidence=f"small change at {head or self.HEAD}",
+            snapshot=self._snapshot(small),
+        )
+
+    def test_matching_verdict_allows_the_late_stamp(self) -> None:
+        verdict = self._close({"verdict": "small", "head": self.HEAD})
+        self.assertTrue(verdict.allowed)
+
+    def test_missing_verdict_denies(self) -> None:
+        verdict = self._close(None)
+        self.assertFalse(verdict.allowed)
+        self.assertIn("no finished implementer agent", verdict.reason)
+
+    def test_not_small_verdict_denies(self) -> None:
+        verdict = self._close({"verdict": "not-small", "head": self.HEAD})
+        self.assertFalse(verdict.allowed)
+        self.assertIn("no finished implementer agent", verdict.reason)
+
+    def test_other_head_denies(self) -> None:
+        verdict = self._close({"verdict": "small", "head": self.OTHER})
+        self.assertFalse(verdict.allowed)
+        self.assertIn("no finished implementer agent", verdict.reason)
+
+    def test_resolve_conflicts_keeps_the_late_stamp(self) -> None:
+        cl = _pending("resolve-conflicts")
+        cl["session_registered"] = "ja"
+        verdict = close_allowed(
+            "resolve-conflicts",
+            "conflicts_resolved",
+            checklist=cl,
+            source="script",
+            evidence=f"small change at {self.HEAD}",
+            snapshot={
+                "state": "local-check",
+                "workflow": "resolve-conflicts",
+                "agents": [],
+            },
+        )
+        self.assertTrue(verdict.allowed)
+
+
 
 class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
     def test_an_unpinned_task_closes_with_a_second_slot_row(self) -> None:
