@@ -12,6 +12,7 @@ from typing import Any
 
 from . import order_ops
 from .coordinator_checks import one_line
+from .order_report import render_order_report
 
 
 USAGE = "Usage: agent order " + "|".join(
@@ -230,6 +231,7 @@ RENDER: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "reply": _render_reply,
     "override": _render_override,
     "cancel": _render_cancel,
+    "report": render_order_report,
 }
 
 

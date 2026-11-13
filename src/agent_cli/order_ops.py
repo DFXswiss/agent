@@ -611,6 +611,12 @@ def op_cancel(
     return {"intent": intent_id, "order_id": order_id}
 
 
+def op_report(store, home, *, order_id) -> dict:
+    from .order_report import build_order_report
+
+    return build_order_report(store, need_order(store, order_id))
+
+
 _ID = Param("order_id", "--id", "UUID", required=True)
 _AFTER = Param("after", "--after", "CURSOR", kind="int")
 _NOTIFY = Param("notify_session", "--notify-session", "ID")
@@ -788,6 +794,59 @@ OPERATIONS: tuple[Operation, ...] = (
         fields=("intent", "order_id"),
         func=op_cancel,
         identity=True,
+    ),
+    Operation(
+        "report",
+        "read",
+        (_ID,),
+        fields=(
+            "order_id",
+            "title",
+            "state",
+            "phase",
+            "repo",
+            "base",
+            "pr_url",
+            "head",
+            "summary_en",
+            "summary_de",
+            "rounds",
+            "waivers",
+            "files",
+            "reviews",
+            "reviews_omitted",
+            "comments",
+            "comments_omitted",
+            "a38_report",
+            "local_checks",
+            "ci",
+        ),
+        nested=(
+            ("rounds", ("used", "limit", "max_rounds", "origin", "model")),
+            ("waivers", ("check", "kind", "by", "reason", "at")),
+            (
+                "files",
+                ("head", "base", "total", "added", "deleted", "listed", "omitted", "error"),
+            ),
+            ("files.listed", ("path", "added", "deleted")),
+            (
+                "reviews",
+                ("stage", "round", "head", "provider", "model", "lanes", "verdict", "defects", "at"),
+            ),
+            (
+                "comments",
+                ("kind", "url", "head", "passes", "defects", "blocks_merge", "visible"),
+            ),
+            (
+                "a38_report",
+                ("result", "head", "url", "runs", "runs_omitted", "reason"),
+            ),
+            ("a38_report.runs", ("id", "name", "result", "exit_code")),
+            ("local_checks", ("name", "result", "head", "ran_at")),
+            ("ci", ("state", "head", "observed_at")),
+        ),
+        func=op_report,
+        json_flag=True,
     ),
 )
 

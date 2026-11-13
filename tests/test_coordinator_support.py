@@ -348,6 +348,8 @@ class FakeGh:
         self.revoke_one_review_on_pr_comment = False
         self.fail_pr_guard_after_comment = False
         self.ready_calls = 0
+        self.numstat = ""
+        self.numstat_rc = 0
 
     def __call__(self, argv: list[str]) -> Completed:
         if argv and argv[0] == "env":
@@ -655,6 +657,10 @@ class FakeGh:
             self.staged = self.dirty
             return Completed(0, "", "")
         if cmd == "diff":
+            if "--numstat" in args:
+                if self.numstat_rc:
+                    return Completed(self.numstat_rc, "", "fatal: bad revision")
+                return Completed(0, self.numstat, "")
             if "--quiet" in args:
                 return Completed(1 if self.staged else 0, "", "")
             return Completed(0, "", "")

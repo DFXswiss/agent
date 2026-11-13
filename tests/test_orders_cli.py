@@ -156,7 +156,7 @@ def duplicate_order(device, order_id: str) -> tuple[dict, str]:
 @pytest.mark.no_pg
 def test_group_usage() -> None:
     assert orders.USAGE == (
-        "Usage: agent order submit|list|show|events|wait|ack|reply|override|cancel"
+        "Usage: agent order submit|list|show|events|wait|ack|reply|override|cancel|report"
     )
     for argv in (("order",), ("order", "nope")):
         with pytest.raises(SystemExit) as exc:
@@ -174,6 +174,7 @@ USAGE_LINES = {
     "reply": "Usage: agent order reply --id UUID --body-file PATH",
     "override": "Usage: agent order override --id UUID --check KEY --reason TEXT",
     "cancel": "Usage: agent order cancel --id UUID --reason TEXT",
+    "report": "Usage: agent order report --id UUID [--json]",
 }
 
 
@@ -222,6 +223,7 @@ def test_operations_table_is_consistent() -> None:
         "reply",
         "override",
         "cancel",
+        "report",
     ]
     assert len(names) == len(set(names))
     for operation in order_ops.OPERATIONS:
@@ -241,6 +243,7 @@ def test_operations_table_is_consistent() -> None:
         "list",
         "show",
         "events",
+        "report",
     }
     views = order_ops.view_operations()
     assert list(views) == [name for name in names if name != "wait"]
@@ -1505,6 +1508,17 @@ def test_results_carry_exactly_the_declared_fields(device) -> None:
         device.home,
         {"order_id": cancel_id, "reason": "No longer needed"},
     )
+    report_id = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        report_id,
+        phase="ci",
+        pr_number=42,
+    )
+    results["report"] = order_ops.run(
+        "report", device.store, device.home, {"order_id": report_id}
+    )
     assert set(results) == {
         "submit",
         "list",
@@ -1514,12 +1528,17 @@ def test_results_carry_exactly_the_declared_fields(device) -> None:
         "reply",
         "override",
         "cancel",
+        "report",
     }
     for name, result in results.items():
         operation = next(op for op in order_ops.OPERATIONS if op.name == name)
         assert set(result) == set(operation.fields)
         for path, keys in operation.nested:
-            value = result[path]
+            value = result
+            for segment in path.split("."):
+                if value is None:
+                    break
+                value = value.get(segment)
             if value is None:
                 continue
             items = value if isinstance(value, list) else [value]
@@ -1550,6 +1569,7 @@ def test_commands_start_no_process(device, capsys, monkeypatch) -> None:
         )
         order("list")
         order("show", "--id", queued)
+        order("report", "--id", queued)
         order("events")
         order("reply", "--id", blocked, "--body-file", body_file(device.home))
         order(
@@ -1564,6 +1584,50 @@ def test_commands_start_no_process(device, capsys, monkeypatch) -> None:
         order("cancel", "--id", queued, "--reason", "Stop")
         order("ack", "--event", event_id)
     capsys.readouterr()
+
+
+def test_report_command(device, capsys) -> None:
+    order_id = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="ci",
+        pr_number=42,
+        head_sha="a" * 40,
+    )
+    order("report", "--id", order_id)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"report {order_id}"
+    assert "title Add a widget" in lines
+    assert "ci pending head - observed -" in lines
+    assert "files -" in lines
+
+    order("report", "--id", order_id, "--json")
+    value = json.loads(capsys.readouterr().out)
+    operation = next(op for op in order_ops.OPERATIONS if op.name == "report")
+    assert set(value) == set(operation.fields)
+
+    with pytest.raises(SystemExit, match="unknown task:"):
+        order("report", "--id", str(uuid.uuid4()))
+    issue_id = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        issue_id,
+        phase="queued",
+        source={
+            "repo": "example/project",
+            "number": 7,
+            "title": "Fix widget",
+            "publication_repo": "example/project",
+            "base": "develop",
+        },
+    )
+    with pytest.raises(SystemExit, match=f"task {issue_id} is not an order"):
+        order("report", "--id", issue_id)
+    with pytest.raises(SystemExit, match="--id is required"):
+        order("report")
 
 
 def test_submit_then_tick_then_events_round_trip(device, capsys, monkeypatch) -> None:

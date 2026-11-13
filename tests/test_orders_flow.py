@@ -11,6 +11,7 @@ from agent_cli.a38_review import ReviewError, parse_review_block
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.coordinator import tick
 from agent_cli.coordinator_orders import own_order_events
+from agent_cli.order_report import build_order_report, render_order_report
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_coordinator import _a38_policy_text, _write_coordinator_a38_report
@@ -117,6 +118,7 @@ def test_reference_flow_to_ready(
     )
     fake = A38FlowGh()
     fake.issues = []
+    fake.numstat = "3\t1\tsrc/app.py\n"
     patch_account_runners(monkeypatch, fake)
     patch_command_runner(monkeypatch, fake)
     monkeypatch.setattr(github_act, "scan_github", scan_done)
@@ -298,6 +300,52 @@ def test_reference_flow_to_ready(
     assert c["a38"]["second_comment"]["blocks_merge"] is False
     assert c["a38"]["second_review_passes"] == 1
     assert c["evidence"]["ready_head"] == fake.head
+
+    report = build_order_report(store, task)
+    assert report["state"] == "ready"
+    assert report["head"] == fake.head
+    assert [run["stage"] for run in report["reviews"]] == [
+        "inner",
+        "review-1",
+        "review-2",
+    ]
+    assert all(run["verdict"] == "approved" for run in report["reviews"])
+    assert all(run["defects"] == 0 for run in report["reviews"])
+    assert all(run["head"] == fake.head for run in report["reviews"])
+    assert [run["lanes"] for run in report["reviews"]] == [
+        "inner=approved",
+        "quality=approved logic=approved",
+        "quality=approved logic=approved",
+    ]
+    assert [run["provider"] for run in report["reviews"]] == [
+        "grok",
+        "grok",
+        "codex",
+    ]
+    comments_by_kind = {comment["kind"]: comment for comment in report["comments"]}
+    assert set(comments_by_kind) == {"review-1", "review-2"}
+    assert all(comment["defects"] == 0 for comment in report["comments"])
+    assert all(comment["url"] for comment in report["comments"])
+    assert comments_by_kind["review-2"]["blocks_merge"] is False
+    assert report["a38_report"]["result"] == "pass"
+    assert report["a38_report"]["runs"] == [
+        {"id": "unit", "name": "Unit tests", "result": "pass", "exit_code": 0}
+    ]
+    assert report["ci"]["state"] == "green"
+    assert report["files"]["total"] == 1
+    assert report["files"]["added"] == 3
+    assert report["files"]["head"] == fake.head
+    assert report["rounds"]["used"] == 1
+    assert any(
+        item["name"] == "a38" and item["result"] == "pass"
+        for item in report["local_checks"]
+    )
+    rendered = render_order_report(report)
+    assert rendered[0] == f"report {task['id']}"
+    assert any(
+        line.startswith(f"a38-report pass head {fake.head[:7]}")
+        for line in rendered
+    )
 
     fake.pr["state"] = "MERGED"
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"

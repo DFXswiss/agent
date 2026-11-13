@@ -32,6 +32,7 @@ from .coordinator_common import (
     coord,
     evidence_base_sha,
     harden_grok_write_argv,
+    is_order,
     is_sha,
     parse_change_summaries,
     parse_model_result,
@@ -2275,6 +2276,72 @@ def write_review_context(
     return "\n".join(lines) + "\n"
 
 
+CHANGE_STATS_FILES = 50
+
+
+def record_change_stats(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+    base_sha: str,
+) -> None:
+    """Keep file and line counts of the review diff on the checkpoint of an order. Does not save the task."""
+    from .coordinator_git import git
+
+    completed = git(
+        store,
+        worker,
+        runner,
+        str(coord(task).get("worktree") or ""),
+        "diff",
+        "--numstat",
+        "--no-ext-diff",
+        "--no-textconv",
+        f"{base_sha}...{head}",
+    )
+    if completed.returncode != 0:
+        stats: dict[str, Any] = {
+            "head": head,
+            "base": base_sha,
+            "error": " ".join(
+                redact(
+                    completed.stderr
+                    or completed.stdout
+                    or "git diff --numstat failed",
+                    limit=200,
+                ).split()
+            ),
+        }
+    else:
+        files: list[dict[str, Any]] = []
+        for line in (completed.stdout or "").splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3 or not parts[2]:
+                continue
+            files.append(
+                {
+                    "path": " ".join(redact(parts[2], limit=200).split()),
+                    "added": int(parts[0]) if parts[0].isdigit() else None,
+                    "deleted": int(parts[1]) if parts[1].isdigit() else None,
+                }
+            )
+        stats = {
+            "head": head,
+            "base": base_sha,
+            "total": len(files),
+            "added": sum(item["added"] for item in files if item["added"] is not None),
+            "deleted": sum(
+                item["deleted"] for item in files if item["deleted"] is not None
+            ),
+            "files": files[:CHANGE_STATS_FILES],
+            "omitted": max(0, len(files) - CHANGE_STATS_FILES),
+        }
+    coord(task)["change_stats"] = stats
+
+
 def write_review_diff(
     store: Store,
     worker: WorkerConfig,
@@ -2302,6 +2369,15 @@ def write_review_diff(
     # Bounded excerpt for prompts; full diff remains on the local artifact path.
     excerpt_path = ctrl / f"review-diff-{head[:12]}.excerpt.txt"
     excerpt_path.write_text(redact(diff_text, limit=12000), encoding="utf-8")
+    if is_order(task):
+        record_change_stats(
+            store,
+            worker,
+            task,
+            runner,
+            head=head,
+            base_sha=base_sha,
+        )
     return diff_path
 
 
