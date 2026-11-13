@@ -296,6 +296,19 @@ class CheckRepoTests(unittest.TestCase):
             self.assertEqual(verdict.lines, 5)
             self.assertEqual(verdict.merge_base, base)
 
+    def test_diff_relative_does_not_hide_changes_outside_a_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo, {"docs/index.md": "index\n"})
+            _checkout(repo, "feature", create=True)
+            _write(repo, "src/big.py", "".join(f"line {i}\n" for i in range(40)))
+            _write(repo, "docs/a.md", "one\n")
+            head = _add_commit(repo, "changes in two directories")
+            _git(repo, "config", "diff.relative", "true")
+            verdict = check_repo(repo / "docs", base, head)
+            self.assertIn("41 changed lines > 30", verdict.reasons)
+            self.assertIn("src/big.py", [item.path for item in verdict.files])
+
     def test_rename_counts_as_two_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

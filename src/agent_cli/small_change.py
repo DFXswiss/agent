@@ -466,6 +466,7 @@ def _numstat_from(repo: Path, merge_base: str, head: str) -> list[FileStat] | No
         "-z",
         "--no-renames",
         "--ignore-submodules=none",
+        "--no-relative",
         merge_base,
         head,
     )
@@ -482,6 +483,7 @@ def _paths_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
         "-z",
         "--no-renames",
         "--ignore-submodules=none",
+        "--no-relative",
         merge_base,
         head,
     )
@@ -498,6 +500,7 @@ def _gitlinks_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
         "-z",
         "--no-renames",
         "--ignore-submodules=none",
+        "--no-relative",
         merge_base,
         head,
     )
@@ -513,13 +516,22 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
     merge_base = ""
     files: tuple[FileStat, ...] = ()
 
-    status = _run_git(repo, "status", "--porcelain=v1", "--untracked-files=normal")
+    # Every diff inherits ``diff.relative`` and resolves paths from the current
+    # directory, so measure the whole repository from its top level instead.
+    top = _run_git(repo, "rev-parse", "--show-toplevel")
+    if top is None or top.returncode != 0 or not top.stdout.strip():
+        reasons.append("repository top level not found")
+        root = repo
+    else:
+        root = Path(top.stdout.decode("utf-8", "replace").strip())
+
+    status = _run_git(root, "status", "--porcelain=v1", "--untracked-files=normal")
     if status is None or status.returncode != 0:
         reasons.append("git status failed")
     elif status.stdout.strip():
         reasons.append("working tree is not clean; commit first")
 
-    rev = _run_git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    rev = _run_git(root, "rev-parse", "--verify", "HEAD^{commit}")
     if rev is None or rev.returncode != 0:
         reasons.append("git rev-parse HEAD failed")
     else:
@@ -531,7 +543,7 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
             )
 
     base_ok = False
-    base_proc = _run_git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+    base_proc = _run_git(root, "cat-file", "-e", f"{base}^{{commit}}")
     if base_proc is None or base_proc.returncode != 0:
         reasons.append(
             f"base commit {base} is not available locally; fetch the base branch"
@@ -540,7 +552,7 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
         base_ok = True
 
     if head and base_ok:
-        merged = _run_git(repo, "merge-base", base, head)
+        merged = _run_git(root, "merge-base", base, head)
         if merged is None or merged.returncode != 0 or not merged.stdout.strip():
             reasons.append("merge base not found")
         else:
@@ -550,13 +562,13 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
     stats: list[FileStat] | None = None
     gitlinks: list[str] | None = None
     if head and merge_base:
-        paths = _paths_from(repo, merge_base, head)
+        paths = _paths_from(root, merge_base, head)
         if paths is None:
             reasons.append("path inventory unreadable")
-        stats = _numstat_from(repo, merge_base, head)
+        stats = _numstat_from(root, merge_base, head)
         if stats is None:
             reasons.append("line inventory unreadable")
-        gitlinks = _gitlinks_from(repo, merge_base, head)
+        gitlinks = _gitlinks_from(root, merge_base, head)
         if gitlinks is None:
             reasons.append("submodule inventory unreadable")
         if (
@@ -568,7 +580,7 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
 
     extra_globs: list[str] = []
     if base_ok:
-        globs, error = load_extra_globs(repo, base)
+        globs, error = load_extra_globs(root, base)
         if error is not None:
             reasons.append(error)
         elif globs is not None:
