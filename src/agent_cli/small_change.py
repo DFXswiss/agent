@@ -419,7 +419,14 @@ def parse_numstat_z(blob: bytes) -> list[FileStat] | None:
 
 def _numstat_from(repo: Path, merge_base: str, head: str) -> list[FileStat] | None:
     proc = _run_git(
-        repo, "diff", "--numstat", "-z", "--no-renames", merge_base, head
+        repo,
+        "diff",
+        "--numstat",
+        "-z",
+        "--no-renames",
+        "--ignore-submodules=none",
+        merge_base,
+        head,
     )
     if proc is None or proc.returncode != 0:
         return None
@@ -428,7 +435,14 @@ def _numstat_from(repo: Path, merge_base: str, head: str) -> list[FileStat] | No
 
 def _paths_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
     proc = _run_git(
-        repo, "diff", "--name-status", "-z", "--no-renames", merge_base, head
+        repo,
+        "diff",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        "--ignore-submodules=none",
+        merge_base,
+        head,
     )
     if proc is None or proc.returncode != 0:
         return None
