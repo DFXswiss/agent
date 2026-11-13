@@ -374,6 +374,27 @@ def close_allowed(
                 step,
             )
         return CloseVerdict(True, "allow", step)
+    # Small-change evidence stands on its own: it must name a measured head in
+    # every state, never fall back to the finished agent artefact.
+    if (
+        workflow == "implement"
+        and key in ("implementer_done", "reviewer_approved")
+        and status == "ja"
+        and is_small_change_evidence(evidence)
+    ):
+        sha = evidence_head(evidence)
+        recorded = snap.get("small_change")
+        if not (
+            sha is not None
+            and isinstance(recorded, Mapping)
+            and recorded.get("verdict") == VERDICT_SMALL
+            and recorded.get("head") == sha
+        ):
+            return CloseVerdict(
+                False,
+                f"small change not measured at {sha}: run agent small-change",
+                step,
+            )
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)
     elif _late_inner_skip(key, status, evidence, snap):

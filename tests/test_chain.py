@@ -799,17 +799,17 @@ class TestSmallChangeLateStamp(unittest.TestCase):
     def test_missing_verdict_denies(self) -> None:
         verdict = self._close(None)
         self.assertFalse(verdict.allowed)
-        self.assertIn("no finished implementer agent", verdict.reason)
+        self.assertIn(f"small change not measured at {self.HEAD}", verdict.reason)
 
     def test_not_small_verdict_denies(self) -> None:
         verdict = self._close({"verdict": "not-small", "head": self.HEAD})
         self.assertFalse(verdict.allowed)
-        self.assertIn("no finished implementer agent", verdict.reason)
+        self.assertIn(f"small change not measured at {self.HEAD}", verdict.reason)
 
     def test_other_head_denies(self) -> None:
         verdict = self._close({"verdict": "small", "head": self.OTHER})
         self.assertFalse(verdict.allowed)
-        self.assertIn("no finished implementer agent", verdict.reason)
+        self.assertIn(f"small change not measured at {self.HEAD}", verdict.reason)
 
     def test_resolve_conflicts_keeps_the_late_stamp(self) -> None:
         cl = _pending("resolve-conflicts")
@@ -828,6 +828,77 @@ class TestSmallChangeLateStamp(unittest.TestCase):
         )
         self.assertTrue(verdict.allowed)
 
+
+
+class TestSmallChangeEvidenceInEveryState(unittest.TestCase):
+    HEAD = "a" * 40
+    OTHER = "b" * 40
+
+    def _checklist(self, key: str) -> dict[str, str]:
+        cl = _pending("implement")
+        cl["session_registered"] = "ja"
+        cl["spec_written"] = "ja"
+        if key == "reviewer_approved":
+            cl["implementer_done"] = "ja"
+        return cl
+
+    def _snapshot(self, key: str, state: str) -> dict:
+        if key == "implementer_done":
+            snapshot: dict = {
+                "agents": [
+                    {"role": "implementer", "vendor": "grok", "status": "done"}
+                ],
+                "implementer_verdict": "done",
+            }
+        else:
+            snapshot = {
+                "agents": [{"role": "reviewer", "vendor": "grok", "status": "done"}],
+                "reviewer_verdict": "approved",
+            }
+        snapshot.update({"state": state, "workflow": "implement"})
+        return snapshot
+
+    def _close(self, key: str, state: str, small: dict | None):
+        snapshot = self._snapshot(key, state)
+        if small is not None:
+            snapshot["small_change"] = small
+        return close_allowed(
+            "implement",
+            key,
+            checklist=self._checklist(key),
+            source="script",
+            evidence=f"small change at {self.HEAD}",
+            snapshot=snapshot,
+        )
+
+    def test_unmeasured_evidence_is_denied_in_every_state(self) -> None:
+        invalid = {
+            "missing": None,
+            "no verdict": {"head": self.HEAD},
+            "not-small": {"verdict": "not-small", "head": self.HEAD},
+            "other head": {"verdict": "small", "head": self.OTHER},
+        }
+        for key in ("implementer_done", "reviewer_approved"):
+            for state in ("implementing", "reviewing"):
+                for label, small in invalid.items():
+                    verdict = self._close(key, state, small)
+                    self.assertFalse(
+                        verdict.allowed, msg=f"{key} {state} {label}"
+                    )
+                    self.assertIn(
+                        f"small change not measured at {self.HEAD}",
+                        verdict.reason,
+                        msg=f"{key} {state} {label}",
+                    )
+                    self.assertIn("run agent small-change", verdict.reason)
+
+    def test_matching_verdict_is_allowed_in_every_state(self) -> None:
+        for key in ("implementer_done", "reviewer_approved"):
+            for state in ("implementing", "reviewing"):
+                verdict = self._close(
+                    key, state, {"verdict": "small", "head": self.HEAD}
+                )
+                self.assertTrue(verdict.allowed, msg=f"{key} {state}")
 
 
 class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
