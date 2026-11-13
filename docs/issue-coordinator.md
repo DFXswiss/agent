@@ -444,6 +444,7 @@ pair.
    saved process id and start time. A live process makes the task wait; one past
    `lane_timeout` is killed. A working row with no live process and no result is
    closed with `recovered: no live process` and retried under the same bound.
+A record of a check lane is closed the same way, but closing it does not retry the phase: the check counts its own attempts.
    A finished reviewer result awaiting its transaction is replayed. A legacy
    `uncertain_lane` flag is removed on the next visit unless a lane is alive,
    and the phase retries under the same bound.
@@ -1247,9 +1248,12 @@ sink with an existing length limit takes only that limit plus a small inspection
 margin before the remaining precise redaction expressions run. If that cut
 splits a token, the cut token is redacted as a whole, and the usual truncation
 marker and hard output limit still apply.
-Tool targets and failed-workflow logs pass their unsliced source into that
-bounded pipeline so credentials crossing the visible cutoff remain inside the
-inspection margin.
+Tool targets pass their unsliced source into that bounded pipeline so
+credentials crossing the visible cutoff remain inside the inspection margin.
+Outputs that keep their end, such as test and check output and failed-workflow
+logs, are redacted whole without a length limit and only then cut to their
+end, which follows the usual truncation marker; the cut therefore never
+exposes part of a credential.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is

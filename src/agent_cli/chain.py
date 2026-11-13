@@ -306,7 +306,12 @@ def close_allowed(
     snapshot: dict[str, Any] | None = None,
     status: str = "ja",
 ) -> CloseVerdict:
-    """May this key be set to ja/n_a/unavailable NOW? Only the current next step."""
+    """May this key be written with this status now?
+
+    A workflow key may be set to ja, n_a or unavailable, and only as the current
+    next step; a second review key that is n_a may also be raised to ja. A
+    registry check key is decided by _check_close_allowed.
+    """
     key = canonical_key(key)
     checklist = canonical_checklist(checklist)
     step = find_step(workflow, key)

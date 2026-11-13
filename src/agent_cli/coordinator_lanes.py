@@ -101,7 +101,7 @@ class GateOrderingUnavailableError(CoordinatorError):
 
 
 def retry_remaining(c: dict[str, Any], worker: WorkerConfig) -> int:
-    """Seconds until the stored retry is due; 0 when it is due or absent."""
+    """Seconds until the stored retry is due; 0 when it is due, absent, or stored with a time after now."""
     retry = c.get("retry")
     if not isinstance(retry, dict):
         return 0
@@ -115,9 +115,9 @@ def retry_remaining(c: dict[str, Any], worker: WorkerConfig) -> int:
     )
     wait = worker.poll_seconds * 2 ** (attempt - 1)
     elapsed = seconds_since(retry.get("at"))
-    if elapsed is None:
+    if elapsed is None or elapsed < 0:
         return 0
-    return min(wait, max(0, int(wait - elapsed)))
+    return max(0, int(wait - elapsed))
 
 
 def schedule_retry(
@@ -206,6 +206,8 @@ def check_command_unavailable(
         "not a code failure."
     )
     save_task(store, task)
+    replies = coord(task).get("authorized_replies")
+    count = len(replies) if isinstance(replies, list) else 0
     return publish_blocker(
         store,
         worker,
@@ -214,6 +216,7 @@ def check_command_unavailable(
         c["blocker"],
         kind="check-unavailable",
         reply_checkpoint=True,
+        occurrence=f"{task['id']}:{count}",
     )
 
 
@@ -1203,7 +1206,7 @@ def _read_lane_process(
     if not isinstance(value, dict):
         return None
     pid = value.get("pid")
-    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or pid > 2**31 - 1:
         return None
     return value
 
@@ -1275,7 +1278,7 @@ def _saved_reviewer_result(
 def recover_working_lanes(
     store: Store, worker: WorkerConfig, task: dict[str, Any]
 ) -> str:
-    """Close working lane rows without a live process: "none", "waiting" or "recovered"."""
+    """Close working lane rows without a live process: "none", "waiting" or "recovered"; closed check-lane rows alone give "none"."""
     task_id = str(task["id"])
     closed_rows: list[dict[str, Any]] = []
     lane_alive = False
@@ -1332,22 +1335,18 @@ def recover_working_lanes(
 
     if lane_alive:
         return "waiting"
-    if closed_rows:
+    if any(closed.get("role") != "check" for closed in closed_rows):
         return "recovered"
     return "none"
 
 
 def implementer_model_id(
-    store: Store, worker: WorkerConfig, task: dict[str, Any] | None = None
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
 ) -> str:
     """The configured model identifier of the implementer role of this worker."""
     try:
         ai = load_ai_accounts(store.home)
-        vendor = (
-            models_for_new_record(task).first
-            if task is not None
-            else ai.models.first
-        )
+        vendor = models_for_new_record(task).first
         return ai.for_lane(
             worker.session_id, "implementer", vendor, require_execution=False
         ).model

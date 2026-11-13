@@ -177,7 +177,7 @@ def test_state_without_a_record_is_dead(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not JSON", encoding="utf-8")
     assert lane_process_state(worker, TID, "agent-1") == "dead"
-    for pid in (0, True, "123"):
+    for pid in (0, True, "123", 2**31):
         path.write_text(json.dumps({"pid": pid}), encoding="utf-8")
         assert lane_process_state(worker, TID, "agent-1") == "dead"
 
@@ -444,6 +444,25 @@ def test_recover_closes_a_row_without_a_live_process(tmp_path: Path) -> None:
     assert saved["note"] == "recovered: no live process"
     assert saved["finished_at"]
     assert recover_working_lanes(store, worker, task) == "none"
+
+
+def test_recover_closes_a_check_lane_row_without_reporting_a_recovery(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    task = seed_lane_task(store, worker)
+    working_row(
+        store, worker, "agent-1", role="check", round=None, check_key="duplicates_checked"
+    )
+    assert recover_working_lanes(store, worker, task) == "none"
+    saved = store.row("agent", "agent-1")
+    assert saved["status"] == "done"
+    assert saved["note"] == "recovered: no live process"
+    assert saved["finished_at"]
+    store.close()
 
 
 def test_recover_waits_for_a_live_process(tmp_path: Path) -> None:

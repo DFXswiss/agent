@@ -220,6 +220,54 @@ def test_after_advance_saves_only_on_a_change(
     store.close()
 
 
+def test_restored_binding_runs_no_handler_in_the_observing_tick(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, quiet
+) -> None:
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    older = "10000000-0000-0000-0000-000000000034"
+    newer = "10000000-0000-0000-0000-000000000035"
+    _task(
+        store,
+        older,
+        "tests",
+        "2026-01-01T00:00:00Z",
+        binding_blocker="configuration changed",
+        binding_blocker_activity_id="published-1",
+    )
+    _task(
+        store,
+        newer,
+        "tests",
+        "2026-01-02T00:00:00Z",
+        binding_blocker="configuration changed",
+        binding_blocker_activity_id="published-2",
+    )
+    seen: list[str] = []
+
+    def phase_tests(store_arg, worker_arg, task, *args, **kwargs):
+        seen.append(str(task["id"]))
+        return ["tests handler"]
+
+    monkeypatch.setattr(coordinator_runtime, "phase_tests", phase_tests)
+    calls: list[list[str]] = []
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=_recording_runner(calls), lane_runner=None
+    ) == []
+    assert seen == []
+    for tid in (older, newer):
+        checkpoint = store.row("task", tid)["payload"]["coordinator"]
+        assert "binding_blocker" not in checkpoint
+        assert "binding_blocker_activity_id" not in checkpoint
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=_recording_runner(calls), lane_runner=None
+    ) == ["tests handler"]
+    assert seen == [older]
+    assert calls == []
+    store.close()
+
+
 def test_parked_task_does_not_block_a_runnable_task(
     tmp_path, monkeypatch: pytest.MonkeyPatch, quiet
 ) -> None:

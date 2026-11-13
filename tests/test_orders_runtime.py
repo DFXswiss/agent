@@ -3027,3 +3027,41 @@ def test_plain_visit_passes_no_intent_keywords(
         store, worker, runner=fake, lane_runner=lane
     ) == ["x"]
     store.close()
+
+
+def test_answer_to_a_runnable_ci_order_keeps_its_handler_visit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_order_task(store, worker, OID, phase="ci", pr_number=42)
+    insert_order_intent(store, worker, OID, "reply", body="Go on.")
+
+    def fake_task(
+        store_arg, worker_arg, task, *, runner, lane_runner, intents=(), intents_only=False
+    ):
+        return [] if intents_only else ["ci handler"]
+
+    monkeypatch.setattr(coordinator_runtime, "_advance_task", fake_task)
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    ) == ["ci handler"]
+    store.close()
+
+
+def test_answer_to_an_ended_order_is_finished_as_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store, worker, OID, phase="blocked", failed_kind="cancelled", blocker="not needed"
+    )
+    task["state"] = "failed"
+    save_task(store, task)
+    intent_id = insert_order_intent(store, worker, OID, "reply", body="Go on.")
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    ) == []
+    row = store.row("activity", intent_id)
+    assert row["execution_status"] == "error"
+    assert row["execution_error"] == "order is already cancelled"
+    store.close()

@@ -419,6 +419,37 @@ def test_task_text_file_is_removed_when_the_insert_fails(
     assert not root.exists() or list(root.iterdir()) == []
 
 
+def test_task_text_file_is_removed_when_the_checklist_rows_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+
+    def refuse(*_args, **_kwargs):
+        raise StoreError("checklist refused")
+
+    monkeypatch.setattr(coordinator_runtime, "_ensure_checklist_rows", refuse)
+    with pytest.raises(StoreError, match="checklist refused"):
+        with store.advisory_transaction("coordinator-source:example/project:7"):
+            coordinator_runtime._create_implement_task(
+                store,
+                worker,
+                repo="example/project",
+                number=7,
+                title="Fix widget",
+                assigned_id="assigned-7",
+                repository_config=worker.repositories["example/project"],
+                body="Please fix",
+            )
+    root = worker.workspace_root / ".coordinator-control"
+    assert not root.exists() or list(root.iterdir()) == []
+    assert store.rows("task") == []
+
+
 def test_test_output_keeps_the_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

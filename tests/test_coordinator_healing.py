@@ -182,7 +182,7 @@ def test_retry_remaining() -> None:
         "attempt": 1,
         "at": "2999-01-01T00:00:00Z",
     }
-    assert retry_remaining(checkpoint, worker) == 30
+    assert retry_remaining(checkpoint, worker) == 0
 
 
 @pytest.mark.no_pg
@@ -620,6 +620,32 @@ def test_check_exit_is_retried_first(
         "not a code failure."
     )
     assert lines[-2:] == [f"blocked: {blocker}", "blocker published on example/project#7"]
+
+
+def test_check_failure_after_a_reply_posts_a_new_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_github import apply_authorized_replies
+
+    store, worker, fake, tid, _lines = _tests_task(
+        tmp_path, monkeypatch, lane_retries=0, returncode=124
+    )
+    first = coord(store.row("task", tid))["question_activity_id"]
+    apply_authorized_replies(store, store.row("task", tid), ["retry"], consumed_through=2)
+    assert coord(store.row("task", tid))["phase"] == "tests"
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+    blocker = (
+        f"Check command could not run on {fake.head[:7]} (exit 124); "
+        "not a code failure."
+    )
+    assert lines[-2:] == [f"blocked: {blocker}", "blocker published on example/project#7"]
+    checkpoint = coord(store.row("task", tid))
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["question_activity_id"] != first
+    assert checkpoint.get("replies_consumed_through") is None
 
 
 def test_failing_tests_still_route_to_the_implementer(

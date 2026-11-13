@@ -146,6 +146,7 @@ from .coordinator_lanes import (
 )
 from .coordinator_orders import (
     consume_order_intents,
+    find_order,
     pending_order_intents,
     phase_accept_order,
     reconcile_order_events,
@@ -560,7 +561,11 @@ def _create_implement_task(
     repository_config: RepositoryConfig | None,
     body: str,
 ) -> dict[str, Any] | None:
-    """Insert task under device-wide source admission lock. None if another owner won."""
+    """Insert task under device-wide source admission lock. None if another owner won.
+
+    Runs inside the caller's store transaction: an error takes the inserted
+    row back and removes the task text.
+    """
     session = owned_session(store, worker.session_id)
     tid = str(uuid.uuid4())
     # One manifest read for both the binding hash and the models pin.
@@ -658,18 +663,18 @@ def _create_implement_task(
             lock_key=f"coordinator-source:{repo.casefold()}:{number}",
             skip=_skip,
         )
+        if held["existing"] is not None:
+            _discard_task_text(worker, tid)
+            return None
+        task = store.row("task", tid)
+        if task is None:
+            # Lost the race to another insert with same logical source.
+            _discard_task_text(worker, tid)
+            return _find_task_for_issue_device_wide(store, repo, number)
+        _ensure_checklist_rows(store, task, session)
     except BaseException:
         _discard_task_text(worker, tid)
         raise
-    if held["existing"] is not None:
-        _discard_task_text(worker, tid)
-        return None
-    task = store.row("task", tid)
-    if task is None:
-        # Lost the race to another insert with same logical source.
-        _discard_task_text(worker, tid)
-        return _find_task_for_issue_device_wide(store, repo, number)
-    _ensure_checklist_rows(store, task, session)
     return task
 
 
@@ -2519,8 +2524,6 @@ def _advance_task(
     c = coord(task)
     if str(c.get("phase") or "accept") == "queued":
         return [f"order queued {order_id(task)}"]
-    if retry_remaining(c, worker) > 0:
-        return []
     if c.get("uncertain_lane"):
         return _recover_uncertain_lane(store, worker, task, runner)
     if c.get("closing_draft"):
@@ -2681,9 +2684,12 @@ def _advance_task(
             ),
         ]
     if "binding_blocker" in c or "binding_blocker_activity_id" in c:
+        restored = bool(c.get("binding_blocker"))
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
+        if restored and phase not in ALWAYS_PARKED and phase != "ci":
+            return list(rejection_publication_lines)
     # Once an A38 pull request exists the guard may make it Ready (also before a rerun
     # after a blocking review), so every later phase checks for a human merge first.
     mergeable_wait = worker.a38 and (
@@ -2900,6 +2906,8 @@ def _advance_task(
                 f"Model lane interrupted in {phase}; not a code rejection."
             )
             save_task(store, task)
+            replies = coord(task).get("authorized_replies")
+            count = len(replies) if isinstance(replies, list) else 0
             retry_lines = publish_blocker(
                 store,
                 worker,
@@ -2908,6 +2916,7 @@ def _advance_task(
                 c["blocker"],
                 kind="lane-failed",
                 reply_checkpoint=True,
+                occurrence=f"{task['id']}:{count}",
             )
         lane_observations = c.pop("lane_observations", [])
         if not isinstance(lane_observations, list):
@@ -2974,7 +2983,12 @@ def _advance_task(
 
 
 def _after_advance(
-    store: Store, worker: WorkerConfig, task: dict[str, Any], before: str
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    before: str,
+    *,
+    intents_only: bool,
 ) -> list[str]:
     """Maintain the scheduler flags of one visited task; save only on a change."""
     if not _terminal(task):
@@ -2991,7 +3005,11 @@ def _after_advance(
                     c.pop(key, None)
                     changed = True
         if now == "ci":
-            if before == "ci" and c.get("ci_wait") is not True:
+            if (
+                before == "ci"
+                and not intents_only
+                and c.get("ci_wait") is not True
+            ):
                 c["ci_wait"] = True
                 changed = True
         elif "ci_wait" in c:
@@ -3038,7 +3056,7 @@ def _advance_guarded(
     except Exception as exc:  # noqa: BLE001 — one task must not stop the tick
         lines = [f"error: {redact(str(exc))}"]
     try:
-        lines = [*lines, *_after_advance(store, worker, task, before)]
+        lines = [*lines, *_after_advance(store, worker, task, before, intents_only=intents_only)]
     except StoreError as exc:
         lines = [*lines, f"store error: {redact(str(exc))}"]
     except Exception as exc:  # noqa: BLE001
@@ -3104,6 +3122,26 @@ def advance_one(
         )
         mark_observed(store, task, worker)
         touched.add(tid)
+    for leftover_order, leftover in intents.items():  # answers of ended orders
+        ended = find_order(store, leftover_order)
+        if (
+            ended is None
+            or not _terminal(ended)
+            or ended.get("session_id") != worker.session_id
+        ):
+            continue
+        lines.extend(
+            _advance_guarded(
+                store,
+                worker,
+                ended,
+                runner=runner,
+                lane_runner=lane_runner,
+                intents=leftover,
+                intents_only=True,
+            )
+        )
+
     runnable = [t for t in tasks if not _terminal(t) and not parked(t, worker)]
     if not runnable:
         queued = [

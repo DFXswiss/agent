@@ -106,15 +106,6 @@ def _redact_parsed_value(
             )
             for item in value
         )
-    if isinstance(value, list):
-        return [
-            _redact_parsed_value(
-                item,
-                config_dir=config_dir,
-                path_replacements=path_replacements,
-            )
-            for item in value
-        ]
     if isinstance(value, dict):
         return {
             _redact_parsed_value(
@@ -128,24 +119,6 @@ def _redact_parsed_value(
             )
             for item_key, item_value in value.items()
         }
-    if isinstance(value, set):
-        return {
-            _redact_parsed_value(
-                item,
-                config_dir=config_dir,
-                path_replacements=path_replacements,
-            )
-            for item in value
-        }
-    if isinstance(value, frozenset):
-        return frozenset(
-            _redact_parsed_value(
-                item,
-                config_dir=config_dir,
-                path_replacements=path_replacements,
-            )
-            for item in value
-        )
     return value
 
 
