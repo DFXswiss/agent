@@ -541,3 +541,48 @@ class CheckRepoTests(unittest.TestCase):
                     for r in verdict.reasons
                 )
             )
+
+    def test_replace_ref_does_not_shrink_the_measured_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            default = _default_branch(repo)
+            _checkout(repo, "feature", create=True)
+            _write(repo, "big.py", "".join(f"line {i}\n" for i in range(40)))
+            head = _add_commit(repo, "large change")
+            _checkout(repo, default)
+            _write(repo, "a.py", "one\n")
+            small = _add_commit(repo, "small change")
+            _checkout(repo, "feature")
+            _git(repo, "replace", head, small)
+            verdict = check_repo(repo, base, head)
+            self.assertIn("40 changed lines > 30", verdict.reasons)
+            self.assertEqual([item.path for item in verdict.files], ["big.py"])
+
+    def test_non_empty_grafts_file_is_a_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            _checkout(repo, "feature", create=True)
+            _write(repo, "a.py", "one\n")
+            head = _add_commit(repo, "small")
+            grafts = repo / ".git" / "info" / "grafts"
+            grafts.parent.mkdir(parents=True, exist_ok=True)
+            grafts.write_text(f"{head} {base}\n", encoding="utf-8")
+            verdict = check_repo(repo, base, head)
+            self.assertIn("grafts file present", verdict.reasons)
+            self.assertEqual(verdict.verdict, "not-small")
+
+    def test_textconv_does_not_rewrite_the_line_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo, {"a.txt": "old\n"})
+            _checkout(repo, "feature", create=True)
+            _write(repo, "a.txt", "".join(f"line {i}\n" for i in range(40)))
+            _write(repo, ".gitattributes", "*.txt diff=fake\n")
+            head = _add_commit(repo, "text change")
+            _git(repo, "config", "diff.fake.textconv", "head -c 1")
+            verdict = check_repo(repo, base, head)
+            self.assertTrue(
+                any("changed lines > 30" in reason for reason in verdict.reasons)
+            )

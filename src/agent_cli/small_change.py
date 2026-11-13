@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -220,12 +221,14 @@ class Verdict:
     lines: int  # sum of added + deleted over text files
     files: tuple[FileStat, ...]
     reasons: tuple[str, ...]  # empty iff verdict == small
+    base_ref: str = ""  # the pull request base branch (GitHub base.ref)
 
     def to_json(self) -> dict:
         return {
             "verdict": self.verdict,
             "head": self.head,
             "base": self.base,
+            "base_ref": self.base_ref,
             "merge_base": self.merge_base,
             "lines": self.lines,
             "files": [
@@ -344,14 +347,38 @@ def evaluate(
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes] | None:
+    # Replacement refs and grafts rewrite what a sha means; measure the objects
+    # that are actually stored, never the substitutes.
+    env = os.environ.copy()
+    env.pop("GIT_GRAFT_FILE", None)
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
     try:
         return subprocess.run(
-            ["git", "-C", str(repo), *args],
+            ["git", "--no-replace-objects", "-C", str(repo), *args],
             capture_output=True,
             check=False,
+            env=env,
         )
     except OSError:
         return None
+
+
+def _grafts_present(root: Path) -> bool:
+    """Whether the repository keeps a non-empty ``info/grafts`` file."""
+    proc = _run_git(root, "rev-parse", "--git-common-dir")
+    if proc is None or proc.returncode != 0:
+        return False
+    common = proc.stdout.decode("utf-8", "replace").strip()
+    if not common:
+        return False
+    common_dir = Path(common)
+    if not common_dir.is_absolute():
+        common_dir = root / common_dir
+    grafts = common_dir / "info" / "grafts"
+    try:
+        return grafts.is_file() and grafts.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _invalid_config(base: str) -> tuple[None, str]:
@@ -462,6 +489,8 @@ def _numstat_from(repo: Path, merge_base: str, head: str) -> list[FileStat] | No
     proc = _run_git(
         repo,
         "diff",
+        "--no-textconv",
+        "--no-ext-diff",
         "--numstat",
         "-z",
         "--no-renames",
@@ -479,6 +508,8 @@ def _paths_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
     proc = _run_git(
         repo,
         "diff",
+        "--no-textconv",
+        "--no-ext-diff",
         "--name-status",
         "-z",
         "--no-renames",
@@ -496,6 +527,8 @@ def _gitlinks_from(repo: Path, merge_base: str, head: str) -> list[str] | None:
     proc = _run_git(
         repo,
         "diff",
+        "--no-textconv",
+        "--no-ext-diff",
         "--raw",
         "-z",
         "--no-renames",
@@ -524,6 +557,9 @@ def check_repo(repo: Path, base: str, expected_head: str) -> Verdict:
         root = repo
     else:
         root = Path(top.stdout.decode("utf-8", "replace").strip())
+
+    if _grafts_present(root):
+        reasons.append("grafts file present")
 
     status = _run_git(root, "status", "--porcelain=v1", "--untracked-files=normal")
     if status is None or status.returncode != 0:

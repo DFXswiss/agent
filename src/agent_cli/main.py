@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 import webbrowser
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1518,9 +1519,14 @@ def cmd_small_change(args: list[str]) -> None:
         head = pull.get("head") if isinstance(pull, dict) else None
         base_sha = _full_sha(base.get("sha") if isinstance(base, dict) else None)
         head_sha = _full_sha(head.get("sha") if isinstance(head, dict) else None)
+        raw_base_ref = base.get("ref") if isinstance(base, dict) else None
+        if not isinstance(raw_base_ref, str) or not raw_base_ref:
+            die("pull request could not be read")
+        base_ref = raw_base_ref
         if base_sha is None or head_sha is None:
             die("pull request could not be read")
         verdict = check_repo(repo_path, base_sha, head_sha)
+        verdict = replace(verdict, base_ref=base_ref)
         record = verdict.to_json()
         record["recorded_at"] = utcnow()
         written = dict(original)
@@ -3574,6 +3580,8 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     merge_commit_sha = str(pull.get("merge_commit_sha") or "").strip()
     head = pull.get("head")
     head_sha = str(head.get("sha") or "").strip() if isinstance(head, dict) else ""
+    base = pull.get("base")
+    base_ref = base.get("ref") if isinstance(base, dict) else None
     if not merged_login or not merged_at or not merge_commit_sha or not head_sha:
         die("pull request merge evidence is incomplete")
 
@@ -3596,6 +3604,19 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                 die(
                     "small change was not measured at the merged head; "
                     "run agent small-change at that head"
+                )
+            measured_base_ref = (
+                small.get("base_ref") if isinstance(small, dict) else None
+            )
+            if not (
+                isinstance(measured_base_ref, str)
+                and measured_base_ref
+                and base_ref
+                and measured_base_ref == base_ref
+            ):
+                die(
+                    "small change was measured against another base branch; "
+                    "run agent small-change again"
                 )
 
     latest = _latest_gates(store, tid)
