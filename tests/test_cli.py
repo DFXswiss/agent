@@ -779,6 +779,7 @@ def _close_pull(**changes: object) -> dict:
         "merged_at": "2026-11-11T10:00:00Z",
         "merge_commit_sha": _CLOSE_MERGE,
         "head": {"sha": _CLOSE_HEAD},
+        "base": {"ref": "develop"},
         "user": {"login": "alice"},
     }
     pull.update(changes)
@@ -6231,3 +6232,462 @@ def test_activity_add_validates_and_writes_second_review_session_mail(
         assert len(store.rows("activity")) == before
     finally:
         store.close()
+
+
+def _git_cmd(cwd: Path, *parts: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", "-C", str(cwd), *parts], check=True, capture_output=True)
+
+
+def _git_commit(cwd: Path, message: str) -> str:
+    import subprocess
+
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(cwd),
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            message,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    completed = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return completed.stdout.strip().lower()
+
+
+def _change_repo(
+    tmp_path: Path, files: dict[str, str], *, name: str = "work"
+) -> tuple[Path, str, str]:
+    repo = tmp_path / name
+    repo.mkdir()
+    _git_cmd(repo, "init")
+    _git_cmd(repo, "config", "user.email", "small@example.com")
+    _git_cmd(repo, "config", "user.name", "Small Test")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git_cmd(repo, "add", "-A")
+    base = _git_commit(repo, "init")
+    _git_cmd(repo, "checkout", "-b", "feature")
+    for path, content in files.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    _git_cmd(repo, "add", "-A")
+    head = _git_commit(repo, "change")
+    return repo, base, head
+
+
+def _pr_runner(base: str, head: str):
+    import subprocess
+
+    def attach(store: Store, task: dict):
+        def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            payload = json.dumps(
+                {
+                    "base": {"sha": base, "ref": "develop"},
+                    "head": {"sha": head},
+                }
+            )
+            return subprocess.CompletedProcess(argv, 0, payload, "")
+
+        return runner
+
+    return attach
+
+
+def _attach_small_pr(tmp_path: Path, capsys: pytest.CaptureFixture[str], tid: str) -> None:
+    run(
+        tmp_path,
+        ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+    )
+    capsys.readouterr()
+
+
+def _late_inner_ready(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> str:
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+    run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "session_registered",
+            "--source", "script", "--evidence", "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "spec_written",
+            "--source", "human", "--evidence", "five-part spec",
+        ],
+    )
+    run(tmp_path, ["task", "state", tid, "local-check"])
+    capsys.readouterr()
+    return tid
+
+
+def _task_row(tmp_path: Path, tid: str) -> dict:
+    store = Store(tmp_path)
+    try:
+        row = store.row("task", tid)
+        assert row is not None
+        return row
+    finally:
+        store.close()
+
+
+def test_small_change_records_a_small_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+    run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    out = capsys.readouterr().out
+    assert f"evidence: small change at {head}" in out
+    row = _task_row(tmp_path, tid)
+    assert row["small_change"]["verdict"] == "small"
+    assert row["small_change"]["head"] == head
+
+
+def test_small_change_records_not_small_and_exits_two(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    files = {f"f{i}.py": "1\n" for i in range(4)}
+    repo, base, head = _change_repo(tmp_path, files)
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    assert exc.value.code == 2
+    assert "4 files > 3" in capsys.readouterr().out
+    row = _task_row(tmp_path, tid)
+    assert row["small_change"]["verdict"] == "not-small"
+
+
+def test_small_change_requires_an_attached_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="attach the pull request first"):
+        run(tmp_path, ["small-change", "--task", tid])
+
+
+def test_small_change_requires_the_implement_workflow(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys, workflow="review")
+    with pytest.raises(SystemExit, match="small-change requires workflow implement"):
+        run(tmp_path, ["small-change", "--task", tid])
+
+
+def test_late_stamp_accepts_small_change_evidence_at_a_small_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _late_inner_ready(tmp_path, capsys)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+    run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "implementer_done",
+            "--source", "script", "--evidence", f"small change at {head}",
+        ],
+    )
+    assert "checklist implementer_done=ja" in capsys.readouterr().out
+
+
+def test_late_stamp_rejects_missing_small_change_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _late_inner_ready(tmp_path, capsys)
+    sha = "a" * 40
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {sha}")
+    ):
+        run(
+            tmp_path,
+            [
+                "close-step", "--task", tid, "--key", "implementer_done",
+                "--source", "script", "--evidence", f"small change at {sha}",
+            ],
+        )
+
+
+def test_late_stamp_rejects_not_small_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    files = {f"f{i}.py": "1\n" for i in range(4)}
+    repo, base, head = _change_repo(tmp_path, files)
+    tid = _late_inner_ready(tmp_path, capsys)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    assert exc.value.code == 2
+    capsys.readouterr()
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {head}")
+    ):
+        run(
+            tmp_path,
+            [
+                "close-step", "--task", tid, "--key", "implementer_done",
+                "--source", "script", "--evidence", f"small change at {head}",
+            ],
+        )
+
+
+def test_late_stamp_rejects_a_verdict_at_another_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _late_inner_ready(tmp_path, capsys)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+    run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    capsys.readouterr()
+    sha = "b" * 40
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {sha}")
+    ):
+        run(
+            tmp_path,
+            [
+                "close-step", "--task", tid, "--key", "implementer_done",
+                "--source", "script", "--evidence", f"small change at {sha}",
+            ],
+        )
+
+
+def test_close_from_pr_requires_the_verdict_at_the_merged_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    other = "b" * 40
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {other}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small", "head": other, "base_ref": "develop"
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    # close-from-pr --id prints the reason, then exits 1.
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert f"task {tid} not closed: small change was not measured at the merged head" in out
+    _assert_close_no_write(monkeypatch, tmp_path, capsys, tid, _close_pull())
+
+
+def test_small_change_does_not_overwrite_a_concurrent_state_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_cli import small_change
+
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+    monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
+
+    def racing_check_repo(repo_path, base_sha, expected_head):
+        store = Store(tmp_path)
+        try:
+            row = store.row("task", tid)
+            assert row is not None
+            row["state"] = "done"
+            store.write("task", "update", tid, row)
+        finally:
+            store.close()
+        return small_change.check_repo(repo_path, base_sha, expected_head)
+
+    monkeypatch.setattr("agent_cli.main.check_repo", racing_check_repo)
+    with pytest.raises(SystemExit, match="task changed during small-change; retry"):
+        run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+    row = _task_row(tmp_path, tid)
+    assert row["state"] == "done"
+    assert "small_change" not in row
+
+
+def test_small_change_requires_a_base_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess
+
+    repo, base, head = _change_repo(tmp_path, {"a.py": "1\n2\n3\n"})
+    tid = _spine_session_task(tmp_path, capsys)
+    _attach_small_pr(tmp_path, capsys, tid)
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        payload = json.dumps({"base": {"sha": base}, "head": {"sha": head}})
+        return subprocess.CompletedProcess(argv, 0, payload, "")
+
+    monkeypatch.setattr(
+        "agent_cli.main._bound_review_runner", lambda store, task: runner
+    )
+    with pytest.raises(SystemExit, match="pull request could not be read"):
+        run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
+
+
+def test_close_from_pr_rejects_an_empty_recorded_base_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {_CLOSE_HEAD}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small", "head": _CLOSE_HEAD, "base_ref": ""
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: small change was measured against another "
+        "base branch; run agent small-change again" in out
+    )
+
+
+def test_close_from_pr_rejects_a_verdict_measured_against_another_base_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {_CLOSE_HEAD}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small", "head": _CLOSE_HEAD, "base_ref": "develop"
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit) as exc:
+        _run_close(
+            monkeypatch, tmp_path, tid, _close_pull(base={"ref": "main"})
+        )
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: small change was measured against another "
+        "base branch; run agent small-change again" in out
+    )
+    _assert_close_no_write(
+        monkeypatch, tmp_path, capsys, tid, _close_pull(base={"ref": "main"})
+    )
+
+
+def test_close_from_pr_rejects_a_non_string_merged_base_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {_CLOSE_HEAD}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small", "head": _CLOSE_HEAD, "base_ref": "123"
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, _close_pull(base={"ref": 123}))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: small change was measured against another "
+        "base branch; run agent small-change again" in out
+    )
+
+
+def test_close_from_pr_rejects_an_unstripped_merged_base_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {_CLOSE_HEAD}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small", "head": _CLOSE_HEAD, "base_ref": "develop"
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, _close_pull(base={"ref": " develop "}))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: small change was measured against another "
+        "base branch; run agent small-change again" in out
+    )

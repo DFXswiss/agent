@@ -418,6 +418,7 @@ agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
 agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
 agent check record …                              # spine skill
+agent small-change --task UUID [--repo PATH] [--json] # spine skill; exit 0 small, 2 not small
 agent local-ci verify|parse|render [--file PATH] [--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]
 agent a38 policy --file PATH                    # validate an A38 manifest
 agent a38 run --repo PATH --policy PATH --base-sha SHA --output PATH --logs-dir PATH

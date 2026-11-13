@@ -18,6 +18,7 @@ from .model_slots import (
     models_from_snapshot,
 )
 from .pr_guard_config import one_review_for
+from .small_change import VERDICT_SMALL, is_small_change_evidence
 
 ACTIONS = ("claim-done", "pr-ready", "pr-create", "task-done")
 # Ready may arrive before the last gate (draft CI); gate-blocked is not enough.
@@ -81,6 +82,7 @@ SECOND_REVIEW_KEYS = frozenset({"review_2_quality", "review_2_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
 EXTERNAL_SECOND_REVIEW_PREFIX = "external second review by "
 _EXTERNAL_SECOND_REVIEW_HEAD = re.compile(r"\bat ([0-9a-f]{40})\b")
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 # (stage, dimension, model slot). The provider comes from the device's
 # ``models`` configuration (see model_slots).
@@ -346,6 +348,25 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
             heads.add(head)
     if all_gates_ok and len(heads) != 1:
         blocking.append(f"{tid}:gate:head_sha=mismatch")
+
+    if str(workflow) == "implement":
+        # Coordinator snapshots carry no small_change: the small route is spine-only.
+        recorded_evidence = recorded if isinstance(recorded, Mapping) else {}
+        if any(
+            is_small_change_evidence(recorded_evidence.get(key))
+            for key in ("implementer_done", "reviewer_approved")
+        ):
+            small = task.get("small_change")
+            if not isinstance(small, dict):
+                blocking.append(f"{tid}:small_change=missing")
+            elif small.get("verdict") != VERDICT_SMALL:
+                blocking.append(f"{tid}:small_change=not-small")
+            elif all_gates_ok and len(heads) == 1:
+                gate_head = next(iter(heads))
+                if not _FULL_SHA.fullmatch(gate_head):
+                    blocking.append(f"{tid}:small_change=gate_head_not_full_sha")
+                elif small.get("head") != gate_head:
+                    blocking.append(f"{tid}:small_change=head_mismatch")
 
     return blocking
 
