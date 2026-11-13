@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 
@@ -14,8 +13,8 @@ import yaml
 pytestmark = pytest.mark.no_pg
 ROOT = Path(__file__).resolve().parents[1]
 
-# Reviewed guard revision installed by this repository. It declares the
-# actor_app_slug input; moving the pin is a reviewed change that updates this.
+# Reviewed guard revision installed by this repository; moving the pin is a
+# reviewed change that updates this.
 GUARD_ACTION_SHA = "63bd283dc9a3b6eb29827af9f690d2ba79ed1f14"
 GUARD_ACTION_USES = f"DFXswiss/agent/.github/actions/a38-guard@{GUARD_ACTION_SHA}"
 
@@ -86,7 +85,7 @@ def test_composite_passes_immutable_action_revision_via_environment() -> None:
     assert "github.sha" not in str(guard_step)
 
 
-def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() -> None:
+def test_repository_guard_workflow_matches_the_example_on_the_default_token() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/a38-guard.yml").read_text(encoding="utf-8")
     )
@@ -105,16 +104,10 @@ def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() ->
 
     steps = workflow["jobs"]["guard"]["steps"]
 
-    app_token_steps = [step for step in steps if step.get("id") == "app-token"]
-    assert len(app_token_steps) == 1
-    app_token = app_token_steps[0]
-    assert re.fullmatch(
-        r"actions/create-github-app-token@[0-9a-fA-F]{40}", app_token["uses"]
-    )
-    assert app_token["with"]["client-id"] == "${{ vars.A38_GUARD_APP_CLIENT_ID }}"
-    assert (
-        app_token["with"]["private-key"]
-        == "${{ secrets.A38_GUARD_APP_PRIVATE_KEY }}"
+    # No App token: a token step whose credentials are not configured fails
+    # and skips the guard step, which is how this repository's guard broke.
+    assert not any(
+        "create-github-app-token" in str(step.get("uses", "")) for step in steps
     )
 
     guard_steps = [
@@ -127,15 +120,20 @@ def test_repository_guard_workflow_uses_pinned_app_token_for_the_guard_step() ->
     assert len(guard_steps) == 1
     guard_step = guard_steps[0]
     assert guard_step["uses"] == GUARD_ACTION_USES
-    assert steps.index(app_token) < steps.index(guard_step)
 
     guard_with = guard_step["with"]
-    assert guard_with["token"] == "${{ steps.app-token.outputs.token }}"
-    assert guard_with["actor_app_slug"] == "${{ steps.app-token.outputs.app-slug }}"
-    assert all(
-        (step.get("with") or {}).get("token") != "${{ secrets.GITHUB_TOKEN }}"
-        for step in steps
-    )
+    example_guard_with = next(
+        step
+        for step in example_guard_job["steps"]
+        if str(step.get("uses", "")).startswith(
+            "DFXswiss/agent/.github/actions/a38-guard@"
+        )
+    )["with"]
+    assert guard_with["token"] == "${{ secrets.GITHUB_TOKEN }}"
+    assert guard_with["token"] == example_guard_with["token"]
+    # Without an App there is no slug to name; a stray one would make the
+    # guard look for an App identity the token does not have.
+    assert "actor_app_slug" not in guard_with
 
     action = yaml.safe_load(
         (ROOT / ".github/actions/a38-guard/action.yml").read_text(encoding="utf-8")
