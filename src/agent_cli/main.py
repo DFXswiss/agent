@@ -4261,6 +4261,36 @@ def cmd_query(args: list[str]) -> None:
         store.close()
 
 
+def _read_body_file(body_file: str) -> str:
+    """Return the text of a body file, or stop with the existing text."""
+    path = Path(body_file)
+    try:
+        body = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        die(f"cannot read body file {path}: {exc}")
+    return body
+
+
+def _read_request_text(
+    repo: str,
+    title: str,
+    body_value: str | None,
+    body_file: str | None,
+) -> str:
+    """Validate repo and title and return the body (1..60000 characters)."""
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
+        repo,
+    ) or repo.split("/", 1)[1] in {".", ".."}:
+        die("repo must be Owner/Name")
+    if not 1 <= len(title) <= 256:
+        die("title must be 1..256 characters")
+    body = _read_body_file(body_file) if body_file is not None else body_value or ""
+    if not 1 <= len(body) <= 60000:
+        die("body must be 1..60000 characters")
+    return body
+
+
 def cmd_assign(args: list[str]) -> None:
     from .hub_assign import AssignmentFailure, create_assignment
 
@@ -4276,23 +4306,7 @@ def cmd_assign(args: list[str]) -> None:
     body_file = flag(args, "--body-file")
     if (body_value is None) == (body_file is None):
         die("assign requires exactly one of --body or --body-file")
-    if not re.fullmatch(
-        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
-        repo,
-    ) or repo.split("/", 1)[1] in {".", ".."}:
-        die("repo must be Owner/Name")
-    if not 1 <= len(title) <= 256:
-        die("title must be 1..256 characters")
-    if body_file is not None:
-        path = Path(body_file)
-        try:
-            body = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            die(f"cannot read body file {path}: {exc}")
-    else:
-        body = body_value or ""
-    if not 1 <= len(body) <= 60000:
-        die("body must be 1..60000 characters")
+    body = _read_request_text(repo, title, body_value, body_file)
     store = open_store()
     try:
         hub = _hub_from_store(store)
@@ -5067,6 +5081,13 @@ def cmd_conflicts(args: list[str]) -> None:
         time.sleep(worker.poll_seconds)
 
 
+def cmd_order(args: list[str]) -> None:
+    """Local orders for the coordinator: the command line of the order operations."""
+    from .orders import run_order_command
+
+    run_order_command(args)
+
+
 def cmd_a38(args: list[str]) -> None:
     from .a38 import main as a38_main
 
@@ -5114,6 +5135,7 @@ COMMANDS = {
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
     "conflicts": cmd_conflicts,
+    "order": cmd_order,
     "github": cmd_github,
     "query": cmd_query,
     "assign": cmd_assign,
@@ -5128,7 +5150,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|assign|subscribe|mail|supervise|coordinate|conflicts> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate|conflicts|order> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:
