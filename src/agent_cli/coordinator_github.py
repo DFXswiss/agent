@@ -36,6 +36,7 @@ from .coordinator_common import (
     STATUS_MARKER_PREFIX,
     Runner,
     account_for,
+    a38_model_second,
     as_int,
     comment_target,
     coord,
@@ -1916,11 +1917,18 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     if worker.a38:
         from .coordinator_a38 import require_ready_evidence
 
-        if not require_ready_evidence(store, task, head):
+        model_second = a38_model_second(c)
+        if not require_ready_evidence(
+            store, task, head, model_second=model_second
+        ):
             return [
                 f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
             ]
-        gate_pairs = tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
+        gate_pairs = (
+            tuple(GATE_PAIRS)
+            if model_second
+            else tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
+        )
     else:
         skip_second = _second_review_skip(
             store, worker, task, runner, phase="readiness", head=head
@@ -3120,6 +3128,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
 def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
     """Return "blocking", "passed" or "missing" from the newest posted second review of head."""
     a38 = c.get("a38")
+    if a38_model_second(c):
+        comment = a38.get("second_comment")
+        if not isinstance(comment, dict) or comment.get("head") != head:
+            return "missing"
+        return "blocking" if comment.get("blocks_merge") is True else "passed"
     state = a38.get("second_review") if isinstance(a38, dict) else None
     if not isinstance(state, dict) or state.get("head") != head or state.get("status") != "posted":
         return "missing"
@@ -3142,14 +3155,16 @@ def _await_second_review_after_merge(
     *,
     blocking: bool,
 ) -> list[str]:
-    """A merge can land before the external second review (the guard sets Ready
-    without it). Keep accepting that review for the merged head for one review
-    timeout, then stop with a visible, non-recoverable blocker. A blocking review
-    of the merged head stops at once."""
+    """Handle a merged head whose required second review is missing or blocking."""
     c = coord(task)
+    model = a38_model_second(c)
     if blocking:
         c["phase"] = "blocked"
-        c["blocker"] = f"merged although the external second review blocks the merge on {head}"
+        c["blocker"] = (
+            f"merged although the model second review blocks the merge on {head}"
+            if model
+            else f"merged although the external second review blocks the merge on {head}"
+        )
         clear_reply_recovery(c)
         save_task(store, task)
         return publish_blocker(
@@ -3157,8 +3172,26 @@ def _await_second_review_after_merge(
             worker,
             task,
             runner,
-            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            (
+                f"Pull request was merged on {head[:7]} although the model second review blocks the merge."
+                if model
+                else f"Pull request was merged on {head[:7]} although the external second review blocks the merge."
+            ),
             kind="merged-with-blocking-second-review",
+        )
+    if model:
+        # No model review can arrive after the merge; do not wait.
+        c["phase"] = "blocked"
+        c["blocker"] = f"merged before the model second review was posted on {head}"
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} before the model second review was posted.",
+            kind="merged-without-second-review",
         )
     a38 = c.setdefault("a38", {})
     stamp = utcnow()

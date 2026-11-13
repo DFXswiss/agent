@@ -94,7 +94,9 @@ def create_order_task(
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first, ai.implementer)
-        _require_second_for_worker(ai.models.second, worker.a38)
+        _require_second_for_worker(
+            ai.models.second, worker.a38, worker.a38_second_review
+        )
         ai.for_lane(
             worker.session_id, "check", ai.models.first, require_execution=False
         )
@@ -162,7 +164,20 @@ def create_order_task(
             **({"execution_binding": binding} if binding is not None else {}),
             "worker_session": worker.session_id,
             "worker_login": login,
-            **({"a38": {"enabled": True}} if worker.a38 else {}),
+            **(
+                {
+                    "a38": {
+                        "enabled": True,
+                        **(
+                            {"second_review_mode": "model"}
+                            if worker.a38_second_review == "model"
+                            else {}
+                        ),
+                    }
+                }
+                if worker.a38
+                else {}
+            ),
             "round_limit": round_limit,
         }
         row = {

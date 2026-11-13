@@ -50,6 +50,7 @@ class WorkerConfig:
     max_rounds: int | None = None
     max_rounds_by_model: dict[str, int] = field(default_factory=dict)
     draft_on_accept: bool = False
+    a38_second_review: str = "external"
 
 
 def _text(value: object, label: str) -> str:
@@ -134,12 +135,18 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'require_hub_assignment', 'a38', 'second_reviewers',
                     'second_review_timeout_seconds', 'park_poll_seconds',
                     'lane_retries', 'orders', 'max_rounds',
-                    'max_rounds_by_model', 'draft_on_accept'}
+                    'max_rounds_by_model', 'draft_on_accept',
+                    'a38_second_review'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
         if not isinstance(a38, bool):
             raise StoreError('a38 must be a boolean')
+        mode = item.get('a38_second_review', 'external')
+        if mode not in ('external', 'model'):
+            raise StoreError('a38_second_review must be external or model')
+        if mode == 'model' and not a38:
+            raise StoreError('a38_second_review requires an A38 worker')
         orders = item.get('orders', False)
         if not isinstance(orders, bool):
             raise StoreError('orders must be a boolean')
@@ -163,7 +170,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         if any(not re.fullmatch(r'[a-z0-9-]+', v) for v in logins):
             raise StoreError('invalid reply login')
         reviewers_raw = item.get('second_reviewers')
-        if a38 and (not isinstance(reviewers_raw, list) or not reviewers_raw):
+        if a38 and mode != 'model' and (not isinstance(reviewers_raw, list) or not reviewers_raw):
             raise StoreError('A38 workers require nonempty second_reviewers')
         if reviewers_raw is None:
             reviewers_raw = []
@@ -251,7 +258,8 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    orders=orders,
                                    max_rounds=max_rounds,
                                    max_rounds_by_model=by_model,
-                                   draft_on_accept=draft_on_accept)
+                                   draft_on_accept=draft_on_accept,
+                                   a38_second_review=mode)
     return result
 
 

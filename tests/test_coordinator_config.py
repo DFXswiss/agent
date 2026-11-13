@@ -184,6 +184,61 @@ def test_a38_worker_requires_and_normalizes_external_reviewers(tmp_path):
     assert loaded.repositories['example/project'].check_argv == ()
 
 
+def test_a38_second_review_defaults_to_external(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].a38_second_review == 'external'
+
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer-one']
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].a38_second_review == 'external'
+
+
+@pytest.mark.parametrize(
+    'a38,value,error',
+    [
+        (False, 'people', 'a38_second_review must be external or model'),
+        (False, 'model', 'a38_second_review requires an A38 worker'),
+    ],
+)
+def test_a38_second_review_refuses_bad_values(tmp_path, a38, value, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = a38
+    worker['a38_second_review'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_model_second_review_drops_the_reviewer_requirement(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['a38_second_review'] = 'model'
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.second_reviewers == ()
+    assert loaded.a38_second_review == 'model'
+
+    worker['second_reviewers'] = ['Same', 'same']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='distinct'):
+        load_coordinator_config(tmp_path)
+
+    worker.pop('second_reviewers')
+    worker['a38_second_review'] = 'external'
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='A38 workers require nonempty second_reviewers'):
+        load_coordinator_config(tmp_path)
+
+
 @pytest.mark.parametrize(
     'reviewers,error',
     [

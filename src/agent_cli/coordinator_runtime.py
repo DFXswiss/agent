@@ -88,6 +88,7 @@ from .coordinator_a38 import (
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
     phase_first_comment as phase_a38_first_comment,
+    phase_second_comment as phase_a38_second_comment,
     phase_tests as phase_a38_tests,
 )
 from .coordinator_exec import run_bounded
@@ -202,7 +203,9 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first, ai.implementer)
-        _require_second_for_worker(ai.models.second, worker.a38)
+        _require_second_for_worker(
+            ai.models.second, worker.a38, worker.a38_second_review
+        )
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(
@@ -310,6 +313,8 @@ def _execution_binding_fields(
             "second_reviewers": worker.second_reviewers,
             "second_review_timeout_seconds": worker.second_review_timeout_seconds,
         }
+        if worker.a38_second_review == "model":
+            selected["a38"]["second_review_mode"] = "model"
     else:
         selected["review_session"] = worker.review_session
     return selected
@@ -399,8 +404,16 @@ def _refuse_codex_first(first: str, implementer: str | None = None) -> None:
         raise CoordinatorError(SEPARATE_IMPLEMENTER_REFUSED)
 
 
-def _require_second_for_worker(second: str | None, a38: bool) -> None:
-    """Only A38 workers may run without a second review vendor."""
+def _require_second_for_worker(
+    second: str | None, a38: bool, second_review: str = "external"
+) -> None:
+    """Only an A38 worker with an external second review runs without a second review vendor."""
+    if a38 and second_review == "model":
+        if second is None:
+            raise CoordinatorError(
+                "A38 workers with a38_second_review = model require models.second"
+            )
+        return
     if a38 and second is not None:
         raise CoordinatorError("A38 workers require models.second = null")
     if not a38 and second is None:
@@ -521,7 +534,9 @@ def _create_implement_task(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first, ai.implementer)
-    _require_second_for_worker(ai.models.second, worker.a38)
+    _require_second_for_worker(
+        ai.models.second, worker.a38, worker.a38_second_review
+    )
     try:
         implementer_model = ai.for_lane(
             worker.session_id,
@@ -556,7 +571,20 @@ def _create_implement_task(
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
         "round_limit": resolve_round_limit(worker, implementer_model),
-        **({"a38": {"enabled": True}} if worker.a38 else {}),
+        **(
+            {
+                "a38": {
+                    "enabled": True,
+                    **(
+                        {"second_review_mode": "model"}
+                        if worker.a38_second_review == "model"
+                        else {}
+                    ),
+                }
+            }
+            if worker.a38
+            else {}
+        ),
     }
     held: dict[str, Any] = {"existing": None}
 
@@ -2244,7 +2272,7 @@ def _a38_pr_left_open(
 
 A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
 A38_PUBLISHED_RERUN_PHASES = frozenset(
-    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment"}
+    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment", "a38_second_comment"}
 )
 NON_REPEATABLE_REJECTION_CHECKPOINT_ERRORS = frozenset(
     {
@@ -2324,6 +2352,9 @@ def phase_handlers(
         "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
         "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
         "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
+        "a38_second_comment": lambda: phase_a38_second_comment(
+            store, worker, task, runner
+        ),
         "await_second_review": lambda: phase_await_second_review(store, worker, task, runner),
         "ci": lambda: phase_ci(store, worker, task, runner),
         "readiness": lambda: phase_readiness(store, worker, task, runner),

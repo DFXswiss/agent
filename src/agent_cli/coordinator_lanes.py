@@ -25,6 +25,7 @@ from .coordinator_common import (
     LaneFailedError,
     LaneRunner,
     Runner,
+    a38_model_second,
     checklist_key_for_stage,
     comment_target,
     control_dir,
@@ -1869,6 +1870,7 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
             "first_comment",
             "second_review",
             "guard_status",
+            "second_comment",
         ):
             value = a38.get(key)
             if isinstance(value, dict) and value.get("head") != head:
@@ -3026,10 +3028,12 @@ def phase_pr_gates(
         raise LaneFailedError("a lane record of an earlier tick is still open")
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
+    model_second = second_stage and a38_model_second(c)
     ordering_phase = "pr_gates_codex" if second_stage else "pr_gates_grok"
-    next_phase = "ci" if second_stage else (
-        "a38_first_comment" if worker.a38 else "pr_gates_codex"
-    )
+    if second_stage:
+        next_phase = "a38_second_comment" if model_second else "ci"
+    else:
+        next_phase = "a38_first_comment" if worker.a38 else "pr_gates_codex"
     first_vendor = _task_models(task).first
 
     def _ordering_unavailable(gate: dict[str, Any] | None) -> bool:
@@ -3055,7 +3059,7 @@ def phase_pr_gates(
         )
         if not approved:
             return False
-        if worker.a38 and not second_stage:
+        if worker.a38 and (not second_stage or model_second):
             dimension = str(gate.get("dimension") or "")
             return gate_prompt_evidence(
                 store,
@@ -3085,6 +3089,23 @@ def phase_pr_gates(
             and gate.get("id") not in handled_rejections
         ):
             persisted_rejections.append(gate)
+    kept_rejections: dict[str, dict[str, Any]] = {}
+    if model_second:
+        # The blocking second comment publishes these rejections; there is no plain review comment
+        # and no direct route to the implementer.
+        kept_rejections = {
+            str(gate.get("dimension") or ""): gate
+            for gate in persisted_rejections
+            if gate_prompt_evidence(
+                store,
+                gate,
+                head=head,
+                dimension=str(gate.get("dimension") or ""),
+                vendor=vendor,
+            )
+            is not None
+        }
+        persisted_rejections = []
     if persisted_rejections:
         recovered_evidence = [
             redact(str(gate.get("evidence") or f"{stage}/{gate.get('dimension')} rejected"))
@@ -3192,6 +3213,9 @@ def phase_pr_gates(
             if blocker is not None:
                 reconciliation_blockers[blocker[0]] = blocker[1]
             lines.append(f"{stage}/{dimension}=approved (cached)")
+            continue
+        if dimension in kept_rejections:
+            lines.append(f"{stage}/{dimension}=rejected (kept)")
             continue
         review_dimensions.append((dimension, role))
         if dimension in replayed_by_dimension:
@@ -3487,6 +3511,13 @@ def phase_pr_gates(
         # transaction neither loses nor double-counts the completed pass.
         save_task(store, task)
 
+    if model_second and not incomplete_outcomes:
+        a38_state = c["a38"]
+        a38_state["second_review_passes"] = (
+            int(a38_state.get("second_review_passes") or 0) + 1
+        )
+        save_task(store, task)
+
     rejection_evidence = [
         redact(outcome.stdout or f"{status}/{model_result}")
         for _prep, outcome, status, model_result in rejected_outcomes
@@ -3513,6 +3544,11 @@ def phase_pr_gates(
     # A crash in GitHub publication must leave every parallel verdict, every
     # rejection intent, the combined findings, and the implementation route
     # available to the next coordinator tick.
+    second_comment_due = (
+        model_second
+        and not incomplete_outcomes
+        and bool(rejection_evidence or kept_rejections)
+    )
     committed_task = copy.deepcopy(task)
     committed_c = coord(committed_task)
     with store.conn.transaction():
@@ -3560,19 +3596,20 @@ def phase_pr_gates(
                         reconciliation_blockers[blocker[0]] = blocker[1]
                 lines.append(f"{stage}/{dimension}=approved")
                 continue
-            activity_id = queue_comment_review(
-                store,
-                worker,
-                committed_task,
-                gate_id=gate_id,
-                body=(
-                    f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
-                    f"{evidence}"
-                ),
-            )
-            rejection_activity_ids.append(activity_id)
             rejection_gate_ids.append(gate_id)
-            _remember_rejection_review(committed_task, activity_id)
+            if not model_second:
+                activity_id = queue_comment_review(
+                    store,
+                    worker,
+                    committed_task,
+                    gate_id=gate_id,
+                    body=(
+                        f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
+                        f"{evidence}"
+                    ),
+                )
+                rejection_activity_ids.append(activity_id)
+                _remember_rejection_review(committed_task, activity_id)
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
 
         # Persist incomplete dimensions only after every complete result. This
@@ -3618,7 +3655,9 @@ def phase_pr_gates(
             agent_ids={str(prep["agent_id"]) for prep, _outcome in outcomes},
         )
 
-        if rejection_evidence:
+        if second_comment_due:
+            committed_c["phase"] = "a38_second_comment"
+        elif rejection_evidence and not model_second:
             _apply_rejected_gate_transition(
                 committed_task,
                 head=head,
@@ -3702,7 +3741,7 @@ def phase_pr_gates(
             store, runner, activity_ids=tuple(rejection_activity_ids)
         )
         lines.extend(_checkpoint_rejection_reviews(store, worker, task))
-    if rejection_evidence:
+    if second_comment_due or (rejection_evidence and not model_second):
         return lines
 
     if incomplete_outcomes:

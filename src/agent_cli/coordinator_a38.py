@@ -1,8 +1,9 @@
 """A38 phases for the script-owned issue coordinator.
 
-The worker account publishes author evidence. The external second reviewer
-communicates only through existing hub pings and session mail. This module
-never submits a GitHub review approval and never changes draft state.
+The worker account publishes author evidence. When configured, an external
+second reviewer communicates only through existing hub pings and session mail;
+the alternative second pair uses the pinned review lanes. This module never
+submits a GitHub review approval and never changes draft state.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from .allow import (
     newest_reviews_block,
 )
 from .coordinator_common import (
+    a38_model_second,
     check_label,
     CoordinatorError,
     NonRecoverableCoordinatorError,
@@ -69,10 +71,12 @@ from .coordinator_git import (
     verify_signed_clean_head,
 )
 from .coordinator_lanes import (
+    _apply_rejected_gate_transition,
     check_command_unavailable,
     gate_prompt_evidence,
     invalidate_head_evidence,
     latest_gates,
+    merge_review_findings,
     review_rules_bound,
     set_checklist,
 )
@@ -749,7 +753,7 @@ def _checkpoint_report_context(
             or active_base != base_sha
         )
         committed_c["head_sha"] = head
-        if evidence_base_sha(committed_c, a38=True) != base_sha:
+        if evidence_base_sha(committed_c, a38=True) != base_sha or not active_base:
             committed_a38["pending_base_sha"] = base_sha
         lock_key = a38_report_activity_lock(str(activity_id or "missing"))
         with store.exclusive(lock_key), store.conn.transaction():
@@ -1839,6 +1843,16 @@ def _machine_block(payload: Mapping[str, Any]) -> str:
     )
 
 
+def _quoted_findings(text: str, *, limit: int) -> str:
+    """Reviewer text as a Markdown quote that no review validator reads as record text."""
+    shortened = redact_tail(text, limit=max(100, limit // 2)).replace(
+        "<!--", "<!- -"
+    )
+    return "\n".join(
+        f"> {line}" if line.strip() else ">" for line in shortened.splitlines()
+    )
+
+
 def _render_review_comment(
     task: Mapping[str, Any],
     payload: dict[str, Any],
@@ -1865,10 +1879,9 @@ def _render_review_comment(
             f"EN:\nSecond review with {model}\n{en_status}\n\n"
             f"DE:\nZweiter Review mit {model}\n{de_status}\n\n"
         )
-        detail_prefix = (
-            f"{_summary(task, 'en')}\n\n{_summary(task, 'de')}\n\n"
-            f"Second review by @{reviewer}.\n"
-        )
+        detail_prefix = f"{_summary(task, 'en')}\n\n{_summary(task, 'de')}\n\n"
+        if reviewer is not None:
+            detail_prefix += f"Second review by @{reviewer}.\n"
         if findings:
             detail_prefix += f"\n{findings.strip()}\n"
     else:
@@ -2212,26 +2225,32 @@ def phase_first_comment(
     activity_id = str(same_head_intent["activity_id"])
     body = str(same_head_intent["body"])
     passes = int(same_head_intent["passes"])
-    request_key = _second_review_request_key(c, head, passes)
-    _requested, request_plan = _prepare_second_review_request(
-        store,
-        worker,
-        task,
-        force=head_review_blocks(c, head),
-        request_key=request_key,
-    )
+    model_second = a38_model_second(c)
+    request_plan = None
+    if not model_second:
+        request_key = _second_review_request_key(c, head, passes)
+        _requested, request_plan = _prepare_second_review_request(
+            store,
+            worker,
+            task,
+            force=head_review_blocks(c, head),
+            request_key=request_key,
+        )
     comment_intent = same_head_intent
     comment_intent.update(
         head=head,
         activity_id=activity_id,
         body=body,
         passes=passes,
-        request_key=request_key,
-        request_occurrence=int(request_plan["occurrence"]),
     )
+    if request_plan is not None:
+        comment_intent.update(
+            request_key=request_key,
+            request_occurrence=int(request_plan["occurrence"]),
+        )
     a38["first_comment"] = comment_intent
-    # Save both outside-effect intents before either the GitHub comment or a ping
-    # is sent. Their deterministic ids make the incomplete steps resumable.
+    # Save the outside-effect intents before the GitHub comment or any ping is
+    # sent. Their deterministic ids make incomplete steps resumable.
     save_task(store, task)
     completed_result = _first_comment_result_verified(
         store, worker, task, runner, comment_intent, head
@@ -2243,11 +2262,179 @@ def phase_first_comment(
     comment_intent.update(id=result.get("id"), url=result.get("url"))
     # Checkpoint the external comment result as soon as the executor has verified it.
     save_task(store, task)
-    _write_second_review_request_pings(store, task, request_plan)
-    c["phase"] = "await_second_review"
+    if request_plan is not None:
+        _write_second_review_request_pings(store, task, request_plan)
+    c["phase"] = "pr_gates_codex" if model_second else "await_second_review"
     save_task(store, task)
     verb = "already posted" if already_posted else "posted"
     return [f"first A38 review comment {verb} on {head[:7]}"]
+
+
+def phase_second_comment(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    """Post the second review comment of an A38 task whose second review is run by model slot second."""
+    c = coord(task)
+    if not worker.a38 or not a38_model_second(c):
+        raise CoordinatorError(
+            "A38 second-comment phase requires the model second review"
+        )
+    head = verify_signed_clean_head(
+        store, worker, runner, str(c.get("worktree") or "")
+    )
+    if head != str(c.get("head_sha") or ""):
+        invalidate_head_evidence(c, head)
+        c["head_sha"] = head
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["head changed before second A38 review comment"]
+
+    models = task.get("models") if isinstance(task.get("models"), dict) else {}
+    vendor = models.get("second")
+    if not isinstance(vendor, str):
+        raise CoordinatorError("A38 second review provider is not pinned")
+    gates = latest_gates(store, str(task["id"]))
+    lanes: list[dict[str, Any]] = []
+    rejected: list[tuple[str, str]] = []
+    rejected_ids: list[str] = []
+    for dimension, lane_id in (
+        ("quality", "conformity-b"),
+        ("logic", "logic-b"),
+    ):
+        gate = gates.get(("review-2", dimension))
+        item = None
+        if (
+            isinstance(gate, dict)
+            and gate.get("head_sha") == head
+            and gate.get("vendor") == vendor
+            and gate.get("verdict") in ("approved", "rejected")
+        ):
+            item = gate_prompt_evidence(
+                store,
+                gate,
+                head=head,
+                dimension=dimension,
+                vendor=vendor,
+            )
+        if item is None:
+            c["phase"] = "pr_gates_codex"
+            save_task(store, task)
+            return [
+                f"second review {dimension} gate missing on {head[:7]}; re-running gate"
+            ]
+        lanes.append(
+            {
+                "id": lane_id,
+                "result": "pass",
+                "status": "complete",
+                "provider": PROVIDER_DISPLAY[item["provider"]],
+                "model": item["model"],
+                "model_number": item["model"],
+                "prompt": public_prompt(item["prompt"], worker, task),
+            }
+        )
+        if gate.get("verdict") == "rejected":
+            rejected.append(
+                (
+                    dimension,
+                    str(
+                        gate.get("evidence")
+                        or f"review-2/{dimension} rejected"
+                    ),
+                )
+            )
+            rejected_ids.append(str(gate["id"]))
+    if lanes[0]["model"] != lanes[1]["model"]:
+        raise CoordinatorError("second review lanes do not share one model")
+
+    defects = len(rejected)
+    blocks = defects > 0
+    a38 = _a38_state(c)
+    passes = int(a38.get("second_review_passes") or 0)
+    activity_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"coordinator-a38-second-model:{task['id']}:{head}:{passes}",
+        )
+    )
+    body = ""
+    saved = store.row("activity", activity_id)
+    if isinstance(saved, dict):
+        saved_payload = saved.get("payload")
+        saved_body = (
+            saved_payload.get("body")
+            if isinstance(saved_payload, dict)
+            else None
+        )
+        if isinstance(saved_body, str) and saved_body:
+            try:
+                declaration = parse_review_block(saved_body)
+            except ReviewError:
+                declaration = {}
+            if (
+                declaration.get("head") == head
+                and declaration.get("defects") == defects
+                and declaration.get("blocks_merge") is blocks
+            ):
+                body = saved_body
+    if not body:
+        if blocks:
+            budget = SECOND_REVIEW_TEXT_LIMIT - 2 * sum(
+                len(json.dumps(lane["prompt"], ensure_ascii=False))
+                for lane in lanes
+            )
+            published = _quoted_findings(
+                merge_review_findings(rejected), limit=max(200, budget)
+            )
+        else:
+            published = ""
+        declaration = {
+            "schema": "a38-review/v2",
+            "head": head,
+            "passes": 1,
+            "defects": defects,
+            "set_aside": "none",
+            "blocks_merge": blocks,
+            "lanes": lanes,
+        }
+        body = _render_review_comment(
+            task,
+            declaration,
+            rules_bound=review_rules_bound(store, worker, runner, task),
+            reviewer=None,
+            findings=published,
+        )
+    result = _post_comment(
+        store,
+        worker,
+        task,
+        runner,
+        activity_id=activity_id,
+        body=body,
+    )
+    comment = {
+        "head": head,
+        "activity_id": activity_id,
+        "id": result.get("id"),
+        "url": result.get("url"),
+        "blocks_merge": blocks,
+    }
+    if blocks:
+        _apply_rejected_gate_transition(
+            task,
+            head=head,
+            rejected=rejected,
+            gate_ids=rejected_ids,
+        )
+        _a38_state(coord(task))["second_comment"] = comment
+        save_task(store, task)
+        return [
+            f"blocking second A38 review comment posted on {head[:7]}; routing to implementer"
+        ]
+    a38["second_comment"] = comment
+    c["phase"] = "ci"
+    save_task(store, task)
+    return [f"second A38 review comment posted on {head[:7]}"]
 
 
 def _ping_id(task_id: str, head: str, login: str, occurrence: int) -> str:
@@ -2678,7 +2865,7 @@ def reconcile_a38_publication_intents(
         if isinstance(second, dict) and second.get("head") == head
         else None
     )
-    if first_pending and plan is None:
+    if first_pending and plan is None and not a38_model_second(c):
         raise CoordinatorError(
             "saved A38 first comment has no saved second-review request occurrence"
         )
@@ -3172,7 +3359,13 @@ def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[st
     return statuses, evidence
 
 
-def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> bool:
+def require_ready_evidence(
+    store: Store,
+    task: dict[str, Any],
+    head: str,
+    *,
+    model_second: bool = False,
+) -> bool:
     c = coord(task)
     a38 = _a38_state(c)
     if a38.get("pending_base_sha"):
@@ -3216,10 +3409,19 @@ def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> boo
     )
     if report_bound == waiver_bound:
         raise CoordinatorError(f"A38 report or waiver evidence is missing on {head[:7]}")
-    for key in ("first_comment", "second_review"):
+    keys = (
+        ("first_comment", "second_comment")
+        if model_second
+        else ("first_comment", "second_review")
+    )
+    for key in keys:
         value = a38.get(key)
         if not isinstance(value, dict) or value.get("head") != head:
             raise CoordinatorError(f"A38 {key} evidence is missing on {head[:7]}")
+    if model_second:
+        if a38["second_comment"].get("blocks_merge") is not False:
+            raise CoordinatorError("model second review blocks the merge")
+        return True
     if a38["second_review"].get("status") != "posted":
         raise CoordinatorError("external second review comment is not posted")
     statuses, evidence = _checklist_maps(store, str(task["id"]))
@@ -3527,7 +3729,9 @@ def phase_await_ready(
             _observation(c, observation)
             save_task(store, task)
             return [observation]
-        if not require_ready_evidence(store, task, head):
+        if not require_ready_evidence(
+            store, task, head, model_second=a38_model_second(c)
+        ):
             return [
                 f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
             ]
