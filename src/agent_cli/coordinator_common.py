@@ -1374,6 +1374,22 @@ def evidence_base_sha(coord_data: dict[str, Any], *, a38: bool) -> str:
     return str(coord_data.get("base_sha") or "")
 
 
+def a38_task(c: dict[str, Any]) -> bool:
+    """True when the task was created by an A38 worker (pin written at creation)."""
+    a38 = c.get("a38")
+    return a38 is True or (isinstance(a38, dict) and a38.get("enabled") is True)
+
+
+def a38_model_second(c: dict[str, Any]) -> bool:
+    """True when the task's second review is run by model slot second in A38 mode."""
+    a38 = c.get("a38")
+    return (
+        isinstance(a38, dict)
+        and a38.get("enabled") is True
+        and a38.get("second_review_mode") == "model"
+    )
+
+
 def harden_grok_write_argv(argv: list[str]) -> list[str]:
     """Ensure the Grok implementer cannot Bash, spawn subagents, or web-search.
 

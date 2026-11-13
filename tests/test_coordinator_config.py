@@ -66,6 +66,24 @@ def test_lane_retries_defaults_to_two(tmp_path):
     assert worker.lane_retries == 2
 
 
+def test_orders_defaults_to_false(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].orders is False
+
+    data['workers']['selected-session']['orders'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].orders is True
+
+
+def test_orders_must_be_a_boolean(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['orders'] = 'yes'
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='orders must be a boolean'):
+        load_coordinator_config(tmp_path)
+
+
 @pytest.mark.parametrize('value', [-1, "1", True, 1.5])
 def test_lane_retries_accepts_zero_and_refuses_bad_values(tmp_path, value):
     data = config(tmp_path)

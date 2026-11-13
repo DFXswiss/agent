@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,10 @@ def make_worker(root: Path) -> WorkerConfig:
         park_poll_seconds=0,
         lane_retries=0,
     )
+
+
+def make_order_worker(root: Path, **overrides) -> WorkerConfig:
+    return replace(make_worker(root), orders=True, **overrides)
 
 
 def order_source(order_id: str, **extra) -> dict:

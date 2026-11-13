@@ -44,6 +44,7 @@ class WorkerConfig:
     second_review_timeout_seconds: int = 86400
     park_poll_seconds: int = DEFAULT_PARK_POLL_SECONDS
     lane_retries: int = DEFAULT_LANE_RETRIES
+    orders: bool = False
 
 
 def _text(value: object, label: str) -> str:
@@ -127,12 +128,15 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'owner_check_argv', 'owner_readiness_argv',
                     'require_hub_assignment', 'a38', 'second_reviewers',
                     'second_review_timeout_seconds', 'park_poll_seconds',
-                    'lane_retries'}
+                    'lane_retries', 'orders'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
         if not isinstance(a38, bool):
             raise StoreError('a38 must be a boolean')
+        orders = item.get('orders', False)
+        if not isinstance(orders, bool):
+            raise StoreError('orders must be a boolean')
         review_raw = item.get('review_session')
         if not a38 and review_raw is None:
             raise StoreError('non-A38 workers require an explicit review_session')
@@ -221,5 +225,6 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                        item.get('lane_retries', DEFAULT_LANE_RETRIES),
                                        'lane_retries',
                                        0,
-                                   ))
+                                   ),
+                                   orders=orders)
     return result
