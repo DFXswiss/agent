@@ -30,6 +30,7 @@ from agent_cli.runner_cmd import (
     exit_code_of,
     expected_login,
     load_json,
+    remove_job_worktree,
     runner_paths,
     run_worker,
     safe_job_id,
@@ -719,6 +720,121 @@ def test_prune_ignores_a_row_whose_id_is_not_a_plain_name(
         store.close()
     assert sibling.read_text(encoding="utf-8") == "keep me"
     assert "job.pruned none" in capsys.readouterr().out
+
+
+def test_prune_removes_a_leftover_worktree_before_deleting_the_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A failed job can leave its worktree behind. Once the row is gone nothing
+    # names that directory again, so prune removes it first.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"failed": 0}})
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    work = runner_dir / "state" / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    worktree = work / row["id"]
+    worktree.mkdir(parents=True)
+    (worktree / "file.txt").write_text("stale", encoding="utf-8")
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        # The fake git leaves the directory in place, so the guarded rmtree is
+        # what removes it.
+        return _completed()
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", row["id"]) is None
+    finally:
+        store.close()
+    assert not worktree.exists()
+    assert not any(logs.iterdir())
+    joined = [" ".join(argv) for argv in calls]
+    assert any("worktree remove" in command for command in joined)
+    assert f"job.pruned {row['id']}" in capsys.readouterr().out
+
+
+def test_prune_keeps_a_row_whose_worktree_cannot_be_removed_safely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A symlink points at data the runner does not own. The row, its log files
+    # and the target must all survive, and git must never see the path.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"failed": 0}})
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    work = runner_dir / "state" / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("keep me", encoding="utf-8")
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    link = work / row["id"]
+    link.symlink_to(outside, target_is_directory=True)
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", row["id"]) is not None
+    finally:
+        store.close()
+    assert link.is_symlink()
+    assert (outside / "precious.txt").read_text(encoding="utf-8") == "keep me"
+    for suffix in (".exit", ".transcript", ".prompt"):
+        assert (logs / f"{row['id']}{suffix}").exists()
+    captured = capsys.readouterr()
+    assert f"prune skipped {row['id']}" in captured.err
+    assert calls == []
+
+
+def test_remove_job_worktree_does_nothing_when_the_path_is_absent(
+    tmp_path: Path,
+) -> None:
+    paths = runner_paths(tmp_path / "runner")
+    calls: list[list[str]] = []
+
+    problem = remove_job_worktree(
+        paths,
+        "missing",
+        {"repo": "owner/name"},
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    assert problem is None
+    assert calls == []
 
 
 # ---------------------------------------------------------------------- retry

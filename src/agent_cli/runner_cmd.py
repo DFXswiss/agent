@@ -599,11 +599,21 @@ def _cmd_prune(args: list[str]) -> None:
                 for job_id in queue.prunable(
                     rows, state=state, now_epoch=now, days=days
                 ):
-                    for suffix in (".exit", ".transcript", ".prompt"):
-                        _remove_if_present(paths.logs / f"{job_id}{suffix}")
                     row = own.row("job", job_id)
                     if row is None:
                         continue
+                    # A failed job can leave its worktree behind (a failed
+                    # `git worktree add`, or a cleanup `finalize` could not
+                    # finish). Once the row is deleted no pass can name that
+                    # directory again, so remove it first, under the same
+                    # guards retry uses. A row whose worktree cannot be removed
+                    # safely is kept, with its logs, for the next prune.
+                    problem = remove_job_worktree(paths, job_id, row, run_argv)
+                    if problem is not None:
+                        print(f"prune skipped {job_id}: {problem}", file=sys.stderr)
+                        continue
+                    for suffix in (".exit", ".transcript", ".prompt"):
+                        _remove_if_present(paths.logs / f"{job_id}{suffix}")
                     store.write(
                         "job",
                         "delete",
@@ -622,48 +632,55 @@ def _cmd_prune(args: list[str]) -> None:
 # ---------------------------------------------------------------------- retry
 
 
-def _remove_previous_worktree(
-    paths: RunnerPaths, job_id: str, row: dict[str, Any]
-) -> None:
-    """Remove a retried job's leftover worktree without ever deleting foreign data."""
-    from .main import die
+def remove_job_worktree(
+    paths: RunnerPaths,
+    job_id: str,
+    row: dict[str, Any],
+    runner: Callable[[list[str]], Completed],
+) -> str | None:
+    """Remove one job's leftover worktree without ever deleting foreign data.
 
+    Returns a problem string instead of exiting: `retry` stops before writing
+    the row, and `prune` keeps a row it could not clean up so the next pass
+    tries again. `None` means the path was already absent or is now gone.
+    """
     path = paths.work / job_id
     if not path.exists() and not os.path.islink(path):
-        return
+        return None
     # `git worktree remove` acts on whatever the path names, so the path is
     # checked before git sees it, not only before the recursive delete below.
     # A symlink is never followed, and a path outside the root is refused:
     # either could remove data the runner does not own.
     if os.path.islink(path):
-        die(f"job {job_id} worktree {path} is a symlink; refusing to remove it")
+        return f"job {job_id} worktree {path} is a symlink; refusing to remove it"
     if not reap.within_root(
         os.path.realpath(str(paths.work)), os.path.realpath(str(path))
     ):
-        die(f"job {job_id} worktree {path} is outside the work root")
+        return f"job {job_id} worktree {path} is outside the work root"
     try:
         bare = workspace.bare_path(str(paths.repos), row.get("repo"))
     except ValueError:
-        die(f"job {job_id} has no usable repo for its worktree")
-    run_argv(workspace.worktree_remove_argv(bare, str(path)))
-    run_argv(workspace.worktree_prune_argv(bare))
+        return f"job {job_id} has no usable repo for its worktree"
+    runner(workspace.worktree_remove_argv(bare, str(path)))
+    runner(workspace.worktree_prune_argv(bare))
     if not path.exists() and not os.path.islink(path):
-        return
+        return None
     # Re-check after git: nothing guarantees the directory is still the one
     # inspected above. `rmtree` is allowed only for a real directory that
     # resolves strictly inside the work root.
     if os.path.islink(path):
-        die(f"job {job_id} worktree {path} is a symlink; refusing to remove it")
+        return f"job {job_id} worktree {path} is a symlink; refusing to remove it"
     if not reap.within_root(
         os.path.realpath(str(paths.work)), os.path.realpath(str(path))
     ):
-        die(f"job {job_id} worktree {path} is outside the work root")
+        return f"job {job_id} worktree {path} is outside the work root"
     try:
         shutil.rmtree(path)
     except OSError as exc:
-        die(f"job {job_id} worktree {path}: {exc}")
+        return f"job {job_id} worktree {path}: {exc}"
     if path.exists():
-        die(f"job {job_id} worktree {path} could not be removed")
+        return f"job {job_id} worktree {path} could not be removed"
+    return None
 
 
 def _cmd_retry(args: list[str]) -> None:
@@ -699,7 +716,9 @@ def _cmd_retry(args: list[str]) -> None:
             # be recorded as the new attempt's result.
             for suffix in (".exit", ".transcript", ".prompt"):
                 _remove_if_present(paths.logs / f"{job_id}{suffix}")
-            _remove_previous_worktree(paths, job_id, row)
+            problem = remove_job_worktree(paths, job_id, row, run_argv)
+            if problem is not None:
+                die(problem)
             store.write("job", "update", job_id, payload)
         finally:
             store.close()

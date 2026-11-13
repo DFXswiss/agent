@@ -129,8 +129,11 @@ ledger session.
 Deletes finished queue rows and their log files once they are older than the
 retention configured for their state. Each of `done` and `failed` is handled
 independently; when a state has no retention setting, the command prints
-`prune <state> not configured` and keeps everything in that state. Output:
-`job.pruned <job-id>` per row, or `job.pruned none`.
+`prune <state> not configured` and keeps everything in that state. A leftover
+worktree under `state/work/<id>` is removed first with the same guards as
+`retry`; a row whose worktree cannot be removed safely is kept with its log
+files and reported as `prune skipped <job-id>: <reason>` on standard error.
+Output: `job.pruned <job-id>` per row, or `job.pruned none`.
 
 ### `agent runner retry JOB_ID`
 
