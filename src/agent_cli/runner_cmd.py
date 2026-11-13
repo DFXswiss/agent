@@ -303,14 +303,24 @@ def work_dirs(paths: RunnerPaths | Path) -> list[str]:
     """Names of the immediate subdirectories of the work root, sorted.
 
     Accepts the runner layout or the work root itself, so a caller that already
-    holds one does not have to reach through the other.
+    holds one does not have to reach through the other. A missing directory is
+    an empty answer, not an error: nothing is reaped when nothing can be listed.
+    A symlinked entry is not a worktree directory and is not listed — reaping
+    it would name a job whose worktree is really somewhere else.
     """
     work = paths.work if isinstance(paths, RunnerPaths) else Path(paths)
     try:
-        entries = work.iterdir()
+        # `Path.iterdir()` is lazy, so its OSError would surface after the
+        # `try` had already been left. `scandir` opens eagerly, which keeps the
+        # whole listing inside the handler.
+        with os.scandir(work) as entries:
+            return sorted(
+                entry.name
+                for entry in entries
+                if entry.is_dir(follow_symlinks=False)
+            )
     except OSError:
         return []
-    return sorted(entry.name for entry in entries if entry.is_dir())
 
 
 def _agent_settings(runner_config: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -639,30 +649,6 @@ def _cmd_status(args: list[str]) -> None:
 # --------------------------------------------------------------------- doctor
 
 
-def _catalogue_skill_ids(catalog: dict[str, Any]) -> list[str]:
-    """Non-empty skill ids the catalogue publishes.
-
-    The catalogue is read exactly as `health.unresolved_skills` reads it: a
-    list, or a mapping read by its values. Non-dict entries and ids that are
-    not strings are skipped; `unresolved_skills` already reports those shapes.
-    """
-    raw_entries = catalog.get("skills") if isinstance(catalog, dict) else None
-    if isinstance(raw_entries, list):
-        entries = raw_entries
-    elif isinstance(raw_entries, dict):
-        entries = list(raw_entries.values())
-    else:
-        return []
-    ids: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        raw_id = entry.get("id")
-        if isinstance(raw_id, str) and raw_id:
-            ids.append(raw_id)
-    return ids
-
-
 def _cmd_doctor(args: list[str]) -> None:
     """Report every configuration and environment problem. Read-only."""
     from .main import home
@@ -700,13 +686,6 @@ def _cmd_doctor(args: list[str]) -> None:
         problems.extend(agent_problems)
     if catalog is not None and runner_config is not None:
         problems.extend(health.unresolved_skills(catalog, runner_config))
-    if catalog is not None:
-        # A skill the catalogue publishes without its prompt template would
-        # only fail when its first job runs; report it here instead.
-        for skill_id in _catalogue_skill_ids(catalog):
-            template = paths.prompts / f"{skill_id}.md"
-            if not template.is_file():
-                problems.append(f"prompt template {template} is missing")
     if agent_config is not None:
         problems.extend(health.agent_config_problems(agent_config))
 
@@ -717,6 +696,20 @@ def _cmd_doctor(args: list[str]) -> None:
             expected = raw_login.strip()
         else:
             problems.append("policy expected_gh_user is missing")
+        # The worker renders `prompts/<job_type>.md`, and the job types are the
+        # lowercased entries of `job_types_allow` that ingest matched. The
+        # catalogue's skill ids are a different namespace: a skill id and the
+        # job type it maps to can differ, so checking catalogue ids would miss
+        # the template the worker actually loads. A job type without its
+        # template would only fail when its first job runs; report it here.
+        job_types = policy.get("job_types_allow")
+        if isinstance(job_types, list):
+            for job_type in job_types:
+                if not isinstance(job_type, str) or not job_type.strip():
+                    continue
+                template = paths.prompts / f"{job_type.lower()}.md"
+                if not template.is_file():
+                    problems.append(f"prompt template {template} is missing")
 
     for binary in ("gh", "git", "tmux", "ps"):
         if shutil.which(binary) is None:
@@ -877,7 +870,11 @@ def run_worker(
     prompt_template = paths.prompts / f"{job_type}.md"
     try:
         template = prompt_template.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers UnicodeDecodeError: a template that is not UTF-8
+        # cannot be rendered, and rendering nothing would start an agent with
+        # an empty prompt. Every failure after identification still records an
+        # exit code.
         return _worker_fail(
             paths, job_id, f"prompt template {prompt_template}: {exc}"
         )
@@ -913,7 +910,11 @@ def run_worker(
             stream = process.stdout
             if stream is not None:
                 while True:
-                    chunk = stream.read(65536)
+                    # `read1`, not `read`: a buffered reader's `read(65536)`
+                    # waits for the full size or EOF, so a quiet agent's
+                    # progress would sit in the buffer, the transcript would
+                    # not grow, and the stall watchdog could kill live work.
+                    chunk = stream.read1(65536)
                     if not chunk:
                         break
                     out.write(chunk)
@@ -968,12 +969,24 @@ def cmd_runner(args: list[str]) -> None:
         cwd = os.getcwd()
         # Validate before touching the store: outside a job worktree this
         # command must leave no trace at all, and opening the store writes.
-        if _worker_job_id(paths, cwd) is None:
+        # The id is computed once and reused below; calling the resolver twice
+        # would only repeat the same check.
+        job_id = _worker_job_id(paths, cwd)
+        if job_id is None:
             raise SystemExit(2)
-        store = open_store()
         try:
-            code = run_worker(paths, store, cwd)
+            store = open_store()
+            try:
+                code = run_worker(paths, store, cwd)
+            finally:
+                store.close()
         finally:
-            store.close()
+            # Failures outside run_worker's own checks (a store that will not
+            # open, an unexpected exception) must still let finalize end the
+            # attempt. Dispatch removes a queued job's stale exit file first,
+            # so a missing file here really means this attempt wrote none.
+            # The exception, if any, still propagates.
+            if not (paths.logs / f"{job_id}.exit").exists():
+                _worker_fail(paths, job_id, "worker ended without recording a result")
         raise SystemExit(code)
     die(USAGE)

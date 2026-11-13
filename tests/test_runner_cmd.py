@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -298,6 +299,21 @@ def test_own_jobs_hides_and_refuses_foreign_rows(tmp_path: Path) -> None:
         store.close()
 
 
+def _apply_foreign_job(store: Store, payload: dict[str, Any], *, seq: int = 1) -> None:
+    """Materialize a job row owned by another device."""
+    store.apply_remote(
+        {
+            "origin_device_id": "other-device",
+            "origin_seq": seq,
+            "table": "job",
+            "op": "insert",
+            "row_id": payload["id"],
+            "payload": payload,
+            "occurred_at": "2026-08-13T12:00:00Z",
+        }
+    )
+
+
 # ------------------------------------------------------------------- dispatch
 
 
@@ -402,6 +418,44 @@ def test_the_worker_wrapper_runs_this_installation(
     ]
 
 
+def test_dispatch_only_starts_this_devices_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A queued row replicated from another device must never reach the runner.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 2})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    own = _job_row()
+    foreign = _job_row("pr-review")
+    # Give the foreign row a distinct identity while keeping the same shape.
+    foreign["id"] = "foreign-queued"
+    foreign.update({"state": "queued", "attempts": 0})
+    store = Store(home)
+    try:
+        store.write("job", "insert", own["id"], own)
+        _apply_foreign_job(store, foreign)
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
+
+    cmd_runner(["dispatch"])
+
+    store = Store(home)
+    try:
+        saved_own = store.row("job", own["id"])
+        assert saved_own is not None
+        assert saved_own["state"] == "running"
+        saved_foreign = store.row("job", foreign["id"])
+        assert saved_foreign is not None
+        assert saved_foreign["state"] == "queued"
+    finally:
+        store.close()
+    assert not any(foreign["id"] in " ".join(argv) for argv in calls)
+    assert f"job.started {own['id']}" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------- prune
 
 
@@ -467,6 +521,81 @@ def test_prune_does_not_delete_when_retention_is_not_configured(
     out = capsys.readouterr().out
     assert "prune done not configured" in out
     assert "prune failed not configured" in out
+
+
+def test_prune_only_deletes_this_devices_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"done": 0}})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    own = _job_row()
+    own.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+    foreign = _job_row()
+    foreign["id"] = "foreign-done"
+    foreign.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+    store = Store(home)
+    try:
+        store.write("job", "insert", own["id"], own)
+        _apply_foreign_job(store, foreign)
+    finally:
+        store.close()
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", own["id"]) is None
+        saved_foreign = store.row("job", foreign["id"])
+        assert saved_foreign is not None
+        assert saved_foreign["state"] == "done"
+    finally:
+        store.close()
+    assert f"job.pruned {own['id']}" in capsys.readouterr().out
+
+
+def test_prune_honours_the_retention_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 30 days means strictly older than 30 days is deleted; 29 days is kept.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"done": 30}})
+    logs = home / "runner" / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    now = datetime.now(timezone.utc)
+
+    def _finished(days: int) -> str:
+        return (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    old = _job_row()
+    old["id"] = "old-job"
+    old.update({"state": "done", "finished": _finished(31)})
+    recent = _job_row()
+    recent["id"] = "recent-job"
+    recent.update({"state": "done", "finished": _finished(29)})
+    store = Store(home)
+    try:
+        store.write("job", "insert", old["id"], old)
+        store.write("job", "insert", recent["id"], recent)
+    finally:
+        store.close()
+    for row in (old, recent):
+        for suffix in (".exit", ".transcript", ".prompt"):
+            (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", old["id"]) is None
+        assert store.row("job", recent["id"]) is not None
+    finally:
+        store.close()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        assert not (logs / f"{old['id']}{suffix}").exists()
+        assert (logs / f"{recent['id']}{suffix}").exists()
+    assert f"job.pruned {old['id']}" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------- retry
@@ -686,6 +815,26 @@ def test_work_dirs_lists_sorted_immediate_directories(tmp_path: Path) -> None:
     assert work_dirs(paths) == ["a", "b"]
 
 
+def test_work_dirs_is_empty_when_the_work_root_is_missing(tmp_path: Path) -> None:
+    # `iterdir()` raises lazily; a missing directory must still answer [].
+    paths = runner_paths(tmp_path / "runner")
+
+    assert work_dirs(paths) == []
+
+
+def test_work_dirs_does_not_list_a_symlinked_directory(tmp_path: Path) -> None:
+    # A symlink is not a worktree the runner owns; reaping it would name a job
+    # whose real directory is somewhere else.
+    paths = runner_paths(tmp_path / "runner")
+    paths.work.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (paths.work / "real").mkdir()
+    (paths.work / "linked").symlink_to(target, target_is_directory=True)
+
+    assert work_dirs(paths) == ["real"]
+
+
 # --------------------------------------------------------------------- worker
 
 
@@ -718,6 +867,9 @@ class _Stream:
         self._chunks = list(chunks)
 
     def read(self, _size: int) -> bytes:
+        raise AssertionError("read() buffers; the worker must use read1()")
+
+    def read1(self, _size: int) -> bytes:
         return self._chunks.pop(0) if self._chunks else b""
 
 
@@ -821,6 +973,56 @@ def test_worker_inherits_the_default_deny_list(tmp_path: Path) -> None:
     assert calls[0][:4] == ["agent-cli", "run", "--deny", "Bash"]
 
 
+def test_worker_uses_read1_to_stream_output(tmp_path: Path) -> None:
+    # `read(65536)` would block until the buffer fills or EOF, so a quiet
+    # agent's progress would not reach the transcript and the stall watchdog
+    # could kill live work. Only `read1` returns what is available.
+    paths, job_id_value = _worker_home(tmp_path)
+    seen: list[str] = []
+
+    class Stream:
+        def __init__(self) -> None:
+            self._chunks = [b"live\n"]
+
+        def read(self, _size: int) -> bytes:
+            raise AssertionError("read() must not be called")
+
+        def read1(self, _size: int) -> bytes:
+            seen.append("read1")
+            return self._chunks.pop(0) if self._chunks else b""
+
+    class Process:
+        stdout = Stream()
+
+        def wait(self) -> int:
+            return 0
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: Process(),
+    )
+
+    assert code == 0
+    assert seen
+    assert (paths.logs / f"{job_id_value}.transcript").read_bytes() == b"live\n"
+
+
+def test_worker_preserves_a_nonzero_agent_result(tmp_path: Path) -> None:
+    paths, job_id_value = _worker_home(tmp_path)
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: _Process(3, [b"partial\n"]),
+    )
+
+    assert code == 3
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "3\n"
+
+
 def test_worker_writes_exit_two_when_the_job_cannot_be_identified(
     tmp_path: Path,
 ) -> None:
@@ -890,6 +1092,44 @@ def test_worker_writes_exit_two_when_the_prompt_template_is_missing(
     ).read_text(encoding="utf-8")
 
 
+def test_worker_writes_exit_two_when_the_prompt_template_is_not_utf8(
+    tmp_path: Path,
+) -> None:
+    # A template that cannot be decoded must not start an agent with no prompt.
+    paths, job_id_value = _worker_home(tmp_path)
+    (paths.prompts / "pr-review.md").write_bytes(b"\xff\xfe\x00")
+
+    code = run_worker(
+        paths,
+        _worker_store(job_id_value),
+        str(paths.work / job_id_value),
+        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
+    )
+
+    assert code == 2
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
+
+
+def test_work_records_a_failure_when_the_store_cannot_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failure outside run_worker's own checks still has to end the attempt,
+    # and the exception itself must keep propagating.
+    paths, job_id_value = _worker_home(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(paths.work / job_id_value)
+
+    def failing_open_store(**_kwargs: Any) -> Any:
+        raise SystemExit("database unavailable")
+
+    monkeypatch.setattr("agent_cli.main.open_store", failing_open_store)
+
+    with pytest.raises(SystemExit, match="database unavailable"):
+        cmd_runner(["work"])
+
+    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
+
+
 def test_worker_refuses_a_row_owned_by_another_device(tmp_path: Path) -> None:
     # Another device's row is not this worker's job; starting the agent would
     # run work the store cannot attribute to this instance.
@@ -952,6 +1192,79 @@ def test_supervise_exits_one_when_a_reap_step_fails(
     assert "reap failed job-orphan" not in captured.out
 
 
+def test_supervise_only_finalizes_this_devices_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    logs = home / "runner" / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    own = _job_row()
+    own.update(
+        {
+            "state": "running",
+            "session": dispatch.session_name(own["id"]),
+            "baseline_output_ids": [],
+            "started": "2026-08-13T12:00:00Z",
+        }
+    )
+    foreign = _job_row()
+    foreign["id"] = "foreign-running"
+    foreign.update(
+        {
+            "state": "running",
+            "session": dispatch.session_name(foreign["id"]),
+            "baseline_output_ids": [],
+            "started": "2026-08-13T12:00:00Z",
+        }
+    )
+    store = Store(home)
+    try:
+        store.write("job", "insert", own["id"], own)
+        _apply_foreign_job(store, foreign)
+    finally:
+        store.close()
+    # Both have an exit file; only the own one may be looked at.
+    (logs / f"{own['id']}.exit").write_text("0\n", encoding="utf-8")
+    (logs / f"{foreign['id']}.exit").write_text("0\n", encoding="utf-8")
+
+    def run(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        if "list-sessions" in joined:
+            return _completed(0, "")
+        if "has-session" in joined:
+            return _completed(1)
+        if "graphql" in joined:
+            return _completed(0, _BASELINE)
+        if "kill-session" in joined:
+            return _completed()
+        if "worktree" in joined:
+            return _completed()
+        raise AssertionError(argv)
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    cmd_runner(["supervise"])
+
+    store = Store(home)
+    try:
+        saved_own = store.row("job", own["id"])
+        assert saved_own is not None
+        assert saved_own["state"] == "failed"
+        saved_foreign = store.row("job", foreign["id"])
+        assert saved_foreign is not None
+        assert saved_foreign["state"] == "running"
+    finally:
+        store.close()
+    assert f"job.finalized {own['id']}" in capsys.readouterr().out
+
+
 # ------------------------------------------------------------------- doctor
 
 
@@ -960,7 +1273,13 @@ def _healthy_runner_files(home: Path) -> RunnerPaths:
     paths.prompts.mkdir(parents=True)
     (paths.prompts / "pr-review.md").write_text("prompt", encoding="utf-8")
     paths.policy.write_text(
-        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+        json.dumps(
+            {
+                "expected_gh_user": "example-bot",
+                "job_types_allow": ["pr-review"],
+            }
+        ),
+        encoding="utf-8",
     )
     paths.runner_config.write_text(
         json.dumps(

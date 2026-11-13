@@ -109,9 +109,13 @@ def test_the_session_name_is_safe_for_tmux() -> None:
 
 def test_long_job_ids_keep_distinct_session_names() -> None:
     # reap_orphans reconstructs the name from the row id, so truncation would
-    # let two jobs share a name and get a live worker killed.
-    first = "owner__pull-request__" + "a" * 40
-    second = "owner__pull-request__" + "b" * 40
+    # let two jobs share a name and get a live worker killed. The two ids share
+    # their first 60 characters, which is past the point a generic name helper
+    # truncates at, so this exercises the collision directly.
+    common = "owner__pull-request__" + "a" * 40
+    first = common + "one"
+    second = common + "two"
+    assert first[:60] == second[:60]
 
     assert session_name(first) == f"job-{first}"
     assert session_name(second) == f"job-{second}"
