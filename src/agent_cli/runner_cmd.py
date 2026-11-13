@@ -45,6 +45,20 @@ USAGE = (
 )
 
 _EXIT_CODE_RE = re.compile(r"^-?[0-9]+$")
+_SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
+
+
+def safe_job_id(value: Any) -> bool:
+    """True when `value` may be used as a job id, and therefore as a path component.
+
+    Job ids become file names (`state/logs/<id>.exit`, `state/work/<id>`) and
+    worktree paths, but the store accepts any string as a row id. A row whose id
+    is `/tmp/x` or `../x` would make prune unlink a file outside the logs
+    directory, retry remove a path outside the work root, and dispatch create a
+    worktree outside it. Only a plain name is accepted: `.` and `/` are excluded,
+    so `.`/`..` and every path separator are impossible.
+    """
+    return isinstance(value, str) and _SAFE_JOB_ID.fullmatch(value) is not None
 
 
 @dataclass(frozen=True)
@@ -173,23 +187,48 @@ class OwnJobs:
     row raises. A command that dispatches, finalizes, prunes or retries must
     act only on its own jobs, so the pure functions receive this view. Other
     tables pass through unchanged.
+
+    Rows whose id is not a plain name (`safe_job_id`) are dropped as well. Every
+    command that touches the filesystem goes through this view, so an id the
+    store accepted but that cannot be a path component never reaches a pure
+    module and never becomes a file name. `ingest` deliberately uses the plain
+    store: it writes rows only with ids from `jobs.job_id`.
+
+    With `work_root` given, a row whose stored `worktree` is set to anything
+    but `<work_root>/<id>` is dropped too. `finalize_running` hands that field
+    to `git worktree remove --force`, and the field is data, not a path this
+    command derived: only the exact path dispatch writes may reach git.
     """
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, *, work_root: Path | None = None) -> None:
         self._store = store
         self._device_id = store.device_id()
+        self._work_root = work_root
+
+    def _usable(self, row: dict[str, Any]) -> bool:
+        if row.get("_origin_device_id") != self._device_id:
+            return False
+        job_id = row.get("id")
+        if not safe_job_id(job_id):
+            return False
+        if self._work_root is None:
+            return True
+        worktree = row.get("worktree")
+        return worktree is None or worktree == f"{self._work_root}/{job_id}"
 
     def rows(self, table: str) -> list[dict[str, Any]]:
         rows = self._store.rows(table)
         if table != "job":
             return rows
-        return [row for row in rows if row.get("_origin_device_id") == self._device_id]
+        return [row for row in rows if self._usable(row)]
 
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
+        if table == "job" and not safe_job_id(row_id):
+            return None
         row = self._store.row(table, row_id)
         if row is None:
             return None
-        if table == "job" and row.get("_origin_device_id") != self._device_id:
+        if table == "job" and not self._usable(row):
             return None
         return row
 
@@ -242,6 +281,23 @@ def _max_concurrent(runner_config: dict[str, Any]) -> int:
     return value
 
 
+def _agent_home() -> Path:
+    """`home()` made absolute, without resolving symlinks.
+
+    Every path the runner hands to git, tmux or the worker derives from this.
+    The worker runs in another directory than the command that dispatched it,
+    so a relative `AGENT_HOME` would name two different places.
+    """
+    from .main import home
+
+    return Path(os.path.abspath(home()))
+
+
+def _runner_base() -> RunnerPaths:
+    """The runner layout under the absolute agent home."""
+    return runner_paths(_agent_home() / "runner")
+
+
 def worker_wrapper() -> str:
     """The one wrapper string every dispatched worker runs inside tmux.
 
@@ -253,13 +309,14 @@ def worker_wrapper() -> str:
     `agent` on `PATH`: another program may ship a binary of that name, and it
     would then be started for every job. Running `main.py` with `-m` starts the
     same code that dispatched the job, whatever its installation is called.
-    """
-    from .main import home
 
+    `AGENT_HOME` is passed absolute: the worker starts in the job's worktree, so
+    a relative home would resolve somewhere else there.
+    """
     return shlex.join(
         [
             "env",
-            f"AGENT_HOME={home()}",
+            f"AGENT_HOME={_agent_home()}",
             sys.executable,
             "-m",
             "agent_cli.main",
@@ -358,13 +415,13 @@ def _agent_settings(runner_config: dict[str, Any]) -> tuple[dict[str, Any] | Non
 
 
 def _cmd_ingest(args: list[str]) -> None:
-    from .main import die, home, open_store, require_flag
+    from .main import die, open_store, require_flag
     from .supervise import SESSION_RE
 
     session_id = require_flag(args, "--session")
     if SESSION_RE.match(session_id) is None:
         die("session id may contain only A-Za-z0-9_-")
-    paths = runner_paths(home() / "runner")
+    paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -397,9 +454,9 @@ def _cmd_ingest(args: list[str]) -> None:
 
 
 def _cmd_dispatch(args: list[str]) -> None:
-    from .main import home, open_store
+    from .main import open_store
 
-    paths = runner_paths(home() / "runner")
+    paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -410,7 +467,7 @@ def _cmd_dispatch(args: list[str]) -> None:
         wrapper = worker_wrapper()
         store = open_store()
         try:
-            own = OwnJobs(store)
+            own = OwnJobs(store, work_root=paths.work)
             # A queued job has, by definition, no live worker, so a leftover
             # exit file or transcript belongs to an earlier attempt. finalize
             # would read the old exit code as this attempt's result.
@@ -450,9 +507,9 @@ def _cmd_supervise(args: list[str]) -> None:
     This is not `agent supervise --session`, which watches one ledger session;
     this supervises the runner's detached jobs.
     """
-    from .main import home, open_store
+    from .main import open_store
 
-    paths = runner_paths(home() / "runner")
+    paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -468,7 +525,7 @@ def _cmd_supervise(args: list[str]) -> None:
         now = int(time.time())
         store = open_store()
         try:
-            own = OwnJobs(store)
+            own = OwnJobs(store, work_root=paths.work)
             finalized, finalize_skipped = finalize.finalize_running(
                 own,
                 run_argv,
@@ -517,9 +574,9 @@ def _cmd_supervise(args: list[str]) -> None:
 
 
 def _cmd_prune(args: list[str]) -> None:
-    from .main import home, open_store
+    from .main import open_store
 
-    paths = runner_paths(home() / "runner")
+    paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -530,7 +587,7 @@ def _cmd_prune(args: list[str]) -> None:
         pruned: list[str] = []
         store = open_store()
         try:
-            own = OwnJobs(store)
+            own = OwnJobs(store, work_root=paths.work)
             rows = own.rows("job")
             for state in ("done", "failed"):
                 days = queue.retention_days(runner_config, state)
@@ -574,6 +631,16 @@ def _remove_previous_worktree(
     path = paths.work / job_id
     if not path.exists() and not os.path.islink(path):
         return
+    # `git worktree remove` acts on whatever the path names, so the path is
+    # checked before git sees it, not only before the recursive delete below.
+    # A symlink is never followed, and a path outside the root is refused:
+    # either could remove data the runner does not own.
+    if os.path.islink(path):
+        die(f"job {job_id} worktree {path} is a symlink; refusing to remove it")
+    if not reap.within_root(
+        os.path.realpath(str(paths.work)), os.path.realpath(str(path))
+    ):
+        die(f"job {job_id} worktree {path} is outside the work root")
     try:
         bare = workspace.bare_path(str(paths.repos), row.get("repo"))
     except ValueError:
@@ -582,9 +649,9 @@ def _remove_previous_worktree(
     run_argv(workspace.worktree_prune_argv(bare))
     if not path.exists() and not os.path.islink(path):
         return
-    # `rmtree` is allowed only for a real directory that resolves strictly
-    # inside the work root. A symlink is never followed, and a path outside the
-    # root is refused: either could delete data the runner does not own.
+    # Re-check after git: nothing guarantees the directory is still the one
+    # inspected above. `rmtree` is allowed only for a real directory that
+    # resolves strictly inside the work root.
     if os.path.islink(path):
         die(f"job {job_id} worktree {path} is a symlink; refusing to remove it")
     if not reap.within_root(
@@ -600,12 +667,17 @@ def _remove_previous_worktree(
 
 
 def _cmd_retry(args: list[str]) -> None:
-    from .main import die, home, open_store
+    from .main import die, open_store
 
     if len(args) != 1 or args[0].startswith("-"):
         die(USAGE)
     job_id = args[0]
-    paths = runner_paths(home() / "runner")
+    # Validate before taking the lock or opening the store: an id that cannot be
+    # a path component must never reach the filesystem, and there is nothing to
+    # look up under it anyway.
+    if not safe_job_id(job_id):
+        die(f"job id {job_id} is not a valid job id")
+    paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -664,9 +736,8 @@ def _cmd_status(args: list[str]) -> None:
 
 def _cmd_doctor(args: list[str]) -> None:
     """Report every configuration and environment problem. Read-only."""
-    from .main import home
 
-    paths = runner_paths(home() / "runner")
+    paths = _runner_base()
     problems: list[str] = []
 
     policy, problem = _read_json(paths.policy, "policy")
@@ -800,13 +871,20 @@ def _worker_job_id(paths: RunnerPaths, cwd: str) -> str | None:
     The job id is the directory name, and the directory must be a direct child
     of the work root after resolving both. Without that rule any directory
     could name a job, and `work` would act on a row unrelated to where it runs.
+    The name must also be a plain job id: it becomes file names under `logs`,
+    and a directory called `..` or containing a separator must be refused even
+    if someone created it under the work root.
     """
     work = os.path.realpath(str(paths.work))
     resolved = os.path.realpath(cwd)
     if not reap.within_root(work, resolved) or os.path.dirname(resolved) != work:
         print(f"agent: not a job worktree: {resolved}", file=sys.stderr)
         return None
-    return os.path.basename(resolved)
+    job_id = os.path.basename(resolved)
+    if not safe_job_id(job_id):
+        print(f"agent: not a job worktree: {resolved}", file=sys.stderr)
+        return None
+    return job_id
 
 
 def run_worker(
@@ -969,7 +1047,7 @@ def run_worker(
 
 def cmd_runner(args: list[str]) -> None:
     """Dispatch one `agent runner` subcommand."""
-    from .main import die, home, open_store
+    from .main import die, open_store
 
     if not args:
         die(USAGE)
@@ -996,7 +1074,7 @@ def cmd_runner(args: list[str]) -> None:
         _cmd_doctor(rest)
         return
     if sub == "work":
-        paths = runner_paths(home() / "runner")
+        paths = _runner_base()
         cwd = os.getcwd()
         # Validate before touching the store: outside a job worktree this
         # command must leave no trace at all, and opening the store writes.
