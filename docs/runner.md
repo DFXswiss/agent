@@ -159,9 +159,10 @@ problem it can find rather than stopping at the first. It runs the three
 health checks, verifies `max_concurrent`, and validates the `agent` block
 (`command`, `args` and `prompt_flag`). It requires the binaries `gh`, `git`,
 `tmux` and `ps` on `PATH`, and the agent command too when the block is usable.
-For every skill id in the catalogue it checks that `prompts/<id>.md` exists.
-It checks that the runner directories are writable, and that the authenticated
-GitHub login matches the policy.
+For every job type in `job_types_allow` it checks that `prompts/<type>.md`
+exists — that is the template the worker renders, and the catalogue's skill ids
+are a different namespace. It checks that the runner directories are writable,
+and that the authenticated GitHub login matches the policy.
 
 Output: one `doctor problem: <text>` line per problem followed by
 `doctor <n> problems`, exiting 1; or `doctor ok`.
