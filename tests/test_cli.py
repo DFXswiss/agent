@@ -6418,12 +6418,15 @@ def test_late_stamp_rejects_missing_small_change_verdict(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tid = _late_inner_ready(tmp_path, capsys)
-    with pytest.raises(SystemExit, match="no finished implementer agent"):
+    sha = "a" * 40
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {sha}")
+    ):
         run(
             tmp_path,
             [
                 "close-step", "--task", tid, "--key", "implementer_done",
-                "--source", "script", "--evidence", f"small change at {'a' * 40}",
+                "--source", "script", "--evidence", f"small change at {sha}",
             ],
         )
 
@@ -6441,7 +6444,9 @@ def test_late_stamp_rejects_not_small_verdict(
         run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
     assert exc.value.code == 2
     capsys.readouterr()
-    with pytest.raises(SystemExit, match="no finished implementer agent"):
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {head}")
+    ):
         run(
             tmp_path,
             [
@@ -6461,12 +6466,15 @@ def test_late_stamp_rejects_a_verdict_at_another_head(
     monkeypatch.setattr("agent_cli.main._bound_review_runner", _pr_runner(base, head))
     run(tmp_path, ["small-change", "--task", tid, "--repo", str(repo)])
     capsys.readouterr()
-    with pytest.raises(SystemExit, match="no finished implementer agent"):
+    sha = "b" * 40
+    with pytest.raises(
+        SystemExit, match=re.escape(f"small change not measured at {sha}")
+    ):
         run(
             tmp_path,
             [
                 "close-step", "--task", tid, "--key", "implementer_done",
-                "--source", "script", "--evidence", f"small change at {'b' * 40}",
+                "--source", "script", "--evidence", f"small change at {sha}",
             ],
         )
 
