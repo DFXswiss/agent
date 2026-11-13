@@ -30,6 +30,7 @@ from .model_slots import (
     parse_model_slots,
 )
 from .pr_guard_config import one_review_for
+from .small_change import VERDICT_SMALL, evidence_head, is_small_change_evidence
 
 KINDS = ("script", "agent", "human")
 # Who may set ja on these keys (source).
@@ -392,7 +393,22 @@ def _late_inner_skip(
         return False
     if not evidence or not str(evidence).strip():
         return False
-    return str(snapshot.get("state") or "") in LATE_INNER_STATES
+    if str(snapshot.get("state") or "") not in LATE_INNER_STATES:
+        return False
+    if (
+        str(snapshot.get("workflow") or "") == "implement"
+        and key in ("implementer_done", "reviewer_approved")
+        and is_small_change_evidence(evidence)
+    ):
+        head = evidence_head(evidence)
+        recorded = snapshot.get("small_change")
+        return (
+            head is not None
+            and isinstance(recorded, Mapping)
+            and recorded.get("verdict") == VERDICT_SMALL
+            and recorded.get("head") == head
+        )
+    return True
 
 
 def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:

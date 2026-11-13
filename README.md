@@ -122,6 +122,7 @@ agent checklist set --task <uuid> --key spec_written --status ja --source human 
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
 agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a|unavailable]
+agent small-change --task <uuid> [--repo PATH] [--json]   # exit 0 small, 2 not small
 agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent github pending
 agent query --match-file PATH
@@ -142,6 +143,8 @@ its outer object has `to_session`, and its `payload` is the strict
 [Issue coordinator — A38 mode](docs/issue-coordinator.md#a38-mode).
 
 `agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
+
+`agent small-change` measures one implement task against the attached pull request: it uses the merge base with the request base recorded by `agent task pr`, requires local HEAD to equal the pull request head, counts paths after `--no-renames`, and accepts at most 30 changed lines in at most 3 files with no binary file. Built-in path classes (workflows, dependencies, infrastructure, migrations, security and money, review rules) are always excluded; `.github/small-change.json` on the base commit may add more. The verdict is recorded on the task. `implementer_done` and `reviewer_approved` accept the evidence `small change at <sha>` only after a `small` verdict at that sha, and `done` needs the small verdict at the head of the four PR gates, which stay required.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 

@@ -96,6 +96,8 @@ Do not invent keys. Chains:
 `reviewer_approved`, `local_check_pass`, `pushed`, `review_1_quality`,
 `review_1_logic`, `review_2_quality`, `review_2_logic`, `mergeable`
 
+Small direct changes may use the small route: `agent small-change --task <uuid>` measures the committed head against the attached pull request base and records `small` or `not-small` on the task. It requires local HEAD equal to the pull request head and accepts at most 30 changed lines in at most 3 files, with workflows, dependencies, infrastructure, migrations, security/money paths and `.github/small-change.json` exclusions kept out. Only after a `small` verdict at a sha may `implementer_done` or `reviewer_approved` take the evidence `small change at <sha>`, and `done` still needs that verdict at the head of the four PR gates, which stay required.
+
 `done` still requires the workflow checklist and both summary sentences
 (`agent task summary`). That ledger `task-done` / checklist close is not
 Ready for review and not pull-request completion. `local_check_pass` and
