@@ -58,6 +58,7 @@ from .coordinator_common import (
     harden_grok_write_argv,
     infra_failure,
     is_order,
+    order_id,
     owned_session,
     parse_change_summaries,
     parse_model_result,
@@ -139,6 +140,7 @@ from .coordinator_lanes import (
     write_review_context,
     write_review_diff,
 )
+from .coordinator_orders import phase_accept_order
 from .preconditions import PHASE_ACTION
 from .github_accounts import AccountError, load_accounts
 from .skills import has_skill
@@ -204,6 +206,16 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
                 raise CoordinatorError("implementer lane requires workspace-write access")
             if role != "implementer" and selected.access != "read-only":
                 raise CoordinatorError(f"{slot} requires read-only access")
+        if worker.orders:
+            check_slot = f"{ai.models.first}:check"
+            check_role = ai.for_lane(
+                worker.session_id,
+                "check",
+                ai.models.first,
+                require_execution=False,
+            )
+            if check_role.access != "read-only":
+                raise CoordinatorError(f"{check_slot} requires read-only access")
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     if not worker.repositories and not worker.repository_owners:
@@ -2292,7 +2304,11 @@ def phase_handlers(
 ) -> dict[str, Callable[[], list[str]]]:
     """The handler of each coordinator phase, bound to one task."""
     return {
-        "accept": lambda: phase_accept(store, worker, task, runner),
+        "accept": lambda: (
+            phase_accept_order(store, worker, task, runner)
+            if is_order(task)
+            else phase_accept(store, worker, task, runner)
+        ),
         "checkout": lambda: phase_checkout(store, worker, task, runner),
         "start_draft": lambda: phase_start_draft(store, worker, task, runner),
         "implement": lambda: phase_implement(store, worker, task, runner, lane_runner),
@@ -2398,6 +2414,8 @@ def _advance_task(
     lane_runner: LaneRunner | None,
 ) -> list[str]:
     c = coord(task)
+    if str(c.get("phase") or "accept") == "queued":
+        return [f"order queued {order_id(task)}"]
     if retry_remaining(c, worker) > 0:
         return []
     if c.get("uncertain_lane"):
@@ -2924,6 +2942,8 @@ def advance_one(
             continue
         if retry_remaining(coord(task), worker) > 0:
             continue
+        if coord(task).get("phase") == "queued":
+            continue
         if not observation_due(store, task, worker):
             continue
         lines.extend(
@@ -2938,6 +2958,16 @@ def advance_one(
         mark_observed(store, task, worker)
         touched.add(str(task["id"]))
     runnable = [t for t in tasks if not _terminal(t) and not parked(t, worker)]
+    if not runnable:
+        queued = [
+            t
+            for t in tasks
+            if not _terminal(t) and coord(t).get("phase") == "queued"
+        ]
+        if queued:
+            coord(queued[0])["phase"] = "accept"
+            save_task(store, queued[0])
+            runnable = [queued[0]]
     candidates = [t for t in runnable if str(t["id"]) not in touched]
     if candidates:  # 2. one phase of the oldest runnable task
         lines.extend(

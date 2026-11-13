@@ -206,6 +206,28 @@ def seed_order_task(
     return store.row("task", order_id)
 
 
+def submit_order(
+    store,
+    worker,
+    *,
+    title: str = "Add a widget",
+    text: str = "Do it",
+    repo: str = "example/project",
+    **kwargs,
+) -> dict:
+    from agent_cli.coordinator_orders import create_order_task
+
+    return create_order_task(
+        store,
+        worker,
+        repo=repo,
+        title=title,
+        text=text,
+        submitted_by="human-owner",
+        **kwargs,
+    )
+
+
 class FakeGh:
     """Minimal fake gh/git transport for coordinator ticks."""
 

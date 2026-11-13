@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -8,7 +10,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
+from agent_cli import coordinator_runtime, github_act
 from agent_cli.allow import CHECKLIST_KEYS
+from agent_cli.coordinator import tick
+from agent_cli.coordinator_checks import registry_row_id
 from agent_cli.coordinator_common import (
     CoordinatorError,
     comment_target,
@@ -18,6 +23,7 @@ from agent_cli.coordinator_common import (
     save_task,
     source_kind,
     source_label,
+    task_text_path,
 )
 from agent_cli.coordinator_git import (
     _write_marker,
@@ -34,13 +40,23 @@ from agent_cli.coordinator_github import (
     publish_blocker,
 )
 from agent_cli.coordinator_lanes import _post_issue_status, phase_pr_gates, write_review_context
+from agent_cli.coordinator_orders import (
+    create_order_task,
+    find_order,
+    list_orders,
+    order_state,
+    phase_accept_order,
+    serves_repo,
+)
 from agent_cli.coordinator_runtime import (
     _apply_implementer_outcome,
     _implementer_instruction,
     _source_still_assigned,
     _spec_context,
     _verify_source_assigned,
+    discover_assignments,
     execution_binding,
+    has_runnable_task,
     implement_commit_message,
     phase_implement,
     refresh_execution_binding,
@@ -50,18 +66,28 @@ from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
     lane_runner,
+    make_order_worker,
     make_session,
     make_worker,
+    order_lane_runner,
     order_source,
     patch_account_runners,
+    scan_done,
     seed_order_task,
+    submit_order,
     write_accounts,
+    write_check_lane,
 )
 
 
 OID = "11111111-1111-4111-8111-111111111111"
 OID2 = "33333333-3333-4333-8333-333333333333"
 TID = "22222222-2222-4222-8222-222222222222"
+OWNERS = dict(
+    repository_owners=("example",),
+    owner_check_argv=("/operator/check",),
+    owner_readiness_argv=("/operator/ready",),
+)
 
 
 def prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -73,6 +99,40 @@ def prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     return store, worker, fake
+
+
+def prepare_orders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    check_lane: bool = True,
+    fake=None,
+    **overrides,
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    if check_lane:
+        write_check_lane(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_order_worker(tmp_path, **overrides)
+    fake = fake or FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = order_lane_runner(fake)
+    return store, worker, fake, lane
+
+
+def run_tick(store, worker, fake, lane) -> list[str]:
+    return tick(store, worker, runner=fake, lane_runner=lane)
+
+
+def checkpoint(store, tid) -> dict:
+    return store.row("task", tid)["payload"]["coordinator"]
+
+
+def text_files(worker) -> list:
+    return list((worker.workspace_root / ".coordinator-control").glob("*/task-text.md"))
 
 
 def seed_issue_task(store, worker, tid: str, *, phase: str, **checkpoint) -> dict:
@@ -965,3 +1025,720 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
         assert f"Order: {OID} Add a widget" in prompt
         assert "The order text takes the place of the linked issue." in prompt
         assert not any(line.startswith("Issue: ") for line in prompt.splitlines())
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ({"state": "done", "payload": {"coordinator": {}}}, "merged"),
+        (
+            {
+                "state": "failed",
+                "payload": {"coordinator": {"failed_kind": "cancelled"}},
+            },
+            "cancelled",
+        ),
+        (
+            {
+                "state": "failed",
+                "payload": {"coordinator": {"failed_kind": "no-change"}},
+            },
+            "failed",
+        ),
+        (
+            {"state": "open", "payload": {"coordinator": {"phase": "blocked"}}},
+            "failed",
+        ),
+        (
+            {"state": "open", "payload": {"coordinator": {"phase": "queued"}}},
+            "queued",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "blocked",
+                        "resume_phase": "implement",
+                    }
+                },
+            },
+            "waiting",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {"phase": "ask", "resume_phase": "implement"}
+                },
+            },
+            "waiting",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "implement",
+                        "binding_blocker": "x",
+                    }
+                },
+            },
+            "waiting",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "await_merge",
+                        "evidence": {"ready_head": "a" * 40},
+                    }
+                },
+            },
+            "ready",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "ask",
+                        "resume_phase": "implement",
+                        "evidence": {"ready_head": "a" * 40},
+                    }
+                },
+            },
+            "waiting",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {"coordinator": {"phase": "implement"}},
+            },
+            "running",
+        ),
+        ({"state": "open", "payload": {"coordinator": {}}}, "running"),
+    ],
+)
+def test_order_state(task: dict, expected: str) -> None:
+    assert order_state(task) == expected
+
+
+@pytest.mark.no_pg
+def test_serves_repo(tmp_path: Path) -> None:
+    worker = make_worker(tmp_path)
+    assert serves_repo(worker, "example/project") is True
+    assert serves_repo(worker, "Example/Project") is True
+    assert serves_repo(worker, "example/other") is False
+    owner_worker = replace(worker, repository_owners=("example",))
+    assert serves_repo(owner_worker, "example/other") is True
+    assert serves_repo(owner_worker, "Example/other") is True
+    assert serves_repo(owner_worker, "other/thing") is False
+
+
+@pytest.mark.no_pg
+def test_accept_handler_depends_on_the_source_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(coordinator_runtime, "phase_accept_order", lambda *a: ["order"])
+    monkeypatch.setattr(coordinator_runtime, "phase_accept", lambda *a: ["issue"])
+    order = {
+        "id": OID,
+        "payload": {"coordinator": {"source": order_source(OID)}},
+    }
+    handlers = coordinator_runtime.phase_handlers(None, None, order, None, None)
+    assert handlers["accept"]() == ["order"]
+    issue = {
+        "id": TID,
+        "payload": {
+            "coordinator": {"source": {"repo": "example/project", "number": 7}}
+        },
+    }
+    handlers = coordinator_runtime.phase_handlers(None, None, issue, None, None)
+    assert handlers["accept"]() == ["issue"]
+    assert "queued" not in handlers
+
+
+@pytest.mark.no_pg
+def test_queued_order_is_not_dispatched(tmp_path: Path) -> None:
+    task = {
+        "id": OID,
+        "state": "open",
+        "payload": {
+            "coordinator": {"phase": "queued", "source": order_source(OID)}
+        },
+    }
+    assert coordinator_runtime._advance_task(
+        SimpleNamespace(),
+        make_worker(tmp_path),
+        task,
+        runner=None,
+        lane_runner=None,
+    ) == [f"order queued {OID}"]
+
+
+def test_create_order_task_writes_one_queued_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = create_order_task(
+        store,
+        worker,
+        repo="Example/Project",
+        title="Add a widget",
+        text="Do it",
+        submitted_by="Human-Owner",
+        notify_session="concierge-1",
+    )
+    assert len(store.rows("task")) == 1
+    assert task["workflow"] == "implement"
+    assert task["state"] == "open"
+    assert task["current_round"] == 0
+    assert task["ref"] is None
+    assert task["repo"] == "example/project"
+    assert task["title"] == "worker-s - Add a widget"
+    assert task["models"] == {"first": "grok", "second": "codex"}
+    assert "implementer" not in task
+    assert task["created_at"] == task["updated_at"]
+    assert "source_issue" not in task["payload"]
+    c = coord(task)
+    assert c["phase"] == "queued"
+    assert c["branch"] == f"task-{task['id'][:8]}"
+    assert c["worker_session"] == "worker-session"
+    assert c["worker_login"] == "worker-bot"
+    assert "a38" not in c
+    assert c["execution_binding"] == execution_binding(
+        store, worker, "example/project"
+    )
+    source = c["source"]
+    assert source["kind"] == "order"
+    assert source["order_id"] == task["id"]
+    assert source["repo"] == "example/project"
+    assert source["title"] == "Add a widget"
+    assert source["body"] == "Do it"
+    assert source["body_chars"] == 5
+    assert source["submitted_by"] == "human-owner"
+    assert source["submitted_at"] == task["created_at"]
+    assert source["notify_session"] == "concierge-1"
+    assert source["publication_repo"] == "example/project"
+    assert source["base"] == "develop"
+    assert not {"requested_base", "owner_scoped", "number", "assigned_id"} & set(
+        source
+    )
+    text_path = task_text_path(worker, task["id"])
+    assert source["body_sha256"] == hashlib.sha256(text_path.read_bytes()).hexdigest()
+    assert store.rows("checklist_item") == []
+    assert store.rows("activity") == []
+    assert order_state(task) == "queued"
+    store.close()
+
+
+def test_create_order_task_refuses_a_worker_without_orders(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    worker = make_worker(tmp_path)
+    with pytest.raises(
+        CoordinatorError, match="worker worker-session does not accept orders"
+    ):
+        create_order_task(
+            store,
+            worker,
+            repo="example/project",
+            title="Add a widget",
+            text="Do it",
+            submitted_by="human-owner",
+        )
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_create_order_task_refuses_an_unserved_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    with pytest.raises(
+        CoordinatorError, match="worker worker-session does not serve other/thing"
+    ):
+        submit_order(store, worker, repo="other/thing")
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_create_order_task_requires_an_active_session(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    write_check_lane(store.home)
+    worker = make_order_worker(tmp_path)
+    with pytest.raises(CoordinatorError, match="session worker-session not found"):
+        submit_order(store, worker)
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_create_order_task_requires_the_check_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path, monkeypatch, check_lane=False
+    )
+    with pytest.raises(
+        CoordinatorError,
+        match="No AI lane configured for session worker-session slot grok:check",
+    ):
+        submit_order(store, worker)
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("implementer", "separate implementer is not supported"),
+        ("second", "only for A38 workers"),
+    ],
+)
+def test_create_order_task_applies_the_creation_refusals_of_issue_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    message: str,
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if case == "implementer":
+        data["implementer"] = "deepseek"
+    else:
+        data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(CoordinatorError, match=message):
+        submit_order(store, worker)
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_a38_order_pins_the_a38_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path,
+        monkeypatch,
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    task = submit_order(store, worker)
+    assert coord(task)["a38"] == {"enabled": True}
+    assert task["models"] == {"first": "grok", "second": None}
+    store.close()
+
+
+def test_create_order_task_refuses_another_base_for_a_configured_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    with pytest.raises(
+        CoordinatorError,
+        match=(
+            "base main differs from the configured base develop of example/project"
+        ),
+    ):
+        submit_order(store, worker, requested_base="main")
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    task = submit_order(store, worker, requested_base="develop")
+    assert "requested_base" not in coord(task)["source"]
+    store.close()
+
+
+def test_owner_scoped_order_is_created_unpinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path, monkeypatch, **OWNERS
+    )
+    task = submit_order(
+        store, worker, repo="example/owned", requested_base="release"
+    )
+    source = coord(task)["source"]
+    assert source["owner_scoped"] is True
+    assert source["require_hub_assignment"] is False
+    assert source["requested_base"] == "release"
+    assert "base" not in source
+    assert "publication_repo" not in source
+    assert "execution_binding" not in coord(task)
+    assert task["repo"] == "example/owned"
+    second = submit_order(store, worker, repo="example/owned")
+    assert "requested_base" not in coord(second)["source"]
+    store.close()
+
+
+def test_order_pins_the_round_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    first = submit_order(store, worker)
+    assert coord(first)["round_limit"] == {
+        "max_rounds": 10,
+        "origin": "default",
+        "model": "grok-model",
+        "limit": 10,
+    }
+    model_worker = replace(worker, max_rounds_by_model={"grok-model": 3})
+    second = submit_order(store, model_worker)
+    assert coord(second)["round_limit"] == {
+        "max_rounds": 3,
+        "origin": "model",
+        "model": "grok-model",
+        "limit": 3,
+    }
+    third = submit_order(store, model_worker, max_rounds=4)
+    assert coord(third)["round_limit"] == {
+        "max_rounds": 4,
+        "origin": "submit",
+        "model": "grok-model",
+        "limit": 4,
+    }
+    store.close()
+
+
+def test_create_order_task_removes_the_text_when_the_insert_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+
+    def raising(*_args, **_kwargs):
+        raise StoreError("insert refused")
+
+    monkeypatch.setattr(store, "write", raising)
+    with pytest.raises(StoreError, match="insert refused"):
+        submit_order(store, worker)
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_preflight_requires_the_check_lane_for_order_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, check_lane=False
+    )
+    lines = run_tick(store, worker, fake, lane)
+    assert len(lines) == 1
+    assert lines[0].startswith("preflight blocked: ")
+    assert "No AI lane configured" in lines[0]
+    assert "grok:check" in lines[0]
+    fake.issues = []
+    assert run_tick(store, replace(worker, orders=False), fake, lane) == ["idle"]
+    store.close()
+
+
+def test_preflight_refuses_a_writable_check_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, check_lane=False
+    )
+    write_check_lane(store.home, role="impl")
+    lines = run_tick(store, worker, fake, lane)
+    assert len(lines) == 1
+    assert lines[0].startswith("preflight blocked: ")
+    assert "requires read-only access" in lines[0]
+    store.close()
+
+
+def test_queued_order_is_promoted_and_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    order = submit_order(store, worker)
+    lines = run_tick(store, worker, fake, lane)
+    assert f"order accepted {order['id']}" in lines
+    saved = store.row("task", order["id"])
+    c = coord(saved)
+    assert c["phase"] == "checkout"
+    assert c["accepted_at"]
+    rows = [
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == order["id"]
+    ]
+    for key in CHECKLIST_KEYS["implement"]:
+        assert sum(row["key"] == key for row in rows) == 1
+    registered = next(row for row in rows if row["key"] == "session_registered")
+    assert registered["status"] == "ja"
+    written = next(row for row in rows if row["key"] == "spec_written")
+    assert written["status"] == "ja"
+    assert written["source"] == "human"
+    assert written["evidence"].startswith(
+        f"order {order['id']} submitted by human-owner at "
+    )
+    for key in ("order_authorized", "spec_available"):
+        assert store.row(
+            "checklist_item", registry_row_id(order["id"], key)
+        )["status"] == "ja"
+    assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
+    assert order_state(saved) == "running"
+    store.close()
+
+
+def test_order_waits_in_the_queue_while_the_worker_has_a_runnable_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_issue_task(store, worker, TID, phase="tests")
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_tests", lambda *a, **k: ["tests handler"]
+    )
+    order = submit_order(store, worker)
+    queued_updated_at = order["updated_at"]
+    for _ in range(2):
+        assert "tests handler" in run_tick(store, worker, fake, lane)
+        saved_order = store.row("task", order["id"])
+        assert coord(saved_order)["phase"] == "queued"
+        assert saved_order["updated_at"] == queued_updated_at
+
+    issue = store.row("task", TID)
+    coord(issue)["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        TID,
+        {key: value for key, value in issue.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_await_merge",
+        lambda *a, **k: ["merge handler"],
+    )
+    lines = run_tick(store, worker, fake, lane)
+    assert "merge handler" in lines
+    assert f"order accepted {order['id']}" in lines
+    assert checkpoint(store, order["id"])["phase"] == "checkout"
+    store.close()
+
+
+def test_oldest_queued_order_is_promoted_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "agent_cli.coordinator_orders.utcnow",
+            lambda: "2026-03-01T00:00:00Z",
+        )
+        first = submit_order(store, worker)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "agent_cli.coordinator_orders.utcnow",
+            lambda: "2026-02-01T00:00:00Z",
+        )
+        older = submit_order(store, worker)
+    lines = run_tick(store, worker, fake, lane)
+    assert checkpoint(store, older["id"])["phase"] == "checkout"
+    assert checkpoint(store, first["id"])["phase"] == "queued"
+    assert sum(line.startswith("order accepted") for line in lines) == 1
+    run_tick(store, worker, fake, lane)
+    assert checkpoint(store, first["id"])["phase"] == "queued"
+    store.close()
+
+
+def test_discovery_is_skipped_while_an_order_is_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    submit_order(store, worker)
+    assert has_runnable_task(store, worker) is True
+
+    def fail(_argv):
+        pytest.fail("runner must not be called")
+
+    assert discover_assignments(store, worker, fail) == []
+    store.close()
+
+
+def test_phase_accept_order_makes_no_github_call_for_a_configured_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    seed_order_task(store, worker, OID, phase="accept")
+
+    def fail(_argv):
+        pytest.fail("runner must not be called")
+
+    assert phase_accept_order(
+        store, worker, store.row("task", OID), fail
+    ) == [f"order accepted {OID}"]
+    c = checkpoint(store, OID)
+    assert c["phase"] == "checkout"
+    assert c["accepted_at"]
+    store.close()
+
+
+def test_list_and_find_orders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    seed_issue_task(store, worker, TID, phase="tests")
+    seed_order_task(store, worker, OID, phase="implement")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "agent_cli.coordinator_orders.utcnow",
+            lambda: "2026-02-01T00:00:00Z",
+        )
+        submitted = submit_order(store, worker)
+    assert [row["id"] for row in list_orders(store)] == [OID, submitted["id"]]
+    assert find_order(store, OID)["id"] == OID
+    assert find_order(store, TID) is None
+    assert find_order(store, "44444444-4444-4444-8444-444444444444") is None
+    store.close()
+
+
+def test_order_runs_to_implement_without_issue_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingGh(FakeGh):
+        def __init__(self) -> None:
+            super().__init__()
+            self.argvs: list[list[str]] = []
+
+        def __call__(self, argv: list[str]) -> Completed:
+            self.argvs.append(list(argv))
+            return super().__call__(argv)
+
+    fake = RecordingGh()
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake
+    )
+    fake.issues = []
+    order = submit_order(store, worker)
+    phases = []
+    for _ in range(6):
+        run_tick(store, worker, fake, lane)
+        phase = checkpoint(store, order["id"])["phase"]
+        phases.append(phase)
+        if phase == "implement":
+            break
+    assert "checkout" in phases
+    assert "start_draft" in phases
+    assert phases.index("checkout") < phases.index("start_draft")
+    assert phases[-1] == "implement"
+    assert store.row(
+        "checklist_item", registry_row_id(order["id"], "duplicates_checked")
+    )["status"] == "ja"
+    assert fake.empty_commits == 1
+    opened = [row for row in store.rows("activity") if row.get("type") == "pr.open"]
+    assert len(opened) == 1
+    assert "Draft for order" in opened[0]["payload"]["body"]
+    assert checkpoint(store, order["id"])["pr_number"] == 42
+    assert not any(
+        any("/issues/7" in element or "issues?assignee=" in element for element in argv)
+        for argv in fake.argvs
+    )
+    assert "check" not in fake.launched
+    assert "implementer" not in fake.launched
+    store.close()
+
+
+def test_order_with_an_open_pull_request_runs_the_check_lane_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    fake.issues = []
+    fake.open_pulls = [
+        {
+            "number": 5,
+            "title": "Other work",
+            "body": "Something else",
+            "head": {"ref": "feature"},
+            "user": {"login": "someone"},
+        }
+    ]
+    order = submit_order(store, worker)
+    for _ in range(6):
+        run_tick(store, worker, fake, lane)
+        if checkpoint(store, order["id"])["phase"] == "implement":
+            break
+    assert checkpoint(store, order["id"])["phase"] == "implement"
+    assert fake.launched.count("check") == 1
+    store.close()
+
+
+def test_owner_scoped_order_pins_the_requested_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OwnerGh(FakeGh):
+        def __call__(self, argv: list[str]) -> Completed:
+            if argv[-2:] == ["--jq", ".default_branch"]:
+                return Completed(0, "main\n", "")
+            if argv == ["gh", "api", "repos/example/owned"]:
+                return Completed(
+                    0, json.dumps({"permissions": {"push": True}}), ""
+                )
+            return super().__call__(argv)
+
+    fake = OwnerGh()
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake, **OWNERS
+    )
+    fake.issues = []
+    order = submit_order(
+        store, worker, repo="example/owned", requested_base="release"
+    )
+    run_tick(store, worker, fake, lane)
+    c = checkpoint(store, order["id"])
+    assert c["phase"] == "checkout"
+    assert c["accepted_at"]
+    source = c["source"]
+    assert source["base"] == "release"
+    assert source["publication_repo"] == "example/owned"
+    assert source["repository_config"] == {
+        "repo": "example/owned",
+        "base": "release",
+        "publication_repo": "example/owned",
+    }
+    assert len(c["execution_binding"]) == 64
+    assert all(character in "0123456789abcdef" for character in c["execution_binding"])
+    lines = run_tick(store, worker, fake, lane)
+    c = checkpoint(store, order["id"])
+    assert "binding_blocker" not in c
+    assert not any(
+        "task execution configuration changed or is unpinned" in line
+        for line in lines
+    )
+    store.close()
+
+
+def test_failed_acceptance_blocks_with_a_resumable_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, **OWNERS
+    )
+    fake.issues = []
+    order = submit_order(store, worker, repo="example/owned")
+    lines = run_tick(store, worker, fake, lane)
+    assert lines[-1] == f"blocker recorded for order {order['id']}"
+    c = checkpoint(store, order["id"])
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "accept"
+    assert c["blocker"]
+    assert "accepted_at" not in c
+    assert "repository_config" not in c["source"]
+    assert order_state(store.row("task", order["id"])) == "waiting"
+    assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
+    store.close()
