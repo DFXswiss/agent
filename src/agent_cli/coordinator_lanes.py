@@ -2071,6 +2071,7 @@ def set_checklist(
     evidence: str,
     *,
     source: str = "script",
+    snapshot_extra: dict[str, Any] | None = None,
 ) -> None:
     """Close an existing checklist key via chain.close_allowed; never bypass."""
     key = canonical_key(key)
@@ -2101,13 +2102,14 @@ def set_checklist(
                     return
         return
     workflow = str(task.get("workflow") or "")
+    close_snapshot = {**snap, **snapshot_extra} if snapshot_extra else snap
     verdict = close_allowed(
         workflow,
         key,
         checklist=dict(snap.get("checklist") or {}),
         source=source,
         evidence=evidence,
-        snapshot=snap,
+        snapshot=close_snapshot,
         status=status,
     )
     if not verdict.allowed:

@@ -12,13 +12,20 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .ai_accounts import AccountError as AIAccountError, load_ai_accounts
 from .coordinator_checks import (
+    OVERRIDE_ACTIONS,
+    SECOND_REVIEW_PHASES,
     CheckValue,
+    Deferred,
     TaskFacts,
+    apply_second_review_waiver,
     checks_satisfied,
     record_check,
     registry_row_id,
+    resolve_action,
+    resume_after_second_review_waiver,
 )
 from .coordinator_common import (
+    CiObservationTransportError,
     CoordinatorError,
     ORDER_KIND,
     Runner,
@@ -46,6 +53,7 @@ from .coordinator_github import (
 )
 from .model_slots import model_pins
 from .preconditions import (
+    ACTIONS,
     CHECKS,
     ORDER,
     PHASE_ACTION,
@@ -99,6 +107,7 @@ def create_order_task(
         _refuse_codex_first,
         _require_second_for_worker,
         execution_binding,
+        require_single_first_model,
     )
 
     try:
@@ -110,6 +119,7 @@ def create_order_task(
         ai.for_lane(
             worker.session_id, "check", ai.models.first, require_execution=False
         )
+        require_single_first_model(ai, worker)
         implementer_model = ai.for_lane(
             worker.session_id,
             "implementer",
@@ -889,12 +899,73 @@ def consume_order_intents(
                 if check is None or not check.overridable:
                     refuse(intent, f"check {key} cannot be overridden")
                     continue
-                if row is None or row.get("status") not in ("nein", "unavailable"):
+                status = row.get("status") if row is not None else None
+                if status not in ("nein", "unavailable") and not (
+                    check.override_pending and status in (None, "pending")
+                ):
                     refuse(intent, f"check {key} is not failed")
                     continue
+                if key in OVERRIDE_ACTIONS:
+                    if (
+                        str(c.get("phase") or "") == "blocked"
+                        and c.get("resume_phase") in SECOND_REVIEW_PHASES
+                        and c.get("blocker_publish_once") is True
+                        and comment_target(task) is not None
+                        and not (
+                            isinstance(c.get("blocker_activity_id"), str)
+                            and c.get("blocker_activity_id")
+                        )
+                    ):
+                        return lines or None
+                    resolved = resolve_action(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        None,
+                        action=OVERRIDE_ACTIONS[key],
+                    )
+                    if isinstance(resolved, Deferred):
+                        lines.extend(resolved.lines)
+                        return lines or None
+                    failed = next(
+                        (
+                            (declared, value)
+                            for declared, value in resolved
+                            if not (
+                                value.status == "ja"
+                                or (value.status == "n_a" and declared.n_a_ok)
+                            )
+                        ),
+                        None,
+                    )
+                    if failed is not None:
+                        declared, value = failed
+                        text = value.evidence or f"{declared.key} is {value.status}"
+                        refuse(intent, f"check {key} cannot be waived: {text}")
+                        continue
+                    try:
+                        apply_second_review_waiver(store, worker, task, runner)
+                    except CiObservationTransportError:
+                        lines.append(
+                            "trusted review list temporarily unavailable; retrying "
+                            "the review_2 override"
+                        )
+                        return lines
+                    except CoordinatorError as exc:
+                        refuse(
+                            intent,
+                            f"check {key} cannot be waived: {redact(str(exc))}",
+                        )
+                        continue
                 action = PHASE_ACTION.get(
                     str(c.get("resume_phase") or c.get("phase") or "")
                 )
+                if action is None or not any(
+                    requirement.check == key and ORDER in requirement.kinds
+                    for requirement in ACTIONS[action].requires
+                ):
+                    action = action_requiring(key, ORDER)
                 if action is None:
                     refuse(intent, f"check {key} cannot be overridden")
                     continue
@@ -942,6 +1013,8 @@ def consume_order_intents(
                             committed_c.pop(field, None)
                         if resume == "implement":
                             committed["state"] = "implementing"
+                    if key == "review_2":
+                        resume_after_second_review_waiver(committed)
                     save_task(store, committed)
                     _finish_intent(store, intent, effect="override")
             except CoordinatorError:

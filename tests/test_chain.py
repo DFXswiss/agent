@@ -1017,6 +1017,50 @@ class TestRegistryCheckClose(unittest.TestCase):
         )
         self.assertIsNone(refused.step)
 
+    def test_review_2_accepts_a_named_override(self) -> None:
+        snapshot = {
+            "registry_action": "ci",
+            "source_kind": "order",
+            "override": {"by": "owner", "reason": "one review"},
+        }
+        allowed = close_allowed(
+            "implement",
+            "review_2",
+            checklist={},
+            source="human",
+            evidence="override by owner: one review",
+            snapshot=snapshot,
+            status="ja",
+        )
+        wrong_action = close_allowed(
+            "implement",
+            "review_2",
+            checklist={},
+            source="human",
+            evidence="override by owner: one review",
+            snapshot={**snapshot, "registry_action": "implement"},
+            status="ja",
+        )
+        non_overridable = close_allowed(
+            "implement",
+            "one_review_permitted",
+            checklist={},
+            source="human",
+            evidence="override by owner: one review",
+            snapshot={**snapshot, "registry_action": "waive_second_review"},
+            status="ja",
+        )
+
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(
+            wrong_action.reason,
+            "review_2 is not a check of action implement",
+        )
+        self.assertEqual(
+            non_overridable.reason,
+            "one_review_permitted cannot be overridden",
+        )
+
     def test_non_overridable_check_refuses_override(self) -> None:
         verdict = close_allowed(
             "implement",

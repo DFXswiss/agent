@@ -37,6 +37,7 @@ REFERENCE_CHECKS = (
     "round_budget",
     "head_signed_clean",
     "pr_mergeable",
+    "review_2",
 )
 
 
@@ -282,6 +283,18 @@ def test_reference_flow_to_ready(
         assert checklist[key] == "ja"
     assert checklist["review_2_quality"] == "ja"
     assert checklist["review_2_logic"] == "ja"
+    review_2 = next(
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == order["id"] and row.get("key") == "review_2"
+    )
+    assert review_2["source"] == "script"
+    assert review_2["override"] is None
+    assert not any(
+        row.get("task_id") == order["id"]
+        and row.get("key") == "one_review_permitted"
+        for row in store.rows("checklist_item")
+    )
     assert c["a38"]["second_comment"]["blocks_merge"] is False
     assert c["a38"]["second_review_passes"] == 1
     assert c["evidence"]["ready_head"] == fake.head

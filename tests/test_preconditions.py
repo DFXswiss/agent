@@ -41,6 +41,8 @@ def test_registry_keys_do_not_collide_with_workflow_keys() -> None:
         "round_budget",
         "head_signed_clean",
         "pr_mergeable",
+        "review_2",
+        "one_review_permitted",
     }
 
 
@@ -77,8 +79,8 @@ def test_every_phase_has_an_action_or_is_waiting() -> None:
     assert len(PHASE_ACTION) == sum(len(action.phases) for action in ACTIONS.values())
 
 
-def test_only_duplicates_checked_is_overridable() -> None:
-    assert OVERRIDABLE == {"duplicates_checked"}
+def test_overridable_checks() -> None:
+    assert OVERRIDABLE == {"duplicates_checked", "review_2"}
 
 
 def test_only_duplicates_checked_is_skippable() -> None:
@@ -126,3 +128,64 @@ def test_every_action_for_orders_starts_with_order_active() -> None:
 def test_check_statuses_are_the_checklist_vocabulary() -> None:
     assert set(CHECK_STATUSES) == set(main.CHECKLIST_STATUSES)
     assert len(CHECK_STATUSES) == 5
+
+
+def test_waived_actions_name_an_overridable_registry_check() -> None:
+    waived = set()
+    for action in ACTIONS.values():
+        assert bool(action.waived_by) == bool(action.waived_route)
+        if not action.waived_by:
+            continue
+        waived.add(action.name)
+        assert action.waived_by in REGISTRY_KEYS
+        assert action.waived_by in OVERRIDABLE
+        assert action.waived_route in set(PHASES) | set(ROUTE_ALIASES)
+    assert waived == {"second_review", "second_review_comment"}
+
+
+def test_pending_route_is_declared_only_on_resolve_checks() -> None:
+    special = set()
+    for check in CHECKS.values():
+        if check.pending_route:
+            assert check.on_pending == "resolve"
+            assert check.pending_route in set(PHASES) | set(ROUTE_ALIASES)
+        if check.override_pending:
+            assert check.overridable
+        if check.pending_route or check.override_pending:
+            special.add(check.key)
+    assert special == {"review_2"}
+
+
+def test_review_2_replaces_the_dimension_requirements() -> None:
+    removed = {"review_2_quality", "review_2_logic", "second_comment_posted"}
+    assert all(
+        requirement.check not in removed
+        for action in ACTIONS.values()
+        for requirement in action.requires
+    )
+    assert [item.check for item in ACTIONS["ci"].requires] == [
+        "order_active",
+        "draft_open",
+        "review_2",
+    ]
+    assert "review_2" in {
+        item.check for item in ACTIONS["readiness"].requires
+    }
+    waiver = ACTIONS["waive_second_review"]
+    assert waiver.phases == ()
+    assert [item.check for item in waiver.requires] == [
+        "order_active",
+        "draft_open",
+        "one_review_permitted",
+    ]
+    for key in ("review_2", "one_review_permitted"):
+        requirements = [
+            item
+            for action in ACTIONS.values()
+            for item in action.requires
+            if item.check == key
+        ]
+        assert requirements
+        assert all(item.kinds == (ORDER,) for item in requirements)
+    assert action_requiring("review_2", ORDER) == "ci"
+    assert action_requiring("one_review_permitted", ORDER) == "waive_second_review"

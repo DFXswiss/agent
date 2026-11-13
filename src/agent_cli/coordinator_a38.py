@@ -3365,6 +3365,7 @@ def require_ready_evidence(
     head: str,
     *,
     model_second: bool = False,
+    second_waived: bool = False,
 ) -> bool:
     c = coord(task)
     a38 = _a38_state(c)
@@ -3409,15 +3410,18 @@ def require_ready_evidence(
     )
     if report_bound == waiver_bound:
         raise CoordinatorError(f"A38 report or waiver evidence is missing on {head[:7]}")
-    keys = (
-        ("first_comment", "second_comment")
-        if model_second
-        else ("first_comment", "second_review")
-    )
+    if second_waived:
+        keys = ("first_comment",)
+    elif model_second:
+        keys = ("first_comment", "second_comment")
+    else:
+        keys = ("first_comment", "second_review")
     for key in keys:
         value = a38.get(key)
         if not isinstance(value, dict) or value.get("head") != head:
             raise CoordinatorError(f"A38 {key} evidence is missing on {head[:7]}")
+    if second_waived:
+        return True
     if model_second:
         if a38["second_comment"].get("blocks_merge") is not False:
             raise CoordinatorError("model second review blocks the merge")
@@ -3729,8 +3733,14 @@ def phase_await_ready(
             _observation(c, observation)
             save_task(store, task)
             return [observation]
+        from .coordinator_checks import second_review_waived
+
         if not require_ready_evidence(
-            store, task, head, model_second=a38_model_second(c)
+            store,
+            task,
+            head,
+            model_second=a38_model_second(c),
+            second_waived=second_review_waived(store, task),
         ):
             return [
                 f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"

@@ -37,6 +37,7 @@ from .coordinator_common import (
     FINDINGS_SPEC_BOUND,
     ORDER_KIND,
     ROUND_FINDINGS_BOUND,
+    SLOT_LANE_KINDS,
     TASK_TEXT_BOUND,
     TASK_TEXT_RECORD_BOUND,
     check_label,
@@ -164,6 +165,7 @@ __all__ = [
     "harden_grok_write_argv",
     "parse_model_result",
     "preflight_worker",
+    "require_single_first_model",
     "redact",
     "review_is_approved",
     "verify_issue_assigned",
@@ -227,6 +229,7 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
             )
             if check_role.access != "read-only":
                 raise CoordinatorError(f"{check_slot} requires read-only access")
+            require_single_first_model(ai, worker)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     if not worker.repositories and not worker.repository_owners:
@@ -420,6 +423,34 @@ def _require_second_for_worker(
         raise CoordinatorError("A38 workers require models.second = null")
     if not a38 and second is None:
         raise CoordinatorError("models.second = null is allowed only for A38 workers")
+
+
+def require_single_first_model(ai: AIAccounts, worker: WorkerConfig) -> str:
+    """The one model identifier of the implementer and the first-review lanes of an order worker."""
+    first = ai.models.first
+    try:
+        implementer = ai.for_lane(
+            worker.session_id,
+            "implementer",
+            first,
+            require_execution=False,
+        ).model
+        for kind in SLOT_LANE_KINDS["first"]:
+            model = ai.for_lane(
+                worker.session_id,
+                kind,
+                first,
+                require_execution=False,
+            ).model
+            if model != implementer:
+                raise CoordinatorError(
+                    "order workers require one model for the implementer and the "
+                    f"first review: {first}:{kind} uses {model}, "
+                    f"{first}:implementer uses {implementer}"
+                )
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    return implementer
 
 
 def _first_slot_vendor(task: dict[str, Any]) -> str:

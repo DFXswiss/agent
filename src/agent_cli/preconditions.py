@@ -18,6 +18,8 @@ class Check:
     on_no: str = "block"
     overridable: bool = False
     skippable: bool = False
+    override_pending: bool = False
+    pending_route: str = ""
     head_bound: bool = False
     n_a_ok: bool = False
     recheck: bool = False
@@ -36,6 +38,8 @@ class Action:
     name: str
     phases: tuple[str, ...]
     requires: tuple[Requirement, ...]
+    waived_by: str = ""
+    waived_route: str = ""
 
 
 PHASES = (
@@ -223,6 +227,25 @@ _CHECKS = (
         head_bound=True,
     ),
     Check(
+        "review_2",
+        "registry",
+        resolver="review_2",
+        on_pending="resolve",
+        pending_route="second_review",
+        on_no="route:implement",
+        overridable=True,
+        override_pending=True,
+        head_bound=True,
+        recheck=True,
+    ),
+    Check(
+        "one_review_permitted",
+        "registry",
+        resolver="one_review_permitted",
+        on_pending="resolve",
+        recheck=True,
+    ),
+    Check(
         "ci_green",
         "checkpoint",
         on_pending="route:ci",
@@ -359,6 +382,8 @@ _ACTIONS = (
             R("checkout_owned", when="phase:pr_gates_codex"),
             R("no_live_lane", OI, when="phase:pr_gates_codex"),
         ),
+        waived_by="review_2",
+        waived_route="ci",
     ),
     Action(
         "second_review_comment",
@@ -368,6 +393,8 @@ _ACTIONS = (
             R("first_comment_posted"),
             R("review_2_recorded"),
         ),
+        waived_by="review_2",
+        waived_route="ci",
     ),
     Action(
         "ci",
@@ -375,9 +402,7 @@ _ACTIONS = (
         (
             R("order_active"),
             R("draft_open"),
-            R("review_2_quality"),
-            R("review_2_logic"),
-            R("second_comment_posted", when="model_second"),
+            R("review_2"),
         ),
     ),
     Action(
@@ -389,8 +414,7 @@ _ACTIONS = (
             R("ci_green"),
             R("review_1_quality"),
             R("review_1_logic"),
-            R("review_2_quality"),
-            R("review_2_logic"),
+            R("review_2"),
             R("head_signed_clean"),
             R("pr_mergeable", OI),
         ),
@@ -416,6 +440,11 @@ _ACTIONS = (
         (R("order_active"), R("draft_open")),
     ),
     Action("close_draft", (), (R("draft_open", OI),)),
+    Action(
+        "waive_second_review",
+        (),
+        (R("order_active"), R("draft_open"), R("one_review_permitted")),
+    ),
 )
 ACTIONS = {action.name: action for action in _ACTIONS}
 PHASE_ACTION = {phase: action.name for action in _ACTIONS for phase in action.phases}

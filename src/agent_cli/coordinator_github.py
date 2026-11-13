@@ -1916,17 +1916,23 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     models = _task_models(task)
     if worker.a38:
         from .coordinator_a38 import require_ready_evidence
+        from .coordinator_checks import second_review_waived
 
         model_second = a38_model_second(c)
+        waived = second_review_waived(store, task)
         if not require_ready_evidence(
-            store, task, head, model_second=model_second
+            store,
+            task,
+            head,
+            model_second=model_second,
+            second_waived=waived,
         ):
             return [
                 f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
             ]
         gate_pairs = (
             tuple(GATE_PAIRS)
-            if model_second
+            if model_second and not waived
             else tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
         )
     else:
@@ -2250,20 +2256,13 @@ def _both_second_reviews_na(store: Store, task_id: str) -> bool:
     return both_second_reviews_na(statuses, evidence)
 
 
-def _trusted_done_review(
+def _trusted_review_config(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> tuple[str, dict[str, Any] | None]:
-    """Live opener and trusted config for a done decision.
+    """Live opener and trusted pr-guard file.
 
-    One review is enough only when the pull request opener is listed in
-    one_review_authors in the trusted .github/pr-guard.json on the default
-    branch. A missing file, a missing key, or an empty list keeps two reviews
-    required. An entry that exists only on the pull request head does not count.
-    A stored payload copy is not this decision. A lookup failure raises
-    ``CiObservationTransportError``.
+    A lookup failure raises ``CiObservationTransportError``.
     """
-    if not _both_second_reviews_na(store, task["id"]):
-        return "", None
     target = target_repo(task)
     number = as_int(coord(task).get("pr_number"))
     if number is None or not target:
@@ -2279,6 +2278,23 @@ def _trusted_done_review(
     except PrGuardLookupError as exc:
         raise CiObservationTransportError("trusted pr-guard file could not be read") from exc
     return login, config
+
+
+def _trusted_done_review(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> tuple[str, dict[str, Any] | None]:
+    """Live opener and trusted config for a done decision.
+
+    One review is enough only when the pull request opener is listed in
+    one_review_authors in the trusted .github/pr-guard.json on the default
+    branch. A missing file, a missing key, or an empty list keeps two reviews
+    required. An entry that exists only on the pull request head does not count.
+    A stored payload copy is not this decision. A lookup failure raises
+    ``CiObservationTransportError``.
+    """
+    if not _both_second_reviews_na(store, task["id"]):
+        return "", None
+    return _trusted_review_config(store, worker, task, runner)
 
 
 def _opener_one_review(
@@ -2972,7 +2988,13 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR has no report or waiver evidence "
                     f"bound to base {observed_base}; a merged PR cannot be remeasured"
                 )
-            second_review = _a38_second_review_outcome(c, expected_head)
+            from .coordinator_checks import second_review_waived
+
+            second_review = (
+                "passed"
+                if second_review_waived(store, task)
+                else _a38_second_review_outcome(c, expected_head)
+            )
             if second_review != "passed":
                 second_review_wait = _await_second_review_after_merge(
                     store,

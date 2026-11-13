@@ -19,6 +19,7 @@ from .coordinator_checks import (
     current_phase,
     read_fact,
     registry_row_id,
+    second_review_waiver_refusal,
 )
 from .coordinator_common import as_int, coord, redact, target_repo
 from .coordinator_config import load_coordinator_config, validate_base
@@ -558,8 +559,15 @@ def op_override(
     if state in ENDED_STATES:
         raise OrderError(f"order {order_id} is already {state}")
     row = store.row("checklist_item", registry_row_id(order_id, check))
-    if row is None or row.get("status") not in ("nein", "unavailable"):
+    status = row.get("status") if row is not None else None
+    if status not in ("nein", "unavailable") and not (
+        declared_check.override_pending and status in (None, "pending")
+    ):
         raise OrderError(f"check {check} is not failed on order {order_id}")
+    if check == "review_2":
+        refusal = second_review_waiver_refusal(store, task)
+        if refusal is not None:
+            raise OrderError(f"check review_2 cannot be waived: {refusal}")
     require_reason(reason)
     event_id = checkpoint_event_id(task)
     intent_id = insert_intent(

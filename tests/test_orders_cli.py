@@ -996,7 +996,18 @@ def test_show_lists_the_overridable_checks(device, capsys) -> None:
     order_id = str(uuid.uuid4())
     task = seed_order_task(device.store, device.worker, order_id, phase="start_draft")
     order("show", "--id", order_id)
-    assert "overridable duplicates_checked pending" in capsys.readouterr().out
+    shown = capsys.readouterr().out
+    assert "overridable duplicates_checked pending" in shown
+    assert "overridable review_2 pending" in shown
+    assert shown.index("overridable duplicates_checked") < shown.index(
+        "overridable review_2"
+    )
+    order("show", "--id", order_id, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["key"] for item in payload["overridable_checks"]] == [
+        "duplicates_checked",
+        "review_2",
+    ]
     record_check(
         device.store,
         task,
@@ -1005,7 +1016,8 @@ def test_show_lists_the_overridable_checks(device, capsys) -> None:
         action="open_draft",
     )
     order("show", "--id", order_id)
-    assert "overridable duplicates_checked nein" in capsys.readouterr().out
+    shown = capsys.readouterr().out
+    assert "overridable duplicates_checked nein" in shown
 
 
 def test_events_filters(device, capsys) -> None:

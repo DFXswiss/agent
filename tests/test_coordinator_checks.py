@@ -206,8 +206,10 @@ def test_registered_resolvers_are_declared():
     assert set(RESOLVERS) == {
         "duplicates_checked",
         "no_live_lane",
+        "one_review_permitted",
         "round_budget",
         "pr_mergeable",
+        "review_2",
         "session_registered",
         "spec_written",
         "order_authorized",

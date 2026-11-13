@@ -43,6 +43,7 @@ from .coordinator_git import verify_checkout_identity, verify_signed_clean_head
 from .coordinator_github import (
     _fetch_pr_json,
     _readiness_keys_closed,
+    _trusted_review_config,
     clear_reply_recovery,
     post_issue_comment,
     publish_blocker,
@@ -55,13 +56,23 @@ from .coordinator_lanes import (
     set_checklist,
 )
 from .gate_order import latest_gates
-from .model_slots import ModelSlotsError, canonical_key, models_from_snapshot
-from .preconditions import ACTIONS, CHECKS, Check
+from .model_slots import (
+    ModelSlotsError,
+    canonical_key,
+    canonical_stage,
+    models_from_snapshot,
+)
+from .pr_guard_config import one_review_for
+from .preconditions import ACTIONS, CHECKS, ORDER, Check
 from .store import Store, utcnow
 
 
 CHECK_EVIDENCE_BOUND = 1000
 ROUTE_LOOP_LIMIT = 3
+SECOND_REVIEW_PHASES = frozenset(
+    {"pr_gates_codex", "a38_second_comment", "await_second_review"}
+)
+OVERRIDE_ACTIONS = {"review_2": "waive_second_review"}
 
 
 @dataclass(frozen=True)
@@ -743,6 +754,209 @@ def needs_resolution(check: Check, value: CheckValue) -> bool:
     return False
 
 
+def second_review_waived(store: Store, task: dict[str, Any]) -> bool:
+    """Return whether a human recorded the order's second-review waiver."""
+    if not is_order(task):
+        return False
+    row = store.row(
+        "checklist_item", registry_row_id(str(task["id"]), "review_2")
+    )
+    return bool(
+        row is not None
+        and row.get("status") == "ja"
+        and row.get("source") == "human"
+        and isinstance(row.get("override"), dict)
+    )
+
+
+def second_review_waiver_refusal(
+    store: Store, task: dict[str, Any]
+) -> str | None:
+    """Return the first store-only reason that the second review cannot be waived."""
+    c = coord(task)
+    rows = TaskFacts(store, task).checklist()
+    try:
+        if models_from_snapshot(task).second is None:
+            return "the second review of this order comes from external reviewers"
+    except ModelSlotsError:
+        return "the second review of this order comes from external reviewers"
+    for key in ("review_1_quality", "review_1_logic"):
+        row = rows.get(key)
+        if row is None or row.get("status") != "ja":
+            return "the first review is not complete"
+    for key in ("review_2_quality", "review_2_logic"):
+        row = rows.get(key)
+        if row is not None and row.get("status") == "ja":
+            return "a second review was already approved for this pull request"
+    if a38_task(c):
+        for row in store.rows("review_gate"):
+            if (
+                row.get("task_id") == task["id"]
+                and canonical_stage(str(row.get("stage") or "")) == "review-2"
+                and row.get("verdict") == "rejected"
+            ):
+                return "a blocking second review is already posted on this pull request"
+    if as_int(c.get("pr_number")) is None:
+        return "no pull request"
+    return None
+
+
+def resolve_review_2(ctx: CheckContext) -> CheckValue:
+    """Resolve the aggregate second-review check from existing facts only."""
+    task = ctx.task
+    facts = TaskFacts(ctx.store, task)
+    head = head_of(task)
+    parts = [
+        READERS["review_2_quality"](facts, task),
+        READERS["review_2_logic"](facts, task),
+    ]
+    if a38_model_second(coord(task)):
+        parts.append(READERS["second_comment_posted"](facts, task))
+    if any(part.status == "nein" for part in parts):
+        return CheckValue(
+            "nein",
+            f"second review has findings on {head[:7]}",
+            head=head or None,
+        )
+    if all(part.status == "ja" for part in parts):
+        return CheckValue(
+            "ja", f"second review free of findings on {head}", head=head
+        )
+    return CheckValue(
+        "pending",
+        f"second review not complete on {head[:7]}",
+        head=head or None,
+    )
+
+
+def resolve_one_review_permitted(ctx: CheckContext) -> CheckValue | Deferred:
+    """Resolve the human one-review exception against live trusted configuration."""
+    refusal = second_review_waiver_refusal(ctx.store, ctx.task)
+    if refusal is not None:
+        return CheckValue("nein", refusal)
+    try:
+        login, config = _trusted_review_config(
+            ctx.store, ctx.worker, ctx.task, ctx.runner
+        )
+    except CiObservationTransportError:
+        return Deferred(
+            ["trusted review list temporarily unavailable; retrying the review_2 override"]
+        )
+    repo = target_repo(ctx.task)
+    if not login or not one_review_for(config, login):
+        return CheckValue(
+            "nein",
+            f"{repo} requires two reviews for pull requests opened by "
+            f"{login or 'an unknown author'}",
+        )
+    return CheckValue("ja", f"one review is enough for {login} in {repo}")
+
+
+def resolve_action(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+    *,
+    action: str,
+) -> list[tuple[Check, CheckValue]] | Deferred:
+    """Resolve an action's facts without routing, blocking, or saving the task."""
+    kind = source_kind(coord(task))
+    facts = TaskFacts(store, task)
+    result: list[tuple[Check, CheckValue]] = []
+    for requirement in ACTIONS[action].requires:
+        if kind not in requirement.kinds or not applies(requirement.when, task):
+            continue
+        check = CHECKS[requirement.check]
+        value = read_fact(facts, task, check)
+        if needs_resolution(check, value):
+            outcome = RESOLVERS[check.resolver](
+                CheckContext(store, worker, task, runner, lane_runner, check, action)
+            )
+            facts.invalidate()
+            if isinstance(outcome, Deferred):
+                return outcome
+            value = outcome
+            if check.fact == "registry":
+                record_check(store, task, check, value, action=action)
+        result.append((check, value))
+    return result
+
+
+def apply_second_review_waiver(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> None:
+    """Close the two second-review dimensions under the trusted one-review rule."""
+    login, config = _trusted_review_config(store, worker, task, runner)
+    for key in ("review_2_quality", "review_2_logic"):
+        set_checklist(
+            store,
+            task,
+            key,
+            "n_a",
+            SECOND_REVIEW_NOT_POSTED,
+            source="script",
+            snapshot_extra={
+                "trusted_pr_guard": config,
+                "pull_opener": login,
+            },
+        )
+
+
+def _drop_second_review_outcomes(c: dict[str, Any]) -> None:
+    saved = c.get("lane_outcome")
+    if not isinstance(saved, dict) or saved.get("role") != "reviewer-results":
+        return
+    outcomes = saved.get("outcomes")
+    if not isinstance(outcomes, list):
+        return
+    kept = [
+        outcome
+        for outcome in outcomes
+        if not (
+            isinstance(outcome, dict)
+            and canonical_stage(str(outcome.get("stage") or "")) == "review-2"
+        )
+    ]
+    if kept:
+        saved["outcomes"] = kept
+    else:
+        c.pop("lane_outcome", None)
+
+
+def resume_after_second_review_waiver(task: dict[str, Any]) -> None:
+    """Move a task waiting in the second-review path to CI without saving it."""
+    c = coord(task)
+    phase = str(c.get("phase") or "")
+    waiting = (
+        phase in ("ask", "blocked")
+        and c.get("resume_phase") in SECOND_REVIEW_PHASES
+    )
+    if phase not in SECOND_REVIEW_PHASES and not waiting:
+        return
+    c["phase"] = "ci"
+    _drop_second_review_outcomes(c)
+    if waiting:
+        task["state"] = "pr-review"
+        for key in (
+            "resume_phase",
+            "blocker",
+            "failed_check",
+            "question_text",
+            "question_activity_id",
+            "replies_consumed_through",
+            "retry",
+            "blocker_publish_once",
+            "blocker_publish_kind",
+            "blocker_activity_id",
+        ):
+            c.pop(key, None)
+
+
 def evaluate_action(
     store: Store,
     worker: WorkerConfig,
@@ -754,6 +968,20 @@ def evaluate_action(
 ) -> list[str] | None:
     kind = source_kind(coord(task))
     facts = TaskFacts(store, task)
+    act = ACTIONS[action]
+    if act.waived_by and kind == ORDER:
+        waiver = read_fact(facts, task, CHECKS[act.waived_by])
+        if waiver.status == "ja" and waiver.source == "human":
+            to = route_phase(act.waived_route, task)
+
+            def change(changed: dict[str, Any]) -> None:
+                coord(changed)["phase"] = to
+                _drop_second_review_outcomes(coord(changed))
+
+            _commit(store, task, change)
+            return [
+                f"action {action} is waived by {act.waived_by}; continuing at {to}"
+            ]
     for requirement in ACTIONS[action].requires:
         if kind not in requirement.kinds or not applies(requirement.when, task):
             continue
@@ -886,6 +1114,17 @@ def apply_pending(
             runner,
             check,
             check.on_pending.removeprefix("route:"),
+            action=action,
+            status="pending",
+        )
+    if check.on_pending == "resolve" and check.pending_route:
+        return _route(
+            store,
+            worker,
+            task,
+            runner,
+            check,
+            check.pending_route,
             action=action,
             status="pending",
         )
@@ -1348,6 +1587,8 @@ def _resolve_duplicates_checked(ctx: CheckContext) -> CheckValue | Deferred:
 
 
 RESOLVERS: dict[str, Callable[[CheckContext], CheckValue | Deferred]] = {
+    "review_2": resolve_review_2,
+    "one_review_permitted": resolve_one_review_permitted,
     "duplicates_checked": _resolve_duplicates_checked,
     "no_live_lane": resolve_no_live_lane,
     "round_budget": resolve_round_budget,
