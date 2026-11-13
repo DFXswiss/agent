@@ -6,7 +6,7 @@ Product decisions (visibility, pairing, sync, restore, what we will not build) a
 
 This device is the write owner of its own rows. The local store is PostgreSQL on `127.0.0.1`. `device.json` next to it is the device identity: wiping only the database must not mint a new device. The hub holds a full copy. `agent sync` pushes own events and pulls own catch-up, session-mail inbox snapshots, and person-ping snapshots. `agent restore` rebuilds a wiped database from the hub.
 
-The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code.
+The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code. The detached job runner is documented in [docs/runner.md](docs/runner.md).
 
 The required GitHub issue-to-PR workflow is defined in
 [DESIGN.md §19.7](DESIGN.md#197-issue-assignment-to-human-merge), together with the
