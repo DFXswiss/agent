@@ -2200,6 +2200,9 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def cmd_dashboard(args: list[str]) -> None:
+    from .cli_bridge import MAX_REQUEST_BYTES
+    from .dashboard_orders import PREFIX as ORDER_PREFIX, handle_order_request
+
     port = 7845
     if args:
         if args[0] != "--port" or len(args) != 2 or not args[1].isdigit():
@@ -2219,7 +2222,40 @@ def cmd_dashboard(args: list[str]) -> None:
             self.end_headers()
             self.wfile.write(body)
 
+        def _orders(self, method: str) -> bool:
+            parsed = urlparse(self.path)
+            if not parsed.path.startswith(ORDER_PREFIX):
+                return False
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = (
+                self.rfile.read(min(length, MAX_REQUEST_BYTES + 1))
+                if method == "POST" and length > 0
+                else b""
+            )
+            try:
+                status, payload = handle_order_request(
+                    store,
+                    home(),
+                    method=method,
+                    path=parsed.path,
+                    query=parsed.query,
+                    headers=self.headers,
+                    body=raw,
+                )
+            except StoreConnectionError as exc:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as rec_exc:
+                    self._json(503, {"ok": False, "error": str(rec_exc)})
+                    return True
+                self._json(503, {"ok": False, "error": str(exc)})
+                return True
+            self._json(status, payload)
+            return True
+
         def do_GET(self) -> None:
+            if self._orders("GET"):
+                return
             path = urlparse(self.path).path
             if path == "/api/state":
                 try:
@@ -2257,6 +2293,8 @@ def cmd_dashboard(args: list[str]) -> None:
             self.send_error(404)
 
         def do_POST(self) -> None:
+            if self._orders("POST"):
+                return
             path = urlparse(self.path).path
             match = re.fullmatch(r"/api/sessions/([^/]+)/control", path)
             if match is None:
