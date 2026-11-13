@@ -400,6 +400,50 @@ class CheckRepoTests(unittest.TestCase):
                 verdict.reasons,
             )
 
+    def test_submodule_pointer_is_counted_when_diff_ignores_submodules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            _init_repo(repo)
+            source = root / "lib"
+            _init_repo(source, {"lib.txt": "lib\n"})
+            probe = subprocess.run(
+                ["git", "-C", str(repo), "submodule", "status"],
+                capture_output=True,
+            )
+            if probe.returncode != 0:
+                pytest.skip("git submodule is unavailable")
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    str(source),
+                    "vendor/lib",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            base = _add_commit(repo, "add submodule")
+            _checkout(repo, "feature", create=True)
+            submodule = repo / "vendor" / "lib"
+            _git(submodule, "config", "user.email", "small@example.com")
+            _git(submodule, "config", "user.name", "Small Test")
+            _write(submodule, "lib.txt", "lib\nmore\n")
+            _add_commit(submodule, "update submodule")
+            _write(repo, "a.py", "one\n")
+            _write(repo, "b.py", "two\n")
+            _write(repo, "c.py", "three\n")
+            head = _add_commit(repo, "submodule pointer and three files")
+            _git(repo, "config", "diff.ignoreSubmodules", "all")
+            verdict = check_repo(repo, base, head)
+            self.assertIn("4 files > 3", verdict.reasons)
+            self.assertIn("vendor/lib", [item.path for item in verdict.files])
+
     def test_invalid_config_on_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
