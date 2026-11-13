@@ -21,6 +21,7 @@ from agent_cli.small_change import (
     evaluate,
     evidence_head,
     excluded_reason,
+    parse_raw_z,
 )
 
 
@@ -117,6 +118,10 @@ class ExcludedReasonTests(unittest.TestCase):
             ("src/auth/login.ts", "security or money"),
             ("src/allowGuard.ts", "security or money"),
             ("src/payout/service.ts", "security or money"),
+            ("server.key", "security or money"),
+            ("config/app.secret", "security or money"),
+            ("session.token", "security or money"),
+            ("auth/session.jwt", "security or money"),
         ]
         for path, label in cases:
             reason = excluded_reason(path, [])
@@ -230,6 +235,28 @@ class EvidenceHeadTests(unittest.TestCase):
         self.assertIsNone(evidence_head(EVIDENCE_PREFIX + "A" * 40))
         self.assertIsNone(evidence_head(EVIDENCE_PREFIX + "a" * 39))
         self.assertIsNone(evidence_head(EVIDENCE_PREFIX + "a" * 40 + "x"))
+
+
+class ParseRawZTests(unittest.TestCase):
+    def test_truncated_record_is_unreadable(self) -> None:
+        record = (
+            b":100644 100644 " + b"a" * 40 + b" " + b"b" * 40 + b" M\0README.md"
+        )
+        self.assertIsNone(parse_raw_z(record))
+
+    def test_complete_record_parses(self) -> None:
+        record = (
+            b":100644 100644 " + b"a" * 40 + b" " + b"b" * 40 + b" M\0README.md\0"
+        )
+        # A non-gitlink record parses cleanly but contributes no paths.
+        self.assertEqual(parse_raw_z(record), [])
+        gitlink = (
+            b":160000 160000 " + b"a" * 40 + b" " + b"b" * 40 + b" M\0README.md\0"
+        )
+        self.assertEqual(parse_raw_z(gitlink), ["README.md"])
+
+    def test_empty_output_is_no_records(self) -> None:
+        self.assertEqual(parse_raw_z(b""), [])
 
 
 def _add_commit(path: Path, message: str) -> str:
@@ -443,6 +470,46 @@ class CheckRepoTests(unittest.TestCase):
             verdict = check_repo(repo, base, head)
             self.assertIn("4 files > 3", verdict.reasons)
             self.assertIn("vendor/lib", [item.path for item in verdict.files])
+
+    def test_submodule_pointer_update_is_never_small(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            _init_repo(repo)
+            source = root / "lib"
+            _init_repo(source, {"lib.txt": "lib\n"})
+            probe = subprocess.run(
+                ["git", "-C", str(repo), "submodule", "status"],
+                capture_output=True,
+            )
+            if probe.returncode != 0:
+                pytest.skip("git submodule is unavailable")
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    str(source),
+                    "vendor/lib",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            base = _add_commit(repo, "add submodule")
+            _checkout(repo, "feature", create=True)
+            submodule = repo / "vendor" / "lib"
+            _git(submodule, "config", "user.email", "small@example.com")
+            _git(submodule, "config", "user.name", "Small Test")
+            _write(submodule, "lib.txt", "lib\nmore\n")
+            _add_commit(submodule, "update submodule")
+            head = _add_commit(repo, "submodule pointer only")
+            verdict = check_repo(repo, base, head)
+            self.assertEqual(verdict.verdict, "not-small")
+            self.assertIn("submodule pointer vendor/lib", verdict.reasons)
 
     def test_invalid_config_on_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
