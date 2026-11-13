@@ -2217,6 +2217,283 @@ def test_a38_merged_second_review_precedes_unavailable_visibility(
     assert saved["phase"] == ("await_merge" if blocker_kind is None else "blocked")
 
 
+def test_a38_missing_merged_at_starts_second_review_timeout_from_first_observation(
+    monkeypatch, tmp_path
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        second_review_timeout_seconds=600,
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["a38"].pop("second_review")
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": None,
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-10-01T12:05:00Z"
+    )
+
+    lines = phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    )
+
+    assert lines == [
+        f"human merge observed on {head[:7]}; awaiting the external second review"
+    ]
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["a38"]["merged_waiting_since"] == "2026-10-01T12:05:00Z"
+    assert checkpoint["a38"]["merged_waiting_since_source"] == "first_observation"
+    assert checkpoint["phase"] == "await_merge"
+    assert saved["state"] != "done"
+
+
+def test_a38_missing_merged_at_does_not_record_or_complete_the_merge(
+    monkeypatch, tmp_path
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": None,
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-10-01T12:05:00Z"
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["merge observed but incomplete metadata"]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "done"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
+@pytest.mark.parametrize(
+    "reported_head", (None, "not-a-sha"), ids=("missing", "invalid")
+)
+def test_a38_merged_invalid_head_metadata_retries_before_second_review(
+    monkeypatch, tmp_path, reported_head
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"sha": reported_head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_a38_second_review_outcome",
+        lambda *_args: pytest.fail("second review must wait for valid head metadata"),
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["merge observed but head SHA missing or invalid"]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "done"
+
+
+@pytest.mark.parametrize(
+    "observed_head", (None, "not-a-sha"), ids=("missing", "invalid")
+)
+def test_a38_merged_ci_retries_missing_or_invalid_graphql_head_metadata(
+    monkeypatch, tmp_path, observed_head
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    original_observe = coordinator_github._observe_exact_head_ci
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        coordinator_github, "_observe_exact_head_ci", original_observe
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_fetch_pr_json",
+        lambda *_args, **_kwargs: {
+            "headRefOid": observed_head,
+            "statusCheckRollup": [],
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_paginate_workflow_runs",
+        lambda *_args, **_kwargs: pytest.fail(
+            "workflow inventory must not run without a valid PR head"
+        ),
+    )
+
+    lines = phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    )
+
+    assert lines == [
+        "human merge observed; cumulative GitHub CI PR head temporarily "
+        f"unavailable on {head[:7]}; retrying await_merge"
+    ]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "done"
+
+
+@pytest.mark.parametrize(
+    ("evidence_state", "message"),
+    (
+        ("pending", "merged PR base evidence was still pending"),
+        ("missing", "merged PR has no trusted evidence base"),
+        ("moved", "merged PR base moved after evidence"),
+    ),
+)
+def test_a38_merged_evidence_base_failure_precedes_second_review_evaluation(
+    monkeypatch, tmp_path, evidence_state, message
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    observed_base = "b" * 40
+    if evidence_state == "pending":
+        checkpoint["a38"]["pending_base_sha"] = observed_base
+    elif evidence_state == "missing":
+        checkpoint["a38"].pop("base_sha", None)
+    else:
+        observed_base = "c" * 40
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": observed_base},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_a38_second_review_outcome",
+        lambda *_args: pytest.fail(
+            "second review must not be evaluated after evidence-base failure"
+        ),
+    )
+
+    with pytest.raises(NonRecoverableCoordinatorError, match=message):
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
+
 @pytest.mark.parametrize(
     ("kind", "detail", "failures", "action_required"),
     (

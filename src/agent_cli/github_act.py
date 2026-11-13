@@ -404,16 +404,22 @@ def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> s
         )
     except AccountError:
         account = None
+    configured_paths: list[tuple[str, str]] = []
     if account is not None:
-        configured_paths = [(account.gh_config_dir, "<gh_config_dir>")]
+        configured_paths.append((account.gh_config_dir, "<gh_config_dir>"))
         if account.git_identity is not None:
             configured_paths.append(
                 (account.git_identity["signing_key"], "<signing_key>")
             )
-        for path, replacement in configured_paths:
-            safe = redact_terminal_interleaved_secret(
-                safe, path, replacement=replacement
-            )
+    for path, replacement in configured_paths:
+        safe = redact_terminal_interleaved_secret(
+            safe, path, replacement=replacement
+        )
+    safe = redact(safe, limit=None)
+    for path, replacement in configured_paths:
+        safe = redact_terminal_interleaved_secret(
+            safe, path, replacement=replacement
+        )
     return redact(safe, limit=500)
 
 

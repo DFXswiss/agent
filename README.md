@@ -82,7 +82,9 @@ the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
 and records `assignment.created`; the client never prints the device token,
 and hub failure detail or recovery URLs redact the exact bearer even when each
-character is literal or percent-encoded in a mixed representation. A response
+character is literal or percent-encoded in a mixed representation. One
+consecutive run of removable terminal controls between bearer characters has
+no per-control count limit. A response
 counts as a mandate only with a positive issue number and a
 matching HTTPS GitHub issue URL.
 
@@ -196,7 +198,8 @@ sanitization and are hidden again afterward. The known-secret matcher walks
 the raw text with the shared nesting-aware scanner: a complete or unterminated
 OSC, DCS, PM, APC, or SOS span is one removable interleave atom, recognized
 before a generic ESC sequence, so replacing its payload cannot expose secret
-fragments on either side. Both configured and
+fragments on either side. Consecutive removable controls are consumed as one
+linear interleave run without a per-control count limit. Both configured and
 provider-reported model strings are bounded and redacted. Neither activity
 stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,

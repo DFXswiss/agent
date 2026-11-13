@@ -642,6 +642,80 @@ def test_github_failure_row_redacts_controls_credentials_and_account_paths(
     assert "<signing_key>" in error
 
 
+def test_safe_execution_error_redacts_configured_paths_before_and_after_sanitizing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import github_act
+
+    store = Store(tmp_path)
+    _owned_session(store)
+    gh_config_dir = "/opt/github-profile"
+    signing_key = "/opt/signing/worker-key"
+    (tmp_path / "github-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "worker": {
+                        "login": "theo-vane",
+                        "gh_config_dir": gh_config_dir,
+                        "git": {
+                            "name": "Test Worker",
+                            "email": "test@example.com",
+                            "signing_format": "ssh",
+                            "signing_key": signing_key,
+                        },
+                    }
+                },
+                "sessions": {"s1": "worker"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    original = github_act.redact_terminal_interleaved_secret
+    calls: list[tuple[str, str]] = []
+
+    def recording_redaction(
+        text: str, secret: str, *, replacement: str = "[redacted]"
+    ) -> str:
+        calls.append((secret, replacement))
+        return original(text, secret, replacement=replacement)
+
+    monkeypatch.setattr(
+        github_act, "redact_terminal_interleaved_secret", recording_redaction
+    )
+    runs = (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    )
+
+    for control_run in runs:
+        raw = (
+            f"profile /opt/{control_run}github-profile/config and "
+            f"key /opt/signing/{control_run}worker-key"
+        )
+        cleaned = github_act._safe_execution_error(
+            store, {"session_id": "s1"}, raw
+        )
+        assert gh_config_dir not in cleaned
+        assert signing_key not in cleaned
+        assert cleaned == (
+            "profile <gh_config_dir>/config and key <signing_key>"
+        )
+
+    assert calls == [
+        (secret, replacement)
+        for _control_run in runs
+        for secret, replacement in (
+            (gh_config_dir, "<gh_config_dir>"),
+            (signing_key, "<signing_key>"),
+            (gh_config_dir, "<gh_config_dir>"),
+            (signing_key, "<signing_key>"),
+        )
+    ]
+
+
 def test_pr_open_view_token_not_found_no_create(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

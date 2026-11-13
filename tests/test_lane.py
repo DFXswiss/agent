@@ -916,6 +916,74 @@ def test_known_secret_scanners_are_linear_across_one_large_nested_string_control
         assert cleaned == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    "control_run",
+    (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    ),
+    ids=("65-osc", "1000-osc", "65-c0", "mixed"),
+)
+@pytest.mark.parametrize("encoded", (False, True), ids=("exact", "percent-encoded"))
+def test_known_secret_scanners_cross_unbounded_terminal_control_runs(
+    control_run: str, encoded: bool
+) -> None:
+    secret = "/opt/key"
+    representation = (
+        "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+        if encoded
+        else secret
+    )
+    split_at = 1
+    raw = (
+        f"before {representation[:split_at]}{control_run}"
+        f"{representation[split_at:]} after"
+    )
+    redact_secret = (
+        redact_terminal_interleaved_urlencoded_secret
+        if encoded
+        else redact_terminal_interleaved_secret
+    )
+
+    started = time.monotonic()
+    cleaned = redact_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+def test_known_secret_scanner_is_linear_across_ambiguous_csi_final_bytes() -> None:
+    secret = "/opt/key"
+    control_run = "\x1b[o" * 1_000
+    raw = f"before /{control_run}opt/key after"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
+    config_dir = "/opt/provider-profile"
+    runs = (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    )
+
+    for control_run in runs:
+        raw = f"failed at /opt/{control_run}provider-profile/key"
+        assert redact_diagnostic(raw, config_dir=config_dir) == (
+            "failed at <config_dir>/key"
+        )
+
+
 def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:
     cleaned = redact_lane_text(
         "visible " + "m" * 1_000_000,

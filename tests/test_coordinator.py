@@ -2239,6 +2239,71 @@ def test_ci_pr_view_transport_failure_retries_same_ci_phase_then_green(
     assert "implementer" not in fake.launched
 
 
+@pytest.mark.parametrize(
+    "observed_head", (None, "not-a-sha"), ids=("missing", "invalid")
+)
+def test_open_ci_retries_missing_or_invalid_pr_head_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    observed_head: str | None,
+) -> None:
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_ci
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    head = "a" * 40
+    task_id = "55555555-5555-4555-8555-555555555560"
+    task = {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "ci",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "base": "develop",
+                },
+            }
+        },
+    }
+    store.write("task", "insert", task_id, task)
+    monkeypatch.setattr(
+        coordinator_github, "scoped", lambda _store, _session, runner: runner
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_fetch_pr_json",
+        lambda *_args, **_kwargs: {
+            "headRefOid": observed_head,
+            "statusCheckRollup": [],
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "_paginate_workflow_runs",
+        lambda *_args, **_kwargs: pytest.fail(
+            "workflow inventory must not run without a valid PR head"
+        ),
+    )
+
+    lines = phase_ci(store, worker, store.row("task", task_id), object())
+
+    assert lines == [f"CI pending on {head[:7]} (PR head temporarily unavailable)"]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert saved["payload"]["coordinator"]["head_sha"] == head
+    assert saved["state"] == "pr-review"
+
+
 def test_ci_rollup_protocol_fault_blocks_with_ci_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

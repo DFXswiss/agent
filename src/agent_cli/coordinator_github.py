@@ -1188,12 +1188,14 @@ def _observe_exact_head_ci(
         return _CiObservation("transport", "PR view temporarily unavailable")
     if not isinstance(pr, dict):
         return _CiObservation("protocol", "PR view failed")
-    observed_head = str(pr.get("headRefOid") or "")
-    if observed_head.lower() != head.lower():
+    observed_head = str(pr.get("headRefOid") or "").lower()
+    if not is_sha(observed_head):
+        return _CiObservation("transport", "PR head temporarily unavailable")
+    if observed_head != head.lower():
         return _CiObservation(
             "head_changed",
             "PR head changed",
-            new_head=(observed_head or head).lower(),
+            new_head=observed_head,
         )
     rollup = pr.get("statusCheckRollup")
     # Absent rollup must not skip head workflow inventory: action_required (and
@@ -2790,9 +2792,9 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if info.get("merged") is True:
         second_review_wait: list[str] | None = None
         sha = str(info.get("merge_commit_sha") or "")
-        merged_at = str(info.get("merged_at") or "")
+        merged_at = str(info.get("merged_at") or "") or None
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
-        if not sha or not merged_at:
+        if not sha or (not worker.a38 and merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
             return ["merge observed but mergedBy missing"]
@@ -2819,7 +2821,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
-        if str((info.get("head") or {}).get("sha") or "") != expected_head:
+        observed_head = str((info.get("head") or {}).get("sha") or "").lower()
+        if not is_sha(observed_head):
+            return ["merge observed but head SHA missing or invalid"]
+        if observed_head != expected_head.lower():
             clear_reply_recovery(c)
             raise NonRecoverableCoordinatorError(
                 "task-done refused: merged PR head differs from reviewed head; "
@@ -2965,6 +2970,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
         if second_review_wait is not None:
             return second_review_wait
+        if merged_at is None:
+            return ["merge observed but incomplete metadata"]
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)

@@ -310,7 +310,9 @@ token character, so sanitization cannot assemble a credential that evades the
 matcher. It uses the shared nesting-aware scanner before any span replacement;
 each complete or unterminated string-control span, including its payload, is a
 single removable interleave atom that is recognized before a generic ESC
-sequence. Seven-bit DCS, PM, APC, and SOS strings accept
+sequence. Consecutive removable C0 bytes, string-control spans, CSI, and other
+ESC sequences are consumed as one linear interleave run without a per-control
+count limit. Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
 through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
 continue through BEL until an ST spelling.

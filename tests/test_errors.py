@@ -1335,71 +1335,67 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "swallows every following physical line" in normalized
 
     assert (
-        "then classifies secret assignments on the full\nraw text. During that scan,\n"
+        "then classifies secret assignments on the full raw text. During that scan, "
         "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "Only after assignment classification does the pipeline replace those\n"
+        "Only after assignment classification does the pipeline replace those "
         "spans with `[redacted]` on the classified text, before whitespace tokenization"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "Before granting that exemption, the secret\n"
+        "Before granting that exemption, the secret "
         "matcher checks the SGR parameter bytes joined to the visible text"
-        in documented
+        in " ".join(documented.split())
     )
-    assert "a match\nredacts the entire token" in documented
+    assert "a match redacts the entire token" in " ".join(documented.split())
     assert (
-        "The assignment scan treats complete and unterminated string-control\n"
-        "spans as opaque; only after that classification are they replaced with\n"
+        "The assignment scan treats complete and unterminated string-control "
+        "spans as opaque; only after that classification are they replaced with "
         "`[redacted]` before tokenization"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
         "split as `pass` + span + `word` still joins to `password`" in documented
     )
     assert (
-        "a terminal control ends an unquoted key\n"
-        "only when an operator follows the skipped whitespace and controls before any\n"
+        "a terminal control ends an unquoted key "
+        "only when an operator follows the skipped whitespace and controls before any "
         "further key character"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "only when no visible\n"
-        "operator follows may a skipped, validly terminated string control supply its\n"
+        "only when no visible "
+        "operator follows may a skipped, validly terminated string control supply its "
         "payload operator"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "BEL terminates\n"
+        "BEL terminates "
         "only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST."
-        in documented
+        in " ".join(documented.split())
     )
     normalized_documented = " ".join(documented.split())
-    assert (
-        "Before `task-done` is evaluated for a merged A38 head, `await_merge` "
-        "evaluates the reported merge head against the reviewed head first. "
-        "A mismatch is the existing non-recoverable head boundary and cannot "
-        "publish a second-review blocker for that different commit. On a matching "
-        "head, `await_merge` evaluates the merged-head second-review outcome and "
+    for phrase in (
+        "the reported merge head against the reviewed head first",
+        "An unreadable pull request state is retried on the next tick",
+        "this evidence-base boundary is evaluated before the second-review outcome",
+        "pending, missing, or moved evidence therefore stops the tick without "
+        "starting or checking the merged-head second-review timeout",
         "starts or checks its timeout on every tick, including when the newest "
-        "review is passing."
-        in normalized_documented
-    )
-    assert (
+        "review is passing",
         "The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls "
         "back to the first merged observation only when that timestamp is unavailable "
-        "or invalid, so an observation outage cannot extend the review window. This "
-        "matching-head second-review evaluation and timeout persistence happen before "
-        "merged-report visibility and cumulative-CI lookups."
-        in normalized_documented
-    )
+        "or invalid",
+        "happen before merged-report visibility and cumulative-CI lookups",
+    ):
+        assert phrase in normalized_documented
     assert "review record's timestamp" in documented
-    assert "the tick\ntime is never substituted" in documented
+    assert "the tick time is never substituted" in " ".join(documented.split())
     assert "stored report body" in documented
     assert "live repository value" in documented
-    assert "same\ncontrol lexer" in documented
+    assert "same control lexer" in " ".join(documented.split())
     for text in (documented, ai_accounts, readme, skill):
         normalized = " ".join(text.split())
         assert (
@@ -1416,23 +1412,23 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in " ".join(documented.split())
     )
     assert (
-        "a raw whitespace token that contained a string-control\nspan"
-        in documented
+        "a raw whitespace token that contained a string-control span"
+        in " ".join(documented.split())
     )
     assert (
-        "Credential assignments are\nthen classified on the full raw text"
-        in ai_accounts
+        "Credential assignments are then classified on the full raw text"
+        in " ".join(ai_accounts.split())
     )
     assert (
-        "a terminal control ends an unquoted key only when, after\n"
+        "a terminal control ends an unquoted key only when, after "
         "skipping whitespace and controls"
-        in ai_accounts
+        in " ".join(ai_accounts.split())
     )
     assert (
-        "A raw whitespace token that\n"
+        "A raw whitespace token that "
         "contained a string-control span and contains a secret keyword is "
         "redacted whole"
-        in ai_accounts
+        in " ".join(ai_accounts.split())
     )
     assert "BEL terminates OSC only" in ai_accounts
     assert (
@@ -1448,20 +1444,23 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in " ".join(readme.split())
     )
     assert (
-        "A control ends an unquoted key only when an operator occurs\n"
+        "A control ends an unquoted key only when an operator occurs "
         "before another key character"
-        in readme
+        in " ".join(readme.split())
     )
     assert (
-        "Otherwise the control stays inside the sticky key, so suffixes such as `_file`\n"
+        "Otherwise the control stays inside the sticky key, so suffixes such as `_file` "
         "and `suffix` remain part of the secret key."
-        in readme
+        in " ".join(readme.split())
     )
     assert (
         "payload operator remains opaque and later key fragments still join"
         in readme
     )
-    assert "BEL ends\nonly OSC; the other string controls require ST." in readme
+    assert (
+        "BEL ends only OSC; the other string controls require ST."
+        in " ".join(readme.split())
+    )
 
 
 def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:

@@ -10,7 +10,7 @@ from collections.abc import Callable
 # pass sees their ESC/C1 bytes and redacts the whole token instead of asking a
 # backtracking expression to classify an unbounded sequence.
 _MAX_ESCAPE_PARAMETER_BYTES = 64
-_MAX_TERMINAL_INTERLEAVES = 64
+_MAX_REGEX_TERMINAL_INTERLEAVES = 64
 
 
 # String controls are scanned on the complete raw text before whitespace
@@ -53,7 +53,7 @@ TERMINAL_INTERLEAVE_PATTERN = (
     rf"|\x1b[ -/]{{0,{_MAX_ESCAPE_PARAMETER_BYTES}}}"
     rf"|{_TERMINAL_ESCAPE_RE.pattern}"
     rf"|{_TERMINAL_CONTROL_RE.pattern}"
-    rf"){{0,{_MAX_TERMINAL_INTERLEAVES}}}"
+    rf"){{0,{_MAX_REGEX_TERMINAL_INTERLEAVES}}}"
 )
 
 
@@ -164,23 +164,24 @@ def _terminal_interleave_positions(
     index: int,
     expected: frozenset[str],
 ) -> tuple[int, ...]:
-    """Return positions reachable after bounded removable terminal atoms.
+    """Return positions reachable after one removable terminal-control run.
 
-    A complete nesting-aware string control is one atom, including its payload
-    and terminator (or the remainder of the text when unterminated).  For CSI
-    and other ESC sequences, the final byte may instead be the next literal
-    secret byte; both that position and the position after the complete escape
-    remain reachable.  String controls must win before the generic ESC case.
+    The linear walk has no per-atom limit: consecutive C0 controls, complete
+    nesting-aware string controls, CSI, and other ESC sequences are one run.
+    For CSI and other ESC sequences, the final byte may instead be the next
+    literal secret byte; both that position and the position after the complete
+    escape remain reachable. String controls must win before the generic ESC
+    case.
     """
     positions = [index]
     cursor = index
-    for _ in range(_MAX_TERMINAL_INTERLEAVES):
+    first_final_position: int | None = None
+    while True:
         if cursor >= len(text):
             break
         if _is_terminal_string_control(text, cursor):
             end, _terminated = _terminal_string_control_end(text, cursor)
             cursor = max(cursor + 1, end)
-            positions.append(cursor)
             continue
 
         if text.startswith("\x1b[", cursor) or text[cursor] == "\x9b":
@@ -202,10 +203,9 @@ def _terminal_interleave_positions(
                 cursor += 1
                 intermediate_count += 1
             if cursor < len(text) and "@" <= text[cursor] <= "~":
-                if text[cursor] in expected:
-                    positions.append(cursor)
+                if text[cursor] in expected and first_final_position is None:
+                    first_final_position = cursor
                 cursor += 1
-            positions.append(cursor)
             continue
 
         if text[cursor] == "\x1b":
@@ -219,18 +219,19 @@ def _terminal_interleave_positions(
                 cursor += 1
                 intermediate_count += 1
             if cursor < len(text) and "0" <= text[cursor] <= "~":
-                if text[cursor] in expected:
-                    positions.append(cursor)
+                if text[cursor] in expected and first_final_position is None:
+                    first_final_position = cursor
                 cursor += 1
-            positions.append(cursor)
             continue
 
         if _TERMINAL_CONTROL_RE.match(text, cursor) is not None:
             cursor += 1
-            positions.append(cursor)
             continue
 
         break
+    if first_final_position is not None:
+        positions.append(first_final_position)
+    positions.append(cursor)
     return tuple(dict.fromkeys(positions))
 
 

@@ -241,6 +241,33 @@ def test_assignment_failure_redacts_fully_and_mixed_percent_encoded_path_bearers
     ) == "/recover/[redacted]"
 
 
+@pytest.mark.parametrize(
+    "control_run",
+    (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    ),
+    ids=("65-osc", "1000-osc", "65-c0", "mixed"),
+)
+@pytest.mark.parametrize("encoded", (False, True), ids=("exact", "percent-encoded"))
+def test_assignment_failure_redacts_bearer_across_unbounded_control_runs(
+    control_run: str, encoded: bool
+) -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    token = "secret-device-token"
+    representation = (
+        "".join(f"%{byte:02X}" for byte in token.encode("utf-8"))
+        if encoded
+        else token
+    )
+    raw = f"retry {representation[:1]}{control_run}{representation[1:]}"
+
+    assert sanitized_assignment_text(raw, token, limit=200) == "retry [redacted]"
+
+
 def test_assign_failure_prints_fully_percent_encoded_recovery_path_without_bearer(
     monkeypatch, capsys
 ) -> None:

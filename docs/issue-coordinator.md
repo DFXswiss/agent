@@ -880,11 +880,14 @@ Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
-sanitization, the second redaction pass, and the replicated-row length bound.
+sanitization, repeat that exact replacement after generic sanitization, and
+only then apply the replicated-row length bound.
 Exact path and bearer matching use the shared nesting-aware scanner before any
 string-control replacement: a complete or unterminated OSC, DCS, PM, APC, or
 SOS span, including nested payload, is one removable interleave atom and wins
-over the generic ESC alternative.
+over the generic ESC alternative. Consecutive removable C0 bytes, string-control
+spans, CSI, and other ESC sequences form one linear interleave run with no
+per-control count limit.
 User-facing blockers and questions are
 published on the source issue only when `execution_status=done` is verified;
 otherwise they remain locally visible (`CoordinatorError` / `StoreError`
@@ -1267,17 +1270,21 @@ when the merged base equals the promoted evidence base, a report or waiver plus
 the local gate are bound to that base, and it has not already run on exactly
 that head (`readiness_head`); keys closed on an earlier head do not count. A
 pending or missing evidence base, or a base move first observed after merge,
-stops at the non-recoverable `task-done` boundary without running readiness. An
+stops at the non-recoverable `task-done` boundary without running readiness.
+On a matching merged head, this evidence-base boundary is evaluated before the
+second-review outcome: pending, missing, or moved evidence therefore stops the
+tick without starting or checking the merged-head second-review timeout. An
 unreadable pull request state is retried on the
 next tick without taking in mail.
 Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
 the reported merge head against the reviewed head first. A mismatch is the
 existing non-recoverable head boundary and cannot publish a second-review
 blocker for that different commit. On a matching head, `await_merge` evaluates
-the merged-head second-review outcome and starts or checks its timeout on every
-tick, including when the newest review is passing. Intake persists the passing
-review record's timestamp as the time the requirement was satisfied; the tick
-time is never substituted. The timeout is anchored at GitHub's valid
+the merged-head second-review outcome after the evidence-base boundary is
+satisfied, and starts or checks its timeout on every tick, including when the
+newest review is passing. Intake persists the passing review record's timestamp
+as the time the requirement was satisfied; the tick time is never substituted.
+The timeout is anchored at GitHub's valid
 `mergedAt` timestamp and falls back to the first merged observation only when
 that timestamp is unavailable or invalid, so an observation outage cannot
 extend the review window. This matching-head second-review evaluation and
