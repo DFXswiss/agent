@@ -85,6 +85,25 @@ def test_orders_must_be_a_boolean(tmp_path):
         load_coordinator_config(tmp_path)
 
 
+def test_draft_on_accept_defaults_to_false(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].draft_on_accept is False
+
+    data['workers']['selected-session']['draft_on_accept'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].draft_on_accept is True
+
+
+@pytest.mark.parametrize('value', ['yes', 1, None])
+def test_draft_on_accept_must_be_a_boolean(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['draft_on_accept'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='draft_on_accept must be a boolean'):
+        load_coordinator_config(tmp_path)
+
+
 @pytest.mark.parametrize('value', [-1, "1", True, 1.5])
 def test_lane_retries_accepts_zero_and_refuses_bad_values(tmp_path, value):
     data = config(tmp_path)

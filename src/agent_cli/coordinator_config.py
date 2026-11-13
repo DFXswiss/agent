@@ -49,6 +49,7 @@ class WorkerConfig:
     orders: bool = False
     max_rounds: int | None = None
     max_rounds_by_model: dict[str, int] = field(default_factory=dict)
+    draft_on_accept: bool = False
 
 
 def _text(value: object, label: str) -> str:
@@ -133,7 +134,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'require_hub_assignment', 'a38', 'second_reviewers',
                     'second_review_timeout_seconds', 'park_poll_seconds',
                     'lane_retries', 'orders', 'max_rounds',
-                    'max_rounds_by_model'}
+                    'max_rounds_by_model', 'draft_on_accept'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -209,6 +210,9 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         require_hub = item.get('require_hub_assignment', False)
         if not isinstance(require_hub, bool):
             raise StoreError('require_hub_assignment must be a boolean')
+        draft_on_accept = item.get('draft_on_accept', False)
+        if not isinstance(draft_on_accept, bool):
+            raise StoreError('draft_on_accept must be a boolean')
         max_rounds = (
             _at_least(item['max_rounds'], 'max_rounds', 1)
             if 'max_rounds' in item else None
@@ -246,7 +250,8 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    ),
                                    orders=orders,
                                    max_rounds=max_rounds,
-                                   max_rounds_by_model=by_model)
+                                   max_rounds_by_model=by_model,
+                                   draft_on_accept=draft_on_accept)
     return result
 
 

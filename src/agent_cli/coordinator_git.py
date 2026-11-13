@@ -18,6 +18,7 @@ from .coordinator_common import (
     as_int,
     coord,
     gh_json,
+    is_order,
     is_sha,
     pr_head_ref,
     publication_repo,
@@ -141,6 +142,50 @@ def stage_sign_commit_if_changes(
     # Explicit -S retains configured identity from the account runner (-c commit.gpgsign).
     commit = git(store, worker, runner, worktree, "commit", "-S", "-m", message)
     require_git_ok(commit, "signed commit")
+    return verify_signed_clean_head(store, worker, runner, worktree)
+
+
+START_COMMIT_MESSAGE = "Open the draft pull request."
+
+
+def sign_empty_commit(
+    store: Store,
+    worker: WorkerConfig,
+    runner: Runner,
+    worktree: str,
+    message: str,
+    *,
+    base_sha: str,
+) -> str:
+    """Create one signed empty commit on the unchanged base head; return the verified head."""
+    status = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+    )
+    require_git_ok(status, "git status")
+    if (status.stdout or "").strip():
+        raise CoordinatorError("worktree is not clean")
+    head = git(store, worker, runner, worktree, "rev-parse", "HEAD")
+    require_git_ok(head, "rev-parse HEAD")
+    if (head.stdout or "").strip().lower() != base_sha:
+        raise CoordinatorError("start commit requires an unchanged base head")
+    commit = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "commit",
+        "-S",
+        "--allow-empty",
+        "-m",
+        message,
+    )
+    require_git_ok(commit, "signed start commit")
     return verify_signed_clean_head(store, worker, runner, worktree)
 
 
@@ -332,8 +377,14 @@ def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], run
     verify_checkout_identity(store, worker, runner, str(worktree))
     if run("status", "--porcelain", "--untracked-files=all"):
         raise CoordinatorError("refusing dirty checkout recovery")
-    c.update(worktree=str(worktree), base_sha=base_sha, branch=branch,
-             publication_repo=publication, head_sha=run("rev-parse", "HEAD"), phase="implement")
+    c.update(
+        worktree=str(worktree),
+        base_sha=base_sha,
+        branch=branch,
+        publication_repo=publication,
+        head_sha=run("rev-parse", "HEAD"),
+        phase="start_draft" if is_order(task) or worker.draft_on_accept else "implement",
+    )
     save_task(store, task)
     return [f"checkout ready on pinned target base {base_sha[:7]}"]
 
@@ -653,3 +704,111 @@ def phase_publish_draft(
             c["phase"] = "inner_review" if task.get("state") == "reviewing" else "implement"
         save_task(store, task)
     return lines or ["draft reconcile idle"]
+
+
+def phase_start_draft(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Open the draft pull request on an empty start commit before the first lane."""
+    c = coord(task)
+    worktree = str(c.get("worktree") or "")
+    base_sha = str(c.get("base_sha") or "")
+    lines: list[str] = []
+    if as_int(c.get("pr_number")) is None:
+        log = git(
+            store,
+            worker,
+            runner,
+            worktree,
+            "log",
+            "--oneline",
+            f"{base_sha}..HEAD",
+        )
+        require_git_ok(log, "start draft log")
+        ahead = bool((log.stdout or "").strip())
+        if not ahead:
+            c["start_commit_pending"] = True
+            save_task(store, task)
+            sha = sign_empty_commit(
+                store,
+                worker,
+                runner,
+                worktree,
+                START_COMMIT_MESSAGE,
+                base_sha=base_sha,
+            )
+            c["start_commit"] = sha
+            c["head_sha"] = sha
+            c.pop("start_commit_pending", None)
+            save_task(store, task)
+        elif c.get("start_commit_pending") is True:
+            sha = verify_signed_clean_head(store, worker, runner, worktree)
+            c["start_commit"] = sha
+            c["head_sha"] = sha
+            c.pop("start_commit_pending", None)
+            save_task(store, task)
+        lines = ensure_draft(store, worker, task, runner)
+        c = coord(task)
+        if as_int(c.get("pr_number")) is None:
+            c["phase"] = "start_draft"
+            save_task(store, task)
+            return lines or ["start draft pending"]
+    c["phase"] = "implement"
+    save_task(store, task)
+    return [
+        f"draft opened on start commit {str(c.get('start_commit') or '')[:7]}",
+        *lines,
+    ]
+
+
+def close_pull_request(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    activity_id: str,
+    body: str,
+) -> str:
+    """Comment on the task's pull request and close it; returns "CLOSED" or "MERGED"."""
+    c = coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    target = target_repo(task)
+    if number is None or not target:
+        raise CoordinatorError("no pull request to close")
+    api = scoped(store, worker.session_id, runner)
+
+    def state() -> str:
+        view = gh_json(
+            api,
+            ["gh", "pr", "view", str(number), "--repo", target, "--json", "state"],
+        )
+        return str(view.get("state") or "").upper() if isinstance(view, dict) else ""
+
+    current = state()
+    if current == "MERGED":
+        return "MERGED"
+    if current == "OPEN":
+        queue_activity(
+            store,
+            activity_id=activity_id,
+            session_id=worker.session_id,
+            typ="comment.post",
+            payload={"repo": target, "number": number, "body": body, "target": "pr"},
+        )
+        execute_github(store, runner, activity_ids=(activity_id,))
+        row = store.row("activity", activity_id)
+        if row is None or row.get("execution_status") != "done":
+            raise CoordinatorError("close comment was not verified published")
+        closed = api(["gh", "pr", "close", str(number), "--repo", target])
+        if closed.returncode != 0:
+            raise CoordinatorError(
+                redact(closed.stderr or closed.stdout or "gh pr close failed")
+            )
+        current = state()
+    if current != "CLOSED":
+        raise CoordinatorError("pull request is not closed")
+    return "CLOSED"

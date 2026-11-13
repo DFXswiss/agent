@@ -31,7 +31,7 @@ from .model_slots import (
     model_pins,
     models_for_new_record,
 )
-from .coordinator_checks import evaluate_action
+from .coordinator_checks import TaskFacts, checks_satisfied, evaluate_action
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     FINDINGS_SPEC_BOUND,
@@ -91,9 +91,11 @@ from .coordinator_a38 import (
 )
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
+    close_pull_request,
     ensure_draft,
     phase_checkout,
     phase_publish_draft,
+    phase_start_draft,
     refresh_draft_body,
     repo_cfg,
     stage_sign_commit_if_changes,
@@ -1084,6 +1086,104 @@ def _hold_surface_list(
     c["surface_list_held"] = True
 
 
+NO_CHANGE_CLOSE_BODY = (
+    "Closing this draft: the implementation lane reported that no change is needed, "
+    "so the pull request contains only its empty start commit."
+)
+NO_CHANGE_BLOCKER = (
+    "The implementation lane reported no change; the empty draft pull request was closed."
+)
+
+
+def close_empty_draft(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Close a draft that holds only its start commit and end the task as failed (no-change)."""
+
+    def _commit(
+        staged: dict[str, Any], staged_round: dict[str, Any] | None = None
+    ) -> None:
+        with store.conn.transaction():
+            if staged_round is not None:
+                store.write(
+                    "task_round",
+                    "update",
+                    staged_round["id"],
+                    strip_row(staged_round),
+                )
+            save_task(store, staged)
+        task.clear()
+        task.update(staged)
+
+    if coord(task).get("closing_draft") != "no-change":
+        staged = copy.deepcopy(task)
+        coord(staged)["closing_draft"] = "no-change"
+        _commit(staged)
+
+    outcome = "CLOSED"
+    if checks_satisfied(TaskFacts(store, task), task, "close_draft"):
+        outcome = close_pull_request(
+            store,
+            worker,
+            task,
+            runner,
+            activity_id=str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"coordinator-no-change-close:{task['id']}",
+                )
+            ),
+            body=NO_CHANGE_CLOSE_BODY,
+        )
+
+    staged = copy.deepcopy(task)
+    staged_c = coord(staged)
+    staged_c.pop("closing_draft", None)
+    if outcome == "MERGED":
+        staged_c["phase"] = "await_merge"
+        _commit(staged)
+        return ["PR merged during the no-change close; verifying the merge"]
+
+    staged_c.pop("lane_outcome", None)
+    staged_c["phase"] = "blocked"
+    clear_reply_recovery(staged_c)
+    staged_c["failed_kind"] = "no-change"
+    staged_c["blocker"] = "implementation lane reported no change"
+    staged["state"] = "failed"
+    staged_round = None
+    try:
+        round_row = _find_round(
+            store,
+            str(task["id"]),
+            int(task.get("current_round") or 0),
+        )
+    except CoordinatorError:
+        pass
+    else:
+        if round_row.get("implementer_verdict") is None:
+            staged_round = copy.deepcopy(round_row)
+            staged_round["implementer_verdict"] = "blocked"
+            staged_round["finished_at"] = utcnow()
+    _commit(staged, staged_round)
+
+    lines = ["no change on the start commit; draft closed"]
+    if not is_order(task):
+        lines.extend(
+            publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                NO_CHANGE_BLOCKER,
+                kind="no-change",
+            )
+        )
+    return lines
+
+
 def _apply_implementer_outcome(
     store: Store,
     worker: WorkerConfig,
@@ -1318,6 +1418,12 @@ def _apply_implementer_outcome(
         ) + draft_lines
 
     if model_result == "no-change":
+        if (
+            c.get("start_commit")
+            and c.get("head_sha") == c["start_commit"]
+            and not sha
+        ):
+            return close_empty_draft(store, worker, task, runner) + draft_lines
         if not c.get("pr_number") and not sha:
             c = _commit_replay_blocker("no-change and no pull request")
             return publish_blocker(
@@ -2188,6 +2294,7 @@ def phase_handlers(
     return {
         "accept": lambda: phase_accept(store, worker, task, runner),
         "checkout": lambda: phase_checkout(store, worker, task, runner),
+        "start_draft": lambda: phase_start_draft(store, worker, task, runner),
         "implement": lambda: phase_implement(store, worker, task, runner, lane_runner),
         "inner_review": lambda: phase_inner_review(store, worker, task, runner, lane_runner),
         "tests": lambda: phase_tests(store, worker, task, runner),
@@ -2295,6 +2402,8 @@ def _advance_task(
         return []
     if c.get("uncertain_lane"):
         return _recover_uncertain_lane(store, worker, task, runner)
+    if c.get("closing_draft"):
+        return close_empty_draft(store, worker, task, runner)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)

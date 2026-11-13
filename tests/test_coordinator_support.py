@@ -273,6 +273,9 @@ class FakeGh:
         self.force_push_attempted = False
         self.git_commands: list[list[str]] = []
         self.commit_used_S = False
+        self.empty_commits = 0
+        self.close_calls = 0
+        self.close_rc = 0
         self.remotes = {}
         self.branch = "develop"
         self.branches = {"develop"}
@@ -419,6 +422,13 @@ class FakeGh:
                 )
                 self.revoke_one_review_on_pr_comment = False
             return Completed(0, self.pr_comments[-1]["html_url"], "")
+
+        if argv[:3] == ["gh", "pr", "close"]:
+            self.close_calls += 1
+            if self.close_rc != 0:
+                return Completed(self.close_rc, "", "close refused")
+            self.pr["state"] = "CLOSED"
+            return Completed(0, "", "")
 
         if argv[:3] == ["gh", "pr", "ready"]:
             self.ready_calls += 1
@@ -597,6 +607,13 @@ class FakeGh:
                 )
             return Completed(1, "", f"unhandled git show: {args}")
         if cmd == "commit":
+            if "--allow-empty" in args:
+                self.commit_used_S = "-S" in args
+                self.commits_ahead = True
+                self.head = format((12 + self.commit_count) % 16, 'x') * 40
+                self.commit_count += 1
+                self.empty_commits += 1
+                return Completed(0, "", "")
             if not self.staged:
                 return Completed(1, "", "nothing to commit")
             self.commit_used_S = "-S" in args
