@@ -36,7 +36,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Session | No work without a `session` row. The start hook inserts it. |
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
-| Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, and `error-fix` exist as skills. They are **not** on by default. |
+| Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, `error-fix`, and `conflicts` exist as skills. They are **not** on by default. |
 | Initial configuration | GitHub accounts, AI accounts, roles, and their selections start unconfigured (`NULL`). Add them explicitly through configuration; no fixed account or role count. See §19.8. |
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
@@ -178,7 +178,7 @@ The hub reads the file from the deployed tree. After merge, the new roster appli
 
 Normal path (from the laptop):
 
-1. `agent pair --hub <url>` (or `AGENT_HUB`) creates or reuses `device_id` and a challenge, persists them in `device.json`, and calls `POST /pair/prepare`.
+1. `agent pair --hub <url>` (or `AGENT_HUB`) creates or reuses `device_id`, creates a new challenge on every run, persists both in `device.json`, and calls `POST /pair/prepare`.
 2. The printed URL opens `/pair?challenge=…`.
 3. If signed out, GitHub OAuth must return to that same `/pair?…` URL (not `/`).
 4. `POST /pair/confirm` with the cookie session binds the device to the GitHub login and issues a **device token** (HMAC, not a GitHub token).
@@ -337,11 +337,16 @@ v1 types (mechanism only):
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
 | `usage.snapshot` | — | script | — (configured Grok billing or OpenRouter key-usage GET on this device; no TUI knock). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; OpenRouter account failures are reported and never stored as zero values. |
-| `lane.run` | — | script | — (one completed lane process; configured/reported model, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). |
+| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; the OpenRouter usage GET uses `trust_env=False`. |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
 | `supervise.event` | `supervise` | script | — (supervise follow bookkeeping / approve; optional closed-question path in tests; skip rows may carry a truncated pane excerpt; no TUI knock) |
+| `order.event` | `order` | script | — (written by the coordinator at order transitions; persists until acknowledged; `agent order ack` or an answering reply, override or cancel sets the acknowledgement; no `NOTIFY`, no TUI knock) |
+| `order.reply` | `order` | script (`agent order reply`, `agent order override`, `agent order cancel`, or the same operations of the local dashboard) | script (consumed by the coordinator tick) |
+
+Both order types are script-only like `pr.merged`; `agent activity add` refuses
+them and a model never writes them (§19.10).
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 
@@ -380,6 +385,7 @@ Skills this client ships:
 - **review-loop** — run implement / review rounds until the catalog shows zero open findings
 - **pr-review** — record quality/logic gates on a head SHA
 - **error-fix** — production log errors on this device → analysis → optional draft pull request (§21)
+- **conflicts** — an exact pull-request comment mandates a static rebase, checks, and lease push, with a confined lane only for conflicted files (§19.9)
 
 The packaged `SKILL.md` files next to the client **are** the skill contracts; `agent skills path` prints their directory.
 
@@ -389,9 +395,12 @@ Person-facing CLI for the spine stays `agent work` / table `open_work`. Catalog 
 
 Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` /
 `unavailable` with an explicit `source`. `ja`, `n_a`, and `unavailable` need
-evidence. `unavailable` is only for the four PR-gate keys (`review_1_quality`,
-`review_1_logic`, `review_2_quality`, `review_2_logic`); it is not `n_a` and it
-blocks `done`. `done` on a task still requires the workflow checklist and both
+evidence. Among the workflow keys, `unavailable` is only for the four PR-gate
+keys (`review_1_quality`, `review_1_logic`, `review_2_quality`,
+`review_2_logic`); it is not `n_a` and it blocks `done`. Coordinator
+precondition checks (§19.10) are separate `checklist_item` rows with the same
+five statuses; there `unavailable` records that the resolver could not run.
+They are not workflow keys and take no part in `done`. `done` on a task still requires the workflow checklist and both
 summary sentences.
 
 ## 16. CLI surface
@@ -401,7 +410,7 @@ agent init [--no-service]                       # --no-service skips the user se
 agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
-agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix
+agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix|conflicts
 agent session skill list --id ID
 agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
@@ -446,12 +455,25 @@ agent watch assigned [--follow]                # allowlisted GitHub assignments 
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
+agent coordinate --session ID [--follow]             # static issue and order workflow; coordinator.json
+agent conflicts --session ID [--once|--follow] [--dry-run]
+agent order submit --repo OWNER/NAME --title TEXT --body-file PATH [--base BRANCH] [--worker SESSION] [--notify-session ID] [--skip-check KEY --reason TEXT]... [--max-rounds N] [--json]
+agent order list [--open] [--json]
+agent order show --id UUID [--json]
+agent order events [--after CURSOR] [--notify-session ID] [--wake-only] [--unacked] [--json]
+agent order wait [--after CURSOR] [--notify-session ID] [--timeout SECONDS]
+agent order ack --event ID
+agent order reply --id UUID --body-file PATH
+agent order override --id UUID --check KEY --reason TEXT
+agent order cancel --id UUID --reason TEXT
+agent order report --id UUID [--json]
 agent status
 agent dashboard [--port 7845]
 agent cli-bridge [--port 7846]
 ```
 
 Local dashboard binds `127.0.0.1` only.
+Its order routes are described in §17.
 
 The AI must not call hub HTTP, `gh`, or himalaya; scripts perform these operations. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
 
@@ -502,7 +524,7 @@ the `models` and `lane_execution` checks pass.
 
 **Lane providers are the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; `claude` and `openrouter` lanes are headless restricted `claude --print` adapters, not this tmux pane. The OpenRouter adapter supplies its Anthropic-compatible endpoint and reads its key only inside a shell wrapper; the key is not argv or lane evidence. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
-Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub.
+Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub. Order reads use `GET /api/orders/<name>` and order writes use `POST /api/orders/<name>` with a JSON object. `GET /api/orders/schema` returns `enabled`, `skippable`, and `operations`. These routes call the same order operations as the command line. Every route below `/api/orders/` requires `Host` to be `127.0.0.1:<port>` or `localhost:<port>`, with any port. When `Origin` is present and nonempty, it must equal `http://` plus that `Host`; otherwise the route returns 403 with `cross-origin request refused`. The blocking `wait` operation has no dashboard route; the dashboard polls `events`.
 
 The knock in §10 uses the **registered pane**, not `tmux_session` derived from the session id. `agent session input` remains argv-only (`send-keys -l` then a separate Enter).
 
@@ -514,7 +536,11 @@ human owner, creates and verifies the GitHub issue assignment, and records
 the repository exactly as supplied; the hub canonicalizes its repository
 spelling. `agent assign` requires `--no-deviation` and sends
 `deviation: {"declared": false}`; a deviation instead needs an explicit grant
-on the issue. The client does not print or persist the bearer anywhere new.
+on the issue. The client does not print or persist the bearer anywhere new, and
+hub failure detail or recovery URLs are bounded and redacted after the exact
+bearer is removed. A successful response is accepted only with a positive,
+non-boolean issue number and a credential-free HTTPS GitHub issue URL that names
+the same repository and number.
 
 ## 18. What “done” for the product still needs (operators)
 
@@ -549,6 +575,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Start implementation and review lanes, restart the implementer for improvements, and start any other agents | Static script on the execution device | The model never orchestrates another model |
 | Execute tests, builds, and checks, including local tests | Static script on the execution device | Script-produced results supplied to the lanes |
 | Monitor or wait for CI, reviews, merges, and other external events; notify a lane when there is useful work | Static script on the execution device | Script-observed facts, not a waiting or polling model |
+| Preconditions of every coordinator action | Static script on the execution device | Registry of checks; one resolver per check; facts in the checklist table (§19.10) |
 | Spine task state | Spine CLI + local constraints | `task` state, checklist keys, `close-step` / `run` |
 | Whether a head is reviewed | Gate after the two model-slot stages | `agent gate record` |
 | Whether a command ran and what it returned | The process that ran it | `agent check record` (name, command, `pass`/`fail`/`skip`, output) |
@@ -640,6 +667,12 @@ delivered as session mail, bound to the approved `review-1` head and recorded as
 `review_2_*` checklist evidence. The coordinator launches no second-slot model
 for that task. `models.second: null` is refused everywhere else.
 
+An A38 coordinator worker that sets `a38_second_review: "model"` is no
+exception. Its tasks pin a provider in `models.second`, and the script runs the
+second pair. For an order the second review is the check `review_2` (§19.10).
+Only an override that names it waives it, and only where the
+`one_review_authors` exception above applies.
+
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
 
 ### 19.7 Issue assignment to human merge
@@ -650,7 +683,10 @@ GitHub. The static script runs on the configured execution device. Deployment
 hostnames belong in the deployment configuration, not this public repository.
 
 1. The script detects assignments in explicit repositories or repositories of
-   explicitly approved GitHub owners. For an owner-scoped repository it pins
+   explicitly approved GitHub owners. Owner discovery uses one owner-qualified
+   search per configured owner and fails that owner's scan when GitHub reports
+   incomplete results or a result count larger than the fetched set. For an
+   owner-scoped repository it pins
    the default branch and a direct-push or verified fork publication route at
    acceptance. When configured to require a hub mandate, it accepts only a
    matching `assignment.created` query row. It queries the configured
@@ -673,6 +709,10 @@ hostnames belong in the deployment configuration, not this public repository.
    confirms acceptance in the GitHub issue. This acceptance and confirmation
    are script work, never model work, and happen before the script starts the
    implementation lane.
+   A local order submitted on the execution device is a second source of work.
+   Its mandate is that local submission by the device's paired GitHub login.
+   The script verifies no hub assignment for it, and acceptance posts nothing
+   on GitHub.
 2. The script starts the implementation lane with the assigned work. The model
    implements the change and returns its result to the script.
 3. The script starts the review lane. When improvements are needed, the script
@@ -688,6 +728,10 @@ hostnames belong in the deployment configuration, not this public repository.
    and blockers, when needed, are communicated through GitHub by the script;
    GitHub replies return through the script. The user need not operate a terminal
    or a separate dashboard to manage the assigned issue.
+   Questions and blockers of an order go to its order events and, once the
+   draft exists, to pull-request comments. Answers return through `agent order
+   reply`, `agent order override`, `agent order cancel`, or an authorized
+   pull-request comment.
    When the lane has no further work, it returns to the script; it does not
    monitor GitHub or wait for CI. The script observes subsequent events and
    informs a lane when further work is useful.
@@ -699,6 +743,11 @@ hostnames belong in the deployment configuration, not this public repository.
    coordinator does so for the ordinary path, while the PR guard alone does so
    for explicit coordinator A38 mode. These steps do not
    wait for this numbered list to finish before publishing the first draft.
+   For orders, and for issue workers with `"draft_on_accept": true`, the script
+   first creates and pushes one signed empty commit with message `Open the draft
+   pull request.` and opens the draft before implementation. That empty start
+   commit is allowed only on these paths. A `no-change` result while it is the
+   only commit closes the draft and fails the task.
 7. The human reviews and merges on GitHub. Completion requires verification of
    that human merge, as defined in the lifecycle.
 
@@ -738,8 +787,9 @@ the workflow is enabled on a deployment:
   executor. Its existence alone does not establish that model lanes cannot
   access GitHub or execute tests or other agents.
 - An explicitly configured coordinator A38 worker keeps the same deterministic
-  boundary with a different readiness owner. Its tasks are pinned with
-  `models.second: null`: the script runs and verifies the repository A38 suite,
+  boundary with a different readiness owner. With the external second review,
+  `a38_second_review: "external"`, which is the default, its tasks are pinned
+  with `models.second: null`: the script runs and verifies the repository A38 suite,
   publishes the author report and two validated author review comments, and
   relays an allowlisted external team-member second-review result from session
   mail. That result is bound to the approved `review-1` head and recorded as
@@ -751,7 +801,15 @@ the workflow is enabled on a deployment:
   The owner-scoped A38 default requires that mandate even when the general hub
   assignment option is disabled, and closes the deviation keys only when its
   inner payload is exactly `deviation: {"declared": false, "stated_by":
-  "<same actor>"}`. Before the
+  "<same actor>"}`. For an order on that default there is no hub mandate. The
+  script closes
+  `deviation_declared` and `deviation_granted` as `n_a` from the local
+  submission, with evidence that orders declare no deviation. With
+  `a38_second_review: "model"`, the task pins `models.second`; after the first
+  review comment the script runs the second-slot quality and logic lanes and
+  publishes their guard-format second comment as the pull-request author. A
+  rejection blocks merge and returns every rejecting dimension to the
+  implementer. The guard still owns Ready. Before the
   owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
   approved at <head>`, it requires the recorded `review-1` quality gate to be
   approved on that exact head. The coordinator never posts a formal
@@ -759,8 +817,28 @@ the workflow is enabled on a deployment:
   making the unchanged head Ready, then waits for the verified human merge. If
   the human merge arrives during the A38 second-review, CI, readiness, or Ready
   wait, merge observation runs the same readiness closing on that merged head
-  before `task-done`, unless readiness already ran on exactly that head. Non-A38
-  workers retain the formal-review and leave-draft path described above.
+  before `task-done` only when the merged base equals the promoted evidence base
+  and a report or waiver plus the local gate are bound to that base, unless
+  readiness already ran on exactly that head. A pending base, a missing evidence
+  base, or a base move first observed after merge instead stops at a
+  non-recoverable `task-done` boundary and does not run readiness. Non-A38 workers
+  retain the formal-review and leave-draft path described above.
+
+- [`preconditions.py`](src/agent_cli/preconditions.py) declares the action and
+  check registry. [`coordinator_checks.py`](src/agent_cli/coordinator_checks.py)
+  contains static resolvers, and
+  [`coordinator_check_lane.py`](src/agent_cli/coordinator_check_lane.py)
+  contains the single-purpose check lane.
+
+- [`order_ops.py`](src/agent_cli/order_ops.py) is the shared table of order
+  operations. [`orders.py`](src/agent_cli/orders.py) generates the command-line
+  interface from it, and
+  [`dashboard_orders.py`](src/agent_cli/dashboard_orders.py) exposes the same
+  operations locally. [`coordinator_orders.py`](src/agent_cli/coordinator_orders.py)
+  owns order creation, events and answers;
+  [`order_report.py`](src/agent_cli/order_report.py) compiles the acceptance
+  report. No worker accepts orders unless its configuration sets
+  `"orders": true`.
 
 This section defines the required responsibility boundary. It does not claim
 that a sandbox or other technical enforcement has been implemented.
@@ -809,6 +887,253 @@ The standalone PR guard retains its explicit workflow-token configuration.
 Trusted script APIs and raw terminal commands are not a sandbox. The optional
 issue coordinator and its deployment boundaries are documented in §19.7;
 technical enforcement of every model tool restriction remains separate work.
+
+### 19.9 Comment mandate: conflicts
+
+**Required.** An operator may explicitly configure a `conflicts` worker. A
+human pull-request comment that normalizes to exactly
+`@<worker-login> conflicts`, authored by a configured GitHub user, unedited,
+and on an open pull request, is a mandate for that static worker. Comment text
+remains data; a longer message that merely contains the phrase is not a
+mandate. With no configured worker, no comment starts work.
+
+The script owns discovery, reaction, pull-request reads, the isolated worktree,
+the rebase, lane starts, verification, configured checks, the
+`--force-with-lease` push, and the one idempotent result or blocker comment. It
+starts a confined implementer lane only when Git reports a content conflict,
+and no model output is a transition. Non-content conflicts, branches with merge
+commits, and repositories without checks are refused in this revision. The
+config and deployment boundaries are documented in
+[docs/conflict-mandate.md](docs/conflict-mandate.md).
+
+The coordinator starts the same script-owned resolution on its own for an order
+whose pull request has merge conflicts. This is the declared remedy of the
+check `pr_mergeable` (§19.10). The mandate is the order, not a comment.
+
+### 19.10 Orders and the precondition registry
+
+The script is the orchestrator. The model between a human and the script is the
+concierge. It submits the human's request, reads status and the acceptance
+report, relays questions, passes back replies, overrides or cancellation, and
+returns a recommendation. It starts no lane, performs no review and does not
+wait with model turns.
+
+The command line, the orders view of the local dashboard and a concierge are
+interchangeable front ends of the operation table in `order_ops.py`. Everything
+the concierge can hand to the script or read from it, a human can do and read
+in the dashboard. The dashboard does not expose the blocking `wait` operation;
+it polls `events`. No front end is part of the coordinator flow. The device daemon runs `agent coordinate
+--session ID --follow` for each configured worker.
+
+An order is a work request submitted on the execution device with `agent order
+submit`. The command takes repository, title and body-file arguments. It may
+also take a base, worker, notification session, repeated skip-check and reason
+pairs, and a round limit. Every option takes its value as the next argument.
+The command prints the order id, which is the task UUID.
+
+The order becomes an ordinary coordinator task. Its
+`payload.coordinator.source.kind` is `order`; an issue task has no kind and is
+read as `github-issue`. Orders use no second state machine and no new table.
+A worker accepts them only when `coordinator.json` sets `"orders": true`.
+The worker must already serve the repository through `repositories` or
+`repository_owners`.
+
+With no explicit worker, submission selects the order-enabled worker that
+serves the repository and has the fewest runnable tasks. An explicit repository
+requires the submitted base to equal its configured base. For an owner-scoped
+repository the submitted base is the branch pinned at acceptance. A new order
+stays in `queued` while that worker has a runnable task. A tick with none
+promotes the oldest queued order to `accept`.
+
+The order text is at most 60,000 characters. It is stored once at
+`<workspace_root>/.coordinator-control/<task id>/task-text.md`. The implementer
+prompt contains the full text for orders and issues. Reviewers read it through
+the review-context file. It is untrusted specification text, like an issue
+body. The task row holds a preview of at most 2,000 characters.
+
+The local submission by the device's paired GitHub login is the mandate. Every
+operation that records who acted refuses an unpaired device with `device is not
+paired`. The coordinator verifies no hub assignment for an order, even when
+the worker requires hub assignment. Acceptance reads no issue and posts
+nothing on GitHub. On the owner-scoped A38 default without
+`owner_readiness_argv`, readiness closes both deviation keys as `n_a` from the
+local submission, with evidence
+`order <id> submitted by <who>: orders declare no deviation`. Order
+submission cannot declare a deviation.
+
+Order states are derived, not stored: `queued`, `running`, `waiting`, `ready`,
+`merged`, `failed`, and `cancelled`. Order state `merged` is derived from task
+state `done`. It is not the spine task state `merged` of §19.5. Only `agent task
+close-from-pr` writes that spine state, and that command refuses coordinator
+tasks.
+
+The script writes one `order.event` at `accepted`, `draft-opened`, `question`,
+`blocked`, `resumed`, `ready`, `merged`, `failed`, and `cancelled`. Its payload
+contains the order id, kind, wake flag, per-device sequence, a redacted digest
+of at most 1,500 characters, pull-request URL, phase, round, failed check,
+accepted answers, round-limit opinion, notification session, time and
+acknowledgement.
+
+`question`, `blocked`, `ready`, `failed`, and `cancelled` wake. `merged` never
+wakes. A merge observed before Ready produces the `ready` and `merged` events
+together. Events persist until acknowledged. `--notify-session` only filters.
+Any later concierge session or the dashboard can list unacknowledged wake
+events and acknowledge them.
+
+`agent order reply`, `agent order override`, and `agent order cancel` write an
+`order.reply` row for the next coordinator tick. A reply resumes the exact
+`resume_phase` like an authorized pull-request or issue comment. A repeated
+question requires a new reply. A cancel closes the pull request with the fixed comment
+and ends the order as failed with kind `cancelled`. An answer acknowledges the
+question or blocker it answers.
+
+Events name accepted answers. `ready`, `failed`, and `cancelled` accept `ack`.
+A question or blocker accepts `reply` unless its failed check requires only an
+override, accepts `override` when the check is overridable, and always accepts
+`cancel`. A blocker that only waits for execution configuration offers only
+`cancel`. A refused answer creates a new unacknowledged question whose digest
+starts `Previous answer refused: <text>`. A refused override with no pending
+question creates no event. `agent order show` records its fate as
+`last-answer`.
+
+Once the draft exists, it is the public carrier. Questions, blockers and gate
+rejections are pull-request comments. Authorized comments from `reply_logins`
+resume the order. Before the draft exists, a question or blocker exists only as
+an order event. Models never write either order activity type.
+
+Every side-effecting coordinator action has an ordered list of precondition
+checks in `preconditions.py`. Adding a check to an action requires one registry
+entry and one resolver. A resolver is either a static script function or one
+single-purpose check lane. The script resolver is preferred.
+
+Each check is a store fact with status `ja`, `nein`, `n_a`, `pending`, or
+`unavailable`, always with evidence, source and time. `n_a` is valid only where
+declared. `unavailable` means the resolver could not run. There is no implicit
+yes. An action runs only when every check is `ja`, or declared `n_a`.
+
+A pending check starts its resolver or routes to the phase that produces the
+fact. A no follows its declaration: remedy phase, retry, declared remedy,
+question, reply checkpoint, or task end. Existing checklist keys, round
+verdicts, gate rows and head-bound checkpoint values are referenced, not
+copied.
+
+The registry-only facts are `order_authorized`, `spec_available`,
+`checkout_owned`, `duplicates_checked`, `no_live_lane`, `round_budget`,
+`head_signed_clean`, `pr_mergeable`, `conflict_mandate`, `review_2`, and
+`one_review_permitted`. Only the coordinator writes them through
+`chain.close_allowed`. They are not workflow keys and do not affect `done`.
+`agent checklist set` and `agent close-step` refuse them with the fixed
+coordinator-precondition message.
+
+Only `duplicates_checked` and `review_2` are overridable. Only
+`duplicates_checked` is skippable at submit. A skip uses the exact sequence
+`--skip-check KEY --reason TEXT`; the reason is one line of 1 to 500 characters.
+Acceptance records status `ja`, source `human`, and evidence `skipped at submit
+by <who>: <reason>`. A final human decision is not head-bound, and its resolver
+never runs again. `agent order show` and the acceptance report list every skip.
+
+The registry covers accept, checkout, draft opening, implementation, commit and
+push, inner review, tests, both review pairs and their comments, CI, readiness,
+Ready, merge observation, second-review waiver, conflict resolution and draft
+closure. For issue tasks it also evaluates `no_live_lane` before implement,
+inner review and both review phases, `round_budget` before implement, and
+`pr_mergeable` before readiness and leave-draft. Other issue preconditions stay
+in their phase handlers.
+
+A check lane makes one judgment from a prompt compiled by the script. Untrusted
+data is between nonce marker lines. The lane has no tools or file access, runs
+in an empty directory, and returns only the fixed grammar of its check. It has
+no `STATUS` line. The script validates the answer and never interprets free
+text. This is process argv hardening, not a sandbox.
+
+The check lane uses model slot `first` through `<first>:check`, bound to a
+read-only role. `codex` cannot run it. The duplicate check first lists the open
+pull requests with bounded titles and descriptions. With none, the
+script records yes without a lane. Otherwise the lane compares that list with
+the order and returns `RESULT: duplicate <number>` or `RESULT: no-duplicate`,
+then one `REASON:` sentence. The script verifies a duplicate number against the
+list.
+
+A duplicate opens no pull request and creates no start commit. It records no
+and raises a question naming the pull request and `duplicates_checked`. Only an
+override or cancellation resolves it, unless it was skipped at submit. Invalid
+answers retry with backoff under `lane_retries`. More than 200 open pull
+requests, or exhausted lane retries, records `unavailable`; a plain reply tries
+the check again.
+
+Every round counts once; an implementer start reuses the current round while
+its implementer has no verdict, so a lane retry stays in its round. The limit
+is pinned at task
+creation from `--max-rounds`, then `max_rounds_by_model`, then `max_rounds`,
+then 10. Its origin is `submit`, `model`, `worker`, or `default`. No value turns
+the limit off. Before exceeding it, the script starts one assessment check lane
+over the task text and bounded findings from each round. It returns `continue`,
+`change-approach`, or `abort`, with a reason and an approach only for
+`change-approach`. The script stores and publishes the opinion but never acts
+on it. A reply grants the same number of rounds and supplies its text as
+untrusted guidance; cancellation ends the order. The proposed approach is not
+passed to the implementer. Without `<first>:check`, an issue-only worker stores
+the opinion as `unavailable`.
+
+Every order pull request has review 1 and review 2. The roles bound to
+`<first>:implementer`, `<first>:reviewer`, `<first>:pr-reviewer-quality`, and
+`<first>:pr-reviewer-logic` must name the same model. Review 2 uses the distinct
+provider in model slot `second`. The fact `review_2` means that review is free
+of findings on the current head, or a human waived it for this order. It is
+required by CI and readiness.
+
+Only `agent order override --id UUID --check review_2 --reason TEXT` can waive
+review 2, including while it is pending. The script refuses the waiver unless
+the task has a model second review, review 1 is complete, no second review has
+approved the pull request or rejected an A38 pull request, and the opener is in
+`one_review_authors` on the trusted default branch. `review_2` cannot be skipped
+at submit, and manual `n_a` review keys do not waive it. The script never drops
+review 2 on its own.
+
+`pr_mergeable` is required before readiness and leave-draft for orders and
+issues. `UNKNOWN` retries the same phase. `CONFLICTING` is a no. An issue conflict is a resumable
+`conflict` blocker; the coordinator starts nothing on its own, and the separate
+comment-mandated worker does not act on the task. For an order the declared
+remedy is the script-owned conflict resolution of §19.9.
+
+The order is the conflict mandate. `resolve_conflicts` requires
+`order_authorized`, `draft_open`, `head_published`, and `conflict_mandate`.
+The last fact binds the order, submitter, pull request and head. The worker uses
+`conflict_remedy` with `check_argv`, `max_rebase_steps` and optional
+`max_attempts`; it does not read `conflicts.json`. Its session needs the
+`conflicts` skill. State lives below
+`<workspace_root>/.coordinator-control/<task id>/conflict-remedy/`.
+Without `conflict_remedy`, no resolution starts and the order receives the
+`pr_mergeable` question described below.
+
+After a remedy push, the script adopts the published head, removes old-head
+evidence and continues at tests. Tests, report, both review pairs and CI run
+again; recorded overrides and skips remain. Open remedy outcomes retry under
+`lane_retries`. Only a final blocker produces a pull-request conflict comment
+and a `question` event for `pr_mergeable`, accepting `reply` and `cancel`. A
+reply measures mergeability again and may start another resolution. At most
+`max_attempts` resolutions start between human decisions. Start and success
+produce no event.
+
+`agent order report` compiles a bounded acceptance dossier from the store. It
+makes no GitHub call, starts no lane and runs no Git process. It works in every
+order state. It includes identity, state, repository and head; both summaries;
+up to 50 changed files with line counts; rounds and limit origin; every skip and
+override; the last 40 review runs; the last 12 bounded review comments; A38
+report outcome, local checks and CI state.
+
+Report verdicts are definitions, not judgments. A run is rejected when a lane
+rejected, incomplete when a lane lacks a recorded verdict, and otherwise
+approved. Defects count rejecting lanes; an external second review uses its
+published defects value. A38 report state is `pass`, `fail`, `unreadable`,
+`missing`, or `waived`. CI is `green`, `failed`, `pending`, or `unknown`. Text
+is at most 12,000 characters, puts single-line facts before list details, and
+ends `report truncated` when cut. A concierge may use it to recommend whether
+the delivery plausibly matches the order. It never performs the full review.
+
+The exact per-head order of implementation, inner review, local checks, both
+review pairs, CI and readiness is in
+[docs/issue-coordinator.md](docs/issue-coordinator.md#workflow-script-owned).
 
 ## 20. Refused: hub as a coding control plane
 
@@ -967,3 +1292,12 @@ Recorded from the design thread that specified realtime team visibility, rejecte
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 
 Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; it is the opt-in **error-fix** skill on this device (§21). The static supervise loop (§22) is a script with locked questions; a second model does not orchestrate the first.
+
+This revision adds the opt-in comment mandate `conflicts` (§19.9): one exact human pull-request comment authorizes a static script to rebase, run the configured checks, and push with `--force-with-lease`, while a confined model lane edits only conflicted files. Installation still enables no worker.
+
+This revision also adds local orders; the precondition registry with one
+resolver per check; skip at submit and override; acknowledged order events; the
+immediate draft; bounded retries and lane recovery; the per-implementer-model
+round limit and its assessment lane; the conflict remedy for orders; the A38
+model second review; the acceptance report; and the orders view of the local
+dashboard.

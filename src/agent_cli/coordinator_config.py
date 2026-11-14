@@ -3,10 +3,20 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .store import StoreError
+
+
+_GITHUB_LOGIN = re.compile(
+    r'[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}'
+)
+DEFAULT_PARK_POLL_SECONDS = 120
+DEFAULT_LANE_RETRIES = 2
+DEFAULT_MAX_ROUNDS = 10
+DEFAULT_CONFLICT_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -16,6 +26,13 @@ class RepositoryConfig:
     publication_repo: str
     check_argv: tuple[str, ...]
     readiness_argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConflictRemedyConfig:
+    check_argv: tuple[str, ...]
+    max_rebase_steps: int
+    max_attempts: int = DEFAULT_CONFLICT_ATTEMPTS
 
 
 @dataclass(frozen=True)
@@ -35,6 +52,14 @@ class WorkerConfig:
     a38: bool = False
     second_reviewers: tuple[str, ...] = ()
     second_review_timeout_seconds: int = 86400
+    park_poll_seconds: int = DEFAULT_PARK_POLL_SECONDS
+    lane_retries: int = DEFAULT_LANE_RETRIES
+    orders: bool = False
+    max_rounds: int | None = None
+    max_rounds_by_model: dict[str, int] = field(default_factory=dict)
+    draft_on_accept: bool = False
+    a38_second_review: str = "external"
+    conflict_remedy: ConflictRemedyConfig | None = None
 
 
 def _text(value: object, label: str) -> str:
@@ -52,11 +77,15 @@ def _repo(value: object) -> str:
     return name
 
 
+def _github_login(value: object, label: str, error: str) -> str:
+    login = _text(value, label).casefold()
+    if _GITHUB_LOGIN.fullmatch(login) is None:
+        raise StoreError(error)
+    return login
+
+
 def _owner(value: object) -> str:
-    owner = _text(value, 'repository owner').casefold()
-    if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?', owner):
-        raise StoreError('invalid repository owner')
-    return owner
+    return _github_login(value, 'repository owner', 'invalid repository owner')
 
 
 def validate_base(value: object) -> str:
@@ -113,12 +142,59 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         optional = {'review_session', 'repositories', 'repository_owners',
                     'owner_check_argv', 'owner_readiness_argv',
                     'require_hub_assignment', 'a38', 'second_reviewers',
-                    'second_review_timeout_seconds'}
+                    'second_review_timeout_seconds', 'park_poll_seconds',
+                    'lane_retries', 'orders', 'max_rounds',
+                    'max_rounds_by_model', 'draft_on_accept',
+                    'a38_second_review', 'conflict_remedy'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
         if not isinstance(a38, bool):
             raise StoreError('a38 must be a boolean')
+        mode = item.get('a38_second_review', 'external')
+        if mode not in ('external', 'model'):
+            raise StoreError('a38_second_review must be external or model')
+        if mode == 'model' and not a38:
+            raise StoreError('a38_second_review requires an A38 worker')
+        orders = item.get('orders', False)
+        if not isinstance(orders, bool):
+            raise StoreError('orders must be a boolean')
+        raw_remedy = item.get('conflict_remedy')
+        if raw_remedy is None:
+            conflict_remedy = None
+        else:
+            if not isinstance(raw_remedy, dict):
+                raise StoreError('conflict_remedy must be an object')
+            unknown = set(raw_remedy) - {
+                'check_argv', 'max_rebase_steps', 'max_attempts'
+            }
+            if unknown:
+                raise StoreError(
+                    'conflict_remedy rejects unknown field '
+                    + ', '.join(sorted(unknown))
+                )
+            if not {'check_argv', 'max_rebase_steps'} <= set(raw_remedy):
+                raise StoreError(
+                    'conflict_remedy requires check_argv and max_rebase_steps'
+                )
+            remedy_argv = _argv(raw_remedy['check_argv'], 'check_argv')
+            steps = _at_least(
+                raw_remedy['max_rebase_steps'], 'max_rebase_steps', 1
+            )
+            if steps > 200:
+                raise StoreError(
+                    'max_rebase_steps requires an integer >= 1 and <= 200'
+                )
+            attempts = _at_least(
+                raw_remedy.get('max_attempts', DEFAULT_CONFLICT_ATTEMPTS),
+                'max_attempts',
+                1,
+            )
+            conflict_remedy = ConflictRemedyConfig(
+                remedy_argv, steps, attempts
+            )
+        if conflict_remedy is not None and not orders:
+            raise StoreError('conflict_remedy requires orders')
         review_raw = item.get('review_session')
         if not a38 and review_raw is None:
             raise StoreError('non-A38 workers require an explicit review_session')
@@ -139,16 +215,16 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         if any(not re.fullmatch(r'[a-z0-9-]+', v) for v in logins):
             raise StoreError('invalid reply login')
         reviewers_raw = item.get('second_reviewers')
-        if a38 and (not isinstance(reviewers_raw, list) or not reviewers_raw):
+        if a38 and mode != 'model' and (not isinstance(reviewers_raw, list) or not reviewers_raw):
             raise StoreError('A38 workers require nonempty second_reviewers')
         if reviewers_raw is None:
             reviewers_raw = []
         if not isinstance(reviewers_raw, list):
             raise StoreError('second_reviewers must be a list')
-        reviewers = tuple(_text(v, 'second reviewer').casefold() for v in reviewers_raw)
-        if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?', v) or '--' in v
-               for v in reviewers):
-            raise StoreError('invalid second reviewer login')
+        reviewers = tuple(
+            _github_login(v, 'second reviewer', 'invalid second reviewer login')
+            for v in reviewers_raw
+        )
         if len(set(reviewers)) != len(reviewers):
             raise StoreError('second_reviewers must be distinct')
         repos_raw = item.get('repositories', {})
@@ -186,6 +262,22 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         require_hub = item.get('require_hub_assignment', False)
         if not isinstance(require_hub, bool):
             raise StoreError('require_hub_assignment must be a boolean')
+        draft_on_accept = item.get('draft_on_accept', False)
+        if not isinstance(draft_on_accept, bool):
+            raise StoreError('draft_on_accept must be a boolean')
+        max_rounds = (
+            _at_least(item['max_rounds'], 'max_rounds', 1)
+            if 'max_rounds' in item else None
+        )
+        raw = item.get('max_rounds_by_model', {})
+        if not isinstance(raw, dict):
+            raise StoreError('max_rounds_by_model must be an object')
+        by_model = {
+            _text(key, 'max_rounds_by_model'): _at_least(
+                value, 'max_rounds_by_model', 1
+            )
+            for key, value in raw.items()
+        }
         result[sid] = WorkerConfig(sid, review, root, repos, logins,
                                    _positive(item['poll_seconds'], 'poll_seconds'),
                                    _positive(item['lane_timeout'], 'lane_timeout'),
@@ -197,5 +289,43 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    a38,
                                    reviewers,
                                    _at_least(item.get('second_review_timeout_seconds', 86400),
-                                             'second_review_timeout_seconds', 600))
+                                             'second_review_timeout_seconds', 600),
+                                   park_poll_seconds=_at_least(
+                                       item.get('park_poll_seconds', DEFAULT_PARK_POLL_SECONDS),
+                                       'park_poll_seconds',
+                                       0,
+                                   ),
+                                   lane_retries=_at_least(
+                                       item.get('lane_retries', DEFAULT_LANE_RETRIES),
+                                       'lane_retries',
+                                       0,
+                                   ),
+                                   orders=orders,
+                                   max_rounds=max_rounds,
+                                   max_rounds_by_model=by_model,
+                                   draft_on_accept=draft_on_accept,
+                                   a38_second_review=mode,
+                                   conflict_remedy=conflict_remedy)
     return result
+
+
+def resolve_round_limit(
+    worker: WorkerConfig, model: str, submitted: int | None = None
+) -> dict[str, Any]:
+    """The round limit of a task and where it came from."""
+    from .lane import LANE_MODEL_LIMIT, redact_lane_text
+
+    if submitted is not None:
+        value, origin = submitted, "submit"
+    elif model in worker.max_rounds_by_model:
+        value, origin = worker.max_rounds_by_model[model], "model"
+    elif worker.max_rounds is not None:
+        value, origin = worker.max_rounds, "worker"
+    else:
+        value, origin = DEFAULT_MAX_ROUNDS, "default"
+    return {
+        "max_rounds": value,
+        "origin": origin,
+        "model": redact_lane_text(model, limit=LANE_MODEL_LIMIT),
+        "limit": value,
+    }

@@ -27,12 +27,70 @@
     .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
     .control-form button { padding: 6px 12px; cursor: pointer; }
     .watch-note { color: #555; margin-top: 10px; }
+    tr.order-row { cursor: pointer; }
+    tr.order-row:hover { background: #faf7f0; }
+    tr.order-row.selected { background: #ebe4d4; }
+    #order-detail { background: #fff; border: 1px solid #e0d8c8; padding: 14px 16px; margin: 12px 0 8px; }
+    #order-detail[hidden] { display: none; }
+    #od-question { background: #1a1a1a; color: #d8d8d8; padding: 12px; overflow: auto; max-height: 240px; font-size: 0.85rem; white-space: pre-wrap; }
+    #order-submit textarea, #order-detail textarea { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
+    #orders td, #order-events td, #order-detail td { overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
   <h1>Agent</h1>
   <p class="sub">Local replica including teammates after sync. <span id="stamp"></span></p>
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
+
+  <h2>Orders</h2>
+  <p id="orders-note" class="watch-note" hidden></p>
+  <div id="order-submit">
+    <h3>New order</h3>
+    <div class="control-form">
+      <input type="text" id="os-repo" placeholder="owner/name" />
+      <input type="text" id="os-title" placeholder="title" />
+      <input type="text" id="os-base" placeholder="base" />
+      <input type="text" id="os-worker" placeholder="worker" />
+      <input type="text" id="os-notify" placeholder="notify session" />
+      <input type="number" id="os-max-rounds" min="1" placeholder="max rounds" />
+    </div>
+    <textarea id="os-body" placeholder="order text"></textarea>
+    <div id="os-skips"></div>
+    <div class="control-form">
+      <button type="button" id="os-add-skip">Add skipped check</button>
+      <button type="button" id="os-send">Submit order</button>
+    </div>
+    <p id="os-result"></p>
+  </div>
+  <table id="orders"><thead><tr></tr></thead><tbody></tbody></table>
+
+  <div id="order-detail" hidden>
+    <h2>Order <code id="od-id"></code></h2>
+    <div id="od-body"></div>
+    <pre id="od-question" hidden></pre>
+    <div id="od-opinion"></div>
+    <textarea id="od-reply-body" placeholder="reply"></textarea>
+    <div class="control-form">
+      <button type="button" id="od-reply">Reply</button>
+      <select id="od-override-check"></select>
+      <input type="text" id="od-override-reason" placeholder="reason" />
+      <button type="button" id="od-override">Override</button>
+      <input type="text" id="od-cancel-reason" placeholder="reason" />
+      <button type="button" id="od-cancel">Cancel order</button>
+    </div>
+    <div id="order-report">
+      <div class="control-form"><button type="button" id="od-report">Load report</button></div>
+      <div id="od-report-body"></div>
+    </div>
+    <p id="od-err" class="failed" hidden></p>
+  </div>
+
+  <h2>Order events</h2>
+  <div class="control-form">
+    <label><input type="checkbox" id="ev-wake" /> wake only</label>
+    <label><input type="checkbox" id="ev-unacked" /> unacknowledged</label>
+  </div>
+  <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
 
   <h2>Usage</h2>
   <table id="usage"><thead><tr><th>Owner</th><th>Email</th><th>Provider</th><th>Tier</th><th>Used</th><th>Reset</th><th>Fetched</th></tr></thead><tbody></tbody></table>
@@ -242,6 +300,366 @@
     }
     tick();
     setInterval(tick, 2000);
+  </script>
+  <script>
+/* ORDER_VIEW_BEGIN */
+const ORDER_VIEW = {
+  "submit": {"mode":"write","method":"POST","path":"/api/orders/submit","params":[{"name":"repo","flag":"--repo","kind":"line","required":true},{"name":"title","flag":"--title","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true},{"name":"base","flag":"--base","kind":"line","required":false},{"name":"worker","flag":"--worker","kind":"line","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"skip_checks","flag":"--skip-check","kind":"skips","required":false},{"name":"max_rounds","flag":"--max-rounds","kind":"int","required":false}],"fields":["order_id","repo","state","worker","round_limit","skipped_checks"],"nested":{"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"]}},
+  "list": {"mode":"read","method":"GET","path":"/api/orders/list","params":[{"name":"open_only","flag":"--open","kind":"bool","required":false}],"fields":["orders"],"nested":{"orders":["order_id","state","phase","round","repo","title","pr_url","head","updated_at"]}},
+  "show": {"mode":"read","method":"GET","path":"/api/orders/show","params":[{"name":"order_id","flag":"--id","kind":"line","required":true}],"fields":["order_id","state","phase","round","repo","base","title","pr_url","head","last_event","checkpoint","last_intent","action","checks","overridable_checks","round_limit","skipped_checks","assessment"],"nested":{"last_event":["id","seq","kind","at","acked"],"checkpoint":["event_id","seq","kind","check","acked","answers"],"last_intent":["id","kind","status","error","at"],"checks":["key","status","source","evidence"],"overridable_checks":["key","status"],"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"],"assessment":["result","reasoning","approach","limit","rounds","at"]}},
+  "events": {"mode":"read","method":"GET","path":"/api/orders/events","params":[{"name":"after","flag":"--after","kind":"int","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"wake_only","flag":"--wake-only","kind":"bool","required":false},{"name":"unacked","flag":"--unacked","kind":"bool","required":false}],"fields":["cursor","events"],"nested":{"events":["id","seq","order_id","kind","wake","digest","pr_url","phase","round","check","failed_kind","notify_session","at","acked","answers","opinion"]}},
+  "ack": {"mode":"write","method":"POST","path":"/api/orders/ack","params":[{"name":"event_id","flag":"--event","kind":"line","required":true}],"fields":["event","acked"],"nested":{}},
+  "reply": {"mode":"write","method":"POST","path":"/api/orders/reply","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true}],"fields":["intent","order_id"],"nested":{}},
+  "override": {"mode":"write","method":"POST","path":"/api/orders/override","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"check","flag":"--check","kind":"line","required":true},{"name":"reason","flag":"--reason","kind":"line","required":true}],"fields":["intent","order_id","check"],"nested":{}},
+  "cancel": {"mode":"write","method":"POST","path":"/api/orders/cancel","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"reason","flag":"--reason","kind":"line","required":true}],"fields":["intent","order_id"],"nested":{}},
+  "report": {"mode":"read","method":"GET","path":"/api/orders/report","params":[{"name":"order_id","flag":"--id","kind":"line","required":true}],"fields":["order_id","title","state","phase","repo","base","pr_url","head","summary_en","summary_de","rounds","waivers","files","reviews","reviews_omitted","comments","comments_omitted","a38_report","local_checks","ci"],"nested":{"rounds":["used","limit","max_rounds","origin","model"],"waivers":["check","kind","by","reason","at"],"files":["head","base","total","added","deleted","listed","omitted","error"],"files.listed":["path","added","deleted"],"reviews":["stage","round","head","provider","model","lanes","verdict","defects","at"],"comments":["kind","url","head","passes","defects","blocks_merge","visible"],"a38_report":["result","head","url","runs","runs_omitted","reason"],"a38_report.runs":["id","name","result","exit_code"],"local_checks":["name","result","head","ran_at"],"ci":["state","head","observed_at"]}}
+};
+/* ORDER_VIEW_END */
+
+let selectedOrderId = null;
+let orderSchema = null;
+let ordersLiveNote = "";
+let ordersStickyNote = "";
+let orderLiveError = "";
+let orderStickyError = "";
+const orderHtml = new WeakMap();
+
+async function orderCall(name, params) {
+  const op = ORDER_VIEW[name];
+  let url = op.path;
+  const init = { method: op.method };
+  if (op.method === "GET") {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value === null || value === undefined || value === "" || value === false) continue;
+      query.set(key, value === true ? "1" : String(value));
+    }
+    const text = query.toString();
+    if (text) url += "?" + text;
+  } else {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(params || {});
+  }
+  const res = await fetch(url, init);
+  let j = null;
+  try { j = await res.json(); } catch (_) {}
+  if (!res.ok || !j || j.ok !== true) throw new Error((j && j.error) || "HTTP " + res.status);
+  return j.result;
+}
+
+function setOrderHtml(el, html) {
+  if (orderHtml.get(el) === html) return;
+  orderHtml.set(el, html);
+  el.innerHTML = html;
+}
+
+function orderCell(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return esc(JSON.stringify(value));
+  if (typeof value === "string" && value.startsWith("https://github.com/")) {
+    return `<a href="${esc(value)}" target="_blank" rel="noopener">${esc(value)}</a>`;
+  }
+  return esc(value);
+}
+
+function orderTableHtml(rows, fields, actions) {
+  const actionHead = actions ? "<th></th>" : "";
+  const head = fields.map(field => `<th>${esc(field)}</th>`).join("") + actionHead;
+  const columns = fields.length + (actions ? 1 : 0);
+  const body = rows.map(row => {
+    const cells = fields.map(field => `<td>${orderCell(row[field])}</td>`).join("");
+    return `<tr>${cells}${actions ? `<td>${actions(row)}</td>` : ""}</tr>`;
+  }).join("") || empty(columns);
+  return `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`;
+}
+
+function renderOrderTable(table, rows, fields, actions) {
+  setOrderHtml(table, orderTableHtml(rows, fields, actions));
+}
+
+function renderOrderObject(container, obj, name) {
+  const view = ORDER_VIEW[name];
+  const main = [];
+  const sections = [];
+  for (const field of view.fields) {
+    const value = obj[field];
+    const keys = view.nested[field];
+    if (keys && Array.isArray(value)) {
+      sections.push(`<h3>${esc(field)}</h3><table>${orderTableHtml(value, keys)}</table>`);
+    } else if (keys && value !== null && typeof value === "object") {
+      const rows = [];
+      const subsections = [];
+      for (const key of keys) {
+        const nestedKeys = view.nested[field + "." + key];
+        if (nestedKeys && Array.isArray(value[key])) {
+          subsections.push(`<h3>${esc(field + "." + key)}</h3><table>${orderTableHtml(value[key], nestedKeys)}</table>`);
+        } else {
+          rows.push(`<tr><th>${esc(key)}</th><td>${orderCell(value[key])}</td></tr>`);
+        }
+      }
+      sections.push(`<h3>${esc(field)}</h3><table><tbody>${rows.join("") || empty(2)}</tbody></table>${subsections.join("")}`);
+    } else {
+      main.push(`<tr><th>${esc(field)}</th><td>${orderCell(value)}</td></tr>`);
+    }
+  }
+  setOrderHtml(container, `<table><tbody>${main.join("") || empty(2)}</tbody></table>${sections.join("")}`);
+}
+
+function showOrderNotes() {
+  const note = document.getElementById("orders-note");
+  const noteText = ordersStickyNote || ordersLiveNote;
+  note.textContent = noteText;
+  note.hidden = noteText === "";
+  const error = document.getElementById("od-err");
+  const errorText = orderStickyError || orderLiveError;
+  error.textContent = errorText;
+  error.hidden = errorText === "";
+}
+
+async function ordersTick() {
+  let failure = "";
+  try {
+    if (orderSchema === null) {
+      const res = await fetch("/api/orders/schema");
+      let j = null;
+      try { j = await res.json(); } catch (_) {}
+      if (!res.ok || !j || j.ok !== true) throw new Error((j && j.error) || "HTTP " + res.status);
+      orderSchema = j.result;
+      document.getElementById("order-submit").hidden = orderSchema.enabled !== true;
+    }
+  } catch (e) {
+    if (!failure) failure = e.message;
+  }
+
+  try {
+    const listed = await orderCall("list", {});
+    const table = document.getElementById("orders");
+    renderOrderTable(table, listed.orders, ORDER_VIEW.list.nested.orders);
+    const rows = table.tBodies[0].rows;
+    for (let i = 0; i < listed.orders.length; i += 1) {
+      rows[i].className = "order-row" + (listed.orders[i].order_id === selectedOrderId ? " selected" : "");
+      rows[i].dataset.id = listed.orders[i].order_id;
+    }
+  } catch (e) {
+    if (!failure) failure = e.message;
+  }
+
+  try {
+    const page = await orderCall("events", {
+      wake_only: document.getElementById("ev-wake").checked,
+      unacked: document.getElementById("ev-unacked").checked,
+    });
+    renderOrderTable(
+      document.getElementById("order-events"),
+      page.events,
+      ORDER_VIEW.events.nested.events,
+      row => row.wake === true && row.acked === false
+        ? `<button type="button" data-event="${esc(row.id)}">Acknowledge</button>`
+        : "",
+    );
+  } catch (e) {
+    if (!failure) failure = e.message;
+  }
+
+  ordersLiveNote = failure || (orderSchema && orderSchema.enabled !== true
+    ? "Orders are not enabled on this device."
+    : "");
+
+  const id = selectedOrderId;
+  if (id !== null) {
+    try {
+      const shown = await orderCall("show", { order_id: id });
+      if (selectedOrderId === id) {
+        renderOrderObject(document.getElementById("od-body"), shown, "show");
+        const cp = shown.checkpoint;
+        if (cp !== null) {
+          const page = await orderCall("events", { after: cp.seq - 1 });
+          if (selectedOrderId === id) {
+            const ev = page.events.find(item => item.id === cp.event_id);
+            const digest = ev && ev.digest ? ev.digest : "";
+            const question = document.getElementById("od-question");
+            question.textContent = digest;
+            question.hidden = digest === "";
+            if (ev && ev.opinion !== null && typeof ev.opinion === "object") {
+              const rows = Object.keys(ev.opinion).map(key => `<tr><th>${esc(key)}</th><td>${orderCell(ev.opinion[key])}</td></tr>`).join("");
+              setOrderHtml(document.getElementById("od-opinion"), `<table><tbody>${rows}</tbody></table>`);
+            } else {
+              setOrderHtml(document.getElementById("od-opinion"), "");
+            }
+          }
+        } else {
+          const question = document.getElementById("od-question");
+          question.textContent = "";
+          question.hidden = true;
+          setOrderHtml(document.getElementById("od-opinion"), "");
+        }
+        if (selectedOrderId === id) {
+          const answers = cp === null ? [] : cp.answers;
+          document.getElementById("od-reply").disabled = cp === null || !answers.includes("reply");
+          document.getElementById("od-cancel").disabled = cp === null
+            ? ["merged", "failed", "cancelled"].includes(shown.state)
+            : !answers.includes("cancel");
+          document.getElementById("od-override").disabled = shown.overridable_checks.length === 0;
+          const select = document.getElementById("od-override-check");
+          const keep = select.value;
+          const options = shown.overridable_checks.map(item => `<option value="${esc(item.key)}">${esc(item.key)} (${esc(item.status)})</option>`).join("");
+          setOrderHtml(select, options);
+          if (keep !== "") select.value = keep;
+          orderLiveError = "";
+        }
+      }
+    } catch (e) {
+      if (selectedOrderId === id) orderLiveError = e.message;
+    }
+  }
+  showOrderNotes();
+}
+
+function selectOrder(id) {
+  if (id !== selectedOrderId) {
+    document.getElementById("od-reply-body").value = "";
+    document.getElementById("od-override-reason").value = "";
+    document.getElementById("od-cancel-reason").value = "";
+    setOrderHtml(document.getElementById("od-body"), "");
+    setOrderHtml(document.getElementById("od-opinion"), "");
+    setOrderHtml(document.getElementById("od-report-body"), "");
+    const question = document.getElementById("od-question");
+    question.textContent = "";
+    question.hidden = true;
+    document.getElementById("od-reply").disabled = true;
+    document.getElementById("od-override").disabled = true;
+    document.getElementById("od-cancel").disabled = true;
+    orderLiveError = "";
+    orderStickyError = "";
+  }
+  selectedOrderId = id;
+  document.getElementById("order-detail").hidden = false;
+  document.getElementById("od-id").textContent = id;
+  ordersTick();
+}
+
+document.getElementById("orders").addEventListener("click", event => {
+  const row = event.target.closest("tr.order-row");
+  if (row) selectOrder(row.dataset.id);
+});
+
+document.getElementById("order-events").addEventListener("click", async event => {
+  const button = event.target.closest("button[data-event]");
+  if (!button) return;
+  try {
+    await orderCall("ack", { event_id: button.dataset.event });
+    ordersStickyNote = "";
+  } catch (e) {
+    ordersStickyNote = e.message;
+  }
+  ordersTick();
+});
+
+document.getElementById("ev-wake").addEventListener("change", ordersTick);
+document.getElementById("ev-unacked").addEventListener("change", ordersTick);
+
+document.getElementById("os-add-skip").addEventListener("click", () => {
+  const row = document.createElement("div");
+  row.className = "control-form os-skip";
+  const options = ((orderSchema && orderSchema.skippable) || []).map(key => `<option value="${esc(key)}">${esc(key)}</option>`).join("");
+  setOrderHtml(row, `<select class="os-skip-key">${options}</select><input type="text" class="os-skip-reason" placeholder="reason" /><button type="button" class="os-skip-remove">Remove</button>`);
+  document.getElementById("os-skips").appendChild(row);
+});
+
+document.getElementById("os-skips").addEventListener("click", event => {
+  const button = event.target.closest("button.os-skip-remove");
+  if (button) button.closest("div.os-skip").remove();
+});
+
+document.getElementById("os-send").addEventListener("click", async () => {
+  const button = document.getElementById("os-send");
+  button.disabled = true;
+  const params = {
+    repo: document.getElementById("os-repo").value,
+    title: document.getElementById("os-title").value,
+    body: document.getElementById("os-body").value,
+  };
+  const optional = [
+    ["base", "os-base"],
+    ["worker", "os-worker"],
+    ["notify_session", "os-notify"],
+    ["max_rounds", "os-max-rounds"],
+  ];
+  for (const [name, elementId] of optional) {
+    const value = document.getElementById(elementId).value;
+    if (value !== "") params[name] = value;
+  }
+  const skips = Array.from(document.querySelectorAll("#os-skips .os-skip")).map(row => ({
+    key: row.querySelector(".os-skip-key").value,
+    reason: row.querySelector(".os-skip-reason").value,
+  }));
+  if (skips.length) params.skip_checks = skips;
+  const resultLine = document.getElementById("os-result");
+  try {
+    const result = await orderCall("submit", params);
+    resultLine.className = "";
+    resultLine.textContent = "order " + result.order_id;
+    for (const elementId of ["os-repo", "os-title", "os-base", "os-worker", "os-notify", "os-max-rounds", "os-body"]) {
+      document.getElementById(elementId).value = "";
+    }
+    document.querySelectorAll("#os-skips .os-skip").forEach(row => row.remove());
+    selectOrder(result.order_id);
+  } catch (e) {
+    resultLine.className = "failed";
+    resultLine.textContent = e.message;
+  }
+  button.disabled = false;
+});
+
+document.getElementById("od-reply").addEventListener("click", async event => {
+  orderStickyError = "";
+  event.currentTarget.disabled = true;
+  try {
+    await orderCall("reply", { order_id: selectedOrderId, body: document.getElementById("od-reply-body").value });
+    document.getElementById("od-reply-body").value = "";
+  } catch (e) {
+    orderStickyError = e.message;
+  }
+  ordersTick();
+});
+
+document.getElementById("od-override").addEventListener("click", async event => {
+  orderStickyError = "";
+  event.currentTarget.disabled = true;
+  try {
+    await orderCall("override", { order_id: selectedOrderId, check: document.getElementById("od-override-check").value, reason: document.getElementById("od-override-reason").value });
+    document.getElementById("od-override-reason").value = "";
+  } catch (e) {
+    orderStickyError = e.message;
+  }
+  ordersTick();
+});
+
+document.getElementById("od-cancel").addEventListener("click", async event => {
+  orderStickyError = "";
+  event.currentTarget.disabled = true;
+  try {
+    await orderCall("cancel", { order_id: selectedOrderId, reason: document.getElementById("od-cancel-reason").value });
+    document.getElementById("od-cancel-reason").value = "";
+  } catch (e) {
+    orderStickyError = e.message;
+  }
+  ordersTick();
+});
+
+document.getElementById("od-report").addEventListener("click", async () => {
+  orderStickyError = "";
+  try {
+    const result = await orderCall("report", { order_id: selectedOrderId });
+    renderOrderObject(document.getElementById("od-report-body"), result, "report");
+  } catch (e) {
+    orderStickyError = e.message;
+  }
+  showOrderNotes();
+});
+
+ordersTick();
+setInterval(ordersTick, 2000);
   </script>
 </body>
 </html>

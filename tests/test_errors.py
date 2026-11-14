@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
 
+from agent_cli.coordinator_common import (
+    _SECRET_ASSIGNMENT_KEYWORDS,
+    _redact_secret_assignments,
+    redact as redact_shared,
+)
 from agent_cli.errors import (
     config_path,
     cursor_path,
@@ -19,6 +25,7 @@ from agent_cli.errors import (
     scan_errors,
     stack_sig,
 )
+from agent_cli.lane import redact_lane_text
 from agent_cli.store import Store, StoreError
 
 
@@ -169,6 +176,622 @@ def test_redact_and_fingerprint() -> None:
     fp = fingerprint(service="api", error_class="TimeoutError", stack_sig=sig, environment="prod")
     assert fp.startswith("api|TimeoutError|")
     assert fp.endswith("|prod")
+
+
+@pytest.mark.parametrize(
+    ("raw", "contains_secret"),
+    [
+        ("m" * 1_000_000, False),
+        ("api_key=model-secret-" + "m" * 1_000_000, True),
+    ],
+    ids=("separatorless-word", "keyword-prefix"),
+)
+def test_error_redaction_is_linear_on_large_words(
+    raw: str, contains_secret: bool
+) -> None:
+    started = time.monotonic()
+    cleaned = redact(raw)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"error redaction took {elapsed:.3f}s"
+    if contains_secret:
+        assert "model-secret" not in cleaned
+        assert "[redacted]" in cleaned
+
+
+def test_error_redaction_uses_unbounded_assignment_key_scanner() -> None:
+    long_key = "A" * 10_000 + "authorization" + "Z" * 10_000
+    cleaned = redact(
+        f'{{"{long_key}":"first secret words","visible":"ok"}}'
+    )
+
+    assert "first secret words" not in cleaned
+    assert '"visible":"ok"' in cleaned
+    assert "[redacted]" in cleaned
+
+
+def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> None:
+    cleaned = redact(
+        "ERROR passwd=hunter2 "
+        "db_passwd='correct horse' "
+        'access-key="dash secret" '
+        'accesskey=compact-secret '
+        "aws_access_key_id=ASIAUNQUOTED "
+        '{"access_key":"ASIAJSON","visible":"keep-me"}'
+    )
+
+    for secret in (
+        "hunter2",
+        "correct horse",
+        "dash secret",
+        "compact-secret",
+        "ASIAUNQUOTED",
+        "ASIAJSON",
+    ):
+        assert secret not in cleaned
+    assert '"visible":"keep-me"' in cleaned
+    assert cleaned.count("[redacted]") == 6
+
+
+@pytest.mark.no_pg
+def test_error_redaction_covers_quoted_json_keys_with_spaces_and_dots() -> None:
+    cleaned = redact(
+        'ERROR {"access token":"s3cr3t","auth.token":"t0k3n","visible":"keep-me"}'
+    )
+    assert "s3cr3t" not in cleaned
+    assert "t0k3n" not in cleaned
+    assert '"visible":"keep-me"' in cleaned
+
+
+@pytest.mark.no_pg
+def test_error_redaction_covers_userinfo_after_a_long_scheme() -> None:
+    cleaned = redact("s" * 65 + "://user:hunter2@localhost")
+    assert "hunter2" not in cleaned
+    assert "://[redacted]@localhost" in cleaned
+
+
+_TERMINATED_CONTROL_EXPECTED = "prefix [redacted]\nvisible line"
+
+
+@pytest.mark.parametrize(
+    ("controlled", "expected"),
+    (
+        pytest.param(
+            "password\x1b]x=y\x07_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-payload-operator",
+        ),
+        pytest.param(
+            "password\x9dx=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-8-bit",
+        ),
+        pytest.param(
+            "password\x1bPx=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="dcs-7-bit",
+        ),
+        pytest.param(
+            "password\x90x=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="dcs-8-bit",
+        ),
+        pytest.param(
+            "password\x1b^x=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="pm-7-bit",
+        ),
+        pytest.param(
+            "password\x9ex=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="pm-8-bit",
+        ),
+        pytest.param(
+            "password\x1b_x=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="apc-7-bit",
+        ),
+        pytest.param(
+            "password\x9fx=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="apc-8-bit",
+        ),
+        pytest.param(
+            "password\x1bXx=y\x1b\\_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sos-7-bit",
+        ),
+        pytest.param(
+            "password\x98x=y\x9c_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sos-8-bit",
+        ),
+        pytest.param(
+            "passwor\x1b[31d\x1b]0;=\x07 hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="csi-final-completes-password-before-osc",
+        ),
+        pytest.param(
+            "secre\x1b[31t\x1b]0;=\x07 hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="csi-final-completes-secret-before-osc",
+        ),
+        pytest.param(
+            "password\x1b[31m_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="sgr-key-interleave",
+        ),
+        pytest.param(
+            "password\x1b]8;;\x07_file = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-empty-link",
+        ),
+        pytest.param(
+            "password\x1b]title\x07suffix=hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-key-suffix",
+        ),
+        pytest.param(
+            '"password" \x1b]0;=\x07hunter2',
+            _TERMINATED_CONTROL_EXPECTED,
+            id="quoted-key-osc-operator",
+        ),
+        pytest.param(
+            "password \x1b]8;;https://example.com\x07 = hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="osc-link-before-visible-operator",
+        ),
+        pytest.param(
+            "password\x1bP0;=\x07\x1b\\hunter2",
+            _TERMINATED_CONTROL_EXPECTED,
+            id="dcs-bel-payload-before-st",
+        ),
+        pytest.param(
+            "password\x1b]unterminated hunter2",
+            "prefix [redacted]",
+            id="unterminated-osc-7-bit",
+        ),
+        pytest.param(
+            "password\x90unterminated hunter2",
+            "prefix [redacted]",
+            id="unterminated-dcs-8-bit",
+        ),
+    ),
+)
+def test_controlled_secret_keyword_lines_fail_closed_across_shared_sinks(
+    controlled: str,
+    expected: str,
+) -> None:
+    raw = f"prefix {controlled}\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact(raw),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == expected
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_multiline_string_control_secret_lines_are_one_logical_line_across_shared_sinks(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"prefix {introducer}token\nhunter2{terminator}\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "prefix [redacted]\nvisible line"
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_unterminated_multiline_string_control_secret_lines_fail_closed_across_shared_sinks(
+    introducer: str,
+) -> None:
+    raw = f"prefix {introducer}token\nhunter2"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "prefix [redacted]"
+        assert "hunter2" not in cleaned
+
+
+def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
+    string_controls = [
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x9c"),
+        ("\x1bP", "\x1b\\"),
+        ("\x90", "\x9c"),
+        ("\x1b^", "\x1b\\"),
+        ("\x9e", "\x9c"),
+        ("\x1b_", "\x1b\\"),
+        ("\x9f", "\x9c"),
+        ("\x1bX", "\x1b\\"),
+        ("\x98", "\x9c"),
+    ]
+    suffixes = (" hunter2", "=hunter2", " = hunter2", ": hunter2")
+    payload_c0_suffixes = ("=hunter2", " hunter2", ": hunter2")
+    lines: list[str] = []
+    for keyword in _SECRET_ASSIGNMENT_KEYWORDS:
+        for intermediate in ("", "!", " ", "$", "-"):
+            if intermediate == "-" and "-" in keyword:
+                split = keyword.index("-")
+                controlled = (
+                    keyword[:split]
+                    + "\x1b[31-"
+                    + keyword[split + 1]
+                    + keyword[split + 2 :]
+                )
+            elif intermediate == "-":
+                controlled = keyword + "\x1b[31-m"
+            else:
+                controlled = keyword[:-1] + f"\x1b[31{intermediate}{keyword[-1]}"
+            lines.extend(controlled + suffix for suffix in suffixes)
+
+        esc_final = keyword[:-1] + "\x1b" + keyword[-1]
+        lines.extend(esc_final + suffix for suffix in suffixes)
+
+        split = max(1, len(keyword) // 2)
+        for introducer, terminator in string_controls:
+            for payload in ("opaque", "0;=", "0;:"):
+                controlled = (
+                    keyword[:split]
+                    + introducer
+                    + payload
+                    + terminator
+                    + keyword[split:]
+                )
+                lines.extend(controlled + suffix for suffix in suffixes)
+            for c0 in ("\x00", "\x08", "\x7f", "\r"):
+                payload_keyword = (
+                    "prefix "
+                    + introducer
+                    + "0;"
+                    + keyword[:split]
+                    + c0
+                    + keyword[split:]
+                    + terminator
+                )
+                lines.extend(
+                    payload_keyword + suffix for suffix in payload_c0_suffixes
+                )
+
+        for c0 in ("\x08", "\x00", "\x7f", "\r"):
+            split = max(1, len(keyword) // 2)
+            lines.append(
+                keyword[:split]
+                + c0
+                + keyword[split:]
+                + " is hunter2 \x1b[31mnote\x1b[0m"
+            )
+
+    lines.append("passwor\x1b[31!d\x1b]0;=\x07 hunter2")
+    raw = "\n".join(lines)
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert "hunter2" not in cleaned
+
+
+def test_assignment_scanner_rechecks_operator_after_control_completes_key(
+) -> None:
+    raw = "passwor\x1b[31!d\x1b]0;=\x07 hunter2"
+
+    cleaned = _redact_secret_assignments(raw)
+
+    assert "hunter2" not in cleaned
+    assert "[redacted]" in cleaned
+
+
+def test_controlled_line_without_secret_keyword_keeps_existing_handling() -> None:
+    raw = "prefix \x1b[31mordinary\x1b[0m tail\nvisible line"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact(raw),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "prefix ordinary tail\nvisible line"
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        (
+            "password \x1b[31m: correct-horse visible=keep",
+            "correct-horse",
+        ),
+        (
+            'password:\x1b[31m "correct horse" visible=keep',
+            "correct horse",
+        ),
+        (
+            "password=\x1b[31m correct-horse visible=keep",
+            "correct-horse",
+        ),
+        ("password\x1b[=m hunter2 visible=keep", "hunter2"),
+        ("password\x1b= hunter2 visible=keep", "hunter2"),
+        ("password\x1b[:m hunter2 visible=keep", "hunter2"),
+    ],
+    ids=(
+        "control-before-operator",
+        "control-before-quoted",
+        "control-before-unquoted",
+        "csi-equals-parameter-is-operator",
+        "esc-equals-final-is-operator",
+        "csi-colon-parameter-is-operator",
+    ),
+)
+def test_error_redaction_consumes_terminal_controls_around_assignment_operator(
+    raw: str, secret: str
+) -> None:
+    cleaned = redact(raw)
+
+    assert secret not in cleaned
+    assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7-bel"),
+        pytest.param("\x1b]", "\x1b\\", id="osc-7-st-7"),
+        pytest.param("\x1b]", "\x9c", id="osc-7-st-8"),
+        pytest.param("\x9d", "\x07", id="osc-8-bel"),
+        pytest.param("\x9d", "\x1b\\", id="osc-8-st-7"),
+        pytest.param("\x9d", "\x9c", id="osc-8-st-8"),
+        pytest.param("\x1bP", "\x1b\\", id="dcs-7-st-7"),
+        pytest.param("\x1bP", "\x9c", id="dcs-7-st-8"),
+        pytest.param("\x90", "\x1b\\", id="dcs-8-st-7"),
+        pytest.param("\x90", "\x9c", id="dcs-8-st-8"),
+        pytest.param("\x1b^", "\x1b\\", id="pm-7-st-7"),
+        pytest.param("\x1b^", "\x9c", id="pm-7-st-8"),
+        pytest.param("\x9e", "\x1b\\", id="pm-8-st-7"),
+        pytest.param("\x9e", "\x9c", id="pm-8-st-8"),
+        pytest.param("\x1b_", "\x1b\\", id="apc-7-st-7"),
+        pytest.param("\x1b_", "\x9c", id="apc-7-st-8"),
+        pytest.param("\x9f", "\x1b\\", id="apc-8-st-7"),
+        pytest.param("\x9f", "\x9c", id="apc-8-st-8"),
+        pytest.param("\x1bX", "\x1b\\", id="sos-7-st-7"),
+        pytest.param("\x1bX", "\x9c", id="sos-7-st-8"),
+        pytest.param("\x98", "\x1b\\", id="sos-8-st-7"),
+        pytest.param("\x98", "\x9c", id="sos-8-st-8"),
+    ),
+)
+@pytest.mark.parametrize("operator", ("=", ":"), ids=("equals", "colon"))
+@pytest.mark.parametrize(
+    ("value_prefix", "value"),
+    (
+        pytest.param("", "hunter2", id="compact-unquoted"),
+        pytest.param(" ", "hunter2", id="spaced-unquoted"),
+        pytest.param("", '"hunter two"', id="quoted"),
+    ),
+)
+def test_error_redaction_uses_operator_inside_complete_string_control(
+    introducer: str,
+    terminator: str,
+    operator: str,
+    value_prefix: str,
+    value: str,
+) -> None:
+    control = f"{introducer}0;{operator}{terminator}"
+
+    cleaned = redact(f"password{control}{value_prefix}{value} visible")
+
+    assert cleaned == "[redacted]"
+
+
+def test_error_redaction_ignores_string_payload_operator_before_secret_key_complete(
+) -> None:
+    cleaned = redact("pass\x1b]0;=\x07word=hunter2 visible")
+
+    assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "control",
+    (
+        pytest.param("\x1b]title\x07", id="osc-7-bit"),
+        pytest.param("\x9dtitle\x07", id="osc-8-bit"),
+        pytest.param("\x1bPtitle\x1b\\", id="dcs-7-bit"),
+        pytest.param("\x90title\x9c", id="dcs-8-bit"),
+        pytest.param("\x1b^title\x1b\\", id="pm-7-bit"),
+        pytest.param("\x9etitle\x9c", id="pm-8-bit"),
+        pytest.param("\x1b_title\x1b\\", id="apc-7-bit"),
+        pytest.param("\x9ftitle\x9c", id="apc-8-bit"),
+        pytest.param("\x1bXtitle\x1b\\", id="sos-7-bit"),
+        pytest.param("\x98title\x9c", id="sos-8-bit"),
+        pytest.param("\x1b[31m", id="sgr"),
+    ),
+)
+@pytest.mark.parametrize(
+    "assignment",
+    (
+        pytest.param("_file = hunter2", id="underscore-visible-equals"),
+        pytest.param("suffix=hunter2", id="suffix-visible-equals"),
+        pytest.param("_file: hunter2", id="underscore-visible-colon"),
+    ),
+)
+def test_redact_keeps_controls_inside_complete_secret_keys(
+    control: str, assignment: str
+) -> None:
+    raw = f"neighbour password{control}{assignment} visible=keep"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert cleaned == "neighbour [redacted]"
+        assert all(
+            char in "\t\n"
+            or not (ord(char) < 32 or 0x7F <= ord(char) <= 0x9F)
+            for char in cleaned
+        )
+
+
+def test_redact_fails_closed_on_secret_token_with_string_control() -> None:
+    raw = "neighbour password\x1b]title opaque\x07suffix visible"
+
+    assert redact_shared(raw) == "neighbour [redacted]"
+    assert redact(raw) == "neighbour [redacted]"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7"),
+        pytest.param("\x9d", "\x07", id="osc-8"),
+        pytest.param("\x1bP", "\x1b\\", id="dcs-7"),
+        pytest.param("\x90", "\x9c", id="dcs-8"),
+        pytest.param("\x1b^", "\x1b\\", id="pm-7"),
+        pytest.param("\x9e", "\x9c", id="pm-8"),
+        pytest.param("\x1b_", "\x1b\\", id="apc-7"),
+        pytest.param("\x9f", "\x9c", id="apc-8"),
+        pytest.param("\x1bX", "\x1b\\", id="sos-7"),
+        pytest.param("\x98", "\x9c", id="sos-8"),
+    ),
+)
+@pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
+@pytest.mark.parametrize(
+    "separator", ("", " "), ids=("direct", "whitespace")
+)
+@pytest.mark.parametrize(
+    "visible_operator", ("=", ":"), ids=("visible-equals", "visible-colon")
+)
+@pytest.mark.parametrize(
+    "payload",
+    ("0;=", "0;:", "8;;https://example.com"),
+    ids=("payload-equals", "payload-colon", "payload-https"),
+)
+def test_error_redaction_prefers_visible_operator_after_string_controls(
+    introducer: str,
+    terminator: str,
+    quoted: bool,
+    separator: str,
+    visible_operator: str,
+    payload: str,
+) -> None:
+    key = '"password"' if quoted else "password"
+    control = f"{introducer}{payload}{terminator}"
+    raw = f"{key}{separator}{control} {visible_operator} hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize("quoted", (False, True), ids=("unquoted", "quoted"))
+@pytest.mark.parametrize(
+    "separator", ("", " "), ids=("direct", "whitespace")
+)
+@pytest.mark.parametrize("payload_operator", ("=", ":"), ids=("equals", "colon"))
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        pytest.param("\x1b]", "\x07", id="osc-7"),
+        pytest.param("\x9d", "\x1b\\", id="osc-8"),
+    ),
+)
+def test_error_redaction_uses_string_control_operator_after_all_separators(
+    quoted: bool,
+    separator: str,
+    payload_operator: str,
+    introducer: str,
+    terminator: str,
+) -> None:
+    key = '"password"' if quoted else "password"
+    control = f"{introducer}0;{payload_operator}{terminator}"
+    raw = f"{key}{separator}{control} \x1b[31m hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        pytest.param("\x1bP", id="dcs-7"),
+        pytest.param("\x90", id="dcs-8"),
+        pytest.param("\x1b^", id="pm-7"),
+        pytest.param("\x9e", id="pm-8"),
+        pytest.param("\x1b_", id="apc-7"),
+        pytest.param("\x9f", id="apc-8"),
+        pytest.param("\x1bX", id="sos-7"),
+        pytest.param("\x98", id="sos-8"),
+    ),
+)
+@pytest.mark.parametrize(
+    "terminator", ("\x1b\\", "\x9c"), ids=("st-7", "st-8")
+)
+@pytest.mark.parametrize("payload_operator", ("=", ":"), ids=("equals", "colon"))
+def test_error_redaction_does_not_end_non_osc_string_controls_at_bel(
+    introducer: str, terminator: str, payload_operator: str
+) -> None:
+    control = (
+        f"{introducer}0;{payload_operator}\x07still-opaque{terminator}"
+    )
+    raw = f"password{control}hunter2 visible"
+
+    for cleaned in (redact_shared(raw), redact(raw)):
+        assert cleaned == "[redacted]"
 
 
 def test_redact_strips_otel_ids() -> None:
@@ -362,6 +985,393 @@ def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
     assert "trace_id=[redacted]" in redact(first_hyphen)
     assert "trace_id=[redacted]" in redact(second_hyphen)
     assert stack_sig(first_hyphen) == stack_sig(second_hyphen)
+
+
+def test_redact_checks_sgr_parameter_bytes_with_shared_and_error_matchers() -> None:
+    assert redact("\x1b[31mabcdef0123456789AB") == "[redacted]"
+    assert redact("abcdef0123456789AB\x1b[31m") == "[redacted]"
+    assert redact_shared("sk-abcdefghijklmn\x1b[31m") == "[redacted]"
+    assert redact("\x1b[31mordinary\x1b[0m") == "ordinary"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\x1bopaque-credential",
+        "opaque\x1b-credential",
+        "opaque-credential\x1b",
+    ],
+    ids=("start", "middle", "end"),
+)
+def test_lone_escape_redacts_the_complete_token_in_shared_sinks(raw: str) -> None:
+    assert redact_shared(raw) == "[redacted]"
+    assert redact(raw) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "terminal_tail",
+    (
+        pytest.param("\x1b", id="lone-escape"),
+        pytest.param("\x1b[31", id="partial-csi-7-bit"),
+        pytest.param("\x9b31", id="partial-csi-8-bit"),
+    ),
+)
+def test_secret_key_with_terminal_control_at_end_fails_closed(
+    terminal_tail: str,
+) -> None:
+    raw = f"password{terminal_tail}"
+
+    assert redact_shared(raw) == "[redacted]"
+    assert redact(raw) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_redact_replaces_complete_string_control_before_tokenization(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"before {introducer}title opaque-credential-123{terminator} after"
+    assert redact_shared(raw) == "before [redacted] after"
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+)
+def test_redact_replaces_unterminated_string_control_before_tokenization(
+    introducer: str,
+) -> None:
+    raw = f"before {introducer}title opaque-credential-123"
+    assert redact_shared(raw) == "before [redacted]"
+
+
+@pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x1b\\"),
+        ("\x1bP", "\x9c"),
+        ("\x90", "\x1b\\"),
+        ("\x1b^", "\x9c"),
+        ("\x9e", "\x1b\\"),
+        ("\x1b_", "\x9c"),
+        ("\x9f", "\x1b\\"),
+        ("\x1bX", "\x9c"),
+        ("\x98", "\x1b\\"),
+    ),
+)
+def test_redact_replaces_complete_string_control_inside_secret_assignment(
+    introducer: str, terminator: str
+) -> None:
+    raw = f"token=x{introducer}0;opaque credential{terminator} visible=keep"
+    cleaned = redact_shared(raw)
+
+    assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+)
+def test_redact_replaces_unterminated_string_control_inside_secret_assignment(
+    introducer: str,
+) -> None:
+    cleaned = redact_shared(f"token=x{introducer}0;opaque credential")
+
+    assert cleaned == "[redacted]"
+
+
+def test_issue_coordinator_documents_terminal_redaction_order() -> None:
+    documented = (
+        Path(__file__).parents[1] / "docs" / "issue-coordinator.md"
+    ).read_text(encoding="utf-8")
+    ai_accounts = (
+        Path(__file__).parents[1] / "docs" / "ai-accounts.md"
+    ).read_text(encoding="utf-8")
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    skill = (
+        Path(__file__).parents[1]
+        / "src"
+        / "agent_cli"
+        / "skills"
+        / "error-fix"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (documented, ai_accounts, readme, skill):
+        normalized = " ".join(text.split())
+        assert "control-stripped view" in normalized
+        assert "payload-kept view" in normalized
+        assert "key-join view" in normalized
+        assert (
+            "A whitespace token exactly `<config_dir>/` followed only by "
+            "`[A-Za-z0-9._-]+` is the one structural exception"
+            in normalized
+        )
+        assert "Any other byte in that token" in normalized
+        assert "keyword elsewhere on the line, still triggers it" in normalized
+        assert "logical line" in normalized
+        assert "removable C0" in normalized
+        assert (
+            "Removable control bytes inside retained string-control payloads "
+            "are omitted from every structural view"
+            in normalized
+        )
+        assert "introducer" in normalized
+        assert "swallows every following physical line" in normalized
+
+    assert (
+        "then classifies secret assignments on the full\nraw text. During that scan,\n"
+        "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
+        in documented
+    )
+    assert (
+        "Only after assignment classification does the pipeline replace those\n"
+        "spans with `[redacted]` on the classified text, before whitespace tokenization"
+        in documented
+    )
+    assert (
+        "Before granting that exemption, the secret\n"
+        "matcher checks the SGR parameter bytes joined to the visible text"
+        in documented
+    )
+    assert "a match\nredacts the entire token" in documented
+    assert (
+        "The assignment scan treats complete and unterminated string-control\n"
+        "spans as opaque; only after that classification are they replaced with\n"
+        "`[redacted]` before tokenization"
+        in documented
+    )
+    assert (
+        "split as `pass` + span + `word` still joins to `password`" in documented
+    )
+    assert (
+        "a terminal control ends an unquoted key\n"
+        "only when an operator follows the skipped whitespace and controls before any\n"
+        "further key character"
+        in documented
+    )
+    assert (
+        "only when no visible\n"
+        "operator follows may a skipped, validly terminated string control supply its\n"
+        "payload operator"
+        in documented
+    )
+    assert (
+        "BEL terminates\n"
+        "only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST."
+        in documented
+    )
+    assert (
+        "Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates\n"
+        "the merged-head second-review outcome and starts or checks its timeout on every\n"
+        "tick."
+        in documented
+    )
+    assert (
+        "even\nwhile cumulative CI is pending or temporarily unavailable"
+        in documented
+    )
+    assert (
+        "a raw whitespace token that contained a string-control\nspan"
+        in documented
+    )
+    assert (
+        "Credential assignments are\nthen classified on the full raw text"
+        in ai_accounts
+    )
+    assert (
+        "a terminal control ends an unquoted key only when, after\n"
+        "skipping whitespace and controls"
+        in ai_accounts
+    )
+    assert (
+        "A raw whitespace token that\n"
+        "contained a string-control span and contains a secret keyword is "
+        "redacted whole"
+        in ai_accounts
+    )
+    assert "BEL terminates OSC only" in ai_accounts
+    assert (
+        "the full capture first has its configured profile path replaced, then "
+        "passes the controlled-logical-line rule, and then enters the precise "
+        "raw secret scanner"
+        in " ".join(readme.split())
+    )
+    assert (
+        "That scanner classifies assignments while complete or unterminated OSC, "
+        "DCS, PM, APC, and SOS spans remain opaque, replaces those spans with "
+        "`[redacted]`, and applies raw-token redaction before terminal sanitization."
+        in " ".join(readme.split())
+    )
+    assert (
+        "A control ends an unquoted key only when an operator occurs\n"
+        "before another key character"
+        in readme
+    )
+    assert (
+        "Otherwise the control stays inside the sticky key, so suffixes such as `_file`\n"
+        "and `suffix` remain part of the secret key."
+        in readme
+    )
+    assert (
+        "payload operator remains opaque and later key fragments still join"
+        in readme
+    )
+    assert "BEL ends\nonly OSC; the other string controls require ST." in readme
+
+
+def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
+    documented = (
+        Path(__file__).parents[1]
+        / "src"
+        / "agent_cli"
+        / "skills"
+        / "error-fix"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    flat = " ".join(documented.split())
+
+    assert (
+        "Secret-key assignments use a complete, unbounded scanner" in documented
+    )
+    assert "shared controlled-line structural rule" in documented
+    assert (
+        "each controlled raw logical line gets a compiled case-insensitive candidate check"
+        in flat
+    )
+    assert "Only candidate lines build the three" in documented
+    assert "a key-join view" in documented
+    assert "mapped whitespace token through logical-line end" in documented
+    assert "Standalone removable C0" in documented
+    assert "payload newlines are\n   not boundaries" in documented
+    assert "swallows every\n   following physical line" in documented
+    assert "classifies secret assignments on the raw line" in documented
+    assert (
+        "replaces those spans only after assignment classification" in documented
+    )
+    assert (
+        "a terminal control ends an\n"
+        "   unquoted key only if a visible `=` or `:`, or otherwise an operator inside a\n"
+        "   valid complete string control, occurs before another key character"
+        in documented
+    )
+    assert (
+        "While the key\n"
+        "   is incomplete, the payload remains\n"
+        "   opaque so later key fragments still join. BEL terminates OSC only"
+        in documented
+    )
+    assert (
+        "Fixed matching windows bound control-tolerant URL schemes, e-mail "
+        "address parts, private-key header words, terminal escape parameters"
+        in flat
+    )
+    assert "windows apply only" not in flat
+    assert "Secret-key name affixes" not in documented
+
+
+@pytest.mark.parametrize(
+    "split_secret",
+    [
+        "ey\x1b[31JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi",
+        "use\x1b[31Jr@example.com",
+        "0123456789\x1b[31abcdefABCD",
+        "AKI\x9b31AIOSFODNN7EXAMPLE",
+    ],
+    ids=("jwt", "email", "hex", "aws-key"),
+)
+def test_scan_redacts_error_tokens_split_by_csi_final_byte(
+    tmp_path: Path, split_secret: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"line": f"ERROR RuntimeError key {split_secret}"}], None)
+
+    created, enriched = scan_errors(store, fetch)
+
+    assert enriched == []
+    assert len(created) == 1
+    excerpt = store.row("activity", created[0])["payload"]["excerpt"]
+    assert "\x1b" not in excerpt
+    assert "[redacted]" in excerpt
+
+
+@pytest.mark.parametrize(
+    "boundary_secret",
+    (
+        "\x1b[31A123456789012345678F",
+        "A123456789012345678\x1b[31F",
+    ),
+    ids=("start-boundary", "end-boundary"),
+)
+def test_scan_redacts_20_hex_secret_with_boundary_csi(
+    tmp_path: Path, boundary_secret: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"line": f"ERROR RuntimeError key {boundary_secret}"}], None)
+
+    created, enriched = scan_errors(store, fetch)
+
+    assert enriched == []
+    assert len(created) == 1
+    excerpt = store.row("activity", created[0])["payload"]["excerpt"]
+    assert "123456789012345678" not in excerpt
+    assert "[redacted]" in excerpt
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:

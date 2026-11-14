@@ -118,10 +118,18 @@ def test_assign_refuses_body_and_body_file_before_store_or_http(monkeypatch, tmp
 
 
 def test_assign_failure_prints_detail_and_recovery_url_without_token(monkeypatch, capsys):
+    token = "secret-device-token"
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             502,
-            json={"detail": "assignee verification failed", "url": "https://github.com/x/y/issues/9"},
+            json={
+                "detail": (
+                    f"assignee verification failed for Authorization: Bearer {token}; "
+                    f"see https://hub.example/recover?token={token}\x1b[0m"
+                ),
+                "url": f"https://github.com/x/y/issues/9?device_token={token}",
+            },
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -135,9 +143,176 @@ def test_assign_failure_prints_detail_and_recovery_url_without_token(monkeypatch
         ])
     assert info.value.code == 1
     captured = capsys.readouterr()
+    emitted = captured.out + captured.err
     assert "assignee verification failed" in captured.err
-    assert "https://github.com/x/y/issues/9" in captured.err
-    assert "secret-device-token" not in captured.out + captured.err
+    assert "https://github.com/x/y/issues/9" in emitted
+    assert "[redacted]" in emitted
+    assert "\x1b" not in emitted
+    assert token not in emitted
+    client.close()
+
+
+def test_assignment_failure_value_removes_echoed_bearer_and_control_chars() -> None:
+    from agent_cli.hub_assign import AssignmentFailure, sanitized_assignment_text
+
+    token = "secret-device-token"
+    detail = sanitized_assignment_text(
+        f"Bearer {token} at https://hub.example/retry?token={token}\x07\x1b[31m",
+        token,
+        limit=200,
+    )
+    url = sanitized_assignment_text(
+        f"https://github.com/x/y/issues/9?token={token}", token, limit=200
+    )
+    failure = AssignmentFailure(detail, url)
+    assert token not in failure.detail
+    assert token not in str(failure.url)
+    assert "\x07" not in failure.detail
+    assert "\x1b" not in failure.detail
+    assert "[redacted]" in failure.detail
+
+
+def test_assignment_failure_removes_control_interleaved_bearer_before_sanitizing() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    token = "secret-device-token"
+    emitted = sanitized_assignment_text(
+        "hub rejected secret-dev\x1b[31ice-token",
+        token,
+        limit=200,
+    )
+
+    assert token not in emitted
+    assert "secret-dev" not in emitted
+    assert "ice-token" not in emitted
+    assert emitted == "hub rejected [redacted]"
+    assert sanitized_assignment_text(
+        "retry Bearer%20secret-device-token",
+        token,
+        limit=200,
+    ) == "retry [redacted]"
+
+
+def test_assignment_sanitizer_uses_one_bearer_helper_for_both_passes(
+    monkeypatch,
+) -> None:
+    import agent_cli.hub_assign as hub_assign
+
+    calls: list[str] = []
+    original = hub_assign._without_bearer
+
+    def recording_without_bearer(text: str, token: str | None) -> str:
+        calls.append(text)
+        return original(text, token)
+
+    monkeypatch.setattr(hub_assign, "_without_bearer", recording_without_bearer)
+
+    emitted = hub_assign.sanitized_assignment_text(
+        "retry Bearer secret-device-token",
+        "secret-device-token",
+        limit=200,
+    )
+
+    assert emitted == "retry [redacted]"
+    assert len(calls) == 2
+
+
+def test_assignment_failure_redacts_fully_and_mixed_percent_encoded_path_bearers() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    token = "secret-device-token"
+    fully_encoded = "".join(f"%{byte:02X}" for byte in token.encode("utf-8"))
+    mixed_encoded = "s%65c%72et%2Ddevice%2dtoken"
+
+    assert sanitized_assignment_text(
+        f"/recover/{fully_encoded}", token, limit=200
+    ) == "/recover/[redacted]"
+    assert sanitized_assignment_text(
+        f"/recover/{mixed_encoded}", token, limit=200
+    ) == "/recover/[redacted]"
+
+
+def test_assign_failure_prints_fully_percent_encoded_recovery_path_without_bearer(
+    monkeypatch, capsys
+) -> None:
+    token = "secret-device-token"
+    encoded = "".join(f"%{byte:02x}" for byte in token.encode("utf-8"))
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502,
+            json={
+                "detail": "assignment recovery required",
+                "url": f"https://hub.example/recover/{encoded}",
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hub = Hub("https://hub.example", token, client=client)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
+
+    with pytest.raises(SystemExit):
+        main([
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "x/y",
+            "--title", "Fix", "--body", "Details",
+        ])
+
+    emitted = capsys.readouterr().err
+    assert emitted == (
+        "assignment recovery required\n"
+        "https://hub.example/recover/[redacted]\n"
+    )
+    assert token not in emitted
+    assert encoded not in emitted
+    client.close()
+
+
+def test_assignment_failure_redacts_generic_token_before_terminal_sanitizing() -> None:
+    from agent_cli.hub_assign import sanitized_assignment_text
+
+    split_token = "github_\x1b[31pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    emitted = sanitized_assignment_text(
+        f"hub rejected {split_token}", None, limit=2000
+    )
+
+    assert emitted == "hub rejected [redacted]"
+
+
+_ISSUE_URL = "https://github.com/Example/Project/issues/{number}"
+
+
+@pytest.mark.parametrize(
+    ("number", "url"),
+    [
+        (0, _ISSUE_URL.format(number=0)),
+        (-1, _ISSUE_URL.format(number=1)),
+        (42, ""),
+        (42, "not-a-url"),
+        (42, "http://github.com/Example/Project/issues/42"),
+        (42, "https://github.com/x/y/issues/42"),
+        (42, "https://github.com/Example/Project/issues/42?x=1"),
+        (42, "https://github.com/Example/Project/issues/42/"),
+        (42, "https://github.com/Example/Project/pull/42"),
+        (43, _ISSUE_URL.format(number=42)),
+        (True, _ISSUE_URL.format(number=42)),
+    ],
+)
+def test_assign_rejects_invalid_success_assignment(monkeypatch, number, url):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            201, json={"repo": "Example/Project", "number": number, "url": url}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hub = Hub("https://hub.example", "secret-device-token", client=client)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
+    with pytest.raises(SystemExit, match="invalid assignment response"):
+        main([
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
+            "--title", "Fix widget", "--body", "Detailed mandate",
+        ])
     client.close()
 
 
@@ -199,4 +374,52 @@ def test_assign_refuses_a_malformed_success_response(monkeypatch, capsys):
             "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
             "--title", "Fix widget", "--body", "Detailed mandate",
         ])
+    client.close()
+
+
+def test_pair_sends_a_new_challenge_instead_of_the_stored_one(monkeypatch, capsys):
+    class PairStore:
+        def __init__(self) -> None:
+            self.values = {"device_id": "device-1", "pair_challenge": "expired-challenge"}
+
+        def meta(self, key: str):
+            return self.values.get(key)
+
+        def set_meta(self, key: str, value: str) -> None:
+            self.values[key] = value
+
+        def device_id(self) -> str:
+            return self.values["device_id"]
+
+        def close(self) -> None:
+            return None
+
+    store = PairStore()
+    prepared: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/pair/prepare":
+            challenge = json.loads(request.content)["challenge"]
+            prepared.append(challenge)
+            return httpx.Response(
+                200, json={"pair_url": f"https://hub.example/pair?challenge={challenge}"}
+            )
+        assert request.url.path == "/pair/wait"
+        if request.url.params["challenge"] == "expired-challenge":
+            return httpx.Response(410, json={"detail": "pairing challenge expired"})
+        return httpx.Response(
+            200, json={"status": "paired", "token": "device-token", "login": "worker-bot"}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: store)
+    monkeypatch.setattr("agent_cli.main.Hub", lambda url: Hub(url, client=client))
+    monkeypatch.setattr("agent_cli.main.webbrowser.open", lambda _url: True)
+    main(["pair", "--hub", "https://hub.example", "--name", "worker-device", "--timeout", "5"])
+    assert len(prepared) == 1
+    assert prepared[0] != "expired-challenge"
+    assert store.values["pair_challenge"] == prepared[0]
+    assert store.values["device_token"] == "device-token"
+    assert store.values["github_login"] == "worker-bot"
+    assert capsys.readouterr().out.endswith("paired as worker-bot device=device-1\n")
     client.close()

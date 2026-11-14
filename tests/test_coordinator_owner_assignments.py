@@ -20,7 +20,7 @@ from agent_cli.coordinator_github import (
     phase_readiness,
 )
 from agent_cli.coordinator_config import RepositoryConfig
-from agent_cli.coordinator_common import CoordinatorError
+from agent_cli.coordinator_common import CoordinatorError, NonRecoverableCoordinatorError
 from agent_cli.coordinator_runtime import advance_one, discover_assignments
 from agent_cli.hub import HubError
 from agent_cli.runtime import Completed
@@ -37,33 +37,53 @@ from test_coordinator_support import (
 class OwnerDiscoveryGh(FakeGh):
     search_incomplete = False
     search_as_dict = False
+    search_total_count: int | None = None
+    owner_type = "User"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_queries: list[str] = []
+        self.search_pages: list[dict] | None = None
 
     def __call__(self, argv: list[str]) -> Completed:
         joined = " ".join(argv)
+        if argv[-1] == "users/example":
+            return Completed(
+                0,
+                json.dumps({"login": "example", "type": self.owner_type}),
+                "",
+            )
         if "search/issues?q=is:issue+is:open" in joined:
+            self.search_queries.append(joined)
+            qualifier = "org" if self.owner_type == "Organization" else "user"
+            assert f"+{qualifier}:example&per_page=100" in joined
+            if self.search_pages is not None:
+                return Completed(0, json.dumps(self.search_pages), "")
+            items = [
+                {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
+                {
+                    "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
+                    "html_url": "https://github.com/Example/owned/issues/8",
+                    "repository_url": "https://api.github.com/repos/Example/owned",
+                    "assignees": [{"login": "worker-bot"}],
+                },
+                {
+                    "number": 9, "state": "closed",
+                    "repository_url": "https://api.github.com/repos/Example/closed",
+                },
+                {
+                    "number": 10, "state": "open",
+                    "repository_url": "https://api.github.com/repos/Outside/project",
+                },
+                {
+                    "number": 11, "state": "open", "repository": {"archived": True},
+                    "repository_url": "https://api.github.com/repos/Example/archived",
+                },
+            ]
             page = {
                 "incomplete_results": self.search_incomplete,
-                "items": [
-                    {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
-                    {
-                        "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
-                        "html_url": "https://github.com/Example/owned/issues/8",
-                        "repository_url": "https://api.github.com/repos/Example/owned",
-                        "assignees": [{"login": "worker-bot"}],
-                    },
-                    {
-                        "number": 9, "state": "closed",
-                        "repository_url": "https://api.github.com/repos/Example/closed",
-                    },
-                    {
-                        "number": 10, "state": "open",
-                        "repository_url": "https://api.github.com/repos/Outside/project",
-                    },
-                    {
-                        "number": 11, "state": "open", "repository": {"archived": True},
-                        "repository_url": "https://api.github.com/repos/Example/archived",
-                    },
-                ],
+                "total_count": self.search_total_count or len(items),
+                "items": items,
             }
             return Completed(0, json.dumps(page if self.search_as_dict else [page]), "")
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/Example/owned/issues/8":
@@ -75,7 +95,10 @@ class OwnerDiscoveryGh(FakeGh):
         return super().__call__(argv)
 
 
-def test_owner_discovery_filters_results_and_explicit_repository_wins(tmp_path, monkeypatch):
+@pytest.mark.parametrize("owner_type", ["User", "Organization"])
+def test_owner_discovery_filters_results_and_explicit_repository_wins(
+    tmp_path, monkeypatch, owner_type
+):
     store = Store(tmp_path)
     write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -85,11 +108,30 @@ def test_owner_discovery_filters_results_and_explicit_repository_wins(tmp_path, 
         owner_readiness_argv=("/operator/owner-readiness",),
     )
     fake = OwnerDiscoveryGh()
+    fake.owner_type = owner_type
     patch_account_runners(monkeypatch, fake)
     lines = discover_assignments(store, worker, fake)
+    assert len(fake.search_queries) == 1
     assert sum("example/project#7" in line for line in lines) == 1
+    assert not any("Example/owned#8" in line for line in lines)
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert discover_assignments(store, worker, fake) == []
+    assert len(fake.search_queries) == 1
+    first = tasks[0]
+    first["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        first["id"],
+        {k: v for k, v in first.items() if not k.startswith("_")},
+    )
+    lines = discover_assignments(store, worker, fake)
+    assert len(fake.search_queries) == 2
     assert sum("Example/owned#8" in line for line in lines) == 1
-    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
     explicit = next(source for source in sources if source["repo"].casefold() == "example/project")
     owned = next(source for source in sources if source["repo"] == "Example/owned")
     assert "owner_scoped" not in explicit
@@ -115,10 +157,249 @@ def test_owner_discovery_rejects_incomplete_search_results(tmp_path, monkeypatch
 
     lines = discover_assignments(store, worker, fake)
 
-    assert "discover owners: owner issue search returned incomplete results" in lines
+    assert "discover owner example: owner issue search returned incomplete results" in lines
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source["repo"] == "Example/owned" for source in sources)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"total_count": 0, "items": []},
+        {"incomplete_results": "true", "total_count": 0, "items": []},
+        {"incomplete_results": 0, "total_count": 0, "items": []},
+    ],
+)
+def test_owner_discovery_requires_boolean_false_incomplete_results(
+    tmp_path, monkeypatch, page
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [page]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search returned incomplete results"
+        in lines
+    )
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_total_count_truncation(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_total_count = 1001
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert "discover owner example: owner issue search was truncated (5 of 1001 results)" in lines
     sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
     assert any(source["repo"].casefold() == "example/project" for source in sources)
     assert not any(source["repo"] == "Example/owned" for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_total_count_changes_between_pages(
+    tmp_path, monkeypatch
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [
+        {
+            "incomplete_results": False,
+            "total_count": 1,
+            "items": [
+                {
+                    **fake.issues[0],
+                    "repository_url": "https://api.github.com/repos/example/project",
+                }
+            ],
+        },
+        {
+            "incomplete_results": False,
+            "total_count": 2,
+            "items": [
+                {
+                    "number": 8,
+                    "state": "open",
+                    "repository_url": "https://api.github.com/repos/Example/owned",
+                }
+            ],
+        },
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search returned inconsistent "
+        "total_count across pages"
+    ) in lines
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_negative_page_total_count(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [
+        {"incomplete_results": False, "total_count": -1, "items": []}
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search page has negative total_count"
+        in lines
+    )
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_duplicate_identity_hiding_missing_issue(
+    tmp_path, monkeypatch
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    items = [
+        {
+            "number": number,
+            "state": "open",
+            "repository_url": f"https://api.github.com/repos/Example/project-{number}",
+        }
+        for number in range(1, 101)
+    ]
+    items.append(dict(items[0]))
+    fake.search_pages = [
+        {"incomplete_results": False, "total_count": 101, "items": items}
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert any(
+        line.startswith(
+            "discover owner example: owner issue search returned incomplete results "
+            "(duplicate issue identity example/project-1#1)"
+        )
+        for line in lines
+    )
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        [],
+        [
+            {
+                "incomplete_results": False,
+                "total_count": 1,
+                "items": [{"number": 1, "state": "open"}],
+            }
+        ],
+        [
+            {
+                "incomplete_results": False,
+                "total_count": 1,
+                "items": [
+                    {
+                        "number": 1,
+                        "state": "open",
+                        "repository_url": "https://api.github.com/repos/Example/one",
+                    },
+                    {
+                        "number": 2,
+                        "state": "open",
+                        "repository_url": "https://api.github.com/repos/Example/two",
+                    },
+                ],
+            }
+        ],
+    ],
+)
+def test_owner_discovery_rejects_invalid_page_sets_and_issue_identities(
+    tmp_path, monkeypatch, pages
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = pages
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert any(
+        line.startswith(
+            "discover owner example: owner issue search returned incomplete results"
+        )
+        for line in lines
+    )
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source.get("owner_scoped") is True for source in sources)
     store.close()
 
 
@@ -133,8 +414,8 @@ def test_owner_repository_route_uses_direct_push_permission(tmp_path):
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main\n", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "true\n", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": True}}), "")
         raise AssertionError(argv)
 
     cfg = _owner_repository_config(worker, runner, repo="Example/project", login="worker-bot")
@@ -156,8 +437,8 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
         nonlocal lookups, posts
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             lookups += 1
             if lookups == 1:
@@ -672,8 +953,8 @@ def test_phase_accept_reposts_when_request_completion_was_not_persisted(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -731,8 +1012,8 @@ def test_phase_accept_crash_after_intent_save_retries_fork_post(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -787,8 +1068,8 @@ def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
     def runner(argv: list[str]) -> Completed:
         if argv[-2:] == ["--jq", ".default_branch"]:
             return Completed(0, "main", "")
-        if argv[-2:] == ["--jq", ".permissions.push"]:
-            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -1258,7 +1539,28 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                     "readiness_argv": [],
                 },
             },
-            "a38": {"enabled": True},
+            "a38": {
+                "enabled": True,
+                "base_sha": base,
+                "policy_revision": base,
+                "report": {
+                    "head": head,
+                    "base_sha": base,
+                    "policy_revision": base,
+                },
+                "first_comment": {"head": head},
+                "second_review": {
+                    "head": head,
+                    "status": "posted",
+                    "reviews": [
+                        {
+                            "reviewer": "outside-reviewer",
+                            "blocks_merge": False,
+                            "at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
+                },
+            },
         }},
     }
     store.write("task", "insert", task_id, task)
@@ -1279,6 +1581,22 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                 "source": "human" if key == "spec_written" else "script",
             },
         )
+    external_review_evidence = (
+        f"external second review by outside-reviewer at {head}: "
+        "https://github.com/example/owned/pull/42#issuecomment-1"
+    )
+    for row in store.rows("checklist_item"):
+        if row.get("task_id") != task_id or row.get("key") not in {
+            "review_2_quality",
+            "review_2_logic",
+        }:
+            continue
+        updated = {
+            key: value for key, value in row.items() if not key.startswith("_")
+        }
+        updated["evidence"] = external_review_evidence
+        updated["source"] = "script"
+        store.write("checklist_item", "update", row["id"], updated)
     for dimension in ("quality", "logic"):
         store.write(
             "review_gate",
@@ -1304,6 +1622,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         "agent_cli.coordinator_github._fetch_pr_json",
         lambda *_args: {
             "headRefOid": head,
+            "baseRefOid": base,
             "baseRefName": "main",
             "author": {"login": "worker-bot"},
             "isDraft": True,
@@ -1319,11 +1638,6 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         "agent_cli.coordinator_github._fresh_ci_still_green",
         lambda *_args: None,
     )
-    monkeypatch.setattr(
-        "agent_cli.coordinator_a38.require_ready_evidence",
-        lambda *_args: None,
-    )
-
     lines = phase_readiness(store, worker, store.row("task", task_id), runner)
     assert "readiness ok" in lines[0]
     saved = store.row("task", task_id)
@@ -1354,6 +1668,8 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1",
+                "_origin_device_id": "test-device",
                 "task_id": "task-1",
                 "stage": "review-1",
                 "dimension": "quality",
@@ -1361,6 +1677,12 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
                 "head_sha": "a" * 40,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     with pytest.raises(CoordinatorError, match="configure owner_readiness_argv"):
         _apply_readiness_checklist(
@@ -1414,6 +1736,8 @@ def test_owner_a38_default_refuses_non_explicit_deviation_statements(
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1",
+                "_origin_device_id": "test-device",
                 "task_id": "task-1",
                 "stage": "review-1",
                 "dimension": "quality",
@@ -1421,6 +1745,12 @@ def test_owner_a38_default_refuses_non_explicit_deviation_statements(
                 "head_sha": "a" * 40,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     task = _accept_task()
     source = task["payload"]["coordinator"]["source"]
@@ -1457,10 +1787,17 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1", "_origin_device_id": "test-device",
                 "task_id": "task-1", "stage": "review-1", "dimension": "quality",
                 "verdict": verdict, "head_sha": head,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     with pytest.raises(CoordinatorError, match="approved review-1/quality"):
         _apply_readiness_checklist(
@@ -1474,8 +1811,10 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
 
 def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
     from agent_cli.allow import CHECKLIST_KEYS
+    from agent_cli.coordinator_a38 import merged_base_evidence_satisfied
 
     head = "a" * 40
+    base = "b" * 40
     task_id = "55555555-5555-4555-8555-555555555555"
     source = {
         "repo": "Example/owned",
@@ -1513,12 +1852,22 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
         "payload": {"coordinator": {
             "phase": "await_merge",
             "head_sha": head,
-            "base_sha": "b" * 40,
+            "base_sha": base,
             "worktree": str(worker.workspace_root / task_id),
             "pr_number": 42,
             "source": source,
             "a38": {
                 "enabled": True,
+                # These early-merge cases start after the suite and report were
+                # measured on the same head and base that GitHub reports below.
+                "base_sha": base,
+                "policy_revision": base,
+                "report": {
+                    "head": head,
+                    "base_sha": base,
+                    "policy_revision": base,
+                    "activity_id": "owner-early-merge-report",
+                },
                 "second_review": {
                     "head": head,
                     "status": "posted",
@@ -1534,6 +1883,12 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
             if key in {"contributing_ok", "deviation_declared", "deviation_granted"}
             else "ja"
         )
+        evidence = "seed" if status == "ja" else None
+        if key in {"review_2_quality", "review_2_logic"}:
+            evidence = (
+                f"external second review by outside-reviewer at {head}: "
+                "https://github.com/Example/owned/pull/42#issuecomment-2"
+            )
         store.write(
             "checklist_item",
             "insert",
@@ -1543,24 +1898,46 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
                 "task_id": task_id,
                 "key": key,
                 "status": status,
-                "evidence": "seed" if status == "ja" else None,
+                "evidence": evidence,
                 "source": "human" if key == "spec_written" else "script",
             },
         )
+    for dimension in ("quality", "logic"):
+        store.write(
+            "review_gate",
+            "insert",
+            f"{task_id}-{dimension}",
+            {
+                "id": f"{task_id}-{dimension}",
+                "task_id": task_id,
+                "stage": "review-1",
+                "dimension": dimension,
+                "vendor": "grok",
+                "verdict": "approved",
+                "head_sha": head,
+                "recorded_at": "2026-01-01T00:00:00Z",
+            },
+        )
     store.write(
-        "review_gate",
+        "local_check",
         "insert",
-        f"{task_id}-quality",
+        f"{task_id}-a38-local",
         {
-            "id": f"{task_id}-quality",
+            "id": f"{task_id}-a38-local",
             "task_id": task_id,
-            "stage": "review-1",
-            "dimension": "quality",
-            "vendor": "grok",
-            "verdict": "approved",
+            "name": "a38",
+            "command": "agent a38 run",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
             "head_sha": head,
-            "recorded_at": "2026-01-01T00:00:00Z",
         },
+    )
+    assert merged_base_evidence_satisfied(
+        store,
+        store.row("task", task_id),
+        head=head,
+        base_sha=base,
     )
     return task_id, head
 
@@ -1577,7 +1954,7 @@ def _patch_early_merge_readiness(monkeypatch, head):
             "merge_commit_sha": "d" * 40,
             "merged_at": "2026-10-01T12:00:00Z",
             "merged_by": {"login": "human-owner", "type": "User"},
-            "base": {"ref": "main"},
+            "base": {"ref": "main", "sha": "b" * 40},
             "head": {"sha": head},
             "html_url": "https://github.com/Example/owned/pull/42",
         },
@@ -1591,14 +1968,12 @@ def _patch_early_merge_readiness(monkeypatch, head):
         lambda *_args: ("worker-bot", {}),
     )
     monkeypatch.setattr(
-        "agent_cli.coordinator_github.evaluate_allow",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            allowed=True, reason="allow", blocking=[]
-        ),
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: SimpleNamespace(kind="green"),
     )
 
 
-def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
+def test_a38_merge_during_ci_rechecks_all_green_and_uses_real_allow(
     monkeypatch, tmp_path
 ):
     from agent_cli.coordinator_github import phase_await_merge
@@ -1632,6 +2007,368 @@ def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
         assert checklist[key]["evidence"] == (
             "hub mandate assignment-row: human-owner stated deviation declared=false"
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "detail", "failures", "action_required"),
+    (
+        ("failed", "CI failed", ("tests:failure",), ()),
+        ("failed", "CI failed", ("tests:cancelled",), ()),
+        ("failed", "CI failed", ("tests:skipped",), ()),
+        ("failed", "CI failed", ("tests:neutral",), ()),
+        (
+            "action_required",
+            "CI action_required (external authorization)",
+            (),
+            (".github/workflows/tests.yml",),
+        ),
+    ),
+    ids=(
+        "failed",
+        "cancelled",
+        "uncovered-skipped",
+        "uncovered-neutral",
+        "action-required",
+    ),
+)
+def test_a38_merged_task_blocks_non_green_cumulative_ci_before_real_allow(
+    monkeypatch,
+    tmp_path,
+    kind,
+    detail,
+    failures,
+    action_required,
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation(
+            kind,
+            detail,
+            failures=failures,
+            action_required=action_required,
+        ),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs))
+        or ["published"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["published"]
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "blocked"
+    assert "cumulative GitHub CI is not green on merged head" in checkpoint[
+        "blocker"
+    ]
+    assert "human intervention" in checkpoint["blocker"]
+    assert "resume_phase" not in checkpoint
+    assert published == [
+        (checkpoint["blocker"], {"kind": "merged-ci-non-green"})
+    ]
+
+
+def test_a38_merged_task_blocks_recoverably_on_a_ci_protocol_fault(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    detail = "CI inventory: workflow inventory has inconsistent total_count"
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation("protocol", detail),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs))
+        or ["published"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["published"]
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "await_merge"
+    assert checkpoint["blocker"] == detail
+    assert published == [
+        (detail, {"kind": "ci-inventory", "reply_checkpoint": True})
+    ]
+
+
+@pytest.mark.parametrize("kind", ("pending", "transport"))
+def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
+    monkeypatch, tmp_path, kind
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    detail = (
+        "checks pending"
+        if kind == "pending"
+        else "inventory temporarily unavailable"
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation(kind, detail),
+    )
+    before = store.row("task", task_id)
+
+    lines = phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    )
+
+    assert "retrying await_merge" in lines[0]
+    assert store.row("task", task_id) == before
+    assert store.rows("activity") == []
+
+
+def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
+    monkeypatch, tmp_path
+):
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        second_review_timeout_seconds=600,
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    del task["payload"]["coordinator"]["a38"]["second_review"]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    observations: list[str] = []
+
+    def pending_ci(*_args, **_kwargs):
+        observations.append("pending")
+        return _CiObservation("pending", "checks pending")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci", pending_ci
+    )
+    clock = iter(
+        (
+            "2026-11-05T10:00:00Z",
+            "2026-11-05T10:05:00Z",
+            "2026-11-05T10:11:00Z",
+        )
+    )
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
+    published: list[str] = []
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: (
+            published.append(kind) or [f"blocker {kind}"]
+        ),
+    )
+
+    first = phase_await_merge(store, worker, store.row("task", task_id), object())
+    second = phase_await_merge(store, worker, store.row("task", task_id), object())
+    third = phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    assert "retrying await_merge" in first[0]
+    assert "retrying await_merge" in second[0]
+    assert third == ["blocker merged-without-second-review"]
+    assert observations == ["pending", "pending"]
+    assert published == ["merged-without-second-review"]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["a38"]["merged_waiting_since"] == "2026-11-05T10:00:00Z"
+    assert saved["phase"] == "blocked"
+
+
+def test_a38_merged_task_blocks_second_review_while_ci_is_pending(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["a38"]["second_review"]["reviews"] = [
+        {"blocks_merge": True}
+    ]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    ci_observations: list[str] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: (
+            ci_observations.append("pending")
+            or _CiObservation("pending", "checks pending")
+        ),
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: (
+            published.append(kind) or [f"blocker {kind}"]
+        ),
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["blocker merged-with-blocking-second-review"]
+    assert ci_observations == []
+    assert published == ["merged-with-blocking-second-review"]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+
+
+def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    moved_base = "c" * 40
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["evidence"] = {"tests_pass": True, "tests_head": head}
+    checkpoint["a38"]["report"] = {
+        "head": head,
+        "base_sha": "b" * 40,
+        "policy_revision": "b" * 40,
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    def merged_on_moved_base(*_args):
+        return {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": moved_base},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        }
+
+    monkeypatch.setattr("agent_cli.coordinator_github.gh_json", merged_on_moved_base)
+
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match=(
+            "task-done refused: merged PR base moved after evidence from "
+            f"{'b' * 40} to {moved_base}; a merged PR cannot be remeasured"
+        ),
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "await_merge"
+    assert checkpoint["base_sha"] == "b" * 40
+    assert checkpoint["base_moved_after_evidence"] == {
+        "old_base": "b" * 40,
+        "new_base": moved_base,
+    }
+    assert "report" not in checkpoint["a38"]
+    assert "tests_pass" not in checkpoint["evidence"]
+    checklist = {
+        row["key"]: row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert checklist[key]["status"] == "pending"
+        assert checklist[key]["evidence"] is None
+        assert checklist[key]["source"] == "script"
 
 
 def test_a38_early_merge_reruns_readiness_when_it_ran_on_an_older_head(

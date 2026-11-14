@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from .coordinator_common import (
+    ORDER_KIND,
     PROTECTED_BRANCHES,
     CoordinatorError,
+    DraftHeadNotVerifiedError,
     Runner,
     account_for,
     as_int,
     coord,
     gh_json,
+    is_order,
     is_sha,
     pr_head_ref,
     publication_repo,
@@ -142,6 +146,50 @@ def stage_sign_commit_if_changes(
     return verify_signed_clean_head(store, worker, runner, worktree)
 
 
+START_COMMIT_MESSAGE = "Open the draft pull request."
+
+
+def sign_empty_commit(
+    store: Store,
+    worker: WorkerConfig,
+    runner: Runner,
+    worktree: str,
+    message: str,
+    *,
+    base_sha: str,
+) -> str:
+    """Create one signed empty commit on the unchanged base head; return the verified head."""
+    status = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+    )
+    require_git_ok(status, "git status")
+    if (status.stdout or "").strip():
+        raise CoordinatorError("worktree is not clean")
+    head = git(store, worker, runner, worktree, "rev-parse", "HEAD")
+    require_git_ok(head, "rev-parse HEAD")
+    if (head.stdout or "").strip().lower() != base_sha:
+        raise CoordinatorError("start commit requires an unchanged base head")
+    commit = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "commit",
+        "-S",
+        "--allow-empty",
+        "-m",
+        message,
+    )
+    require_git_ok(commit, "signed start commit")
+    return verify_signed_clean_head(store, worker, runner, worktree)
+
+
 def push_branch(
     store: Store,
     worker: WorkerConfig,
@@ -253,6 +301,89 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
     return marker
 
 
+def adopt_published_head(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    expected_old: str,
+    expected_new: str | None,
+    base_sha: str | None,
+) -> str | None:
+    """Bring the owned checkout to the head a script-owned rebase published.
+
+    Returns the adopted head, or None when the published head is still
+    ``expected_old``. It changes no field of the task.
+    """
+    c = coord(task)
+    worktree = str(c.get("worktree") or "")
+    branch = str(c.get("branch") or "")
+    if not worktree or not branch:
+        raise CoordinatorError("checkout is missing")
+    verify_checkout_identity(store, worker, runner, worktree)
+    local = verify_signed_clean_head(store, worker, runner, worktree)
+    fetched = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "fetch",
+        "--no-tags",
+        "publication",
+        f"+refs/heads/{branch}:refs/remotes/publication/{branch}",
+    )
+    require_git_ok(fetched, "fetch published head")
+    read_remote = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "rev-parse",
+        f"refs/remotes/publication/{branch}",
+    )
+    require_git_ok(read_remote, "read published head")
+    remote = (read_remote.stdout or "").strip().lower()
+    if not is_sha(remote):
+        raise CoordinatorError("cannot read the published head")
+    if remote == expected_old:
+        if local != expected_old:
+            raise CoordinatorError("checkout head differs from the published head")
+        return None
+    if expected_new is None or remote != expected_new:
+        raise CoordinatorError(
+            "published head changed outside the recorded conflict resolution"
+        )
+    if local not in (expected_old, expected_new):
+        raise CoordinatorError(
+            "checkout head differs from the head the conflict resolution replaced"
+        )
+    if is_sha(str(base_sha or "")):
+        require_git_ok(
+            git(
+                store,
+                worker,
+                runner,
+                worktree,
+                "merge-base",
+                "--is-ancestor",
+                str(base_sha),
+                remote,
+            ),
+            "rebased base ancestry",
+        )
+    if local != remote:
+        require_git_ok(
+            git(store, worker, runner, worktree, "reset", "--hard", remote),
+            "adopt rebased head",
+        )
+    head = verify_signed_clean_head(store, worker, runner, worktree)
+    if head != remote:
+        raise CoordinatorError("checkout did not reach the published head")
+    verify_checkout_identity(store, worker, runner, worktree)
+    return head
+
+
 def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
@@ -330,8 +461,14 @@ def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], run
     verify_checkout_identity(store, worker, runner, str(worktree))
     if run("status", "--porcelain", "--untracked-files=all"):
         raise CoordinatorError("refusing dirty checkout recovery")
-    c.update(worktree=str(worktree), base_sha=base_sha, branch=branch,
-             publication_repo=publication, head_sha=run("rev-parse", "HEAD"), phase="implement")
+    c.update(
+        worktree=str(worktree),
+        base_sha=base_sha,
+        branch=branch,
+        publication_repo=publication,
+        head_sha=run("rev-parse", "HEAD"),
+        phase="start_draft" if is_order(task) or worker.draft_on_accept else "implement",
+    )
     save_task(store, task)
     return [f"checkout ready on pinned target base {base_sha[:7]}"]
 
@@ -391,6 +528,18 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
         row = store.row('activity', aid)
         if row is None or row.get('_origin_device_id') != store.device_id():
             raise CoordinatorError('GitHub intent is missing or foreign')
+    bound_report_tasks: dict[str, set[str]] = {}
+    for aid in selected:
+        row = store.row("activity", aid)
+        payload = row.get("payload") if isinstance(row, dict) else None
+        binding = (
+            payload.get(github_act.A38_REPORT_BINDING_KEY)
+            if isinstance(payload, dict)
+            else None
+        )
+        task_id = binding.get("task_id") if isinstance(binding, dict) else None
+        if isinstance(task_id, str) and task_id:
+            bound_report_tasks.setdefault(task_id, set()).add(aid)
     class Scoped:
         def __getattr__(self, name):
             return getattr(store, name)
@@ -400,9 +549,47 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
             rows = store.rows(table)
             return [row for row in rows if row.get('id') in selected] if table == 'activity' else rows
         def write(self, table, operation, row_id, data, **kwargs):
-            if table != 'activity' or row_id not in selected:
-                raise CoordinatorError('GitHub executor attempted an unrelated write')
-            return store.write(table, operation, row_id, data, **kwargs)
+            if table == 'activity' and row_id in selected:
+                return store.write(table, operation, row_id, data, **kwargs)
+            if table == "task" and operation == "update":
+                activity_ids = bound_report_tasks.get(row_id, set())
+                current = store.row("task", row_id)
+                if (
+                    activity_ids
+                    and isinstance(current, dict)
+                    and current.get("_origin_device_id") == store.device_id()
+                ):
+                    expected = {
+                        key: value
+                        for key, value in deepcopy(current).items()
+                        if not key.startswith("_")
+                    }
+                    payload = expected.get("payload")
+                    coordinator = (
+                        payload.get("coordinator")
+                        if isinstance(payload, dict)
+                        else None
+                    )
+                    a38 = (
+                        coordinator.get("a38")
+                        if isinstance(coordinator, dict)
+                        else None
+                    )
+                    intent = (
+                        a38.get("report_intent")
+                        if isinstance(a38, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(intent, dict)
+                        and intent.get("activity_id") in activity_ids
+                    ):
+                        a38.pop("report_intent", None)
+                        if data == expected:
+                            return store.write(
+                                table, operation, row_id, data, **kwargs
+                            )
+            raise CoordinatorError('GitHub executor attempted an unrelated write')
     return github_act.scan_github(Scoped(), runner)
 
 
@@ -411,16 +598,27 @@ def draft_pr_body(
     reused: list[str] | None = None,
     added: list[str] | None = None,
 ) -> str:
-    """Draft text. Empty headings stay until the script has a real list to post."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
+    if source.get("kind") == ORDER_KIND:
+        short = str(source.get("order_id") or "")[:8]
+        title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+        visible = (
+            f"EN:\nDraft for order {short}: {title}.\n\n"
+            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
+        )
     else:
-        details = "Reused:\nAdded:\n\n"
-    return (
-        f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        visible = (
+            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        )
+    if not details:
+        return visible
+    return visible + (
         "<details>\n<summary>Details</summary>\n\n"
         f"{details}"
         "</details>\n"
@@ -440,7 +638,9 @@ def refresh_draft_body(
     if not isinstance(reused, list) or not isinstance(added, list) or not reused or not added:
         return []
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
-    if not isinstance(source.get("repo"), str) or source.get("number") is None:
+    if not isinstance(source.get("repo"), str) or (
+        source.get("number") is None and source.get("kind") != ORDER_KIND
+    ):
         return []
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
@@ -500,7 +700,7 @@ def ensure_draft(
     if existing_pr is not None:
         after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         if after['head']['sha'] != sha:
-            raise CoordinatorError('updated Draft head is not yet verified')
+            raise DraftHeadNotVerifiedError('updated Draft head is not yet verified')
         c['published_head'] = sha
         c.pop('pending_published_head', None)
         save_task(store, task)
@@ -589,3 +789,115 @@ def phase_publish_draft(
             c["phase"] = "inner_review" if task.get("state") == "reviewing" else "implement"
         save_task(store, task)
     return lines or ["draft reconcile idle"]
+
+
+def phase_start_draft(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Open the draft pull request on an empty start commit before the first implementation lane."""
+    c = coord(task)
+    worktree = str(c.get("worktree") or "")
+    base_sha = str(c.get("base_sha") or "")
+    lines: list[str] = []
+    if as_int(c.get("pr_number")) is None:
+        log = git(
+            store,
+            worker,
+            runner,
+            worktree,
+            "log",
+            "--oneline",
+            f"{base_sha}..HEAD",
+        )
+        require_git_ok(log, "start draft log")
+        ahead = bool((log.stdout or "").strip())
+        if not ahead:
+            c["start_commit_pending"] = True
+            save_task(store, task)
+            sha = sign_empty_commit(
+                store,
+                worker,
+                runner,
+                worktree,
+                START_COMMIT_MESSAGE,
+                base_sha=base_sha,
+            )
+            c["start_commit"] = sha
+            c["head_sha"] = sha
+            c.pop("start_commit_pending", None)
+            save_task(store, task)
+        elif c.get("start_commit_pending") is True:
+            sha = verify_signed_clean_head(store, worker, runner, worktree)
+            c["start_commit"] = sha
+            c["head_sha"] = sha
+            c.pop("start_commit_pending", None)
+            save_task(store, task)
+        lines = ensure_draft(store, worker, task, runner)
+        c = coord(task)
+        if as_int(c.get("pr_number")) is None:
+            c["phase"] = "start_draft"
+            save_task(store, task)
+            return lines or ["start draft pending"]
+    c["phase"] = "implement"
+    save_task(store, task)
+    return [
+        f"draft opened on start commit {str(c.get('start_commit') or '')[:7]}",
+        *lines,
+    ]
+
+
+def close_pull_request(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    activity_id: str,
+    body: str,
+) -> str:
+    """Comment on and close the task's open pull request; return "CLOSED" or "MERGED".
+
+    A pull request that is already merged or closed is reported as it is,
+    without a comment.
+    """
+    c = coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    target = target_repo(task)
+    if number is None or not target:
+        raise CoordinatorError("no pull request to close")
+    api = scoped(store, worker.session_id, runner)
+
+    def state() -> str:
+        view = gh_json(
+            api,
+            ["gh", "pr", "view", str(number), "--repo", target, "--json", "state"],
+        )
+        return str(view.get("state") or "").upper() if isinstance(view, dict) else ""
+
+    current = state()
+    if current == "MERGED":
+        return "MERGED"
+    if current == "OPEN":
+        queue_activity(
+            store,
+            activity_id=activity_id,
+            session_id=worker.session_id,
+            typ="comment.post",
+            payload={"repo": target, "number": number, "body": body, "target": "pr"},
+        )
+        execute_github(store, runner, activity_ids=(activity_id,))
+        row = store.row("activity", activity_id)
+        if row is None or row.get("execution_status") != "done":
+            raise CoordinatorError("close comment was not verified published")
+        closed = api(["gh", "pr", "close", str(number), "--repo", target])
+        if closed.returncode != 0:
+            raise CoordinatorError(
+                redact(closed.stderr or closed.stdout or "gh pr close failed")
+            )
+        current = state()
+    if current != "CLOSED":
+        raise CoordinatorError("pull request is not closed")
+    return "CLOSED"

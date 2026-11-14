@@ -80,7 +80,11 @@ verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
 `--body TEXT` for longer mandates. The required `--no-deviation` flag records
 the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
-and records `assignment.created`; the client never prints the device token.
+and records `assignment.created`; the client never prints the device token,
+and hub failure detail or recovery URLs redact the exact bearer even when each
+character is literal or percent-encoded in a mixed representation. A response
+counts as a mandate only with a positive issue number and a
+matching HTTPS GitHub issue URL.
 
 ## Record work
 
@@ -130,7 +134,7 @@ agent mail pending|ingest
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
-agent dashboard
+agent dashboard  # local dashboard with the orders view; 127.0.0.1 only
 agent cli-bridge
 agent pg status
 agent pg stop
@@ -141,13 +145,13 @@ its outer object has `to_session`, and its `payload` is the strict
 `a38.second-review/v1` result documented in
 [Issue coordinator — A38 mode](docs/issue-coordinator.md#a38-mode).
 
-`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
+`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`. An implementer lane closes the round only with exactly one valid `STATUS` record and exactly one role-valid `RESULT: done|no-change|blocked` record. Every `STATUS:` and `RESULT:` line counts before its value is validated, so a malformed extra record also aborts the row and leaves the round retryable. Failed-lane notes and printed diagnostics are bounded and secret-redacted. If standalone `agent lane run` cannot write its audit row, it preserves the lane verdict and prints only the fixed `lane.run audit write failed` category without backend exception text.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
-This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`). `agent skills path` prints that directory, or `AGENT_SKILLS_DIR` when set. Operator-specific git or deploy rules stay outside this package.
+This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`, `conflicts`). `agent skills path` prints that directory, or `AGENT_SKILLS_DIR` when set. Operator-specific git or deploy rules stay outside this package.
 
-Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` ships in the packaged tree; an override need not copy it. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print the packaged directory.
+Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`, `conflicts`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. Without `conflicts`, `agent conflicts` refuses. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` and `conflicts` ship in the packaged tree; an override need not copy them. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print the packaged directory.
 
 Session mail, `pr.merged`, and `error.seen` notify channel `agent_inbox`. `issue.assigned` does not: `agent watch assigned` knocks the queue head after writing `MANDATE.md` / `QUEUE.md`. The knock text is only `da ist Post id <uuid>`:
 
@@ -159,6 +163,8 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
+agent order submit|list|show|events|wait|ack|reply|override|cancel|report  # local orders for the coordinator; coordinator.json "orders": true
+agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
@@ -176,7 +182,19 @@ starts configured workers on startup; changing its worker set requires a restart
 Workers may select explicit repositories, approved GitHub owners, or both;
 explicit entries win. They may require matching hub-issued assignments before
 acceptance.
+A worker with `"orders": true` also accepts orders submitted on the device with
+`agent order submit` or in the dashboard. A front end learns about questions
+and results through `agent order wait` or `agent order events`; the coordinator
+does not depend on any front end.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
+
+The optional [comment mandate `conflicts`](docs/conflict-mandate.md) worker is
+separately configured in `$AGENT_HOME/conflicts.json`. A human comment
+`@<worker-login> conflicts` on an open pull request makes the static script rebase
+the branch, start a confined implementer lane only for content conflicts, run
+the configured checks, and push with `--force-with-lease`. Absent or empty
+configuration enables no worker; installation selects no account, provider,
+repository, or check command.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 
@@ -186,7 +204,74 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
-text. Neither activity stores argv, environment, profile paths, or credentials; a tool target outside the worktree is stored as `[redacted]`.
+text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
+redacted, printed, or persisted in that evidence. Raw and resolved provider
+config paths are matched despite interleaved terminal controls before
+sanitization and are hidden again afterward. Both configured and
+provider-reported model strings are bounded and redacted. Neither activity
+stores argv, environment, profile paths, or
+credentials; a tool target outside the worktree is stored as `[redacted]`,
+including a Glob pattern or an absolute or relative-traversal path fragment
+inside a Grep pattern, also when assignment text or punctuation precedes it.
+Numeric and named backslash escapes (`\x`, `\u`, `\U`, `\N{`, octal, and
+`\c`) fail closed by redacting the complete target. A `%HH` percent escape in a
+path or pattern target also redacts the complete target before normalization,
+without decoding. Any raw ESC or C0/C1
+control byte does the same before path classification.
+The shared text redactor performs one initial ESC/C1 search. For a raw logical
+line that contains ESC/C1, a compiled case-insensitive candidate check
+runs over a control-byte-translated view. Only candidate lines build three views,
+one at a time: a control-stripped view
+(complete or unterminated controls and payloads removed), a payload-kept view
+(only introducers, terminators, and CSI parameter bytes removed), and a key-join
+view. The key-join view uses the assignment scanner's own classifier to retain
+only control-sequence bytes that the scanner may join into a key, including a
+key-character CSI/ESC final and a `-` intermediate, while dropping string-control
+payloads and all other control bytes. If any view contains a shared secret
+keyword, case-insensitively, the raw logical line is redacted
+from the start of the mapped whitespace token through logical-line end.
+Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
+return, are removed from every structural view but do not activate the rule
+without ESC/C1. Removable control bytes inside retained string-control payloads
+are omitted from every structural view, so they cannot split a keyword in the
+payload-kept view. Complete and unterminated string-control spans are indexed on
+the full raw input before lines are formed, so payload newlines are not
+boundaries; a mapped start inside such a span moves to its introducer. Following
+normal lines outside the span remain unchanged. An unterminated string control
+extends through the end of the text and swallows every following physical line
+into its payload. Lines without ESC/C1 keep the precise scanner
+unchanged, and controlled lines without a keyword retain the existing control
+handling.
+A whitespace token exactly `<config_dir>/` followed only by
+`[A-Za-z0-9._-]+` is the one structural exception: keywords inside that
+placeholder do not trigger the line rule. Any other byte in that token, or a
+keyword elsewhere on the line, still triggers it. Lane sinks replace raw and
+control-interleaved config-directory paths on the complete source before this
+structural rule, apply their length bound next, and run precise redaction last.
+Credential assignments use one linear scanner over complete, unbounded key
+tokens, including quoted JSON keys; quoted values are consumed through their
+closing quote or the bounded input end. The scanner recognizes the legacy
+`passwd` and `access_key` / `access-key` / `accesskey` key forms and consumes
+removable terminal controls between the key, assignment operator, and value.
+After a complete secret keyword, the scanner skips any following whitespace and
+terminal controls. A control ends an unquoted key only when an operator occurs
+before another key character: a visible `=` or `:` wins, and only when none is
+visible may a complete skipped string-control span supply its payload operator.
+Otherwise the control stays inside the sticky key, so suffixes such as `_file`
+and `suffix` remain part of the secret key. A whitespace token that contained a
+string-control span and contains a secret keyword is redacted whole as a
+fail-closed defence. Before
+the key is complete, payload operators stay opaque so split key fragments still
+join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
+`ESC \` or the eight-bit ST byte.
+Control-tolerant URL schemes, escape parameters, and removable-control interleaves use fixed
+matching windows. For bounded lane fields, the controlled-line structural rule
+first sees the complete raw source; the result is then cut to the limit plus a
+small fail-closed inspection margin before the remaining precise redaction.
+Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
+watch ignores them too.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
@@ -218,7 +303,17 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+
+For that raw assignment classification, the scanner skips whitespace and
+terminal controls after a complete secret keyword. A control ends an unquoted
+key only when a visible `=` or `:`, or otherwise a valid complete
+string-control payload operator, occurs before another key character. Without
+such an operator the control remains an opaque interleave in the sticky key. A
+raw token containing both a string-control span and a secret keyword is
+redacted whole before the span is replaced. If the key is not complete yet, the
+payload operator remains opaque and later key fragments still join. BEL ends
+only OSC; the other string controls require ST.
 
 ## Testing against another hub
 

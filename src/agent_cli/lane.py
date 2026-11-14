@@ -11,11 +11,16 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
+from .text_sanitize import (
+    redact_terminal_interleaved_secret,
+    sanitize_terminal_text,
+)
 
 if TYPE_CHECKING:
     from .ai_accounts import AIRole
@@ -28,9 +33,19 @@ SPEC_VIA_STDIN = frozenset({"codex", "claude", "openrouter"})
 OUTPUT_FILE_VENDORS = frozenset({"codex", "openrouter"})
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 NPROC_CAP = 800
+LANE_MODEL_LIMIT = 200
+LANE_TOOL_LIMIT = 200
+LANE_USAGE_VALUE_LIMIT = 1_000_000_000_000_000
+LANE_GITHUB_TOKEN_ENV = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+)
 # Stripped from every lane and every lane pane: a lane runs on its own provider
 # login, never on the orchestrator's ambient Claude credentials, its API route
-# (gateway, Bedrock, Vertex, Foundry) or Claude Code session markers.
+# (gateway, Bedrock, Vertex, Foundry), Claude Code session markers, or ambient
+# proxy/CA overrides (an intercepting proxy must never see a lane's credentials).
 LANE_STRIP_ENV = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -47,15 +62,22 @@ LANE_STRIP_ENV = (
     "ANTHROPIC_FOUNDRY_RESOURCE",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
 )
 _CLAUDE_READ_TOOLS = ("Read", "Grep", "Glob")
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
-STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
-
-_STATUS_RE = re.compile(
-    r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -75,6 +97,7 @@ class LaneOutput:
     usage: LaneUsage | None
     tools: tuple[dict, ...]
     tools_truncated: bool
+    source_text: str = field(default="", repr=False, compare=False)
 
 
 @dataclass
@@ -88,14 +111,30 @@ class LaneResult:
     stdout: str
     stderr: str
     tmux_session: str | None = None
+    config_dir: str | None = field(default=None, repr=False)
     usage: LaneUsage | None = None
     tools: tuple[dict, ...] = ()
     tools_truncated: bool = False
     activity_error: str | None = None
+    # Parsed exactly once from the unredacted final lane text. Persisted text
+    # must never be reparsed because redaction can remove hidden duplicate
+    # STATUS/RESULT records.
+    protocol_result: str = ""
 
 
 # runner(argv, stdin_text) -> object with returncode, stdout, stderr
 Runner = Callable[[list[str], str | None], object]
+
+
+@contextmanager
+def sanitized_lane_argv(argv: list[str]):
+    """Yield lane argv with no ambient GitHub login available to the child."""
+    with tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-") as profile:
+        prefix = ["env"]
+        for key in LANE_GITHUB_TOKEN_ENV:
+            prefix.extend(["-u", key])
+        prefix.append(f"GH_CONFIG_DIR={profile}")
+        yield [*prefix, *argv]
 
 
 def _env_strip_prefix() -> list[str]:
@@ -172,7 +211,12 @@ def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[s
 
 
 def claude_argv(
-    *, cwd: str, write: bool, model: str, read_dirs: tuple[str, ...] = ()
+    *,
+    cwd: str,
+    write: bool,
+    model: str,
+    read_dirs: tuple[str, ...] = (),
+    tools: tuple[str, ...] | None = None,
 ) -> list[str]:
     """Restricted Claude Code lane with only explicit file tools."""
     if write and read_dirs:
@@ -193,7 +237,13 @@ def claude_argv(
             "--strict-mcp-config",
             "--disable-slash-commands",
             "--tools",
-            ",".join((*_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS) if write else _CLAUDE_READ_TOOLS),
+            ",".join(tools)
+            if tools is not None
+            else ",".join(
+                (*_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS)
+                if write
+                else _CLAUDE_READ_TOOLS
+            ),
             "--permission-mode",
             "acceptEdits" if write else "default",
         ]
@@ -222,8 +272,15 @@ def openrouter_argv(
     model: str,
     output_file: str,
     read_dirs: tuple[str, ...] = (),
+    tools: tuple[str, ...] | None = None,
 ) -> list[str]:
-    claude = claude_argv(cwd=cwd, write=write, model=model, read_dirs=read_dirs)
+    claude = claude_argv(
+        cwd=cwd,
+        write=write,
+        model=model,
+        read_dirs=read_dirs,
+        tools=tools,
+    )
     inner = claude[len(_env_strip_prefix()) :]
     return [
         *_env_strip_prefix(),
@@ -238,15 +295,35 @@ def openrouter_argv(
     ]
 
 
-def hide_config_dir(text: str, config_dir: str | None) -> str:
-    """Replace the account directory in provider diagnostics, wherever it lives."""
-    if not config_dir:
-        return text
-    raw = str(Path(config_dir).expanduser())
-    resolved = str(Path(raw).resolve())
-    for path in sorted({raw, resolved}, key=len, reverse=True):
-        text = text.replace(path, "<config_dir>")
+def replace_path_roots(
+    text: str, replacements: tuple[tuple[str, str], ...]
+) -> str:
+    """Replace raw/resolved local roots despite interleaved terminal controls."""
+    variants: list[tuple[str, str]] = []
+    for value, replacement in replacements:
+        if not value or value in ("/", "."):
+            continue
+        raw = str(Path(value).expanduser())
+        try:
+            resolved = str(Path(raw).resolve())
+        except (OSError, RuntimeError, ValueError):
+            resolved = raw
+        variants.extend((path, replacement) for path in {raw, resolved})
+    for path, replacement in sorted(
+        variants, key=lambda item: len(item[0]), reverse=True
+    ):
+        text = redact_terminal_interleaved_secret(
+            text, path, replacement=replacement
+        )
     return text
+
+
+def hide_config_dir(text: str, config_dir: str | None) -> str:
+    """Replace raw/resolved account paths despite interleaved terminal controls."""
+    return replace_path_roots(
+        text,
+        ((config_dir, "<config_dir>"),) if config_dir else (),
+    )
 
 
 def openrouter_path_error(
@@ -304,6 +381,64 @@ def provider_argv(
     raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
 
 
+CODEX_CHECK_LANE_REFUSED = (
+    "codex cannot run a check lane: its sandbox cannot remove file access"
+)
+
+
+def judgment_argv(
+    vendor: str,
+    *,
+    spec_file: str,
+    cwd: str,
+    model: str,
+    output_file: str | None = None,
+) -> list[str]:
+    """argv of a lane without tools and without file access, for one judgment."""
+    if vendor == "grok":
+        return [
+            *_env_strip_prefix(),
+            "grok",
+            "--prompt-file",
+            spec_file,
+            "-m",
+            model,
+            "--deny",
+            "Read",
+            "--deny",
+            "Grep",
+            "--deny",
+            "Glob",
+            "--deny",
+            "Write",
+            "--deny",
+            "Edit",
+            "--deny",
+            "Bash",
+            "--no-subagents",
+            "--disable-web-search",
+            "--output-format",
+            "plain",
+            "--cwd",
+            cwd,
+        ]
+    if vendor == "claude":
+        return claude_argv(cwd=cwd, write=False, model=model, tools=())
+    if vendor == "openrouter":
+        if not output_file:
+            raise SystemExit("openrouter lane requires an output file")
+        return openrouter_argv(
+            cwd=cwd,
+            write=False,
+            model=model,
+            output_file=output_file,
+            tools=(),
+        )
+    if vendor == "codex":
+        raise SystemExit(CODEX_CHECK_LANE_REFUSED)
+    raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
+
+
 def lane_tmux_name(*, vendor: str, role: str, unique: str = "") -> str:
     base = f"agent-lane-{vendor}-{role}"
     if unique:
@@ -318,17 +453,6 @@ def tmux_wrap_argv(inner: list[str], *, name: str, cwd: str) -> list[str]:
     return ["tmux", "new-session", "-d", "-s", name, "-c", cwd, "--", *inner]
 
 
-def parse_status(output: str, returncode: int) -> str:
-    matches = list(_STATUS_RE.finditer(output))
-    if matches:
-        return matches[-1].group(1).lower()
-    if returncode == 124:
-        return "timeout"
-    if returncode != 0:
-        return "unavailable"
-    return "partial"
-
-
 def _int_or_zero(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
@@ -337,26 +461,167 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+_REGEX_ESCAPE_RE = re.compile(r"\\([^A-Za-z0-9])")
+_ENCODED_ESCAPE_RE = re.compile(r"\\(?:x|u|U|N\{|[0-7]|c)")
+_PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_PLAIN_PATH_REGEX_META_RE = re.compile(r"[\^$+{}|()]")
+_DRIVE_PREFIX_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))[A-Za-z]:")
+_ABSOLUTE_FRAGMENT_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))/")
+_CONTROL_BYTE_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _normalize_tool_target(value: str) -> str:
+    """Normalize terminal text, regex escapes and platform separators once."""
+    sanitized = sanitize_terminal_text(value)
+    regex_unescaped = _REGEX_ESCAPE_RE.sub(r"\1", sanitized)
+    return regex_unescaped.replace("\\", "/")
+
+
+def _contains_disallowed_path_fragment(value: str) -> bool:
+    """Apply the one fail-closed traversal and host-path rule."""
+    return (
+        ".." in value
+        or "~" in value
+        or _DRIVE_PREFIX_RE.search(value) is not None
+        or _ABSOLUTE_FRAGMENT_RE.search(value) is not None
+    )
+
+
+def _plain_inside_worktree_target(value: str, root: Path) -> str | None:
+    """Relativize only a whole, plain absolute target inside the worktree."""
+    normalized = _normalize_tool_target(value)
+    root_text = root.as_posix().rstrip("/")
+    if not normalized.startswith(root_text + "/"):
+        return None
+    if re.search(r"\s", normalized) or _PLAIN_PATH_REGEX_META_RE.search(normalized):
+        return None
+    remainder = normalized[len(root_text) + 1 :]
+    if not remainder or _contains_disallowed_path_fragment(remainder):
+        return None
+    return remainder
+
+
 def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
     raw = str(target)
+    if _CONTROL_BYTE_RE.search(raw) is not None:
+        return "[redacted]"
     if raw == "":
         return ""
+    if kind not in ("file_path", "path", "pattern"):
+        return redact(raw, limit=300)
+    if _PERCENT_ESCAPE_RE.search(raw) is not None:
+        return "[redacted]"
+    if _ENCODED_ESCAPE_RE.search(raw) is not None:
+        return "[redacted]"
+    try:
+        root = Path(cwd).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return "[redacted]"
+    inside = _plain_inside_worktree_target(raw, root)
+    if inside is not None:
+        return redact(inside, limit=300)
+    normalized = _normalize_tool_target(raw)
+    if _contains_disallowed_path_fragment(normalized):
+        return "[redacted]"
     if kind in ("file_path", "path"):
         try:
-            root = Path(cwd).expanduser().resolve()
-            path = Path(raw).expanduser()
+            path = Path(normalized).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
         except (OSError, RuntimeError, ValueError):
             return "[redacted]"
         try:
-            raw = str(resolved.relative_to(root))
+            normalized = str(resolved.relative_to(root))
         except ValueError:
             # Any path outside the worktree is a host detail, whatever its prefix.
             return "[redacted]"
-    return redact(raw[:300], limit=300)
+    return redact(normalized, limit=300)
+
+
+DIAGNOSTIC_LIMIT = 4000
+
+
+def redact_lane_text(
+    text: str, *, config_dir: str | None = None, limit: int | None
+) -> str:
+    """Hide config paths and secrets before and after terminal sanitization."""
+    from .coordinator_common import (
+        _apply_redaction_bound,
+        _prebound_redaction_input,
+        _redact_controlled_secret_lines,
+        _TERMINAL_STRUCTURAL_TRIGGER,
+        redact,
+    )
+
+    # Config roots are replaced on the complete raw text so a terminal control
+    # cannot make the structural line rule consume the safe placeholder.
+    raw_source = hide_config_dir(text or "", config_dir)
+    source = raw_source
+    if _TERMINAL_STRUCTURAL_TRIGGER.search(source) is not None:
+        source = _redact_controlled_secret_lines(
+            source, control_present=True
+        )
+    # Preserve the truncation fact from the unsanitized source even when the
+    # complete structural pass collapses a long controlled line.
+    _, source_was_cut = _prebound_redaction_input(raw_source, limit)
+    bounded, bounded_was_cut = _prebound_redaction_input(source, limit)
+    source_was_cut = source_was_cut or bounded_was_cut
+    safe = redact(bounded, limit=None, controlled_lines_redacted=True)
+    safe = hide_config_dir(safe, config_dir)
+    safe = redact(safe, limit=None, controlled_lines_redacted=True)
+    return _apply_redaction_bound(
+        safe,
+        limit,
+        source_was_cut=source_was_cut,
+    )
+
+
+def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
+    """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
+    return redact_lane_text(
+        text, config_dir=config_dir, limit=DIAGNOSTIC_LIMIT
+    )
+
+
+def output_read_failure(exc: BaseException) -> str:
+    """Bounded, redacted diagnostic for an unreadable lane output file."""
+    if isinstance(exc, UnicodeDecodeError):
+        return "lane output file is not valid UTF-8"
+    return "lane output file is unavailable"
+
+
+def unreadable_output_result(
+    *,
+    role: str,
+    vendor: str,
+    model: str,
+    argv: list[str],
+    returncode: int,
+    stderr: str,
+    exc: BaseException,
+    config_dir: str | None,
+    tmux_session: str | None = None,
+) -> LaneResult:
+    """Unavailable result for a lane whose output file cannot be read or decoded."""
+    message = output_read_failure(exc)
+    diagnostic = f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
+    # Provider stderr can carry credentials; the failure diagnostic is stored
+    # and printed, so it is bounded and redacted here, not only at the last print.
+    diagnostic = redact_diagnostic(diagnostic, config_dir=config_dir)
+    return LaneResult(
+        role=role,
+        vendor=vendor,
+        model=model,
+        status="unavailable",
+        argv=argv,
+        returncode=returncode,
+        stdout="",
+        stderr=diagnostic,
+        tmux_session=tmux_session,
+        config_dir=config_dir,
+    )
 
 
 def finalize_lane_output(
@@ -372,7 +637,23 @@ def finalize_lane_output(
     out = _finalize_lane_output(
         vendor, stdout, output_file_text, cwd=cwd, stream_from_output_file=stream_from_output_file
     )
-    return replace(out, text=hide_config_dir(out.text, config_dir))
+    usage = out.usage
+    if usage is not None and usage.model is not None:
+        usage = replace(
+            usage,
+            model=redact_lane_text(
+                usage.model, config_dir=config_dir, limit=None
+            ),
+        )
+    return replace(
+        out,
+        text=redact_lane_text(out.text, config_dir=config_dir, limit=None),
+        usage=usage,
+        # Callers that persist output use ``text``.  The coordinator needs the
+        # validated source briefly so schema punctuation consumed by secret
+        # redaction can still be restored around already-redacted fields.
+        source_text=out.text,
+    )
 
 
 def _finalize_lane_output(
@@ -436,8 +717,9 @@ def _finalize_lane_output(
                             target = inputs[key]
                             target_kind = key
                             break
+                tool_name = str(name) if name is not None else ""
                 row = {
-                    "tool": str(name) if name is not None else "",
+                    "tool": tool_name,
                     "target": _tool_target(target, cwd, target_kind),
                     "error": False,
                 }
@@ -498,50 +780,26 @@ def record_lane_run(
     task_id: str | None = None,
     agent_id: str | None = None,
     round_num: int | None = None,
+    activity_id: str | None = None,
 ) -> str:
     """Write the script-owned, redacted lane audit activity."""
-    from .coordinator_common import redact
-
-    usage = result.usage
-    usage_payload = None
-    if usage is not None:
-        usage_payload = {
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "cache_read_input_tokens": usage.cache_read_input_tokens,
-            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-            "num_turns": usage.num_turns,
-            "duration_ms": usage.duration_ms,
-        }
-    safe_tools = []
-    for item in result.tools[:200]:
-        if not isinstance(item, dict):
-            continue
-        safe_tools.append(
-            {
-                "tool": redact(str(item.get("tool") or ""), limit=100),
-                "target": redact(str(item.get("target") or "")[:300], limit=300),
-                "error": item.get("error") is True,
-            }
-        )
-    activity_id = str(uuid.uuid4())
+    metadata = bounded_lane_metadata(result)
+    activity_id = activity_id or str(uuid.uuid4())
     final_text = result.stdout
     if not final_text and result.vendor in ("claude", "openrouter"):
         final_text = result.stderr
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": result.model,
-        "reported_model": usage.model if usage is not None else None,
+        **metadata,
         "task_id": task_id,
         "agent_id": agent_id,
         "round": round_num,
         "status": result.status,
         "returncode": result.returncode,
-        "usage": usage_payload,
-        "tools": safe_tools,
-        "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact(final_text, limit=4000),
+        "final_text": redact_lane_text(
+            final_text, config_dir=result.config_dir, limit=4000
+        ),
     }
     store.write(  # type: ignore[attr-defined]
         "activity",
@@ -556,6 +814,73 @@ def record_lane_run(
         },
     )
     return activity_id
+
+
+def _bounded_usage_value(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return max(0, min(value, LANE_USAGE_VALUE_LIMIT))
+
+
+def bounded_lane_metadata(result: LaneResult) -> dict[str, object]:
+    """Return the shared bounded/redacted model, usage, and tool audit fields."""
+    usage = result.usage
+    usage_payload = None
+    if usage is not None:
+        usage_payload = {
+            "input_tokens": _bounded_usage_value(usage.input_tokens),
+            "output_tokens": _bounded_usage_value(usage.output_tokens),
+            "cache_read_input_tokens": _bounded_usage_value(
+                usage.cache_read_input_tokens
+            ),
+            "cache_creation_input_tokens": _bounded_usage_value(
+                usage.cache_creation_input_tokens
+            ),
+            "num_turns": _bounded_usage_value(usage.num_turns),
+            "duration_ms": _bounded_usage_value(usage.duration_ms),
+        }
+    safe_tools = []
+    for item in result.tools[:LANE_TOOL_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        safe_tools.append(
+            {
+                "tool": redact_lane_text(
+                    str(item.get("tool") or ""),
+                    config_dir=result.config_dir,
+                    limit=100,
+                ),
+                "target": (
+                    "[redacted]"
+                    if _CONTROL_BYTE_RE.search(str(item.get("target") or ""))
+                    else redact_lane_text(
+                        str(item.get("target") or ""),
+                        config_dir=result.config_dir,
+                        limit=300,
+                    )
+                ),
+                "error": item.get("error") is True,
+            }
+        )
+    return {
+        "model": redact_lane_text(
+            result.model, config_dir=result.config_dir, limit=LANE_MODEL_LIMIT
+        ),
+        "reported_model": (
+            redact_lane_text(
+                usage.model,
+                config_dir=result.config_dir,
+                limit=LANE_MODEL_LIMIT,
+            )
+            if usage is not None and usage.model is not None
+            else None
+        ),
+        "usage": usage_payload,
+        "tools": safe_tools,
+        "tools_truncated": (
+            result.tools_truncated or len(result.tools) > LANE_TOOL_LIMIT
+        ),
+    }
 
 
 def _default_runner(
@@ -624,7 +949,9 @@ def _run_in_tmux(
         raw = status.stdout.strip()
         if raw.isdigit():
             returncode = int(raw)
-    captured = _tmux_call(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])
+    captured = _tmux_call(
+        ["tmux", "capture-pane", "-t", name, "-p", "-J", "-S", "-"]
+    )
     _tmux_call(["tmux", "kill-session", "-t", name])
     return subprocess.CompletedProcess(
         wrap,
@@ -709,47 +1036,57 @@ def launch(
     # Apply the selected provider home inside the tmux child too. The builders'
     # credential-clearing prefix is nested, never a process-global mutation.
     argv = [*selected.env_prefix(), *argv]
+    github_environment = sanitized_lane_argv(argv)
+    argv = github_environment.__enter__()
 
     tmux_session: str | None = None
     claude_redirect = False
-    if tmux:
-        unique = "" if dry_run else uuid.uuid4().hex[:8]
-        tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
-        if vendor == "claude":
-            # Claude's stream-json lines can exceed a tmux pane width and its
-            # history. Keep the stream in a file and use pane capture only as
-            # process diagnostics, never as the parser input.
-            if output_file is None:
-                raise SystemExit("claude tmux lane requires an output file")
-            argv = [
-                "sh",
-                "-c",
-                'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
-                "sh",
-                spec_file,
-                output_file,
-                *argv,
-            ]
-            claude_redirect = True
-        elif vendor == "openrouter":
-            # Claude Code reads the prompt from stdin only when stdin is not a
-            # TTY; in a tmux pane it is. Redirect this adapter's spec file.
-            argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
-            claude_redirect = True
-        argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
+    try:
+        if tmux:
+            unique = "" if dry_run else uuid.uuid4().hex[:8]
+            tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
+            if vendor == "claude":
+                # Claude's stream-json lines can exceed a tmux pane width and its
+                # history. Keep the stream in a file and use pane capture only as
+                # process diagnostics, never as the parser input.
+                if output_file is None:
+                    raise SystemExit("claude tmux lane requires an output file")
+                argv = [
+                    "sh",
+                    "-c",
+                    'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+                    "sh",
+                    spec_file,
+                    output_file,
+                    *argv,
+                ]
+                claude_redirect = True
+            elif vendor == "openrouter":
+                # Claude Code reads the prompt from stdin only when stdin is not a
+                # TTY; in a tmux pane it is. Redirect this adapter's spec file.
+                argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
+                claude_redirect = True
+            argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
+    except BaseException:
+        github_environment.__exit__(None, None, None)
+        raise
 
     if dry_run:
-        return LaneResult(
-            role=role,
-            vendor=vendor,
-            model=selected.model,
-            status="",
-            argv=argv,
-            returncode=0,
-            stdout="",
-            stderr="",
-            tmux_session=tmux_session,
-        )
+        try:
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                model=selected.model,
+                status="",
+                argv=argv,
+                returncode=0,
+                stdout="",
+                stderr="",
+                tmux_session=tmux_session,
+                config_dir=selected.account.config_dir,
+            )
+        finally:
+            github_environment.__exit__(None, None, None)
 
     stdin_text: str | None = spec_text if vendor in SPEC_VIA_STDIN else None
     if claude_redirect:
@@ -776,24 +1113,20 @@ def launch(
         if lane_output_file is not None:
             try:
                 output_file_text = Path(lane_output_file).read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                message = "lane output file is not valid UTF-8"
-                diagnostic = (
-                    f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
-                )
-                return LaneResult(
+            except (OSError, UnicodeDecodeError) as exc:
+                # A completed child whose output cannot be read or decoded has no
+                # usable verdict; that is an unavailable infrastructure result.
+                return unreadable_output_result(
                     role=role,
                     vendor=vendor,
                     model=selected.model,
-                    status="unavailable",
                     argv=argv,
                     returncode=returncode,
-                    stdout="",
-                    stderr=hide_config_dir(diagnostic, selected.account.config_dir),
+                    stderr=stderr,
+                    exc=exc,
+                    config_dir=selected.account.config_dir,
                     tmux_session=tmux_session,
                 )
-            except OSError:
-                output_file_text = ""
 
         stream_from_output_file = vendor in OUTPUT_FILE_VENDORS or (
             vendor == "claude" and tmux
@@ -806,24 +1139,34 @@ def launch(
             stream_from_output_file=stream_from_output_file,
             config_dir=selected.account.config_dir,
         )
+        # The protocol is counted on the raw source exactly once. Only the
+        # redacted body below is returned to callers or persisted.
+        from .coordinator_common import parse_model_result
+
+        protocol_status, protocol_result = parse_model_result(
+            finalized.source_text, returncode
+        )
         if stream_from_output_file and not finalized.text and stdout and not stderr:
             # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr
             # so the CLI and lane.run show why a lane produced no stream output.
             stderr = stdout
-        status = parse_status(finalized.text, returncode)
         return LaneResult(
             role=role,
             vendor=vendor,
             model=selected.model,
-            status=status,
+            status=protocol_status,
             argv=argv,
             returncode=returncode,
             stdout=finalized.text,
-            stderr=hide_config_dir(stderr, selected.account.config_dir),
+            stderr=redact_lane_text(
+                stderr, config_dir=selected.account.config_dir, limit=None
+            ),
             tmux_session=tmux_session,
+            config_dir=selected.account.config_dir,
             usage=finalized.usage,
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
+            protocol_result=protocol_result,
         )
     finally:
         if lane_output_file is not None:
@@ -831,3 +1174,4 @@ def launch(
                 os.unlink(lane_output_file)
             except OSError:
                 pass
+        github_environment.__exit__(None, None, None)

@@ -3,7 +3,7 @@
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [DESIGN.md](DESIGN.md), and
 [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md) before
 changing this repository. Skill contracts live next to the client:
-`agent skills path` (spine, review-loop, pr-review, error-fix).
+`agent skills path` (spine, review-loop, pr-review, error-fix, conflicts).
 
 Static scripts own assignment acceptance, its issue confirmation before the
 implementation lane starts, every lane/subagent start, test execution, and all
@@ -29,7 +29,18 @@ script-owned loop. Installation enables no worker. Legacy assignment dispatch
 and `supervise` refuse a session selected for this coordinator. For the target
 repositories of an explicitly configured A38 coordinator worker, the guard alone
 owns Ready and the second review comes from configured team members through
-the hub instead of model slot `second`.
+the hub, or from model slot `second` when the worker sets
+`a38_second_review: "model"`.
+
+Orders are submitted only through `agent order` or the orders view of the local
+dashboard. They are answered there or, once the draft exists, by an authorized
+pull-request comment from `reply_logins`. Models never write `order.event` or
+`order.reply` and
+never close a precondition check; an override names its check. A model that
+hands orders to the script is a concierge, not an orchestrator: it submits,
+reads status and the acceptance report, relays questions, and passes on the
+human's reply, override or cancel. It starts no lane, runs no review loop and
+does not wait with model turns.
 
 Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed

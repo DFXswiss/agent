@@ -56,7 +56,7 @@ ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
 READ_ONLY_WORKFLOW_KINDS = frozenset(
-    {"reviewer", "pr-reviewer-quality", "pr-reviewer-logic"}
+    {"check", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic"}
 )
 _CLEAR_ENV = (
     "XAI_API_KEY",

@@ -48,6 +48,9 @@ from .chain import (
     steps_for,
     to_json as step_to_json,
 )
+from .coordinator_common import parse_model_result, redact as redact_secrets
+from .gate_order import latest_gates as durable_latest_gates
+from .gate_order import ordered_snapshot_gates
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -58,6 +61,8 @@ from .lane import (
     LaneResult,
     launch,
     record_lane_run,
+    redact_diagnostic,
+    redact_lane_text,
 )
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
@@ -82,6 +87,7 @@ from .model_slots import (
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
+from .preconditions import REGISTRY_KEYS
 from .runtime import (
     PreflightRuntime,
     Runtime,
@@ -201,6 +207,8 @@ ACTIVITY_TYPES = frozenset(
         "usage.snapshot",
         "lane.run",
         "supervise.event",
+        "order.event",
+        "order.reply",
     }
 )
 SCRIPT_ONLY_ACTIVITY = frozenset(
@@ -215,6 +223,8 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "error.seen",
         "supervise.event",
         "issue.assigned.ack",
+        "order.event",
+        "order.reply",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -979,6 +989,8 @@ def cmd_checklist(args: list[str]) -> None:
     supplied_key = require_flag(rest, "--key")
     key = canonical_key(supplied_key)
     _warn_deprecated_name(supplied_key, key)
+    if key in REGISTRY_KEYS:
+        die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     status = require_flag(rest, "--status")
     source = require_flag(rest, "--source")
     if status not in CHECKLIST_STATUSES:
@@ -1401,7 +1413,7 @@ def cmd_agent(args: list[str]) -> None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
             if note is not None:
-                agent["note"] = note
+                agent["note"] = redact_secrets(note)
             store.write("agent", "update", aid, _strip(agent))
             print(f"agent {aid} verdict={verdict}")
             return
@@ -1874,7 +1886,7 @@ def cmd_pair(args: list[str]) -> None:
     try:
         if store.meta("device_token"):
             die("this device is already paired")
-        challenge = store.meta("pair_challenge") or secrets.token_hex(16)
+        challenge = secrets.token_hex(16)
         store.set_meta("pair_challenge", challenge)
         store.set_meta("hub_url", hub_url.rstrip("/"))
         hub = Hub(hub_url)
@@ -2188,6 +2200,9 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def cmd_dashboard(args: list[str]) -> None:
+    from .cli_bridge import MAX_REQUEST_BYTES
+    from .dashboard_orders import PREFIX as ORDER_PREFIX, handle_order_request
+
     port = 7845
     if args:
         if args[0] != "--port" or len(args) != 2 or not args[1].isdigit():
@@ -2207,7 +2222,44 @@ def cmd_dashboard(args: list[str]) -> None:
             self.end_headers()
             self.wfile.write(body)
 
+        def _orders(self, method: str) -> bool:
+            parsed = urlparse(self.path)
+            if not parsed.path.startswith(ORDER_PREFIX):
+                return False
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                self.send_error(400)
+                return True
+            raw = (
+                self.rfile.read(min(length, MAX_REQUEST_BYTES + 1))
+                if method == "POST" and length > 0
+                else b""
+            )
+            try:
+                status, payload = handle_order_request(
+                    store,
+                    home(),
+                    method=method,
+                    path=parsed.path,
+                    query=parsed.query,
+                    headers=self.headers,
+                    body=raw,
+                )
+            except StoreConnectionError as exc:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as rec_exc:
+                    self._json(503, {"ok": False, "error": str(rec_exc)})
+                    return True
+                self._json(503, {"ok": False, "error": str(exc)})
+                return True
+            self._json(status, payload)
+            return True
+
         def do_GET(self) -> None:
+            if self._orders("GET"):
+                return
             path = urlparse(self.path).path
             if path == "/api/state":
                 try:
@@ -2245,6 +2297,8 @@ def cmd_dashboard(args: list[str]) -> None:
             self.send_error(404)
 
         def do_POST(self) -> None:
+            if self._orders("POST"):
+                return
             path = urlparse(self.path).path
             match = re.fullmatch(r"/api/sessions/([^/]+)/control", path)
             if match is None:
@@ -2474,7 +2528,7 @@ def _interactive_runtime_preflight(
     *,
     meta: dict[str, Any] | None = None,
     provider: str | None = None,
-) -> None:
+) -> str | None:
     """Preflight a Grok-bound runtime while leaving raw terminals unchanged."""
     if meta is None:
         row = store.row("session", sid)
@@ -2490,8 +2544,9 @@ def _interactive_runtime_preflight(
             meta["tmux_session"]
         )
         if provider != "grok" or raw_terminal:
-            return
-    _interactive_preflight(store, sid, meta=meta)
+            return None
+    selected, _binding, _existing = _interactive_preflight(store, sid, meta=meta)
+    return selected.account.config_dir
 
 
 def _is_grok_runtime(meta: dict[str, Any]) -> bool:
@@ -2784,7 +2839,6 @@ def _publish_terminals(
     last_capture: dict[str, str],
 ) -> None:
     device = store.device_id()
-    runtime = _preflight_runtime(store, runtime)
     for session in store.rows("session"):
         if session.get("_origin_device_id") != device:
             continue
@@ -2793,7 +2847,10 @@ def _publish_terminals(
             continue
         sid = session["id"]
         try:
-            text = runtime.capture(sid)
+            config_dir = _interactive_runtime_preflight(store, sid, meta=meta)
+            text = redact_lane_text(
+                runtime.capture(sid), config_dir=config_dir, limit=None
+            )
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:
@@ -2830,15 +2887,7 @@ def _find_round(store: Store, task_id: str, round_num: object) -> dict:
 
 
 def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
-    gates = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    # rows() is updated_at DESC (index 0 = newer). Keep newer rows last on ties.
-    indexed = list(enumerate(gates))
-    indexed.sort(key=lambda item: (item[1].get("recorded_at") or "", -item[0]))
-    ordered = [g for _, g in indexed]
-    latest: dict[tuple[str, str], dict] = {}
-    for g in ordered:
-        latest[(canonical_stage(str(g.get("stage"))), g.get("dimension"))] = g
-    return latest
+    return durable_latest_gates(store, task_id)
 
 
 def _all_gate_pairs_approved_same_head(
@@ -2895,12 +2944,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
     local_checks = [
         {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
     ]
-    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    indexed_gates = list(enumerate(gates_raw))
-    indexed_gates.sort(
-        key=lambda item: (item[1].get("recorded_at") or "", -item[0])
-    )
-    ordered_gates = [g for _, g in indexed_gates]
+    ordered_gates = ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -3250,6 +3294,8 @@ def cmd_close_step(args: list[str]) -> None:
             "Usage: agent close-step --task ID --key KEY --source script|human|runner "
             "--evidence TEXT [--status ja|n_a|unavailable] [--head SHA]"
         )
+    if key in REGISTRY_KEYS:
+        die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     if status not in CLOSE_STATUSES:
         die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
@@ -3737,16 +3783,20 @@ def _abort_incomplete_agent(store: Store, agent: dict, note: str) -> None:
     """
     agent["status"] = "done"
     agent["finished_at"] = utcnow()
-    agent["note"] = f"aborted incomplete lane: {note}"
+    agent["note"] = redact_secrets(f"aborted incomplete lane: {note}")
     store.write("agent", "update", str(agent["id"]), _strip(agent))
 
 
-def _parsed_lane_result(output: str) -> str | None:
-    matches = re.findall(
-        r"(?mi)^RESULT:[ \t]*(done|blocked|ask|approved|rejected|no-change)[ \t]*\r?$",
-        output or "",
-    )
-    return matches[0].lower() if len(matches) == 1 else None
+# Implementer RESULT values that close the lane. ``done`` and ``no-change`` are
+# both an implemented round; ``blocked`` ends the task. Missing, duplicate or
+# role-invalid values (ask/approved/rejected) stay retryable.
+_IMPLEMENTER_VERDICTS = {"done": "done", "no-change": "done", "blocked": "blocked"}
+
+
+def _lane_diagnostic_note(result: LaneResult) -> str:
+    """Bounded, secret-redacted lane diagnostic for notes, evidence and stderr."""
+    raw = result.stderr.strip() or result.stdout.strip() or f"lane STATUS={result.status}"
+    return redact_diagnostic(raw, config_dir=result.config_dir)
 
 
 def _agent_handoff_exit(
@@ -4002,34 +4052,44 @@ def cmd_run(args: list[str]) -> None:
                         round_num=round_num,
                     )
                 except (Exception, SystemExit) as exc:  # noqa: BLE001 — StoreError is a SystemExit; audit failure cannot change verdict
-                    print(f"lane.run write failed: {exc}", file=sys.stderr)
+                    print(
+                        f"lane.run write failed: {redact_secrets(str(exc))}",
+                        file=sys.stderr,
+                    )
                 _print_lane_result(result)
-                if role == "implementer" and result.status == "complete":
+                # Re-read the task after the lane: finish/abort writes above the
+                # round and checklist, and a pure read of stale state could hand
+                # off with an outdated snapshot.
+                snap = _chain_snapshot(store, tid, extra_head=head)
+                protocol_status = result.status
+                semantic_result = result.protocol_result
+                implementer_verdict: str | None = None
+                if (
+                    role == "implementer"
+                    and protocol_status == "complete"
+                    and semantic_result in _IMPLEMENTER_VERDICTS
+                ):
+                    implementer_verdict = _IMPLEMENTER_VERDICTS[semantic_result]
+                if implementer_verdict is not None:
                     working = _find_working_agent(
                         store, tid, role=role, vendor=vendor, round_num=round_num
                     )
                     if working is None:
                         die("implementer working agent not found after lane")
-                    semantic_result = _parsed_lane_result(result.stdout)
-                    verdict = "blocked" if semantic_result == "blocked" else "done"
                     cmd_agent(
                         [
                             "finish",
                             "--id",
                             str(working["id"]),
                             "--verdict",
-                            verdict,
+                            implementer_verdict,
                             "--note",
-                            (
-                                "lane STATUS=complete RESULT=blocked"
-                                if verdict == "blocked"
-                                else "lane STATUS=complete"
-                            ),
+                            f"lane STATUS=complete RESULT={semantic_result}",
                         ]
                     )
                     snap = _chain_snapshot(store, tid, extra_head=head)
                     task = _need(store, "task", tid)
-                    if verdict == "blocked":
+                    if implementer_verdict == "blocked":
                         _agent_handoff_exit(
                             step,
                             tid,
@@ -4043,10 +4103,17 @@ def cmd_run(args: list[str]) -> None:
                     )
                     if working is None:
                         die("implementer working agent not found after lane")
-                    note = result.stderr.strip() or result.stdout.strip()
-                    if not note:
-                        note = f"lane STATUS={result.status}"
+                    note = _lane_diagnostic_note(result)
+                    if result.status == "complete":
+                        # A provider may report complete after selecting the last
+                        # of several STATUS records. The joint parser above still
+                        # requires exactly one STATUS and one role-valid RESULT.
+                        note = (
+                            "invalid implementer STATUS/RESULT: "
+                            f"{semantic_result or 'missing, duplicate, or ambiguous'}; {note}"
+                        )
                     _abort_incomplete_agent(store, working, note)
+                    snap = _chain_snapshot(store, tid, extra_head=head)
                     _agent_handoff_exit(
                         step,
                         tid,
@@ -4060,9 +4127,7 @@ def cmd_run(args: list[str]) -> None:
                     )
                     if working is None:
                         die(f"{role} working agent not found after lane")
-                    note = result.stderr.strip() or result.stdout.strip()
-                    if not note:
-                        note = f"lane STATUS={result.status}"
+                    note = _lane_diagnostic_note(result)
                     if role == "reviewer":
                         _abort_incomplete_agent(store, working, note)
                     elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
@@ -4238,6 +4303,36 @@ def cmd_query(args: list[str]) -> None:
         store.close()
 
 
+def _read_body_file(body_file: str) -> str:
+    """Return the text of a body file, or stop with the existing text."""
+    path = Path(body_file)
+    try:
+        body = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        die(f"cannot read body file {path}: {exc}")
+    return body
+
+
+def _read_request_text(
+    repo: str,
+    title: str,
+    body_value: str | None,
+    body_file: str | None,
+) -> str:
+    """Validate repo and title and return the body (1..60000 characters)."""
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
+        repo,
+    ) or repo.split("/", 1)[1] in {".", ".."}:
+        die("repo must be Owner/Name")
+    if not 1 <= len(title) <= 256:
+        die("title must be 1..256 characters")
+    body = _read_body_file(body_file) if body_file is not None else body_value or ""
+    if not 1 <= len(body) <= 60000:
+        die("body must be 1..60000 characters")
+    return body
+
+
 def cmd_assign(args: list[str]) -> None:
     from .hub_assign import AssignmentFailure, create_assignment
 
@@ -4253,23 +4348,7 @@ def cmd_assign(args: list[str]) -> None:
     body_file = flag(args, "--body-file")
     if (body_value is None) == (body_file is None):
         die("assign requires exactly one of --body or --body-file")
-    if not re.fullmatch(
-        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
-        repo,
-    ) or repo.split("/", 1)[1] in {".", ".."}:
-        die("repo must be Owner/Name")
-    if not 1 <= len(title) <= 256:
-        die("title must be 1..256 characters")
-    if body_file is not None:
-        path = Path(body_file)
-        try:
-            body = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            die(f"cannot read body file {path}: {exc}")
-    else:
-        body = body_value or ""
-    if not 1 <= len(body) <= 60000:
-        die("body must be 1..60000 characters")
+    body = _read_request_text(repo, title, body_value, body_file)
     store = open_store()
     try:
         hub = _hub_from_store(store)
@@ -4289,9 +4368,37 @@ def cmd_assign(args: list[str]) -> None:
         store.close()
     number = result.get("number")
     url = result.get("url")
-    if isinstance(number, bool) or not isinstance(number, int) or not isinstance(url, str):
+    issue = _assignment_issue_url(url)
+    if (
+        isinstance(number, bool)
+        or not isinstance(number, int)
+        or number < 1
+        or issue is None
+        or issue[0].casefold() != repo.casefold()
+        or issue[1] != number
+    ):
         die("hub returned an invalid assignment response")
     print(f"assigned {repo}#{number} {url}")
+
+
+_GITHUB_ISSUE_URL_RE = re.compile(
+    r"https:\/\/github\.com\/"
+    r"([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)"
+)
+
+
+def _assignment_issue_url(url: object) -> tuple[str, int] | None:
+    """Return ``(owner/name, number)`` for a credential-free HTTPS GitHub issue URL."""
+    if not isinstance(url, str) or url.strip() != url or not url:
+        return None
+    match = _GITHUB_ISSUE_URL_RE.fullmatch(url)
+    if match is None:
+        return None
+    try:
+        number = int(match.group(3))
+    except ValueError:
+        return None
+    return f"{match.group(1)}/{match.group(2)}", number
 
 
 def cmd_subscribe(args: list[str]) -> None:
@@ -4357,29 +4464,26 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
-_LANE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-
-
-def _sanitize_lane_output(text: str) -> str:
-    # The --no-tmux runner captures raw vendor subprocess output (unlike the tmux
-    # path, whose capture-pane already drops escape sequences), so an ESC-led CSI/OSC
-    # sequence (7-bit, \x1b-prefixed) or an 8-bit C1 control byte (\x80-\x9f, e.g. a
-    # bare CSI at \x9b) from a misbehaving vendor process could otherwise reach the
-    # terminal verbatim. Stripping C0/C1/DEL control bytes (keeping \t/\n/\r)
-    # neutralizes that without touching the printable content a human or
-    # --evidence actually needs.
-    return _LANE_CONTROL_CHARS_RE.sub("", text)
-
-
 def _print_lane_result(result: LaneResult) -> None:
     # The vendor's actual review/implementation text lives only in result.stdout —
     # by the time launch() returns, the tmux pane it was captured from is already
     # killed, so this is the only remaining chance to surface it. Without this, a
     # caller sees STATUS/rc but never the content a gate record --evidence needs.
+    # Vendor output can echo a provider credential; every printed diagnostic is
+    # bounded and passed through the shared redaction, like the stored notes.
     if result.stdout.strip():
-        print(_sanitize_lane_output(result.stdout.rstrip()))
+        print(
+            redact_diagnostic(
+                result.stdout.rstrip(), config_dir=result.config_dir
+            )
+        )
     if result.stderr.strip():
-        print(_sanitize_lane_output(result.stderr.rstrip()), file=sys.stderr)
+        print(
+            redact_diagnostic(
+                result.stderr.rstrip(), config_dir=result.config_dir
+            ),
+            file=sys.stderr,
+        )
     print(
         f"lane role={result.role} vendor={result.vendor} "
         f"STATUS={result.status} rc={result.returncode}"
@@ -4467,8 +4571,8 @@ def cmd_lane(args: list[str]) -> None:
             session_id=session_id,
             result=result,
         )
-    except (Exception, SystemExit) as exc:  # audit failure cannot change verdict
-        print(f"lane.run write failed: {exc}", file=sys.stderr)
+    except (Exception, SystemExit):  # audit failure cannot change verdict
+        print("lane.run audit write failed", file=sys.stderr)
     finally:
         if lane_store is not None:
             lane_store.close()
@@ -4957,6 +5061,73 @@ def cmd_coordinate(args: list[str]) -> None:
         time.sleep(worker.poll_seconds)
 
 
+def cmd_conflicts(args: list[str]) -> None:
+    """Run the script-owned comment-mandate conflict worker."""
+    from .conflict_mandate_config import load_conflict_config
+
+    sid = None
+    follow = False
+    once = False
+    dry_run = False
+    i = 0
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args) and sid is None:
+            sid = args[i + 1]
+            i += 2
+        elif args[i] == "--follow" and not follow and not once:
+            follow = True
+            i += 1
+        elif args[i] == "--once" and not follow and not once:
+            once = True
+            i += 1
+        elif args[i] == "--dry-run" and not dry_run:
+            dry_run = True
+            i += 1
+        else:
+            die("Usage: agent conflicts --session ID [--once|--follow] [--dry-run]")
+    config = load_conflict_config(home())
+    if sid is None:
+        if not config and not follow:
+            print("conflicts unconfigured")
+            return
+        die("conflicts requires an explicitly selected --session")
+    if sid not in config:
+        die("conflicts session is not configured")
+    from .conflict_mandate import tick
+
+    while True:
+        config = load_conflict_config(home())
+        worker = config.get(sid)
+        if worker is None:
+            print("conflicts disabled by configuration")
+            return
+        store = open_store()
+        try:
+            session = _need(store, "session", sid)
+            _require_owned(store, session, "session")
+            if session.get("status") != "active":
+                die(f"session {sid} is not active")
+            _require_skill(session, "conflicts")
+            for line in tick(store, worker, dry_run=dry_run):
+                print(line, flush=True)
+        except StoreError as exc:
+            if not follow:
+                raise
+            print(f"conflicts error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            store.close()
+        if not follow:
+            return
+        time.sleep(worker.poll_seconds)
+
+
+def cmd_order(args: list[str]) -> None:
+    """Local orders for the coordinator: the command line of the order operations."""
+    from .orders import run_order_command
+
+    run_order_command(args)
+
+
 def cmd_a38(args: list[str]) -> None:
     from .a38 import main as a38_main
 
@@ -5003,6 +5174,8 @@ COMMANDS = {
     "watch": cmd_watch,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
+    "conflicts": cmd_conflicts,
+    "order": cmd_order,
     "github": cmd_github,
     "query": cmd_query,
     "assign": cmd_assign,
@@ -5017,7 +5190,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|assign|subscribe|mail|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate|conflicts|order> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

@@ -16,35 +16,44 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from .coordinator_common import redact as redact_shared
 from .skills import has_skill
 from .store import Store, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 
-_EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
-_BEARER = re.compile(r"(?i)bearer\s+\S+")
-_AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).+")
-_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).+")
-_USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
-_JSON_SECRET = re.compile(
-    r'(?i)("[^"]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[^"]*"\s*:\s*")[^"]*(")'
+_EMAIL = re.compile(
+    r"(?<![A-Z0-9._%+-])[A-Z0-9._%+-]{1,64}@"
+    r"[A-Z0-9.-]{1,253}\.[A-Z]{2,63}",
+    re.I,
 )
-_HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
+_BEARER = re.compile(r"(?i)bearer\s+\S++")
+_AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).++")
+_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).++")
+_USERINFO = re.compile(
+    r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*+://)[^/:@\s]++:[^/@\s]++@"
+)
+_JSON_PAIR = re.compile(
+    r'("([^"]*+)"\s*+:\s*+")((?:[^"\\]++|\\.)*+)(")', re.S
+)
+_HEX = re.compile(r"\b[a-fA-F0-9]{20,}+\b")
 _OTEL_TRACE_ID = re.compile(
-    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])'
+    r'(?i)(\btrace_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
+    r"[0-9a-fA-F]++(?:-[0-9a-fA-F]++)*+(?![-\w])"
 )
 _OTEL_SPAN_ID = re.compile(
     r'(?i)(\b(?:parent_?)?span_?id(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
-    r"[0-9a-fA-F]+(?:-[0-9a-fA-F]+)*(?![-\w])"
+    r"[0-9a-fA-F]++(?:-[0-9a-fA-F]++)*+(?![-\w])"
 )
 _OTEL_TRACEPARENT = re.compile(
-    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+(?![-\w])'
-)
-_SECRET = re.compile(
-    r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9_-]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[A-Za-z0-9_-]*\s*[:=]\s*\S+"
+    r'(?i)(\btraceparent(?:\\?["\'])?\s*[:=]\s*(?:\\?["\'])?)'
+    r"[0-9a-fA-F]++-[0-9a-fA-F]++-[0-9a-fA-F]++-"
+    r"[0-9a-fA-F]++(?![-\w])"
 )
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+_JWT = re.compile(
+    r"\beyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\b"
+)
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _ACCESS_LOG = re.compile(
     r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD|TRACE|CONNECT)\s+\S+\s+\d{3}\b"
 )
@@ -93,6 +102,13 @@ def _is_cred_name(name: object) -> bool:
     if normalized in _CREDENTIAL_KEYS:
         return True
     return any(token in normalized for token in _CREDENTIAL_TOKENS)
+
+
+def _redact_json_secret(match: re.Match[str]) -> str:
+    key = _norm_cred(match.group(2))
+    if any(token in key for token in _CREDENTIAL_TOKENS):
+        return match.group(1) + "[redacted]" + match.group(4)
+    return match.group(0)
 
 
 Fetch = Callable[[dict[str, Any], str | None], tuple[list[dict[str, Any]], str | None]]
@@ -157,7 +173,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def strip_ansi(text: str) -> str:
-    return _ANSI.sub("", text)
+    return sanitize_terminal_text(text)
 
 
 def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:
@@ -180,13 +196,12 @@ def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:
     return False
 
 
-def redact(text: str) -> str:
-    out = _AUTHORIZATION.sub(r"\1[redacted]", text)
+def _redact_error_patterns(text: str) -> str:
+    out = _JSON_PAIR.sub(_redact_json_secret, text)
+    out = _AUTHORIZATION.sub(r"\1[redacted]", out)
     out = _BEARER.sub("[redacted]", out)
     out = _COOKIE.sub(r"\1[redacted]", out)
     out = _USERINFO.sub(r"\1[redacted]@", out)
-    out = _JSON_SECRET.sub(r"\1[redacted]\2", out)
-    out = _SECRET.sub("[redacted]", out)
     out = _AKIA.sub("[redacted]", out)
     out = _JWT.sub("[redacted]", out)
     out = _EMAIL.sub("[redacted]", out)
@@ -195,6 +210,21 @@ def redact(text: str) -> str:
     out = _OTEL_TRACEPARENT.sub(r"\1[redacted]", out)
     out = _HEX.sub("[redacted]", out)
     return out
+
+
+def _matches_error_secret(text: str) -> bool:
+    return _redact_error_patterns(text) != text
+
+
+def redact(text: str) -> str:
+    """Redact raw log text before and after terminal sanitization."""
+    return _redact_error_patterns(
+        redact_shared(
+            text,
+            limit=None,
+            token_secret_matcher=_matches_error_secret,
+        )
+    )
 
 
 def fingerprint(*, service: str, error_class: str, stack_sig: str, environment: str) -> str:
@@ -214,7 +244,7 @@ def error_class(line: str) -> str:
 
 
 def stack_sig(line: str) -> str:
-    norm = redact(strip_ansi(line))
+    norm = redact(line)
     norm = _UUID.sub("", norm)
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
@@ -476,7 +506,7 @@ def _apply_lines(
         repo = item.get("repo")
         if not isinstance(repo, str) or repo == "":
             repo = default_repo if isinstance(default_repo, str) and default_repo else None
-        redacted = redact(strip_ansi(line))
+        redacted = redact(line)
         excerpt = redacted[:500]
         cls = error_class(redacted)
         fp = fingerprint(

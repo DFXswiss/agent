@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.lane import LANE_STRIP_ENV
 from agent_cli.runtime import (
     TARGETS_FILE,
     Completed,
@@ -175,47 +176,20 @@ def test_grok_tmux_argv_unsets_claude_env() -> None:
         model="operator-selected-model",
         new_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     )
-    assert argv[:31] == [
-        "env",
-        "-u",
-        "ANTHROPIC_API_KEY",
-        "-u",
-        "ANTHROPIC_AUTH_TOKEN",
-        "-u",
-        "OPENROUTER_API_KEY",
-        "-u",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "-u",
-        "ANTHROPIC_BASE_URL",
-        "-u",
-        "ANTHROPIC_CUSTOM_HEADERS",
-        "-u",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "-u",
-        "CLAUDE_CODE_USE_VERTEX",
-        "-u",
-        "AWS_BEARER_TOKEN_BEDROCK",
-        "-u",
-        "CLAUDE_CODE_USE_FOUNDRY",
-        "-u",
-        "ANTHROPIC_FOUNDRY_API_KEY",
-        "-u",
-        "ANTHROPIC_FOUNDRY_BASE_URL",
-        "-u",
-        "ANTHROPIC_FOUNDRY_RESOURCE",
-        "-u",
-        "CLAUDECODE",
-        "-u",
-        "CLAUDE_CODE_ENTRYPOINT",
-    ]
-    assert argv[31:] == [
-        "grok",
-        "--always-approve",
-        "--session-id",
-        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-        "--model",
-        "operator-selected-model",
-    ]
+    expected = ["env"]
+    for key in LANE_STRIP_ENV:
+        expected.extend(["-u", key])
+    expected.extend(
+        [
+            "grok",
+            "--always-approve",
+            "--session-id",
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "--model",
+            "operator-selected-model",
+        ]
+    )
+    assert argv == expected
 
 
 def test_grok_rejects_non_uuid_session_id() -> None:
@@ -327,7 +301,15 @@ def test_tmux_prefix_prepended_per_session() -> None:
     assert prefix + ["tmux", "send-keys", "-t", "agent-worker-a", "-l", "--", "hello"] in calls
     calls.clear()
     rt.capture("worker-a")
-    assert prefix + ["tmux", "capture-pane", "-t", "agent-worker-a", "-p", "-e"] in calls
+    assert prefix + [
+        "tmux",
+        "capture-pane",
+        "-t",
+        "agent-worker-a",
+        "-p",
+        "-e",
+        "-J",
+    ] in calls
     calls.clear()
 
     def runner_alive(argv: list[str]) -> Completed:

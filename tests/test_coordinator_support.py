@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from agent_cli.coordinator_common import redact, write_task_text
 from agent_cli.coordinator_config import RepositoryConfig, WorkerConfig
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, utcnow
 from agent_cli.github_act import scan_github as _REAL_SCAN
 
 
@@ -86,6 +89,15 @@ def write_accounts(home: Path) -> None:
     )
 
 
+def write_check_lane(
+    home: Path, vendor: str = "grok", role: str = "rev"
+) -> None:
+    path = home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["sessions"]["worker-session"]["lanes"][f"{vendor}:check"] = role
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
 def make_session(store: Store, sid: str, skills: list[str]) -> None:
     store.write(
         "session",
@@ -121,7 +133,127 @@ def make_worker(root: Path) -> WorkerConfig:
         poll_seconds=30,
         lane_timeout=60,
         check_timeout=30,
+        park_poll_seconds=0,
+        lane_retries=0,
     )
+
+
+def make_order_worker(root: Path, **overrides) -> WorkerConfig:
+    return replace(make_worker(root), orders=True, **overrides)
+
+
+def order_source(order_id: str, **extra) -> dict:
+    source = {
+        "kind": "order",
+        "order_id": order_id,
+        "repo": "example/project",
+        "title": "Add a widget",
+        "body": "Do it",
+        "body_sha256": "0" * 64,
+        "body_chars": 5,
+        "submitted_at": "2026-01-01T00:00:00Z",
+        "submitted_by": "human-owner",
+        "publication_repo": "example/project",
+        "base": "develop",
+    }
+    source.update(extra)
+    return {key: value for key, value in source.items() if value is not None}
+
+
+def seed_order_task(
+    store,
+    worker,
+    order_id: str,
+    *,
+    phase: str,
+    title: str = "Add a widget",
+    text: str = "Do it",
+    **checkpoint,
+) -> dict:
+    from agent_cli.coordinator_runtime import execution_binding
+
+    source = checkpoint.pop("source", None)
+    if source is None:
+        source = order_source(order_id, title=title)
+    sha, chars = write_task_text(worker, order_id, text)
+    source.update(body=redact(text, limit=2000), body_sha256=sha, body_chars=chars)
+    c = {
+        "phase": phase,
+        "source": source,
+        "branch": f"task-{order_id[:8]}",
+        "worker_session": worker.session_id,
+        "worker_login": "worker-bot",
+    }
+    if not source.get("owner_scoped"):
+        c["execution_binding"] = execution_binding(store, worker, source["repo"])
+    c.update(checkpoint)
+    row = {
+        "id": order_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "title": f"{worker.session_id[:8]} - {title[:120]}",
+        "repo": source["repo"],
+        "ref": str(c["pr_number"]) if c.get("pr_number") else None,
+        "payload": {"coordinator": c},
+        "state": "open",
+        "current_round": 0,
+        "models": {"first": "grok", "second": "codex"},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "change_summary_en": None,
+        "change_summary_de": None,
+    }
+    store.write("task", "insert", order_id, row)
+    return store.row("task", order_id)
+
+
+def submit_order(
+    store,
+    worker,
+    *,
+    title: str = "Add a widget",
+    text: str = "Do it",
+    repo: str = "example/project",
+    **kwargs,
+) -> dict:
+    from agent_cli.coordinator_orders import create_order_task
+
+    return create_order_task(
+        store,
+        worker,
+        repo=repo,
+        title=title,
+        text=text,
+        submitted_by="human-owner",
+        **kwargs,
+    )
+
+
+def insert_order_intent(
+    store, worker, order_id: str, kind: str, **payload
+) -> str:
+    intent_id = str(uuid4())
+    values = {
+        "order_id": order_id,
+        "kind": kind,
+        "by": "human-owner",
+        "answers": None,
+        "created_at": utcnow(),
+        **payload,
+    }
+    store.write(
+        "activity",
+        "insert",
+        intent_id,
+        {
+            "id": intent_id,
+            "session_id": worker.session_id,
+            "type": "order.reply",
+            "execution_status": "pending",
+            "payload": values,
+        },
+    )
+    return intent_id
 
 
 class FakeGh:
@@ -130,6 +262,10 @@ class FakeGh:
     def __init__(self) -> None:
         self.comments: list[dict[str, Any]] = []
         self.pr_comments: list[dict[str, Any]] = []
+        self.open_pulls: list[dict[str, Any]] = []
+        self.open_pulls_rc: int = 0
+        self.check_prompts: list[str] = []
+        self.assessment_prompts: list[str] = []
         # Optional multi-page shapes for --paginate --slurp regression coverage.
         # When set, each entry is one GitHub API page (list of items).
         self.issue_pages: list[list[dict[str, Any]]] | None = None
@@ -156,6 +292,7 @@ class FakeGh:
             "isDraft": True,
             "author": {"login": "worker-bot"},
             "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "baseRefName": "develop",
             "mergeable": "MERGEABLE",
             "statusCheckRollup": [],
@@ -199,6 +336,9 @@ class FakeGh:
         self.force_push_attempted = False
         self.git_commands: list[list[str]] = []
         self.commit_used_S = False
+        self.empty_commits = 0
+        self.close_calls = 0
+        self.close_rc = 0
         self.remotes = {}
         self.branch = "develop"
         self.branches = {"develop"}
@@ -208,6 +348,11 @@ class FakeGh:
         self.revoke_one_review_on_pr_comment = False
         self.fail_pr_guard_after_comment = False
         self.ready_calls = 0
+        self.numstat = ""
+        self.numstat_rc = 0
+        self.published_head: str | None = None
+        self.extra_ancestors: set[str] = set()
+        self.resets: list[str] = []
 
     def __call__(self, argv: list[str]) -> Completed:
         if argv and argv[0] == "env":
@@ -230,6 +375,13 @@ class FakeGh:
 
         if argv == ["gh", "api", "user", "--jq", ".login"]:
             return Completed(0, "worker-bot", "")
+
+        if argv[:2] == ["gh", "api"] and "/pulls?state=open" in argv[-1]:
+            if self.open_pulls_rc != 0:
+                return Completed(self.open_pulls_rc, "", "connection reset")
+            if "--slurp" in argv:
+                return Completed(0, json.dumps([self.open_pulls]), "")
+            return Completed(0, json.dumps(self.open_pulls), "")
 
         joined = " ".join(argv)
 
@@ -345,6 +497,13 @@ class FakeGh:
                 )
                 self.revoke_one_review_on_pr_comment = False
             return Completed(0, self.pr_comments[-1]["html_url"], "")
+
+        if argv[:3] == ["gh", "pr", "close"]:
+            self.close_calls += 1
+            if self.close_rc != 0:
+                return Completed(self.close_rc, "", "close refused")
+            self.pr["state"] = "CLOSED"
+            return Completed(0, "", "")
 
         if argv[:3] == ["gh", "pr", "ready"]:
             self.ready_calls += 1
@@ -472,6 +631,10 @@ class FakeGh:
                 return Completed(0, "", "")
             return Completed(1, "", "invalid remote mutation")
         if cmd == "fetch":
+            if "publication" in args:
+                return Completed(
+                    0 if "publication" in self.remotes else 1, "", ""
+                )
             return Completed(0 if "origin" in args and "origin" in self.remotes else 1, "", "")
         if cmd == "rev-parse":
             if "--abbrev-ref" in args:
@@ -480,6 +643,12 @@ class FakeGh:
                 return Completed(0, self.base + "\n", "")
             if args[-1] == "HEAD":
                 return Completed(0, self.head + "\n", "")
+            if args[-1].startswith("refs/remotes/publication/"):
+                return Completed(
+                    0,
+                    (self.published_head or self.pr["headRefOid"]) + "\n",
+                    "",
+                )
             return Completed(1, "", "unknown revision")
         if cmd == "checkout":
             if "-b" in args:
@@ -492,7 +661,17 @@ class FakeGh:
                 return Completed(0, "", "")
             return Completed(1, "", "unexpected checkout mutation")
         if cmd == "merge-base" and "--is-ancestor" in args:
-            return Completed(0 if args[-2] == self.base else 1, "", "")
+            return Completed(
+                0
+                if args[-2] == self.base or args[-2] in self.extra_ancestors
+                else 1,
+                "",
+                "",
+            )
+        if cmd == "reset" and args[1:2] == ["--hard"]:
+            self.resets.append(args[-1])
+            self.head = args[-1]
+            return Completed(0, "", "")
         if cmd == "log":
             return Completed(0, f"{self.head} implement\n" if self.commits_ahead else "", "")
         if cmd == "status":
@@ -501,6 +680,10 @@ class FakeGh:
             self.staged = self.dirty
             return Completed(0, "", "")
         if cmd == "diff":
+            if "--numstat" in args:
+                if self.numstat_rc:
+                    return Completed(self.numstat_rc, "", "fatal: bad revision")
+                return Completed(0, self.numstat, "")
             if "--quiet" in args:
                 return Completed(1 if self.staged else 0, "", "")
             return Completed(0, "", "")
@@ -523,6 +706,13 @@ class FakeGh:
                 )
             return Completed(1, "", f"unhandled git show: {args}")
         if cmd == "commit":
+            if "--allow-empty" in args:
+                self.commit_used_S = "-S" in args
+                self.commits_ahead = True
+                self.head = format((12 + self.commit_count) % 16, 'x') * 40
+                self.commit_count += 1
+                self.empty_commits += 1
+                return Completed(0, "", "")
             if not self.staged:
                 return Completed(1, "", "nothing to commit")
             self.commit_used_S = "-S" in args
@@ -612,7 +802,58 @@ def lane_runner(fake: FakeGh):
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
+        if "--output-last-message" in argv:
+            output = Path(argv[argv.index("--output-last-message") + 1])
+            output.write_text(out, encoding="utf-8")
+            return Completed(0, "", "")
         return Completed(0, out, "")
+
+    return run
+
+
+def order_lane_runner(
+    fake: FakeGh,
+    check_output: str = (
+        "RESULT: no-duplicate\n"
+        "REASON: No listed pull request has the same goal.\n"
+    ),
+    assessment_output: str = (
+        "RESULT: continue\n"
+        "REASON: The findings get narrower.\n"
+    ),
+):
+    ordinary = lane_runner(fake)
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        prompt = stdin
+        if prompt is None and "--prompt-file" in argv:
+            prompt = Path(argv[argv.index("--prompt-file") + 1]).read_text(
+                encoding="utf-8"
+            )
+        if not (prompt or "").startswith("# Role: check"):
+            return ordinary(argv, stdin)
+        if "BEGIN FINDINGS BY ROUND" in (prompt or ""):
+            fake.launched.append("assessment")
+            fake.assessment_prompts.append(prompt or "")
+            output = assessment_output
+        else:
+            fake.launched.append("check")
+            fake.check_prompts.append(prompt or "")
+            output = check_output
+        if "claude" in argv:
+            stream = json.dumps(
+                {"type": "result", "result": output, "usage": {}}
+            ) + "\n"
+            if "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+                wrapper_index = next(
+                    i
+                    for i, value in enumerate(argv)
+                    if "openrouter-api-key" in value
+                )
+                Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
+                return Completed(0, "", "")
+            return Completed(0, stream, "")
+        return Completed(0, output, "")
 
     return run
 

@@ -25,6 +25,11 @@ As soon as the **first signed task commit** exists on the feature branch, **push
 - Before publication, perform only the **basic** secret, scope, and signature checks needed to publish safely. Those are not full test gates.
 - An explicit stop, or missing permission to publish, **blocks** draft publication and must be reported promptly. Do not invent a substitute path.
 
+An empty start commit is allowed only for `draft_on_accept` workers and orders
+of the script-owned coordinator. There the script creates one signed empty
+commit, pushes it and opens the draft before the first implementation lane.
+Everywhere else the first signed task commit carries a patch.
+
 Early draft publication does **not** mark spine checklist keys such as `local_check_pass` or `pushed` as passed, and it does not claim tests, A38 evidence, or reviews are complete. `agent allow --action pr-create` already permits draft creation; no separate runtime switch is required for this rule.
 
 The spine checklist key `pushed` remains **final validated push bookkeeping** after the applicable measured checks for that workflow step. Early draft publication via `pr.open` is allowed independently of that checklist close.

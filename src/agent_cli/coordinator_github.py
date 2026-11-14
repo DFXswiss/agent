@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -31,19 +30,30 @@ from .coordinator_common import (
     CiObservationTransportError,
     CiObservedFailureError,
     CoordinatorError,
+    NonRecoverableCoordinatorError,
+    OUTPUT_BOUND,
     QUESTION_MARKER_PREFIX,
     STATUS_MARKER_PREFIX,
     Runner,
     account_for,
+    a38_model_second,
     as_int,
+    comment_target,
     coord,
     coordinator_env,
+    evidence_base_sha,
     gh_json,
     gh_list,
     is_sha,
+    is_order,
+    order_id,
     redact,
+    redact_tail,
+    reopen_base_bound_checklist,
+    repository_push_permission,
     save_task,
     scoped,
+    source_label,
     strip_row,
     target_repo,
     text,
@@ -56,7 +66,12 @@ from .coordinator_git import (
     repo_cfg,
     verify_signed_clean_head,
 )
-from .coordinator_lanes import invalidate_head_evidence, latest_gates, set_checklist
+from .coordinator_lanes import (
+    invalidate_head_evidence,
+    latest_gates,
+    ordered_snapshot_gates,
+    set_checklist,
+)
 from .github_act import (
     ACTIVITY_MARKER,
     REVIEW_APPROVE_COMMIT_MISMATCH,
@@ -65,7 +80,13 @@ from .github_act import (
 from .github_accounts import AccountError
 from .hub import Hub, HubError
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
+from .pr_lifecycle import (
+    a38_passed_job_names_from_comment,
+    required_check_matches,
+)
+from .preconditions import CHECKS
 from .store import Store, StoreError, utcnow
+from .timestamps import parse_utc_timestamp
 
 # Executor error strings that prove an observed same-marker APPROVE rejection.
 _FORMAL_OBSERVED_REJECTION_ERRORS = frozenset(
@@ -129,8 +150,41 @@ def post_issue_comment(
     body: str,
     kind: str,
     occurrence: str = "",
+    target: str = "issue",
 ) -> str:
     """Publish a deterministic idempotent source-issue status/question comment."""
+    activity_id = queue_issue_comment(
+        store,
+        worker,
+        repo=repo,
+        number=number,
+        body=body,
+        kind=kind,
+        occurrence=occurrence,
+        target=target,
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        err = ""
+        if row is not None:
+            err = redact(str(row.get("execution_error") or row.get("execution_status") or "pending"))
+        raise CoordinatorError(f"issue comment {kind} not verified published: {err}")
+    return activity_id
+
+
+def queue_issue_comment(
+    store: Store,
+    worker: WorkerConfig,
+    *,
+    repo: str,
+    number: int,
+    body: str,
+    kind: str,
+    occurrence: str = "",
+    target: str = "issue",
+) -> str:
+    """Durably queue a deterministic issue comment without executing GitHub."""
     safe = redact(body, limit=2000)
     activity_id = str(
         uuid5(
@@ -146,15 +200,13 @@ def post_issue_comment(
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="comment.post",
-        payload={"repo": repo, "number": number, "body": f"{safe}\n{marker}", "target": "issue"},
+        payload={
+            "repo": repo,
+            "number": number,
+            "body": f"{safe}\n{marker}",
+            "target": target,
+        },
     )
-    execute_github(store, runner, activity_ids=(activity_id,))
-    row = store.row("activity", activity_id)
-    if row is None or row.get("execution_status") != "done":
-        err = ""
-        if row is not None:
-            err = redact(str(row.get("execution_error") or row.get("execution_status") or "pending"))
-        raise CoordinatorError(f"issue comment {kind} not verified published: {err}")
     return activity_id
 
 
@@ -231,15 +283,20 @@ def publish_blocker(
             f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
         )
     try:
+        target = comment_target(task)
+        if target is None:
+            lines.append(f"blocker recorded for {source_label(task)}")
+            return lines
         activity_id = post_issue_comment(
             store,
             worker,
             runner,
-            repo=str(source["repo"]),
-            number=int(source["number"]),
+            repo=target[0],
+            number=target[1],
             body=f"Blocked: {redact(message)}",
             kind=kind,
             occurrence=resolved_occurrence,
+            target=target[2],
         )
         changed = False
         if binding_notice:
@@ -258,7 +315,7 @@ def publish_blocker(
             changed = True
         if changed:
             save_task(store, task)
-        lines.append(f"blocker published on {source['repo']}#{source['number']}")
+        lines.append(f"blocker published on {target[0]}#{target[1]}")
     except (CoordinatorError, StoreError) as exc:
         # These subclass SystemExit — must not be treated as successful publication.
         lines.append(f"blocker publish failed locally visible: {redact(str(exc))}")
@@ -356,15 +413,11 @@ def _owner_repository_config(
         ["gh", "api", f"repos/{repo}", "--jq", ".default_branch"],
         "default branch lookup",
     ))
-    can_push = _gh_jq_text(
-        runner,
-        ["gh", "api", f"repos/{repo}", "--jq", ".permissions.push"],
-        "push permission lookup",
-    ).casefold()
-    if can_push not in {"true", "false"}:
+    can_push = repository_push_permission(runner, repo)
+    if can_push is None:
         raise CoordinatorError("push permission lookup returned neither true nor false")
     publication = repo
-    if can_push == "false":
+    if not can_push:
         publication = f"{login}/{repo.split('/', 1)[1]}"
         if not _fork_repository(
             runner,
@@ -470,7 +523,18 @@ def _mandate_provenance(source: Any) -> dict[str, Any]:
     """Only the assignment's provenance goes into team-visible evidence."""
     if not isinstance(source, dict):
         return {}
-    keys = ("repo", "number", "assignment_actor", "assignment_event_id", "assignment_at", "hub_assignment_row_id")
+    keys = (
+        "repo",
+        "number",
+        "assignment_actor",
+        "assignment_event_id",
+        "assignment_at",
+        "hub_assignment_row_id",
+        "kind",
+        "order_id",
+        "submitted_by",
+        "submitted_at",
+    )
     return {key: source[key] for key in keys if key in source}
 
 
@@ -513,16 +577,7 @@ def _canonical_issue_repo(expected_repo: str, *responses: object) -> str | None:
     return None
 
 
-def _parse_coordinator_time(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
+_parse_coordinator_time = parse_utc_timestamp
 
 
 def _seconds_since(value: object) -> float | None:
@@ -542,6 +597,96 @@ def _hub_assignment_configuration_error(reason: str) -> bool:
         or "http 401" in folded
         or "http 403" in folded
     )
+
+
+def pin_owner_repository(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    scoped_runner: Runner,
+    account: Any,
+    *,
+    base: str | None = None,
+) -> list[str] | None:
+    """Pin the publication route of an owner-scoped source.
+
+    None: the source is not owner-scoped, is already pinned, or was pinned now.
+    A list: the lines the caller returns for this tick.
+    """
+    c = coord(task)
+    source = c["source"]
+    repo = str(source["repo"])
+    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
+        def persist_fork_intent() -> None:
+            if source.get("fork_requested_at") is None:
+                source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+
+        def persist_fork_request_done() -> None:
+            if source.get("fork_request_done_at") is None:
+                source["fork_request_done_at"] = utcnow()
+                save_task(store, task)
+
+        cfg = _owner_repository_config(
+            worker,
+            scoped_runner,
+            repo=repo,
+            login=account.login.casefold(),
+            fork_request_done=source.get("fork_request_done_at") is not None,
+            before_fork_create=persist_fork_intent,
+            after_fork_create=persist_fork_request_done,
+        )
+        if cfg is None:
+            fork_request_done_at = source.get("fork_request_done_at")
+            if fork_request_done_at is None:
+                save_task(store, task)
+                return ["publication fork request not completed; retrying accept"]
+            age = _seconds_since(fork_request_done_at)
+            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
+                save_task(store, task)
+                return ["publication fork not yet visible; retrying accept"]
+            message = (
+                "publication fork did not become visible within "
+                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
+            )
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "publication-fork"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="publication-fork",
+                reply_checkpoint=True,
+            )
+        if base is not None:
+            cfg = replace(cfg, base=validate_base(base))
+        from .coordinator_runtime import execution_binding
+
+        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
+        ai = load_ai_accounts(store.home)
+        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
+        binding = execution_binding(
+            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
+        )
+        source["repository_config"] = {
+            "repo": cfg.repo,
+            "base": cfg.base,
+            "publication_repo": cfg.publication_repo,
+        }
+        source["base"] = cfg.base
+        source["publication_repo"] = cfg.publication_repo
+        c["execution_binding"] = binding
+    return None
 
 
 def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
@@ -711,73 +856,9 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker_publish_kind", None)
         c.pop("blocker_activity_id", None)
         clear_reply_recovery(c)
-    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
-        def persist_fork_intent() -> None:
-            if source.get("fork_requested_at") is None:
-                source["fork_requested_at"] = utcnow()
-                save_task(store, task)
-
-        def persist_fork_request_done() -> None:
-            if source.get("fork_request_done_at") is None:
-                source["fork_request_done_at"] = utcnow()
-                save_task(store, task)
-
-        cfg = _owner_repository_config(
-            worker,
-            scoped_runner,
-            repo=repo,
-            login=account.login.casefold(),
-            fork_request_done=source.get("fork_request_done_at") is not None,
-            before_fork_create=persist_fork_intent,
-            after_fork_create=persist_fork_request_done,
-        )
-        if cfg is None:
-            fork_request_done_at = source.get("fork_request_done_at")
-            if fork_request_done_at is None:
-                save_task(store, task)
-                return ["publication fork request not completed; retrying accept"]
-            age = _seconds_since(fork_request_done_at)
-            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
-                save_task(store, task)
-                return ["publication fork not yet visible; retrying accept"]
-            message = (
-                "publication fork did not become visible within "
-                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
-            )
-            if c.get("blocker") != message:
-                c.pop("blocker_activity_id", None)
-            c["blocker"] = message
-            c["resume_phase"] = "accept"
-            c["phase"] = "blocked"
-            c["blocker_publish_once"] = True
-            c["blocker_publish_kind"] = "publication-fork"
-            save_task(store, task)
-            return publish_blocker(
-                store,
-                worker,
-                task,
-                runner,
-                message,
-                kind="publication-fork",
-                reply_checkpoint=True,
-            )
-        from .coordinator_runtime import execution_binding
-
-        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
-        ai = load_ai_accounts(store.home)
-        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
-            raise CoordinatorError("task model configuration changed before acceptance")
-        binding = execution_binding(
-            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
-        )
-        source["repository_config"] = {
-            "repo": cfg.repo,
-            "base": cfg.base,
-            "publication_repo": cfg.publication_repo,
-        }
-        source["base"] = cfg.base
-        source["publication_repo"] = cfg.publication_repo
-        c["execution_binding"] = binding
+    pinned = pin_owner_repository(store, worker, task, runner, scoped_runner, account)
+    if pinned is not None:
+        return pinned
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))
     body = f"{ACCEPT_BODY}\n{marker}"
@@ -814,17 +895,73 @@ def _rollup_state(check: dict[str, Any]) -> str:
     return ""
 
 
+_WORKFLOW_RUN_STATUSES = CI_PENDING | frozenset({"completed"})
+_WORKFLOW_RUN_CONCLUSIONS = CI_ACTION_REQUIRED | CI_SUCCESS | frozenset(
+    {
+        "cancelled",
+        "failure",
+        "neutral",
+        "skipped",
+        "stale",
+        "startup_failure",
+        "timed_out",
+    }
+)
+
+
+def _validate_workflow_run(item: Any, head: str) -> dict[str, Any]:
+    """Validate one exact-head Actions inventory row before classification."""
+    if not isinstance(item, dict):
+        raise CiInventoryProtocolError("workflow inventory entry is not an object")
+    run_head = item.get("head_sha")
+    path = item.get("path")
+    event = item.get("event")
+    run_id = item.get("id")
+    status = item.get("status")
+    conclusion = item.get("conclusion")
+    attempt = item.get("run_attempt")
+    if (
+        not isinstance(run_head, str)
+        or not is_sha(run_head)
+        or run_head.lower() != head.lower()
+    ):
+        raise CiInventoryProtocolError("workflow inventory entry has invalid head_sha")
+    if not isinstance(path, str) or not path.strip():
+        raise CiInventoryProtocolError("workflow inventory entry has invalid path")
+    if not isinstance(event, str) or not event.strip():
+        raise CiInventoryProtocolError("workflow inventory entry has invalid event")
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid id")
+    if not isinstance(status, str) or status not in _WORKFLOW_RUN_STATUSES:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid status")
+    if "conclusion" not in item:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid conclusion")
+    if status == "completed":
+        if not isinstance(conclusion, str) or conclusion not in _WORKFLOW_RUN_CONCLUSIONS:
+            raise CiInventoryProtocolError(
+                "workflow inventory entry has invalid conclusion"
+            )
+    elif conclusion not in (None, ""):
+        raise CiInventoryProtocolError("workflow inventory entry has invalid conclusion")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
+        raise CiInventoryProtocolError("workflow inventory entry has invalid run_attempt")
+    return item
+
+
 def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[str, Any]]:
     """Paginate Actions runs for an exact head; fail closed on truncation/unknown shape.
 
     Shape / missing ``workflow_runs`` / pagination truncation raise
-    ``CiInventoryProtocolError`` (recoverable blocked + ``resume_phase=ci``).
+    ``CiInventoryProtocolError`` (recoverable blocked; ``resume_phase=ci``, or
+    ``await_merge`` after a merge).
     Transient ``gh_json`` transport failures raise ``CiObservationTransportError``
     so callers can retry the same static phase without a reply gate.
     """
     owner, name = repo.split("/", 1)
     page = 1
     runs: list[dict[str, Any]] = []
+    identities: set[int] = set()
+    total_count: int | None = None
     while page <= 20:
         try:
             raw = gh_json(
@@ -844,14 +981,38 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
         batch = raw.get("workflow_runs")
         if not isinstance(batch, list):
             raise CiInventoryProtocolError("workflow inventory missing workflow_runs")
+        page_total = raw.get("total_count")
+        if (
+            isinstance(page_total, bool)
+            or not isinstance(page_total, int)
+            or page_total < 0
+        ):
+            raise CiInventoryProtocolError("workflow inventory has invalid total_count")
+        if total_count is None:
+            total_count = page_total
+        elif page_total != total_count:
+            raise CiInventoryProtocolError(
+                "workflow inventory has inconsistent total_count"
+            )
         for item in batch:
-            if isinstance(item, dict):
-                runs.append(item)
-        total = as_int(raw.get("total_count"))
-        if total is not None and len(runs) >= total:
+            run = _validate_workflow_run(item, head)
+            identity = run["id"]
+            if identity in identities:
+                raise CiInventoryProtocolError(
+                    f"workflow inventory has duplicate run identity {identity}"
+                )
+            identities.add(identity)
+            runs.append(run)
+        if len(identities) > total_count:
+            raise CiInventoryProtocolError(
+                "workflow inventory contains more runs than total_count"
+            )
+        if len(identities) == total_count:
             break
         if len(batch) < 100:
-            break
+            raise CiInventoryProtocolError(
+                "workflow inventory ended before total_count was reached"
+            )
         page += 1
     else:
         raise CiInventoryProtocolError("workflow inventory pagination truncated")
@@ -884,15 +1045,84 @@ class _CiObservation:
     latest: dict[str, dict[str, Any]] | None = None
 
 
+def _a38_ci_evidence(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], head: str
+) -> frozenset[str]:
+    """Return passing jobs from the verified exact-head author A38 report."""
+    c = coord(task)
+    base = evidence_base_sha(c, a38=True)
+    a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+    report = a38.get("report") if isinstance(a38, dict) else None
+    if not (
+        is_sha(base)
+        and isinstance(report, dict)
+        and report.get("head") == head
+        and report.get("base_sha") == base
+        and report.get("policy_revision") == base
+    ):
+        return frozenset()
+    activity_id = report.get("activity_id")
+    activity = store.row("activity", activity_id) if isinstance(activity_id, str) else None
+    from .coordinator_a38 import _own_report_activity
+
+    payload = activity.get("payload") if isinstance(activity, dict) else None
+    body = payload.get("body") if isinstance(payload, dict) else None
+    if (
+        not isinstance(activity, dict)
+        or not _own_report_activity(store, worker, task, activity, head)
+        or activity.get("execution_status") != "done"
+        or not isinstance(body, str)
+    ):
+        return frozenset()
+    return a38_passed_job_names_from_comment(body, head)
+
+
+def _rollup_workflow_run_id(check: dict[str, Any]) -> int | None:
+    """Read the Actions run identity from a rollup link, never its display name."""
+    for key in ("detailsUrl", "details_url", "link", "url"):
+        value = check.get(key)
+        if not isinstance(value, str):
+            continue
+        match = re.search(r"/actions/runs/([1-9][0-9]*)(?:[/#?]|$)", value)
+        if match is not None:
+            return int(match.group(1))
+    return None
+
+
+def _a38_accepts_actual_check(
+    actual_check_name: object,
+    conclusion: object,
+    *,
+    passed_names: frozenset[str],
+) -> bool:
+    """Match a skipped/neutral GitHub check to a passing reported A38 job."""
+    return (
+        isinstance(actual_check_name, str)
+        and conclusion in {"skipped", "neutral"}
+        and any(
+            required_check_matches(actual_check_name, report_name)
+            for report_name in passed_names
+        )
+    )
+
+
 def _classify_rollup_and_inventory(
     rollup: list[Any],
     latest: dict[str, dict[str, Any]],
+    *,
+    passed_a38: frozenset[str] = frozenset(),
 ) -> _CiObservation:
     """Classify fetched rollup+inventory facts. Never guesses from log text."""
     pending = False
     failures: list[str] = []
     action_required: list[str] = []
     successes = 0
+    inventory_keys_by_run: dict[int, list[str]] = {}
+    for key, run in latest.items():
+        run_id = as_int(run.get("id"))
+        if run_id is not None and run_id > 0:
+            inventory_keys_by_run.setdefault(run_id, []).append(key)
+    report_covered_inventory_keys: set[str] = set()
 
     for check in rollup:
         if not isinstance(check, dict):
@@ -905,8 +1135,18 @@ def _classify_rollup_and_inventory(
             action_required.append(name)
         elif state in CI_SUCCESS:
             successes += 1
+        elif _a38_accepts_actual_check(
+            name,
+            state,
+            passed_names=passed_a38,
+        ):
+            successes += 1
+            run_id = _rollup_workflow_run_id(check)
+            matching_keys = inventory_keys_by_run.get(run_id or 0, [])
+            if len(matching_keys) == 1:
+                report_covered_inventory_keys.add(matching_keys[0])
         else:
-            # cancelled/skipped/failure/neutral/pass/passing — not success here.
+            # Cancelled, failed, pending, and uncovered skipped/neutral stay strict.
             failures.append(f"{name}:{state or 'unknown'}")
 
     for key, run in latest.items():
@@ -919,6 +1159,11 @@ def _classify_rollup_and_inventory(
         if conclusion in CI_ACTION_REQUIRED:
             action_required.append(path)
         elif conclusion in CI_SUCCESS:
+            successes += 1
+        elif (
+            conclusion in {"skipped", "neutral"}
+            and key in report_covered_inventory_keys
+        ):
             successes += 1
         else:
             failures.append(f"{path}:{conclusion or 'unknown'}")
@@ -944,13 +1189,35 @@ def _classify_rollup_and_inventory(
             latest=latest,
         )
     rollup_ok = any(
-        isinstance(check, dict) and _rollup_state(check) in CI_SUCCESS for check in rollup
+        isinstance(check, dict)
+        and (
+            _rollup_state(check) in CI_SUCCESS
+            or _a38_accepts_actual_check(
+                str(check.get("name") or check.get("context") or "check"),
+                _rollup_state(check),
+                passed_names=passed_a38,
+            )
+        )
+        for check in rollup
     )
     inventory_ok = any(
-        str(run.get("status") or "") == "completed" and str(run.get("conclusion") or "") in CI_SUCCESS
-        for run in latest.values()
+        str(run.get("status") or "") == "completed"
+        and (
+            str(run.get("conclusion") or "") in CI_SUCCESS
+            or (
+                str(run.get("conclusion") or "") in {"skipped", "neutral"}
+                and key in report_covered_inventory_keys
+            )
+        )
+        for key, run in latest.items()
     )
-    if not rollup or not latest or not rollup_ok or not inventory_ok or successes <= 0:
+    if (
+        not rollup
+        or not latest
+        or not rollup_ok
+        or not inventory_ok
+        or successes <= 0
+    ):
         return _CiObservation(
             "pending",
             "incomplete rollup/inventory success evidence",
@@ -967,6 +1234,7 @@ def _observe_exact_head_ci(
     head: str,
     *,
     fields: str,
+    passed_a38: frozenset[str] = frozenset(),
 ) -> _CiObservation:
     """Shared exact-head CI observation for ``phase_ci`` and Ready-side rechecks."""
     try:
@@ -984,8 +1252,8 @@ def _observe_exact_head_ci(
         )
     rollup = pr.get("statusCheckRollup")
     # Absent rollup must not skip head workflow inventory: action_required (and
-    # actual failures) may exist only in inventory. Empty rollup still cannot
-    # be green, but inventory facts remain visible to classification.
+    # actual failures) may exist only in inventory. Empty rollup cannot be
+    # green, but inventory facts remain visible to classification.
     if rollup is None:
         rollup = []
     elif not isinstance(rollup, list):
@@ -1000,29 +1268,30 @@ def _observe_exact_head_ci(
         # Defensive: any other typed command failure stays transport, not reply-gated.
         return _CiObservation("transport", "inventory temporarily unavailable")
     latest = _latest_run_attempts(runs, head)
-    return _classify_rollup_and_inventory(rollup, latest)
+    return _classify_rollup_and_inventory(
+        rollup,
+        latest,
+        passed_a38=passed_a38,
+    )
 
 
 def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dict[str, Any]]:
-    """Disambiguate by workflow path + event; keep highest attempt/id per key."""
+    """Keep the newest run id per path/event and the newest attempt of that run."""
     latest: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        if str(run.get("head_sha") or "").lower() != head.lower():
-            continue
-        path = run.get("path")
-        event = run.get("event") or ""
-        if not isinstance(path, str) or not path:
-            continue
+    for item in runs:
+        run = _validate_workflow_run(item, head)
+        path = run["path"]
+        event = run["event"]
         key = f"{path}|{event}"
         prev = latest.get(key)
-        run_attempt = as_int(run.get("run_attempt")) or 0
-        run_id = as_int(run.get("id")) or 0
+        run_attempt = run["run_attempt"]
+        run_id = run["id"]
         if prev is None:
             latest[key] = run
             continue
-        prev_attempt = as_int(prev.get("run_attempt")) or 0
-        prev_id = as_int(prev.get("id")) or 0
-        if run_attempt > prev_attempt or (run_attempt == prev_attempt and run_id > prev_id):
+        prev_attempt = prev["run_attempt"]
+        prev_id = prev["id"]
+        if run_id > prev_id or (run_id == prev_id and run_attempt > prev_attempt):
             latest[key] = run
     return latest
 
@@ -1092,7 +1361,7 @@ def fetch_failure_logs(
             inaccessible = True
             chunks.append(f"{path}: logs inaccessible (archive, not plain text)")
             continue
-        chunks.append(redact(raw[:1500]))
+        chunks.append(redact_tail(raw, limit=1500))
     if inaccessible and not any("logs inaccessible" not in c for c in chunks):
         return "failing workflow logs inaccessible"
     if not chunks:
@@ -1100,12 +1369,19 @@ def fetch_failure_logs(
     return "\n".join(chunks)
 
 
+def _ci_failure_findings(head: str, failures: list[str], logs: str) -> str:
+    """The failed checks first, then the end of their logs."""
+    header = redact(f"CI failed on {head[:7]}:\n" + "\n".join(failures), limit=1000)
+    return header + "\n" + redact_tail(logs, limit=OUTPUT_BOUND - len(header) - 1)
+
+
 def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     """Exact-head PR check rollup AND head workflow inventory. Fail closed.
 
     This core observes cumulative GitHub CI targets only. Target-repository
-    policy / A38 live join belongs to configured readiness_argv. No generic
-    cancelled/skipped bypass. Empty or malformed evidence is not green.
+    policy / A38 live join belongs to configured readiness_argv. A verified
+    exact-head A38 report may cover matching skipped/neutral required checks;
+    there is no generic cancelled/failed/pending bypass. Empty or malformed evidence is not green.
     Absent ``statusCheckRollup`` is treated as ``[]`` and inventory is still
     inspected so inventory-only ``action_required`` / failures stay visible.
     action_required is an authorization blocker, not a source-code failure.
@@ -1120,12 +1396,17 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
     if number is None or not head:
         raise CoordinatorError("CI observation requires PR number and head")
     scoped_runner = scoped(store, worker.session_id, runner)
+    passed_a38 = (
+        _a38_ci_evidence(store, worker, task, head)
+        if worker.a38 else frozenset()
+    )
     obs = _observe_exact_head_ci(
         scoped_runner,
         target,
         number,
         head,
         fields="statusCheckRollup,headRefOid,state,isDraft,author,baseRefName,mergeable",
+        passed_a38=passed_a38,
     )
     if obs.kind == "transport":
         # Transient PR-view / inventory transport: same static ci phase.
@@ -1156,6 +1437,11 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         )
     if obs.kind == "action_required":
         names = list(obs.action_required)
+        if worker.a38:
+            return [
+                f"CI authorization pending on {head[:7]} (guard-owned): "
+                + ", ".join(names[:5])
+            ]
         c["phase"] = "blocked"
         c["resume_phase"] = "ci"
         c["blocker"] = "CI action_required (external authorization)"
@@ -1190,7 +1476,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
                 kind="ci-logs",
                 reply_checkpoint=True,
             )
-        c["findings"] = redact(f"CI failed on {head[:7]}:\n" + "\n".join(failures) + "\n" + logs)
+        c["findings"] = _ci_failure_findings(head, failures, logs)
         c["phase"] = "implement"
         task["state"] = "implementing"
         evidence = c.setdefault("evidence", {})
@@ -1237,12 +1523,17 @@ def _fresh_ci_still_green(
     if number is None:
         raise CoordinatorError("CI recheck requires PR number")
     scoped_runner = scoped(store, worker.session_id, runner)
+    passed_a38 = (
+        _a38_ci_evidence(store, worker, task, head)
+        if worker.a38 else frozenset()
+    )
     obs = _observe_exact_head_ci(
         scoped_runner,
         target,
         number,
         head,
         fields="statusCheckRollup,headRefOid",
+        passed_a38=passed_a38,
     )
     if obs.kind == "green":
         return None
@@ -1252,6 +1543,11 @@ def _fresh_ci_still_green(
         raise CoordinatorError("PR head changed during readiness")
     if obs.kind == "protocol":
         raise CiObservationProtocolError(obs.detail)
+    if obs.kind == "action_required" and worker.a38:
+        return (
+            f"CI authorization pending on {head[:7]} (guard-owned); "
+            "retrying without Ready"
+        )
     if obs.kind == "action_required":
         raise CoordinatorError(
             "CI action_required on recheck: " + ", ".join(obs.action_required[:5])
@@ -1313,6 +1609,17 @@ def _apply_readiness_checklist(
             )
         source_raw = coord(task).get("source")
         source = source_raw if isinstance(source_raw, dict) else {}
+        if is_order(task):
+            set_checklist(
+                store, task, "contributing_ok", "ja", f"conformity-a approved at {head}", source="script"
+            )
+            evidence = (
+                f"order {order_id(task)} submitted by {source.get('submitted_by')}: "
+                "orders declare no deviation"
+            )
+            set_checklist(store, task, "deviation_declared", "n_a", evidence, source="human")
+            set_checklist(store, task, "deviation_granted", "n_a", evidence, source="human")
+            return
         assignment_actor_raw = text(source.get("assignment_actor"))
         assignment_actor = assignment_actor_raw.strip() if assignment_actor_raw else None
         assignment_event_id = source.get("assignment_event_id")
@@ -1472,7 +1779,51 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head changed before readiness"]
 
-    base_sha = str(c.get("base_sha") or "")
+    target = target_repo(task)
+    number = as_int(c.get("pr_number"))
+    if number is None:
+        raise CoordinatorError("readiness requires PR number")
+    scoped_runner = scoped(store, worker.session_id, runner)
+    if worker.a38:
+        try:
+            before_readiness = _fetch_pr_json(
+                scoped_runner,
+                target,
+                number,
+                "headRefOid,baseRefOid",
+            )
+        except CiObservationTransportError:
+            c["phase"] = "readiness"
+            save_task(store, task)
+            return [
+                f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"
+            ]
+        if not isinstance(before_readiness, dict):
+            raise CoordinatorError("PR view failed")
+        if str(before_readiness.get("headRefOid") or "").lower() != head:
+            raise CoordinatorError("PR head does not match clean signed head")
+        observed_base = str(before_readiness.get("baseRefOid") or "").lower()
+        from .coordinator_a38 import _reconcile_pending_base, invalidate_base_evidence
+
+        if _reconcile_pending_base(store, task, observed_base):
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return [
+                "PR base changed before readiness; invalidating A38 report evidence"
+            ]
+        a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+        promoted_base = str(a38_state.get("base_sha") or "").lower()
+        if not is_sha(promoted_base) or observed_base != promoted_base:
+            invalidate_base_evidence(store, task, observed_base)
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return [
+                "PR base changed before readiness; invalidating A38 report evidence"
+            ]
+
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     readiness = _readiness_for_head(
         worker,
         task,
@@ -1490,17 +1841,12 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head modified by readiness; invalidating evidence"]
 
-    target = target_repo(task)
-    number = as_int(c.get("pr_number"))
-    if number is None:
-        raise CoordinatorError("readiness requires PR number")
-    scoped_runner = scoped(store, worker.session_id, runner)
     try:
         pr = _fetch_pr_json(
             scoped_runner,
             target,
             number,
-            "headRefOid,baseRefName,author,isDraft,state,mergeable",
+            "headRefOid,baseRefOid,baseRefName,author,isDraft,state,mergeable",
         )
     except CiObservationTransportError:
         # Unavailable fetch ≠ known mismatched identity/base/signature.
@@ -1513,6 +1859,27 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     account = account_for(store, worker.session_id)
     if str(pr.get("headRefOid") or "").lower() != head:
         raise CoordinatorError("PR head does not match clean signed head")
+    if worker.a38:
+        observed_base = str(pr.get("baseRefOid") or "").lower()
+        from .coordinator_a38 import _reconcile_pending_base
+
+        if _reconcile_pending_base(store, task, observed_base):
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return [
+                "PR base changed before readiness; invalidating A38 report evidence"
+            ]
+        a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+        promoted_base = str(a38_state.get("base_sha") or "").lower()
+        if not is_sha(promoted_base) or observed_base != promoted_base:
+            from .coordinator_a38 import invalidate_base_evidence
+
+            invalidate_base_evidence(store, task, observed_base)
+            c = coord(task)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return ["PR base changed before readiness; invalidating A38 report evidence"]
     author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
     if str(author.get("login") or "").casefold() != account.login.casefold():
         raise CoordinatorError("PR author does not match configured worker login")
@@ -1529,7 +1896,15 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         raise CoordinatorError("PR must still be draft before readiness completes")
 
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
-    if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
+    if worker.a38:
+        from .coordinator_a38 import local_test_gate_satisfied
+
+        tests_satisfied = local_test_gate_satisfied(task, head)
+    else:
+        tests_satisfied = bool(
+            evidence.get("tests_pass") and evidence.get("tests_head") == head
+        )
+    if not tests_satisfied:
         raise CoordinatorError("tests not green on current head")
     retry = _fresh_ci_still_green(store, worker, task, runner, head)
     if retry is not None:
@@ -1542,9 +1917,25 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     models = _task_models(task)
     if worker.a38:
         from .coordinator_a38 import require_ready_evidence
+        from .coordinator_checks import second_review_waived
 
-        require_ready_evidence(store, task, head)
-        gate_pairs = tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
+        model_second = a38_model_second(c)
+        waived = second_review_waived(store, task)
+        if not require_ready_evidence(
+            store,
+            task,
+            head,
+            model_second=model_second,
+            second_waived=waived,
+        ):
+            return [
+                f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
+            ]
+        gate_pairs = (
+            tuple(GATE_PAIRS)
+            if model_second and not waived
+            else tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
+        )
     else:
         skip_second = _second_review_skip(
             store, worker, task, runner, phase="readiness", head=head
@@ -1817,8 +2208,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
             continue
         latest_by_name[str(name)] = item
     local_checks = [{"name": name, "result": item.get("result")} for name, item in latest_by_name.items()]
-    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    gates_raw.sort(key=lambda g: g.get("recorded_at") or "")
+    gates_raw = ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -1867,20 +2257,13 @@ def _both_second_reviews_na(store: Store, task_id: str) -> bool:
     return both_second_reviews_na(statuses, evidence)
 
 
-def _trusted_done_review(
+def _trusted_review_config(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> tuple[str, dict[str, Any] | None]:
-    """Live opener and trusted config for a done decision.
+    """Live opener and trusted pr-guard file.
 
-    One review is enough only when the pull request opener is listed in
-    one_review_authors in the trusted .github/pr-guard.json on the default
-    branch. A missing file, a missing key, or an empty list keeps two reviews
-    required. An entry that exists only on the pull request head does not count.
-    A stored payload copy is not this decision. A lookup failure raises
-    ``CiObservationTransportError``.
+    A lookup failure raises ``CiObservationTransportError``.
     """
-    if not _both_second_reviews_na(store, task["id"]):
-        return "", None
     target = target_repo(task)
     number = as_int(coord(task).get("pr_number"))
     if number is None or not target:
@@ -1896,6 +2279,23 @@ def _trusted_done_review(
     except PrGuardLookupError as exc:
         raise CiObservationTransportError("trusted pr-guard file could not be read") from exc
     return login, config
+
+
+def _trusted_done_review(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> tuple[str, dict[str, Any] | None]:
+    """Live opener and trusted config for a done decision.
+
+    One review is enough only when the pull request opener is listed in
+    one_review_authors in the trusted .github/pr-guard.json on the default
+    branch. A missing file, a missing key, or an empty list keeps two reviews
+    required. An entry that exists only on the pull request head does not count.
+    A stored payload copy is not this decision. A lookup failure raises
+    ``CiObservationTransportError``.
+    """
+    if not _both_second_reviews_na(store, task["id"]):
+        return "", None
+    return _trusted_review_config(store, worker, task, runner)
 
 
 def _opener_one_review(
@@ -2196,6 +2596,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if pr.get("isDraft") is not True:
         # Already left draft — verify and continue only with matching head.
         if pr.get("isDraft") is False and str(pr.get("state") or "").upper() == "OPEN":
+            if is_order(task):
+                c.setdefault("evidence", {})["ready_head"] = head
             c["phase"] = "await_merge"
             save_task(store, task)
             return [f"already ready {target}#{number}; awaiting human merge"]
@@ -2388,7 +2790,7 @@ def _close_readiness_after_merge(
     )
     if local_head != head:
         raise CoordinatorError("merged PR head does not match clean signed readiness head")
-    base_sha = str(c.get("base_sha") or "")
+    base_sha = evidence_base_sha(c, a38=worker.a38)
     readiness = _readiness_for_head(
         worker,
         task,
@@ -2432,6 +2834,43 @@ def _block_merged_readiness(
     )
 
 
+def _block_merged_ci(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+    observation: _CiObservation,
+) -> list[str]:
+    """Stop a merged A38 task whose cumulative exact-head CI is not green."""
+    if observation.kind == "failed":
+        detail = ", ".join(observation.failures[:5]) or observation.detail
+    elif observation.kind == "action_required":
+        detail = ", ".join(observation.action_required[:5]) or observation.detail
+    elif observation.kind == "head_changed":
+        detail = "CI observation returned a different PR head"
+    else:
+        detail = observation.detail or observation.kind
+    message = (
+        "task-done refused: cumulative GitHub CI is not green on merged head "
+        f"{head} ({detail}); the merged task requires human intervention"
+    )
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["blocker"] = message
+    clear_reply_recovery(c)
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        message,
+        kind="merged-ci-non-green",
+    )
+
+
 def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     target = target_repo(task)
@@ -2446,6 +2885,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     )
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
+        second_review_wait: list[str] | None = None
         sha = str(info.get("merge_commit_sha") or "")
         merged_at = str(info.get("merged_at") or "")
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
@@ -2476,8 +2916,97 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
+        if worker.a38:
+            moved_base = c.get("base_moved_after_evidence")
+            if isinstance(moved_base, dict):
+                old_base = str(moved_base.get("old_base") or "")
+                new_base = str(moved_base.get("new_base") or "")
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base moved after evidence from "
+                    f"{old_base or 'unknown'} to {new_base or 'unknown'}; "
+                    "a merged PR cannot be remeasured"
+                )
+            observed_base = str((info.get("base") or {}).get("sha") or "").lower()
+            a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+            saved_base = str(a38.get("base_sha") or "").lower()
+            if not is_sha(observed_base):
+                return ["merge observed but base SHA missing or invalid"]
+            pending_base = str(a38.get("pending_base_sha") or "").lower()
+            if pending_base:
+                from .coordinator_a38 import mark_base_moved_after_evidence
+
+                if is_sha(saved_base) and saved_base != observed_base:
+                    mark_base_moved_after_evidence(
+                        c, old_base=saved_base, new_base=observed_base
+                    )
+                reopen_base_bound_checklist(store, task)
+                save_task(store, task)
+                if is_sha(saved_base) and saved_base != observed_base:
+                    raise NonRecoverableCoordinatorError(
+                        "task-done refused: merged PR base moved after evidence from "
+                        f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
+                    )
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base evidence was still pending; "
+                    "a merged PR cannot be remeasured"
+                )
+            if not is_sha(saved_base) or observed_base != saved_base:
+                from .coordinator_a38 import mark_base_moved_after_evidence
+
+                if not is_sha(saved_base):
+                    clear_reply_recovery(c)
+                    raise NonRecoverableCoordinatorError(
+                        "task-done refused: merged PR has no trusted evidence base; "
+                        f"observed base {observed_base}"
+                    )
+                mark_base_moved_after_evidence(
+                    c, old_base=saved_base, new_base=observed_base
+                )
+                reopen_base_bound_checklist(store, task)
+                save_task(store, task)
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base moved after evidence from "
+                    f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
+                )
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
-            raise CoordinatorError("merged PR head differs from reviewed head")
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
+        if worker.a38:
+            from .coordinator_a38 import merged_base_evidence_satisfied
+
+            if not merged_base_evidence_satisfied(
+                store,
+                task,
+                head=expected_head,
+                base_sha=observed_base,
+            ):
+                reopen_base_bound_checklist(store, task)
+                save_task(store, task)
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR has no report or waiver evidence "
+                    f"bound to base {observed_base}; a merged PR cannot be remeasured"
+                )
+            from .coordinator_checks import second_review_waived
+
+            second_review = (
+                "passed"
+                if second_review_waived(store, task)
+                else _a38_second_review_outcome(c, expected_head)
+            )
+            if second_review != "passed":
+                second_review_wait = _await_second_review_after_merge(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    expected_head,
+                    blocking=second_review == "blocking",
+                )
+                if c.get("phase") == "blocked":
+                    return second_review_wait
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -2486,6 +3015,54 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 "human merge observed; task-done blocked: missing change summaries "
                 "describing the actual result"
             ]
+        if worker.a38:
+            passed_a38 = _a38_ci_evidence(
+                store, worker, task, expected_head
+            )
+            ci_observation = _observe_exact_head_ci(
+                scoped_runner,
+                target,
+                number,
+                expected_head,
+                fields="statusCheckRollup,headRefOid",
+                passed_a38=passed_a38,
+            )
+            if ci_observation.kind in ("pending", "transport"):
+                return [
+                    "human merge observed; cumulative GitHub CI "
+                    f"{ci_observation.detail} on {expected_head[:7]}; "
+                    "retrying await_merge"
+                ]
+            if ci_observation.kind == "protocol":
+                c = coord(task)
+                c["phase"] = "blocked"
+                c["resume_phase"] = "await_merge"
+                c["blocker"] = ci_observation.detail
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    ci_observation.detail,
+                    kind=(
+                        "ci-inventory"
+                        if ci_observation.detail.startswith("CI inventory:")
+                        else "ci-rollup"
+                    ),
+                    reply_checkpoint=True,
+                )
+            if ci_observation.kind != "green":
+                return _block_merged_ci(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    head=expected_head,
+                    observation=ci_observation,
+                )
+        if second_review_wait is not None:
+            return second_review_wait
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -2505,16 +3082,6 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             )
             return ["trusted review list could not be read; retrying await_merge"]
         if worker.a38:
-            second_review = _a38_second_review_outcome(c, expected_head)
-            if second_review != "passed":
-                return _await_second_review_after_merge(
-                    store,
-                    worker,
-                    task,
-                    runner,
-                    expected_head,
-                    blocking=second_review == "blocking",
-                )
             if not _readiness_keys_closed(store, task, expected_head):
                 try:
                     _close_readiness_after_merge(
@@ -2603,6 +3170,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
 def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
     """Return "blocking", "passed" or "missing" from the newest posted second review of head."""
     a38 = c.get("a38")
+    if a38_model_second(c):
+        comment = a38.get("second_comment")
+        if not isinstance(comment, dict) or comment.get("head") != head:
+            return "missing"
+        return "blocking" if comment.get("blocks_merge") is True else "passed"
     state = a38.get("second_review") if isinstance(a38, dict) else None
     if not isinstance(state, dict) or state.get("head") != head or state.get("status") != "posted":
         return "missing"
@@ -2625,14 +3197,16 @@ def _await_second_review_after_merge(
     *,
     blocking: bool,
 ) -> list[str]:
-    """A merge can land before the external second review (the guard sets Ready
-    without it). Keep accepting that review for the merged head for one review
-    timeout, then stop with a visible, non-recoverable blocker. A blocking review
-    of the merged head stops at once."""
+    """Handle a merged head whose required second review is missing or blocking."""
     c = coord(task)
+    model = a38_model_second(c)
     if blocking:
         c["phase"] = "blocked"
-        c["blocker"] = f"merged although the external second review blocks the merge on {head}"
+        c["blocker"] = (
+            f"merged although the model second review blocks the merge on {head}"
+            if model
+            else f"merged although the external second review blocks the merge on {head}"
+        )
         clear_reply_recovery(c)
         save_task(store, task)
         return publish_blocker(
@@ -2640,8 +3214,26 @@ def _await_second_review_after_merge(
             worker,
             task,
             runner,
-            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            (
+                f"Pull request was merged on {head[:7]} although the model second review blocks the merge."
+                if model
+                else f"Pull request was merged on {head[:7]} although the external second review blocks the merge."
+            ),
             kind="merged-with-blocking-second-review",
+        )
+    if model:
+        # No model review can arrive after the merge; do not wait.
+        c["phase"] = "blocked"
+        c["blocker"] = f"merged before the model second review was posted on {head}"
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} before the model second review was posted.",
+            kind="merged-without-second-review",
         )
     a38 = c.setdefault("a38", {})
     stamp = utcnow()
@@ -2667,6 +3259,36 @@ def _await_second_review_after_merge(
         f"Pull request was merged on {head[:7]} without an external second review.",
         kind="merged-without-second-review",
     )
+
+
+def apply_authorized_replies(
+    store: Store,
+    task: dict[str, Any],
+    new_replies: list[str],
+    *,
+    consumed_through: int | None = None,
+) -> list[str]:
+    """Store authorized replies and resume the phase saved at the question or blocker."""
+    c = coord(task)
+    existing = c.get("authorized_replies")
+    if not isinstance(existing, list):
+        existing = []
+    existing.extend(new_replies)
+    c["authorized_replies"] = existing
+    if consumed_through is not None:
+        c["replies_consumed_through"] = consumed_through
+    # Resume the exact safe script phase persisted at the blocker — never blindly
+    # start implement for CI authorization / checkout / acceptance administrative issues.
+    resume = str(c.get("resume_phase") or "")
+    c["phase"] = resume
+    c.pop("resume_phase", None)
+    c.pop("blocker_publish_once", None)
+    c.pop("blocker_publish_kind", None)
+    c.pop("blocker_activity_id", None)
+    if resume == "implement":
+        task["state"] = "implementing"
+    save_task(store, task)
+    return [f"consumed {len(new_replies)} authorized reply(ies); resuming {c['phase']}"]
 
 
 def phase_read_replies(
@@ -2695,12 +3317,18 @@ def phase_read_replies(
         source = c.get("source") if isinstance(c.get("source"), dict) else {}
         repo = str(source.get("repo") or "?")
         number = source.get("number") or "?"
+        label = source_label(task) if is_order(task) else f"{repo}#{number}"
         return [
-            f"blocked: no eligible resume_phase for reply recovery on {repo}#{number}"
+            f"blocked: no eligible resume_phase for reply recovery on {label}"
         ]
-    source = c["source"]
-    repo = str(source["repo"])
-    number = int(source["number"])
+    failed_key = str(c.get("failed_check") or "")
+    failed = CHECKS.get(failed_key)
+    if failed is not None and failed.on_no == "question:override":
+        return [f"waiting for override of {failed_key}"]
+    target = comment_target(task)
+    if target is None:
+        return [f"waiting for order reply on {order_id(task)}"]
+    repo, number = target[0], target[1]
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     comments = gh_list(
@@ -2765,24 +3393,9 @@ def phase_read_replies(
 
     if not new_replies:
         return [f"waiting for authorized reply on {repo}#{number}"]
-    existing = c.get("authorized_replies")
-    if not isinstance(existing, list):
-        existing = []
-    existing.extend(new_replies)
-    c["authorized_replies"] = existing
-    c["replies_consumed_through"] = last_id
-    # Resume the exact safe script phase persisted at the blocker — never blindly
-    # start implement for CI authorization / checkout / acceptance administrative issues.
-    resume = str(c.get("resume_phase") or "")
-    c["phase"] = resume
-    c.pop("resume_phase", None)
-    c.pop("blocker_publish_once", None)
-    c.pop("blocker_publish_kind", None)
-    c.pop("blocker_activity_id", None)
-    if resume == "implement":
-        task["state"] = "implementing"
-    save_task(store, task)
-    return [f"consumed {len(new_replies)} authorized reply(ies); resuming {c['phase']}"]
+    return apply_authorized_replies(
+        store, task, new_replies, consumed_through=last_id
+    )
 
 
 def phase_blocked(

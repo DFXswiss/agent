@@ -92,6 +92,10 @@ itself explicitly:
 Agent does not provide its own remote lane transport or workspace mirroring.
 The local harness's lane starter starts the Agent lane command on the external
 lane host, with its workspace and provider configuration already present there.
+Every lane child, including subprocess, tmux, and injected-runner paths, clears
+the four GitHub token environment variables and receives a fresh empty temporary
+`GH_CONFIG_DIR` that exists for the lifetime of that child. It never inherits an
+ambient `gh` login from the lane host.
 Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
 the `models` and `lane_execution` checks pass. The `remote` mode, remote
 manifests, and copy-back are not supported by Agent.
@@ -113,8 +117,11 @@ for a lane started elsewhere does not need it.
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
-`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`) and from the supported
-provider adapters (`grok`, `codex`, `claude`, `openrouter`). Those workflow kinds and adapters
+`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, `check`) and from the supported
+provider adapters (`grok`, `codex`, `claude`, `openrouter`). The `check` kind is
+read-only and is required for the provider of model slot `first` when a worker
+enables orders, through lane slot `<first>:check`. The implementer and first
+review roles of that worker must name one model. Those workflow kinds and adapters
 are protocol capabilities used when resolving a lane slot, not preinstalled user
 roles.
 
@@ -128,7 +135,8 @@ of each review slot:
 - `first`: `grok`, `codex`, `claude` or `openrouter`
 - `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
   or JSON `null` when an A38 coordinator worker obtains the second review
-  externally
+  externally. An A38 worker with `a38_second_review: "model"` sets `second` to
+  a provider.
 
 The optional top-level `implementer` names the implementation provider. It may
 be `grok`, `codex`, `claude`, `openrouter`, or `deepseek`. It must differ from
@@ -160,7 +168,8 @@ cannot start a new lane or write a new agent or gate row.
 `agent models` prints `second=external` (or `external` for the selected slot)
 for a pinned null second slot; JSON output preserves `null`. A null second slot
 does not authorize an ordinary workflow to omit a review. The issue coordinator
-accepts it only for a worker with explicit A38 mode and external reviewers.
+accepts it only for a worker with explicit A38 mode and external reviewers. An
+A38 worker with `a38_second_review: "model"` sets `second` to a provider.
 
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). When the configured implementer differs from
@@ -215,6 +224,86 @@ every added read directory. Launch is refused when those paths overlap. Claude
 Code's reported token counts and tool calls are stored in `lane.run`; its
 Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
 not OpenRouter prices.
+Stored file-tool targets are fail-closed host evidence. Complete terminal
+escapes are removed, separators are normalized, and regex backslash escapes are
+removed first. A target containing `..` anywhere, `~`, a drive fragment, or `/`
+at the start or immediately after a character outside `[A-Za-z0-9._-]` is stored
+as `[redacted]`. A target containing a numeric or named escape (`\x`, `\u`,
+`\U`, `\N{`, octal `\0` through `\7`, or `\c`) is also fully redacted without
+decoding. Any percent escape of the form `%HH` is likewise fully redacted before
+normalization, for both path and pattern targets; it is never decoded. A drive
+fragment is one ASCII letter followed by `:` at that
+same boundary, regardless of whether `/` follows. The only absolute-path
+exception is a single plain whole target with no whitespace or regex
+metacharacters other than glob `*`, `?`, `[` and `]`, starting with the absolute
+worktree plus `/`; its relative remainder must pass the same checks and is then
+stored worktree-relative.
+Any raw ESC or C0/C1 control byte instead redacts the complete target before
+terminal sanitization or path classification.
+
+Lane final text, configured and reported model fields, diagnostics, agent notes,
+terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
+one initial ESC/C1 search skips the structural rule entirely when the input has
+no ESC/C1. For each controlled raw logical line, a compiled case-insensitive
+candidate check runs over a control-byte-translated view. Only candidate lines
+build the three views, one at a time: a control-stripped view
+removes complete or unterminated controls and their payloads, a payload-kept
+view removes only introducers, terminators, and CSI parameter bytes, and a
+key-join view uses the assignment scanner's own classifier to retain only
+control-sequence bytes that the scanner may join into a key. Those bytes include
+a key-character CSI/ESC final and a `-` intermediate; string-control payloads
+and all other control bytes are dropped. If any view contains a shared secret
+keyword, case-insensitively, the raw logical line is replaced from the start of that
+keyword's mapped whitespace token
+through logical-line end. Standalone removable C0 bytes are removed from every
+view without activating the rule by themselves. Removable control bytes inside
+retained string-control payloads are omitted from every structural view, so
+they cannot split a keyword in the payload-kept view. String-control spans are
+indexed on the complete raw input first, so their payload newlines do not split
+logical lines; a mapped start inside one moves to the introducer and the span is
+never split by two replacement stages. An unterminated string control extends
+through the end of the text and swallows every following physical line into its payload.
+Other normal lines remain independent, and controlled lines without a keyword
+retain the existing control handling. A whitespace token exactly
+`<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
+exception: keywords inside that placeholder do not trigger the line rule. Any
+other byte in that token, or a keyword elsewhere on the line, still triggers
+it. Lane sinks replace raw and control-interleaved config-directory paths on
+the complete source before this structural rule, apply their length bound next,
+and run precise redaction last. Credential assignments are
+then classified on the full raw text, where
+complete and unterminated OSC, DCS, PM, APC, and SOS spans are opaque and
+payload whitespace is not a value delimiter. Before a complete secret keyword,
+payload operators stay opaque so visible key fragments still join. After a
+complete keyword, a terminal control ends an unquoted key only when, after
+skipping whitespace and controls, a visible operator or, when none is visible,
+a valid complete string-control payload operator occurs before any further key
+character. Otherwise the control stays as an opaque key interleave, preserving
+sticky keys such as `password` + control + `_file`. A raw whitespace token that
+contained a string-control span and contains a secret keyword is redacted whole
+as a fail-closed defence. The spans are then visibly redacted before whitespace
+tokenization, including their payload. Every remaining raw token containing an
+ESC or C1 sequence is redacted in place, including at a token boundary, while
+tabs and newlines stay unchanged. The only exemption is one leading and/or one
+trailing strict SGR wrapper whose parameter bytes joined to the visible text do
+not match a secret pattern.
+The pipeline then applies control-tolerant secret and raw/resolved config-path
+redaction on raw text, terminal sanitization, a second redaction pass, then
+bounding. Credential assignments use a linear lexical scan of complete,
+unbounded key tokens, including quoted JSON keys. Control-tolerant URL schemes, terminal escape
+parameters, and removable-control interleaves have fixed matching windows so
+long separatorless text remains linear to process. For bounded lane fields, the
+controlled-line structural rule first sees the complete raw source. Its result
+is then cut to the limit plus a small inspection margin before the remaining
+matching; a token split by that cut is redacted in full before the ordinary
+truncation marker is added.
+The known-secret raw pass
+allows a CSI/ESC final byte to be a
+token character, so sanitization cannot assemble a credential that evades the
+matcher. Seven-bit DCS, PM, APC, and SOS strings accept
+both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
+through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
+continue through BEL until an ST spelling.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
@@ -263,7 +352,10 @@ The optional top-level `usage_accounts` is a list of explicitly named
 configured account is read from `<config_dir>/openrouter-api-key`; unknown names,
 accounts of another provider and duplicate names are rejected. `agent watch openrouter-usage`
 records changed USD key-usage values from OpenRouter's key endpoint as
-`usage.snapshot`, without storing the key, label, or provider ids.
+`usage.snapshot`, without storing the key, label, or provider ids. Its request
+uses an owned client with `trust_env=False`, so ambient proxy and CA
+environment variables are ignored and the bearer key cannot be routed through
+an intercepting proxy.
 
 Each session may include:
 
@@ -278,8 +370,9 @@ session on the device, not an implicit identity.
 Lane slots are arbitrary non-empty single-line strings. Resolvers look up the
 explicit key `vendor:workflow-kind` (for example `claude:implementer`) and
 require the bound role's account provider to match `vendor`. For workflow kinds
-`reviewer`, `pr-reviewer-quality`, and `pr-reviewer-logic`, the bound role must
-use `access: read-only`; a writable binding is refused.
+`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, and `check`, the bound
+role must use `access: read-only`; a writable binding is refused. The `check`
+kind is required at `<first>:check` when a coordinator worker enables orders.
 
 Unknown top-level, account, role, or session fields are rejected. Dangling
 account or role references are rejected. Credentials and API tokens must not
@@ -300,6 +393,14 @@ removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`
 variables are left for the child to inherit. This is process configuration
 isolation, not a sandbox and not a claim that the provider CLI is already
 authenticated for that profile.
+
+Every lane provider also removes the upper- and lower-case `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` variables and the CA overrides
+`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`
+and `CURL_CA_BUNDLE`. A lane therefore never inherits an ambient proxy or CA
+trust that could read its provider credential. There is no opt-in for this
+stripping. The script-owned OpenRouter usage watcher builds its own HTTP client
+with `trust_env=False` for the same reason.
 
 ## Interactive selection
 

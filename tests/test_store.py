@@ -119,6 +119,31 @@ def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None
     assert all(row["_updated_at"] for row in rows)
 
 
+def test_row_insert_sequences_uses_only_ledger_inserts_for_materialized_rows(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    inserted = store.write(
+        "review_gate", "insert", "gate-ledger", {"id": "gate-ledger", "verdict": "approved"}
+    )
+    store.write(
+        "review_gate", "update", "gate-ledger", {"id": "gate-ledger", "verdict": "rejected"}
+    )
+    store.apply_replica_row(
+        {
+            "table": "review_gate",
+            "row_id": "gate-snapshot",
+            "origin_device_id": "replica-device",
+            "payload": {"id": "gate-snapshot", "verdict": "approved"},
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    assert store.row_insert_sequences("review_gate") == {
+        "gate-ledger": (store.device_id(), inserted["origin_seq"])
+    }
+
+
 def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
     tmp_path: Path,
 ) -> None:
@@ -691,3 +716,67 @@ def test_reconnect_opens_a_fresh_connection(tmp_path: Path) -> None:
 
     assert store.conn is not old_conn
     assert store.meta("device_id") == store.device_id()
+
+
+def test_activity_of_types_returns_own_rows_of_the_given_types(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        for row_id, activity_type in (
+            ("event", "order.event"),
+            ("reply", "order.reply"),
+            ("mail", "message"),
+        ):
+            store.write(
+                "activity",
+                "insert",
+                row_id,
+                {"id": row_id, "type": activity_type, "payload": {}},
+            )
+        event = store.activity_of_types(("order.event",))
+        assert [row["id"] for row in event] == ["event"]
+        both = store.activity_of_types(("order.event", "order.reply"))
+        assert {row["id"] for row in both} == {"event", "reply"}
+        assert store.activity_of_types(()) == []
+        assert event[0]["_origin_device_id"] == store.device_id()
+        assert event[0]["_updated_at"]
+    finally:
+        store.close()
+
+
+def test_activity_of_types_ignores_foreign_rows(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-reply",
+                "origin_device_id": "other-device",
+                "payload": {
+                    "id": "foreign-reply",
+                    "type": "order.reply",
+                    "payload": {},
+                },
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        )
+        assert store.activity_of_types(("order.reply",)) == []
+    finally:
+        store.close()
+
+
+def test_activity_of_types_ignores_a_nested_type_match(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "nested",
+            {
+                "id": "nested",
+                "type": "message",
+                "payload": {"type": "order.event"},
+            },
+        )
+        assert store.activity_of_types(("order.event",)) == []
+    finally:
+        store.close()

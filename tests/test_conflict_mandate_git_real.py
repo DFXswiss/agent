@@ -1,0 +1,785 @@
+"""Git helper tests against real temporary repositories."""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from agent_cli.coordinator_common import CoordinatorError
+from agent_cli.conflict_mandate import _restore_outside_paths
+from agent_cli.conflict_mandate_git import (
+    base_is_ancestor,
+    branch_ref_valid,
+    changed_paths,
+    checkout_head,
+    conflict_markers,
+    effective_driver_names,
+    git_file_snapshot,
+    index_fingerprint,
+    push_with_lease,
+    repository_state,
+    repository_state_changed,
+    require_ok,
+    range_commits,
+    rebase,
+    rebase_abort,
+    rebase_complete,
+    rebase_continue,
+    rev_parse,
+    stage_paths,
+    unmerged_paths,
+    verify_git_file,
+    verify_signed_range,
+)
+from agent_cli.runtime import Completed
+
+
+pytestmark = pytest.mark.no_pg
+
+if shutil.which("git") is None:
+    pytest.skip("git is required", allow_module_level=True)
+
+
+def _run(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> Completed:
+    env = dict(os.environ)
+    for key in ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "VISUAL", "EDITOR"):
+        env.pop(key, None)
+    if env_overrides is not None:
+        env.update(env_overrides)
+    completed = subprocess.run(
+        argv,
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return Completed(completed.returncode, completed.stdout or "", completed.stderr or "")
+
+
+def _runner(argv: list[str]) -> Completed:
+    return _run(argv)
+
+
+def _git(cwd: Path, *parts: str) -> str:
+    completed = _run(["git", "-C", str(cwd), *parts])
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout.strip()
+
+
+def _commit(cwd: Path, message: str, *, sign: bool = False) -> str:
+    flags = ["-c", "commit.gpgsign=true"] if sign else ["-c", "commit.gpgsign=false"]
+    completed = _run(
+        [
+            "git",
+            "-C",
+            str(cwd),
+            *flags,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            message,
+        ]
+    )
+    assert completed.returncode == 0, completed.stderr
+    return _git(cwd, "rev-parse", "HEAD").lower()
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    assert _run(["git", "init", "-b", "main"], cwd=path).returncode == 0
+    _git(path, "config", "user.name", "Conflict Test")
+    _git(path, "config", "user.email", "conflict@example.com")
+    _git(path, "config", "commit.gpgsign", "false")
+    _git(path, "config", "core.hooksPath", "/dev/null")
+
+
+def _repo_pair(tmp_path: Path) -> tuple[Path, Path]:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    _init_repo(upstream)
+    (upstream / "file.txt").write_text("base\n", encoding="utf-8")
+    (upstream / "space ä.txt").write_text("base non-ascii\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(["git", "clone", str(upstream), str(worktree)]).returncode == 0
+    _git(worktree, "config", "user.name", "Conflict Test")
+    _git(worktree, "config", "user.email", "conflict@example.com")
+    _git(worktree, "config", "commit.gpgsign", "false")
+    _git(worktree, "config", "core.hooksPath", "/dev/null")
+    return upstream, worktree
+
+
+def _feature_with_two_commits(worktree: Path, *, path: str = "file.txt") -> None:
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / path).write_text("feature one\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature one")
+    (worktree / "second.txt").write_text("feature two\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature two")
+
+
+def _move_base(upstream: Path, worktree: Path, *, path: str = "file.txt") -> None:
+    (upstream / path).write_text("base change\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base change")
+    _git(worktree, "fetch", "origin")
+
+
+def _start_conflicted_rebase(tmp_path: Path) -> tuple[Path, Path, str]:
+    upstream, worktree = _repo_pair(tmp_path)
+    _feature_with_two_commits(worktree)
+    original = _git(worktree, "rev-parse", "HEAD").lower()
+    _move_base(upstream, worktree)
+    completed = rebase(_runner, str(worktree), base="main")
+    assert completed.returncode != 0
+    return upstream, worktree, original
+
+
+def _start_named_conflicted_rebase(
+    tmp_path: Path,
+    *,
+    path: str,
+    other: str,
+) -> Path:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    _init_repo(upstream)
+    (upstream / path).write_text("base\n", encoding="utf-8")
+    (upstream / other).write_text("other base\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(["git", "clone", str(upstream), str(worktree)]).returncode == 0
+    _git(worktree, "config", "user.name", "Conflict Test")
+    _git(worktree, "config", "user.email", "conflict@example.com")
+    _git(worktree, "config", "commit.gpgsign", "false")
+    _git(worktree, "config", "core.hooksPath", "/dev/null")
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / path).write_text("feature\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature")
+    (upstream / path).write_text("base change\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base change")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    (worktree / other).write_text("other edit\n", encoding="utf-8")
+    return worktree
+
+
+def _assert_literal_conflict_path(
+    tmp_path: Path,
+    *,
+    path: str,
+    other: str,
+) -> None:
+    worktree = _start_named_conflicted_rebase(
+        tmp_path,
+        path=path,
+        other=other,
+    )
+    numstat: list[str] = []
+
+    def recording_runner(argv: list[str]) -> Completed:
+        completed = _run(argv)
+        if "diff" in argv and "--numstat" in argv:
+            numstat.append(completed.stdout)
+        return completed
+
+    paths = unmerged_paths(recording_runner, str(worktree))
+    assert [(item.path, item.state, item.supported) for item in paths] == [
+        (path, "UU", True)
+    ]
+    assert len(numstat) == 1
+    numstat_entries = [line.split("\t", 2) for line in numstat[0].splitlines()]
+    assert numstat_entries
+    assert len(numstat_entries[0]) == 3
+    assert {entry[-1] for entry in numstat_entries} == {path}
+
+    (worktree / path).write_text("resolved\n", encoding="utf-8")
+    stage_paths(_runner, str(worktree), [path])
+    assert set(_git(worktree, "diff", "--cached", "--name-only").splitlines()) == {
+        path
+    }
+    assert set(_git(worktree, "diff", "--name-only").splitlines()) == {other}
+
+    (worktree / path).write_text("edit after staging\n", encoding="utf-8")
+    _restore_outside_paths(_runner, worktree, {path})
+    assert (worktree / path).read_text(encoding="utf-8") == "resolved\n"
+    assert (worktree / other).read_text(encoding="utf-8") == "other edit\n"
+
+
+def test_literal_exclude_path_is_confined_to_named_file(tmp_path: Path) -> None:
+    _assert_literal_conflict_path(
+        tmp_path,
+        path=":(exclude)foo",
+        other="foo",
+    )
+
+
+def test_literal_glob_path_is_confined_to_named_file(tmp_path: Path) -> None:
+    _assert_literal_conflict_path(
+        tmp_path,
+        path="*.txt",
+        other="a.txt",
+    )
+
+
+def test_rebase_conflict_reports_real_uu_and_incomplete(tmp_path: Path) -> None:
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state) for item in paths] == [("file.txt", "UU")]
+    assert paths[0].supported is True
+    assert rebase_complete(_runner, str(worktree)) is False
+
+
+def test_non_utf8_conflicted_name_is_never_reported_as_supported(
+    tmp_path: Path,
+) -> None:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    raw_name = b"caf\xe9.txt"
+    _init_repo(upstream)
+
+    def write_raw(root: Path, content: bytes) -> None:
+        raw_path = os.path.join(os.fsencode(root), raw_name)
+        with open(raw_path, "wb") as stream:
+            stream.write(content)
+
+    try:
+        write_raw(upstream, b"base\n")
+    except OSError:
+        pytest.skip("filesystem refuses a non-UTF-8 file name")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(["git", "clone", str(upstream), str(worktree)]).returncode == 0
+    _git(worktree, "config", "user.name", "Conflict Test")
+    _git(worktree, "config", "user.email", "conflict@example.com")
+    _git(worktree, "config", "commit.gpgsign", "false")
+    _git(worktree, "config", "core.hooksPath", "/dev/null")
+    _git(worktree, "checkout", "-b", "feature")
+    write_raw(worktree, b"feature\n")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature")
+    write_raw(upstream, b"base change\n")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base change")
+    _git(worktree, "fetch", "origin")
+    try:
+        completed = rebase(_runner, str(worktree), base="main")
+    except UnicodeDecodeError:
+        # Git names the conflicted file in its output; the worker ends such a
+        # request with a blocker, so the stop itself is still present below.
+        pass
+    else:
+        assert completed.returncode != 0
+    assert rebase_complete(_runner, str(worktree)) is False
+
+    try:
+        paths = unmerged_paths(_runner, str(worktree))
+    except UnicodeDecodeError:
+        return
+    assert len(paths) == 1
+    assert paths[0].supported is False
+
+
+def test_rebase_continue_without_editor_finishes_signed_range(tmp_path: Path) -> None:
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen is required for signing assertions")
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    key = tmp_path / "signing-key"
+    completed = _run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key)])
+    assert completed.returncode == 0, completed.stderr
+    allowed = tmp_path / "allowed-signers"
+    allowed.write_text(
+        f"conflict@example.com {key.with_suffix('.pub').read_text(encoding='utf-8').strip()}\n",
+        encoding="utf-8",
+    )
+    _git(worktree, "config", "gpg.format", "ssh")
+    _git(worktree, "config", "user.signingkey", str(key))
+    _git(worktree, "config", "commit.gpgsign", "true")
+    _git(worktree, "config", "gpg.ssh.allowedSignersFile", str(allowed))
+    (worktree / "file.txt").write_text("resolved\n", encoding="utf-8")
+    assert conflict_markers(str(worktree), ["file.txt"]) == []
+    stage_paths(_runner, str(worktree), ["file.txt"])
+    continued = rebase_continue(_runner, str(worktree))
+    assert continued.returncode == 0, continued.stderr
+    assert rebase_complete(_runner, str(worktree)) is True
+    assert base_is_ancestor(_runner, str(worktree), base="main") is True
+    commits = range_commits(_runner, str(worktree), base="main")
+    assert len(commits) == 2
+    verify_signed_range(_runner, str(worktree), commits)
+
+
+def test_conflict_markers_report_leftover_markers(tmp_path: Path) -> None:
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    assert conflict_markers(str(worktree), ["file.txt"])
+
+
+def test_enlarged_conflict_markers_from_gitattributes_are_detected(
+    tmp_path: Path,
+) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    (upstream / ".gitattributes").write_text(
+        "* conflict-marker-size=12\n", encoding="utf-8"
+    )
+    _git(upstream, "add", "-A")
+    _commit(upstream, "marker size")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "reset", "--hard", "origin/main")
+    _feature_with_two_commits(worktree)
+    _move_base(upstream, worktree)
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    text = (worktree / "file.txt").read_text(encoding="utf-8")
+    assert "<<<<<<<<<<<<" in text
+    assert "============" in text
+    assert ">>>>>>>>>>>>" in text
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["<<<<<<<", "=======", ">>>>>>>", "|||||||"],
+)
+def test_bare_conflict_markers_are_detected(tmp_path: Path, line: str) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(f"{line}\n", encoding="utf-8")
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["<<<<<<< HEAD", "=======", ">>>>>>> base", "||||||| merged common ancestors"],
+)
+def test_labelled_conflict_markers_are_detected(tmp_path: Path, line: str) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(f"before\n{line}\nafter\n", encoding="utf-8")
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+def test_eight_character_marker_prefix_is_a_marker(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "file.txt").write_text(
+        "<<<<<<<<\n========\n>>>>>>>>\n||||||||\n", encoding="utf-8"
+    )
+    assert conflict_markers(str(worktree), ["file.txt"]) == [
+        "file.txt: conflict marker remains"
+    ]
+
+
+def test_non_ascii_path_with_space_is_returned_exactly(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    path = "space ä.txt"
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / path).write_text("feature non-ascii\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature")
+    (upstream / path).write_text("base non-ascii changed\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state) for item in paths] == [(path, "UU")]
+
+
+def test_unicode_line_separator_conflict_is_not_split_into_adjacent_name(
+    tmp_path: Path,
+) -> None:
+    path = "a\u2028b"
+    worktree = _start_named_conflicted_rebase(tmp_path, path=path, other="a")
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state, item.supported) for item in paths] == [
+        (path, "UU", False)
+    ]
+    assert all(item.path != "a" for item in paths)
+
+
+def test_delete_modify_conflict_keeps_real_state(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / "file.txt").unlink()
+    _git(worktree, "add", "-A")
+    _commit(worktree, "delete")
+    (upstream / "file.txt").write_text("base change\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    paths = unmerged_paths(_runner, str(worktree))
+    assert len(paths) == 1
+    assert paths[0].path == "file.txt"
+    assert paths[0].state in {"DU", "UD"}
+    assert paths[0].state != "UU"
+
+
+def test_both_added_conflict_is_aa(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / "added.txt").write_text("feature\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "feature add")
+    (upstream / "added.txt").write_text("base\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base add")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state) for item in paths] == [("added.txt", "AA")]
+
+
+def test_binary_conflict_without_nul_bytes_is_unsupported(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    (upstream / ".gitattributes").write_text("data.bin binary\n", encoding="utf-8")
+    (upstream / "data.bin").write_bytes(b"base bytes\n")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "binary base")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "reset", "--hard", "origin/main")
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / "data.bin").write_bytes(b"feature bytes\n")
+    _git(worktree, "add", "-A")
+    _commit(worktree, "binary feature")
+    (upstream / "data.bin").write_bytes(b"base change bytes\n")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "binary base change")
+    _git(worktree, "fetch", "origin")
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    (worktree / "data.bin").write_bytes(b"resolution bytes without NUL\n")
+    paths = unmerged_paths(_runner, str(worktree))
+    assert [(item.path, item.state) for item in paths] == [("data.bin", "UU")]
+    assert paths[0].supported is False
+
+
+def test_rebase_abort_restores_head_and_clears_markers(tmp_path: Path) -> None:
+    _upstream, worktree, original = _start_conflicted_rebase(tmp_path)
+    rebase_abort(_runner, str(worktree))
+    assert rev_parse(_runner, str(worktree), "HEAD") == original
+    assert rebase_complete(_runner, str(worktree)) is True
+
+
+def test_changed_paths_reports_edit_outside_conflict_set(tmp_path: Path) -> None:
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    (worktree / "outside.txt").write_text("outside\n", encoding="utf-8")
+    assert "outside.txt" in changed_paths(_runner, str(worktree))
+
+
+def test_changed_paths_returns_special_characters_exactly(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    path = "space ä.txt"
+    _feature_with_two_commits(worktree, path=path)
+    _move_base(upstream, worktree, path=path)
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    (worktree / path).write_text("resolved\n", encoding="utf-8")
+    (worktree / "other file.txt").write_text("outside\n", encoding="utf-8")
+    assert changed_paths(_runner, str(worktree)) == {
+        path,
+        "other file.txt",
+    }
+
+
+def _separate_git_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    upstream = tmp_path / "upstream"
+    worktree = tmp_path / "worktree"
+    git_dir = tmp_path / "metadata" / "git"
+    git_dir.parent.mkdir(parents=True, exist_ok=True)
+    _init_repo(upstream)
+    (upstream / "file.txt").write_text("base\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "base")
+    assert _run(
+        [
+            "git",
+            "clone",
+            "--no-checkout",
+            "--separate-git-dir",
+            str(git_dir),
+            str(upstream),
+            str(worktree),
+        ]
+    ).returncode == 0
+    return worktree, git_dir
+
+
+def test_index_fingerprint_detects_staged_edit_between_reads(tmp_path: Path) -> None:
+    _upstream, worktree = _repo_pair(tmp_path)
+    before = index_fingerprint(_runner, str(worktree))
+    outside = worktree / "outside.txt"
+    outside.write_text("edited outside the lane\n", encoding="utf-8")
+    assert index_fingerprint(_runner, str(worktree)) == before
+    _git(worktree, "add", "outside.txt")
+    staged = index_fingerprint(_runner, str(worktree))
+    assert staged != before
+    outside.write_text("edited again\n", encoding="utf-8")
+    assert index_fingerprint(_runner, str(worktree)) == staged
+
+
+def test_repository_state_sees_config_and_hook_changes_without_git(tmp_path: Path) -> None:
+    _worktree, git_dir = _separate_git_worktree(tmp_path)
+    (git_dir / "hooks").mkdir(exist_ok=True)
+    before = repository_state(git_dir)
+    assert repository_state_changed(before, repository_state(git_dir)) is False
+    with (git_dir / "config").open("a", encoding="utf-8") as handle:
+        handle.write("\n[alias]\n\tnoop = !true\n")
+    assert repository_state_changed(before, repository_state(git_dir)) is True
+    after_config = repository_state(git_dir)
+    (git_dir / "hooks" / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    assert repository_state_changed(after_config, repository_state(git_dir)) is True
+
+
+def test_effective_driver_names_reads_the_repository_configuration(tmp_path: Path) -> None:
+    worktree, git_dir = _separate_git_worktree(tmp_path)
+    env = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    assert effective_driver_names(runner, str(worktree)) == ()
+    _git(worktree, "config", "--local", "filter.lfs.smudge", "cat")
+    assert effective_driver_names(runner, str(worktree)) == ("filter.lfs.smudge",)
+    _git(worktree, "config", "--local", "merge.custom.driver", "true")
+    _git(worktree, "config", "--local", "diff.external", "/usr/bin/diff")
+    assert effective_driver_names(runner, str(worktree)) == (
+        "filter.lfs.smudge",
+        "merge.custom.driver",
+        "diff.external",
+    )
+
+
+def test_effective_driver_names_reads_conditional_global_include(tmp_path: Path) -> None:
+    worktree, git_dir = _separate_git_worktree(tmp_path)
+    git_dir = git_dir.resolve()
+    included = tmp_path / "conditional.gitconfig"
+    included.write_text('[filter "x"]\n\tsmudge = cat\n', encoding="utf-8")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text(
+        f'[includeIf "gitdir:{git_dir}"]\n\tpath = {included}\n',
+        encoding="utf-8",
+    )
+    env = {
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    assert effective_driver_names(runner, str(worktree)) == ("filter.x.smudge",)
+    plain = runner([
+        "git", "config", "--global", "--get-regexp",
+        r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|"
+        r"diff\..*\.(textconv|command)|diff\.external)$",
+    ])
+    assert plain.returncode == 1
+    assert plain.stdout == ""
+
+
+def test_effective_driver_names_onbranch_activates_after_feature_branch_checkout(
+    tmp_path: Path,
+) -> None:
+    worktree, _git_dir = _separate_git_worktree(tmp_path)
+    included = tmp_path / "onbranch.gitconfig"
+    included.write_text('[filter "branch"]\n\tsmudge = cat\n', encoding="utf-8")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text(
+        f'[includeIf "onbranch:feature"]\n\tpath = {included}\n',
+        encoding="utf-8",
+    )
+    env = {
+        "GIT_CONFIG_GLOBAL": str(global_config),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(argv, env_overrides=env)
+
+    remote_head = _git(worktree, "rev-parse", "refs/remotes/origin/main")
+    _git(worktree, "update-ref", "refs/remotes/publication/feature", remote_head)
+    assert effective_driver_names(runner, str(worktree)) == ()
+    checkout_head(runner, str(worktree), branch="feature")
+    assert effective_driver_names(runner, str(worktree)) == (
+        "filter.branch.smudge",
+    )
+
+
+def test_snapshot_detects_rewritten_git_file(tmp_path: Path) -> None:
+    worktree, _git_dir = _separate_git_worktree(tmp_path)
+    snapshot = git_file_snapshot(worktree)
+    verify_git_file(worktree, snapshot)
+    (worktree / ".git").write_text("gitdir: /somewhere/else\n", encoding="utf-8")
+    with pytest.raises(CoordinatorError, match="repository metadata"):
+        verify_git_file(worktree, snapshot)
+
+
+def test_snapshot_rejects_git_directory_as_metadata(tmp_path: Path) -> None:
+    worktree, _git_dir = _separate_git_worktree(tmp_path)
+    (worktree / ".git").unlink()
+    (worktree / ".git").mkdir()
+    with pytest.raises(CoordinatorError, match="repository metadata"):
+        git_file_snapshot(worktree)
+
+
+def test_separate_git_dir_accepts_local_hook_configuration(tmp_path: Path) -> None:
+    worktree, git_dir = _separate_git_worktree(tmp_path)
+    require_ok(
+        _runner,
+        str(worktree),
+        "disable hooks",
+        "config",
+        "core.hooksPath",
+        "/dev/null",
+    )
+    assert _git(worktree, "config", "--local", "core.hooksPath") == "/dev/null"
+    config_path = git_dir / "config"
+    assert config_path.is_file()
+    assert "hooksPath = /dev/null" in config_path.read_text(encoding="utf-8")
+
+
+def test_changed_paths_ignores_cleanly_staged_replay_files(tmp_path: Path) -> None:
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    (worktree / "src").mkdir(exist_ok=True)
+    (worktree / "src" / "clean.py").write_text("staged cleanly\n", encoding="utf-8")
+    _git(worktree, "add", "src/clean.py")
+    assert changed_paths(_runner, str(worktree)) == {"file.txt"}
+    (worktree / "file.txt").write_text("resolved\n", encoding="utf-8")
+    touched = changed_paths(_runner, str(worktree))
+    assert touched == {"file.txt"}
+
+
+def test_changed_paths_reports_edit_to_cleanly_staged_file(tmp_path: Path) -> None:
+    _upstream, worktree, _original = _start_conflicted_rebase(tmp_path)
+    clean = worktree / "src" / "clean.py"
+    clean.parent.mkdir(exist_ok=True)
+    clean.write_text("staged cleanly\n", encoding="utf-8")
+    _git(worktree, "add", "src/clean.py")
+    clean.write_text("lane edit\n", encoding="utf-8")
+    assert "src/clean.py" in changed_paths(_runner, str(worktree))
+
+
+def test_changed_paths_reports_new_and_ignored_files(tmp_path: Path) -> None:
+    upstream, worktree = _repo_pair(tmp_path)
+    (upstream / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _commit(upstream, "ignore generated file")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "reset", "--hard", "origin/main")
+    _feature_with_two_commits(worktree)
+    _move_base(upstream, worktree)
+    assert rebase(_runner, str(worktree), base="main").returncode != 0
+    (worktree / "new file.txt").write_text("new\n", encoding="utf-8")
+    assert "new file.txt" in changed_paths(_runner, str(worktree))
+    (worktree / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    assert "ignored.txt" in changed_paths(_runner, str(worktree))
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["feature@2", "späti", "_topic", "release/2026.11", "a&b"],
+)
+def test_git_valid_branch_names_are_accepted(name: str) -> None:
+    assert branch_ref_valid(name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "@",
+        ".hidden",
+        "-topic",
+        "/topic",
+        "topic.",
+        "topic/",
+        "a..b",
+        "a@{1}",
+        "a//b",
+        "a b",
+        "space ä",
+        "a~b",
+        "a^b",
+        "a:b",
+        "a?b",
+        "a*b",
+        "a[b",
+        "a\\b",
+        "topic.lock",
+        "topic/.hidden",
+        "topic/component.lock",
+        "topic\nnext",
+    ],
+)
+def test_git_invalid_branch_names_are_rejected(name: str) -> None:
+    assert branch_ref_valid(name) is False
+
+
+def test_push_with_lease_does_not_follow_annotated_tags(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    remote = tmp_path / "remote.git"
+    _init_repo(worktree)
+    _git(worktree, "checkout", "-b", "feature")
+    (worktree / "file.txt").write_text("first\n", encoding="utf-8")
+    _git(worktree, "add", "file.txt")
+    old_sha = _commit(worktree, "first")
+    assert _run(["git", "init", "--bare", str(remote)]).returncode == 0
+    _git(worktree, "remote", "add", "publication", str(remote))
+    _git(worktree, "push", "publication", "feature")
+
+    (worktree / "file.txt").write_text("second\n", encoding="utf-8")
+    _git(worktree, "add", "file.txt")
+    verified_sha = _commit(worktree, "second")
+    _git(worktree, "tag", "-a", "followed", "-m", "annotated tag")
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text("[push]\n\tfollowTags = true\n", encoding="utf-8")
+
+    def runner(argv: list[str]) -> Completed:
+        return _run(
+            argv,
+            env_overrides={
+                "GIT_CONFIG_GLOBAL": str(global_config),
+                "GIT_CONFIG_NOSYSTEM": "1",
+            },
+        )
+
+    pushed = push_with_lease(
+        runner,
+        str(worktree),
+        ref="feature",
+        old_sha=old_sha,
+        verified_sha=verified_sha,
+    )
+    assert pushed.returncode == 0, pushed.stderr
+    branch = _run([
+        "git", "--git-dir", str(remote), "rev-parse", "refs/heads/feature",
+    ])
+    assert branch.returncode == 0
+    assert branch.stdout.strip().lower() == verified_sha
+    tag = _run([
+        "git", "--git-dir", str(remote), "show-ref", "--verify", "--quiet",
+        "refs/tags/followed",
+    ])
+    assert tag.returncode == 1

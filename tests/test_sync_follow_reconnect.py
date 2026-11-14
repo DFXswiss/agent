@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -678,6 +680,194 @@ def test_publish_terminals_does_not_record_state_for_a_failed_send(
         store.close()
 
 
+def test_publish_terminals_keeps_capture_beyond_diagnostic_limit(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        capture = "start-" + ("x" * 4500) + " \x1b[31mend\x1b[0m token=secret-value tail"
+
+        class _LongRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        capture if argv[:2] == ["tmux", "capture-pane"] else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _LongRuntime(), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert len(published) > 4000
+        assert published.startswith("start-" + ("x" * 4500))
+        assert published.endswith("end [redacted]")
+        assert "secret-value" not in published
+        assert "[truncated]" not in published
+        assert "\x1b" not in published
+    finally:
+        store.close()
+
+
+def test_publish_terminals_joins_soft_wrapped_token_before_redaction(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        token = "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+        def pane(argv: list[str]) -> Completed:
+            if argv[:2] != ["tmux", "capture-pane"]:
+                return Completed(0, "", "")
+            if "-J" in argv:
+                return Completed(0, f"credential={token}\n", "")
+            return Completed(
+                0,
+                "credential=github_pat_ABCDEFGHIJKL\nMNOPQRSTUVWXYZ0123456789\n",
+                "",
+            )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, Runtime(runner=pane), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert published == "credential=[redacted]\n"
+        assert token not in published
+        assert "github_pat_" not in published
+    finally:
+        store.close()
+
+
+def test_publish_terminals_redacts_raw_csi_overlap_before_sanitizing(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        split_token = "github_\x1b[31pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+
+        class _RawCsiRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        f"credential={split_token}\n"
+                        if argv[:2] == ["tmux", "capture-pane"]
+                        else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _RawCsiRuntime(), ws, {}, {})
+
+        assert len(ws.sent) == 1
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        # Fail closed: the escape is inside one raw token, so redact it whole.
+        assert published == "[redacted]\n"
+    finally:
+        store.close()
+
+
+def test_publish_terminals_redacts_tokens_with_interior_or_boundary_csi(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        capture = (
+            "ey\x1b[31JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi\t"
+            "use\x1b[31Jr@example.com\n"
+            "0123456789\x1b[31abcdefABCD "
+            "AKI\x9b31AIOSFODNN7EXAMPLE\n"
+            "\x1b[31A123456789012345678F "
+            "A123456789012345678\x1b[31F\n"
+        )
+
+        class _RawRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        capture if argv[:2] == ["tmux", "capture-pane"] else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _RawRuntime(), ws, {}, {})
+
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert published == (
+            "[redacted]\t[redacted]\n[redacted] [redacted]\n"
+            "[redacted] [redacted]\n"
+        )
+    finally:
+        store.close()
+
+
 def test_publish_terminals_grok_preflight_propagates_store_connection_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -795,6 +985,85 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
             f"terminal grok configuration error: {error}"
             in capsys.readouterr().err
         )
+    finally:
+        store.close()
+
+
+def test_publish_terminals_redacts_configured_profile_outside_home_roots(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    config_dir = "/opt/profiles/grok-live"
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "grok", "second": "codex"},
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+                "accounts": {
+                    "grok-a": {"provider": "grok", "config_dir": config_dir},
+                },
+                "roles": {
+                    "interactive": {
+                        "account": "grok-a",
+                        "model": "operator-model",
+                        "access": "workspace-write",
+                    },
+                },
+                "sessions": {"grok": {"interactive": "interactive"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                    "ai_binding": {
+                        "role": "interactive",
+                        "account": "grok-a",
+                        "provider": "grok",
+                        "model": "operator-model",
+                        "access": "workspace-write",
+                        "configuration": hashlib.sha256(
+                            config_dir.encode()
+                        ).hexdigest(),
+                    },
+                },
+            },
+        )
+
+        class _ProfileRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        f"loading {config_dir}/credentials.json\n"
+                        if argv[:2] == ["tmux", "capture-pane"]
+                        else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _ProfileRuntime(), ws, {}, {})
+
+        published = base64.b64decode(json.loads(ws.sent[0])["data"]).decode("utf-8")
+        assert config_dir not in published
+        assert published == "loading <config_dir>/credentials.json\n"
     finally:
         store.close()
 

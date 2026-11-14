@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from agent_cli.coordinator_config import load_coordinator_config
+from agent_cli.coordinator_config import (
+    ConflictRemedyConfig,
+    load_coordinator_config,
+    resolve_round_limit,
+)
 from agent_cli.store import StoreError
 
 pytestmark = pytest.mark.no_pg
@@ -39,6 +44,81 @@ def test_explicit_worker_preserves_selected_commands_and_identities(tmp_path):
     assert worker.reply_logins == ('exampleuser',)
     assert worker.repositories['example/project'].check_argv == ('/operator/checks', '--full')
     assert worker.repositories['example/project'].publication_repo == 'example/project'
+
+
+def test_park_poll_seconds_defaults_to_120(tmp_path):
+    (tmp_path / 'coordinator.json').write_text(json.dumps(config(tmp_path)))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.park_poll_seconds == 120
+
+
+@pytest.mark.parametrize('value', [-1, "5", True, 1.5])
+def test_park_poll_seconds_accepts_zero_and_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['park_poll_seconds'] = 0
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].park_poll_seconds == 0
+
+    data['workers']['selected-session']['park_poll_seconds'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='park_poll_seconds requires an integer >= 0'):
+        load_coordinator_config(tmp_path)
+
+
+def test_lane_retries_defaults_to_two(tmp_path):
+    (tmp_path / 'coordinator.json').write_text(json.dumps(config(tmp_path)))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.lane_retries == 2
+
+
+def test_orders_defaults_to_false(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].orders is False
+
+    data['workers']['selected-session']['orders'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].orders is True
+
+
+def test_orders_must_be_a_boolean(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['orders'] = 'yes'
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='orders must be a boolean'):
+        load_coordinator_config(tmp_path)
+
+
+def test_draft_on_accept_defaults_to_false(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].draft_on_accept is False
+
+    data['workers']['selected-session']['draft_on_accept'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].draft_on_accept is True
+
+
+@pytest.mark.parametrize('value', ['yes', 1, None])
+def test_draft_on_accept_must_be_a_boolean(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['draft_on_accept'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='draft_on_accept must be a boolean'):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize('value', [-1, "1", True, 1.5])
+def test_lane_retries_accepts_zero_and_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['lane_retries'] = 0
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].lane_retries == 0
+
+    data['workers']['selected-session']['lane_retries'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='lane_retries requires an integer >= 0'):
+        load_coordinator_config(tmp_path)
 
 
 @pytest.mark.parametrize('field', ['review_session', 'workspace_root', 'repositories',
@@ -106,6 +186,61 @@ def test_a38_worker_requires_and_normalizes_external_reviewers(tmp_path):
     assert loaded.second_reviewers == ('reviewer-one', 'reviewer-two')
     assert loaded.second_review_timeout_seconds == 86400
     assert loaded.repositories['example/project'].check_argv == ()
+
+
+def test_a38_second_review_defaults_to_external(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].a38_second_review == 'external'
+
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer-one']
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].a38_second_review == 'external'
+
+
+@pytest.mark.parametrize(
+    'a38,value,error',
+    [
+        (False, 'people', 'a38_second_review must be external or model'),
+        (False, 'model', 'a38_second_review requires an A38 worker'),
+    ],
+)
+def test_a38_second_review_refuses_bad_values(tmp_path, a38, value, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = a38
+    worker['a38_second_review'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_model_second_review_drops_the_reviewer_requirement(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['a38_second_review'] = 'model'
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.second_reviewers == ()
+    assert loaded.a38_second_review == 'model'
+
+    worker['second_reviewers'] = ['Same', 'same']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='distinct'):
+        load_coordinator_config(tmp_path)
+
+    worker.pop('second_reviewers')
+    worker['a38_second_review'] = 'external'
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='A38 workers require nonempty second_reviewers'):
+        load_coordinator_config(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -183,7 +318,17 @@ def test_owner_scoped_worker_normalizes_distinct_owners_and_requires_checks(tmp_
     assert loaded.require_hub_assignment is True
 
 
-@pytest.mark.parametrize('owners', [['-bad'], ['bad-'], ['same', 'Same'], ['with_underscore']])
+@pytest.mark.parametrize(
+    'owners',
+    [
+        ['-bad'],
+        ['bad-'],
+        ['a--b'],
+        ['a' * 40],
+        ['same', 'Same'],
+        ['with_underscore'],
+    ],
+)
 def test_owner_scoped_worker_rejects_invalid_or_duplicate_owners(tmp_path, owners):
     data = config(tmp_path)
     worker = data['workers']['selected-session']
@@ -209,6 +354,172 @@ def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
     data['workers']['selected-session']['owner_check_argv'] = ['/operator/checks']
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='owner_readiness_argv'):
+        load_coordinator_config(tmp_path)
+
+
+def test_max_rounds_is_optional(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.max_rounds is None
+    assert worker.max_rounds_by_model == {}
+
+    selected = data['workers']['selected-session']
+    selected['max_rounds'] = 7
+    selected['max_rounds_by_model'] = {'grok-model': 3}
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    worker = load_coordinator_config(tmp_path)['selected-session']
+    assert worker.max_rounds == 7
+    assert worker.max_rounds_by_model == {'grok-model': 3}
+
+
+@pytest.mark.parametrize('value', [0, -1, '8', True])
+def test_max_rounds_refuses_bad_values(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['max_rounds'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='max_rounds requires an integer >= 1'):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    'value,error',
+    [
+        ([], 'max_rounds_by_model must be an object'),
+        ({'m': 0}, 'max_rounds_by_model requires an integer >= 1'),
+        ({'m': '3'}, 'max_rounds_by_model requires an integer >= 1'),
+        ({'': 3}, 'max_rounds_by_model requires a nonempty single-line string'),
+    ],
+)
+def test_max_rounds_by_model_is_validated(tmp_path, value, error):
+    data = config(tmp_path)
+    data['workers']['selected-session']['max_rounds_by_model'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_resolve_round_limit_order(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    base = load_coordinator_config(tmp_path)['selected-session']
+    worker = replace(
+        base,
+        max_rounds=7,
+        max_rounds_by_model={'grok-model': 3},
+    )
+    cases = [
+        (resolve_round_limit(worker, 'grok-model', 2), 2, 'submit'),
+        (resolve_round_limit(worker, 'grok-model'), 3, 'model'),
+        (resolve_round_limit(worker, 'other-model'), 7, 'worker'),
+        (resolve_round_limit(base, 'other-model'), 10, 'default'),
+    ]
+    for result, limit, origin in cases:
+        assert set(result) == {'max_rounds', 'origin', 'model', 'limit'}
+        assert result['max_rounds'] == result['limit'] == limit
+        assert result['origin'] == origin
+        assert result['model'] in {'grok-model', 'other-model'}
+
+
+def test_pinned_model_name_is_redacted_and_still_matches(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    base = load_coordinator_config(tmp_path)['selected-session']
+    model = '/home/someone/models/x'
+    worker = replace(base, max_rounds_by_model={model: 3})
+    result = resolve_round_limit(worker, model)
+    assert result['origin'] == 'model'
+    assert result['max_rounds'] == 3
+    assert 'someone' not in result['model']
+
+
+def test_conflict_remedy_is_absent_by_default(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].conflict_remedy is None
+
+    data['workers']['selected-session']['conflict_remedy'] = None
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].conflict_remedy is None
+
+
+def test_conflict_remedy_loads(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['orders'] = True
+    worker['conflict_remedy'] = {
+        'check_argv': ['/operator/conflict-checks'],
+        'max_rebase_steps': 5,
+    }
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.conflict_remedy == ConflictRemedyConfig(
+        ('/operator/conflict-checks',), 5, 2
+    )
+
+    worker['conflict_remedy']['max_attempts'] = 4
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(
+        tmp_path
+    )['selected-session'].conflict_remedy.max_attempts == 4
+
+
+@pytest.mark.parametrize(
+    'value,error',
+    [
+        ([], 'conflict_remedy must be an object'),
+        (
+            {'check_argv': ['x']},
+            'conflict_remedy requires check_argv and max_rebase_steps',
+        ),
+        (
+            {'check_argv': [], 'max_rebase_steps': 5},
+            'check_argv requires an explicit nonempty argv array',
+        ),
+        (
+            {'check_argv': ['x'], 'max_rebase_steps': 0},
+            'max_rebase_steps requires an integer >= 1',
+        ),
+        (
+            {'check_argv': ['x'], 'max_rebase_steps': 201},
+            'max_rebase_steps requires an integer >= 1 and <= 200',
+        ),
+        (
+            {
+                'check_argv': ['x'],
+                'max_rebase_steps': 5,
+                'max_attempts': 0,
+            },
+            'max_attempts requires an integer >= 1',
+        ),
+        (
+            {
+                'check_argv': ['x'],
+                'max_rebase_steps': 5,
+                'request_logins': ['owner'],
+            },
+            'conflict_remedy rejects unknown field request_logins',
+        ),
+    ],
+)
+def test_conflict_remedy_refuses_bad_values(tmp_path, value, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['orders'] = True
+    worker['conflict_remedy'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_conflict_remedy_requires_orders(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['conflict_remedy'] = {
+        'check_argv': ['/operator/conflict-checks'],
+        'max_rebase_steps': 5,
+    }
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='conflict_remedy requires orders'):
         load_coordinator_config(tmp_path)
 
 

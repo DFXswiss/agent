@@ -34,11 +34,13 @@ _GIT_OPTS_WITH_ARG = frozenset({
     "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
     "--buffered-output-size",
 })
+_GIT_OPTS_WITHOUT_ARG = frozenset({"--literal-pathspecs"})
 _TRANSFER_FLAGS = {
     "fetch": frozenset({"--prune", "-p", "--tags", "-t", "--no-tags", "-n",
                         "--quiet", "-q", "--verbose", "-v", "--dry-run", "--no-recurse-submodules"}),
     "push": frozenset({"--set-upstream", "-u", "--dry-run", "-n", "--porcelain",
-                       "--quiet", "-q", "--verbose", "-v", "--atomic"}),
+                       "--quiet", "-q", "--verbose", "-v", "--atomic",
+                       "--no-follow-tags"}),
     "pull": frozenset({"--ff-only", "--no-rebase", "--quiet", "-q", "--verbose", "-v"}),
     "clone": frozenset({"--no-checkout", "-n", "--bare", "--single-branch",
                         "--no-single-branch", "--quiet", "-q", "--verbose", "-v"}),
@@ -47,7 +49,7 @@ _TRANSFER_VALUE_FLAGS = {
     "fetch": frozenset({"--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--filter"}),
     "push": frozenset(),
     "pull": frozenset({"--depth"}),
-    "clone": frozenset({"--depth", "--branch", "-b", "--filter"}),
+    "clone": frozenset({"--depth", "--branch", "-b", "--filter", "--separate-git-dir"}),
 }
 
 
@@ -254,6 +256,8 @@ def _clear_http_headers(run: Runner, cwd: str | None) -> list[str]:
 def _skip_git_option(args: list[str], index: int) -> int:
     arg = args[index]
     name = arg.split("=", 1)[0]
+    if arg in _GIT_OPTS_WITHOUT_ARG:
+        return index + 1
     if arg.startswith("--") and "=" in arg:
         return index + 1
     if arg in _GIT_OPTS_WITH_ARG or name in _GIT_OPTS_WITH_ARG:
@@ -286,19 +290,27 @@ def _git_c_path(git_args: list[str]) -> str | None:
     return git_args[index]
 
 
-def _network_remote_targets(git_args: list[str]) -> list[str] | None:
+def _network_remote_targets(
+    git_args: list[str],
+    *,
+    allow_force_with_lease: bool = False,
+) -> list[str] | None:
     """Accept only explicitly supported single-remote transfers.
 
     Unknown options fail closed rather than guessing whether the next token is
     their value or a repository. Network calls permit only an optional single
-    global -C; configuration/context overrides cannot differ between validation
-    and execution. Other local Git commands remain available.
+    global -C and --literal-pathspecs; configuration/context overrides cannot
+    differ between validation and execution. Other local Git commands remain
+    available.
     """
     verb, rest = _split_git_command(git_args)
     if verb not in _NETWORK_GIT:
         return None
     leading = git_args[:len(git_args) - len(rest) - 1]
-    if leading and (len(leading) != 2 or leading[0] != "-C"):
+    if leading.count("--literal-pathspecs") > 1:
+        raise GitHubHttpsRemoteError("unsupported git network configuration")
+    context = [arg for arg in leading if arg != "--literal-pathspecs"]
+    if context and (len(context) != 2 or context[0] != "-C"):
         raise GitHubHttpsRemoteError("unsupported git network configuration")
     operands: list[str] = []
     index = 0
@@ -312,6 +324,26 @@ def _network_remote_targets(git_args: list[str]) -> list[str] | None:
             index += 1
             continue
         if arg in _TRANSFER_FLAGS[verb]:
+            index += 1
+            continue
+        if (
+            allow_force_with_lease
+            and verb == "push"
+            and arg.startswith("--force-with-lease=")
+        ):
+            # The worker owns this exact lease form; the value is a ref and SHA,
+            # never a command or credentials.
+            value = arg[len("--force-with-lease="):]
+            ref, separator, expected = value.rpartition(":")
+            if (
+                not separator
+                or not ref.startswith("refs/heads/")
+                or len(ref) == len("refs/heads/")
+                or any(character.isspace() for character in ref)
+                or ":" in ref
+                or re.fullmatch(r"[0-9a-fA-F]{40}", expected) is None
+            ):
+                raise GitHubHttpsRemoteError("invalid force-with-lease argument")
             index += 1
             continue
         name, equal, value = arg.partition("=")
@@ -355,7 +387,13 @@ class Account:
     command_prefix: tuple[str, ...] = ()
     worktree_paths: tuple[tuple[str, str], ...] = ()
 
-    def runner(self, base: Runner, *, require_git: bool = False) -> Runner:
+    def runner(
+        self,
+        base: Runner,
+        *,
+        require_git: bool = False,
+        allow_force_with_lease: bool = False,
+    ) -> Runner:
         if require_git and self.git_identity is None:
             raise AccountError(f"Git identity is not configured for account {self.name}")
 
@@ -382,7 +420,10 @@ class Account:
                     f"GIT_COMMITTER_EMAIL={identity['email']}",
                 ])
                 git_args = list(argv[1:])
-                targets = _network_remote_targets(git_args)
+                targets = _network_remote_targets(
+                    git_args,
+                    allow_force_with_lease=allow_force_with_lease,
+                )
                 header_config: list[str] = []
                 if targets is not None:
                     # Keep host cwd until each nested call maps it exactly once.

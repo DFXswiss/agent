@@ -358,6 +358,13 @@ def test_load_task_dict_does_not_read_the_trusted_review_list(
                 return []
             raise AssertionError(table)
 
+        def row_insert_sequences(self, table: str) -> dict[str, tuple[str, int]]:
+            assert table == "review_gate"
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
+
     snap = load_task_dict(LocalStore(), "task-1")
     assert snap["pull_opener"] == ""
     assert snap["trusted_pr_guard"] is None
@@ -5430,7 +5437,7 @@ def test_round_start_refuses_unavailable_gate(
         run(tmp_path, ["round", "start", "--task", tid])
 
 
-def test_same_second_gate_prefers_newer_updated_row() -> None:
+def test_cli_gate_readers_fail_closed_on_ambiguous_legacy_rows() -> None:
     recorded_at = "2026-01-01T00:00:00Z"
     newer = {
         "task_id": "task-1",
@@ -5460,12 +5467,88 @@ def test_same_second_gate_prefers_newer_updated_row() -> None:
             assert (table, row_id) == ("task", "task-1")
             return {"id": "task-1"}
 
+        def row_insert_sequences(self, table: str) -> dict[str, tuple[str, int]]:
+            assert table == "review_gate"
+            return {}
+
     store = GateStore()
-    assert _latest_gates(store, "task-1")[("review-1", "quality")] is newer
-    assert [g["verdict"] for g in load_task_dict(store, "task-1")["gates"]] == [
-        "unavailable",
-        "approved",
+    assert (
+        _latest_gates(store, "task-1")[("review-1", "quality")]["verdict"]
+        == "unavailable"
+    )
+    assert load_task_dict(store, "task-1")["gates"][-1]["verdict"] == "unavailable"
+
+
+@pytest.mark.no_pg
+def test_allow_command_denies_ambiguous_legacy_gate_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from test_allow import _ready_task
+
+    ready = _ready_task(tid="task-1", session_id="sess-1")
+    common = {
+        "task_id": "task-1",
+        "stage": "grok-pr",
+        "dimension": "quality",
+        "vendor": "grok",
+        "head_sha": "a" * 40,
+        "recorded_at": "2026-01-01T00:00:00Z",
+    }
+    ambiguous = [
+        {"id": "legacy-approved", **common, "verdict": "approved"},
+        {"id": "legacy-rejected", **common, "verdict": "rejected"},
     ]
+    other_gates = [
+        {"id": f"gate-{index}", "task_id": "task-1", **gate}
+        for index, gate in enumerate(ready["gates"])
+        if (gate["stage"], gate["dimension"]) != ("review-1", "quality")
+    ]
+
+    class GateStore:
+        def row(self, table: str, row_id: str) -> dict | None:
+            if (table, row_id) == ("task", "task-1"):
+                return {
+                    "id": "task-1",
+                    "session_id": "sess-1",
+                    "workflow": ready["workflow"],
+                    "state": ready["state"],
+                    "change_summary_en": ready["summaries"]["en"],
+                    "change_summary_de": ready["summaries"]["de"],
+                }
+            if (table, row_id) == ("session", "sess-1"):
+                return {"id": "sess-1", "skills": ["spine"], "status": "active"}
+            return None
+
+        def rows(self, table: str) -> list[dict]:
+            if table == "review_gate":
+                return [*ambiguous, *other_gates]
+            if table == "checklist_item":
+                return [
+                    {"id": key, "task_id": "task-1", "key": key, "status": status}
+                    for key, status in ready["checklist"].items()
+                ]
+            if table == "local_check":
+                return [
+                    {"id": "check", "task_id": "task-1", **check}
+                    for check in ready["local_checks"]
+                ]
+            raise AssertionError(f"unexpected table: {table}")
+
+        def row_insert_sequences(self, table: str) -> dict[str, tuple[str, int]]:
+            assert table == "review_gate"
+            return {}
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: GateStore())
+    with pytest.raises(SystemExit) as exc:
+        main(["allow", "--action", "task-done", "--task", "task-1"])
+
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert "review-1/quality" in output.err
+    assert "unavailable" in output.err
 
 
 def test_new_second_stage_accepts_stored_legacy_first_stage_gates(

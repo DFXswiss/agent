@@ -71,6 +71,11 @@ requiring an existing local repository or contacting the remote. Before each
 supported transfer, all configured `http.*extraHeader` keys, including
 repository-specific URL matches, are reset for that invocation so ambient
 Authorization headers cannot override the selected account.
+Accepted `clone` value forms include `--separate-git-dir <path>`.
+`--force-with-lease=refs/heads/<branch>:<40 hex>` is accepted only when the
+account runner is created with `allow_force_with_lease=True`; every other caller
+rejects that argument. The exact `--no-follow-tags` flag is accepted for push
+and narrows the refs sent by that transfer.
 Only transfer forms with one explicit repository argument are accepted
 (for example `git fetch -- origin`, `git push -- origin HEAD:refs/heads/feature`,
 and `git push --set-upstream origin feature`); implicit default-remote forms,
