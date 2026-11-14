@@ -1177,11 +1177,22 @@ Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
 first searches once for ESC or C1 bytes. If none exist, the existing precise
 scanner runs unchanged. For a raw logical line that does contain ESC or C1, a
 compiled case-insensitive candidate check runs over a control-byte-translated
-view. Only candidate lines build the three views, one at a time: a
+view. Only candidate lines build the three primary views, one at a time: a
 control-stripped view that removes complete or
 unterminated controls with their payloads, a payload-kept view that removes
-only control introducers, terminators, and CSI parameter bytes, and a key-join
-view. The key-join view uses the assignment scanner's own classifier to retain
+string-control introducers and terminators and CSI parameter bytes while
+retaining string-control payload text at every nesting depth, and a key-join
+view. Inside retained string-control payloads, the payload view runs the same
+control lexer again. Nested string controls keep their payload text at every
+nesting depth; their introducers and terminators are omitted. Retained
+string-control payloads are checked in both a payload-clean view and a
+payload-key-join view while preserving the raw mapping. The payload-clean view
+omits complete nested CSI spans, other ESC sequences, C0 bytes, and lone C1
+bytes. The payload-key-join view contributes exactly the key characters from
+nested CSI/ESC sequences that the assignment scanner may join into a key and
+omits all other control bytes. The second view is built lazily only for payloads
+that contain nested controls, and a keyword in either view activates the line
+rule. The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
 payloads and all other control bytes. If any view contains a shared secret
@@ -1189,15 +1200,18 @@ keyword, case-insensitively, the raw logical line is redacted from the start of 
 whitespace token containing the first mapped keyword
 through the end of that logical line. All three views remove standalone
 removable C0 bytes such as backspace, NUL, DEL, and carriage return; those bytes
-do not activate the rule without ESC/C1. Removable control bytes inside retained
-string-control payloads are omitted from every structural view, so they cannot
-split a keyword in the payload-kept view. Complete and unterminated
+do not activate the rule without ESC/C1. Those omitted controls cannot split a
+keyword in the payload-kept view. An unterminated nested string control fails
+closed and treats the whole logical line as matched. Complete and unterminated
 string-control spans are indexed once on the full raw input before line
 splitting, so newlines inside OSC, DCS, PM, APC, or SOS payloads are not
 boundaries. If a mapped keyword starts inside such a span, redaction starts at
 its introducer. A following normal line outside the span remains independent. An unterminated string control
 extends through the end of the text and swallows every following physical line
-into its payload. A controlled line without a secret keyword continues through
+into its payload. The same linear, nesting-aware scanner supplies every
+string-control span boundary to redaction, terminal sanitization, logical-line
+splitting, and all structural views, including both payload views. A controlled
+line without a secret keyword continues through
 the existing control handling. A whitespace token exactly `<config_dir>/`
 followed only by `[A-Za-z0-9._-]+` is the one structural exception: keywords
 inside that placeholder do not trigger the line rule. Any other byte in that token, or a
@@ -1291,7 +1305,13 @@ Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
 in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
-sanitization, the second redaction pass, and the replicated-row length bound.
+sanitization, repeat that exact replacement after generic sanitization, and
+only then apply the replicated-row length bound. Exact path and bearer matching
+use the shared nesting-aware scanner before any string-control replacement: a
+complete or unterminated OSC, DCS, PM, APC, or SOS span, including nested
+payload, is one removable interleave atom and wins over the generic ESC
+alternative. Consecutive removable controls form one linear interleave run with
+no per-control count limit.
 User-facing blockers and questions are
 published on the source issue, or on the pull request of an order, only when
 `execution_status=done` is verified;
@@ -1558,7 +1578,12 @@ visibility, head, base, and policy revision. Recovery first reads pull-request
 state. An open pull request still requires the current execution binding and
 source assignment; only a confirmed merged or closed pull request may finish
 the checkpoint without a live assignment. An unreadable state retries without
-changing the task or publishing. Recovery requires full payload equality and revalidates the
+changing the task or publishing. Repository visibility is read again before
+publication and immediately before finalisation through the worker account's
+scoped GitHub runner. The visibility parsed from the stored report body must equal the
+checkpoint and live repository values. A mismatch retires open evidence for
+remeasurement and refuses merged completion; an unreadable lookup retries
+without duplicating a completed report intent. Recovery requires full payload equality and revalidates the
 v2 schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
 evidence. A validated legacy report intent that predates the post-suite
@@ -1693,13 +1718,36 @@ worker. The guard may make the pull request Ready while the worker is still in
 in any of these phases goes straight to `await_merge`, which verifies the merge;
 a pull request closed there also goes to `await_merge`, which publishes the
 `closed-unmerged` blocker. Before task completion, `await_merge` runs readiness
-on that merged head with the same readiness source as the ordinary phase unless
-it already ran on exactly that head (`readiness_head`); keys closed on an earlier
-head do not count. An unreadable pull request state is retried on the
+on that merged head with the same readiness source as the ordinary phase only
+when the merged base equals the promoted evidence base, a report or waiver plus
+the local gate are bound to that base, and it has not already run on exactly
+that head (`readiness_head`); keys closed on an earlier head do not count. A
+pending or missing evidence base, or a base move first observed after merge,
+stops at the non-recoverable `task-done` boundary without running readiness. On
+a matching merged head, this evidence-base boundary is evaluated before the
+second-review outcome: pending, missing, or moved evidence therefore stops the
+tick without starting or checking the merged-head second-review timeout. An
+unreadable pull request state is retried on the
 next tick without taking in mail.
 Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates
-the merged-head second-review outcome and starts or checks its timeout on every
-tick. A blocking review or expired timeout publishes its merge blocker even
+the reported merge head against the reviewed head first. A mismatch is the
+existing non-recoverable head boundary and cannot publish a second-review
+blocker for that different commit. On a matching head, `await_merge` evaluates
+the merged-head second-review outcome after the evidence-base boundary is
+satisfied, and starts or checks its timeout on every tick, including when the
+newest review is passing. Intake persists the passing review record's timestamp
+as the time the requirement was satisfied; the tick time is never substituted.
+The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls back to
+the first merged observation only when that timestamp is unavailable or
+invalid, so an observation outage cannot extend the review window. This
+matching-head second-review evaluation and timeout persistence happen before
+merged-report visibility and cumulative-CI lookups. A later valid merge
+timestamp always replaces a fallback anchor. Merge commit ids must be
+40-character hexadecimal SHAs and merge times must be parseable timezone-aware
+timestamps. Invalid values are missing; an A38 fallback may drive only the
+deadline, and no worker records or completes a merge until both metadata values
+are valid. A passing review after the deadline publishes
+`merged-without-second-review`. A blocking review or expired timeout publishes its merge blocker even
 while cumulative CI is pending or temporarily unavailable. A non-expired wait
 may still return the cumulative-CI pending result, but its timer has already
 been persisted and checked. `await_merge` re-observes the exact-head cumulative

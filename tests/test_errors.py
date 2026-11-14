@@ -27,6 +27,7 @@ from agent_cli.errors import (
 )
 from agent_cli.lane import redact_lane_text
 from agent_cli.store import Store, StoreError
+from agent_cli.text_sanitize import sanitize_terminal_text
 
 
 def _runner_session(store: Store, sid: str = "runner-1") -> None:
@@ -415,6 +416,141 @@ def test_multiline_string_control_secret_lines_are_one_logical_line_across_share
 
 
 @pytest.mark.parametrize(
+    ("introducer", "terminator"),
+    (
+        ("\x1b]", "\x07"),
+        ("\x9d", "\x07"),
+        ("\x1bP", "\x1b\\"),
+        ("\x90", "\x9c"),
+        ("\x1b^", "\x1b\\"),
+        ("\x9e", "\x9c"),
+        ("\x1b_", "\x1b\\"),
+        ("\x9f", "\x9c"),
+        ("\x1bX", "\x1b\\"),
+        ("\x98", "\x9c"),
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+@pytest.mark.parametrize("depth", (2, 3), ids=("depth-2", "depth-3"))
+def test_nested_string_control_boundaries_match_across_sinks_and_sanitizer(
+    introducer: str, terminator: str, depth: int
+) -> None:
+    marker = "Zx7Qp9Lm4V2"
+    raw = (
+        "before "
+        + (introducer * depth)
+        + "inner"
+        + terminator
+        + marker
+        + (terminator * (depth - 1))
+        + " after"
+    )
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "before [redacted] after"
+        assert marker not in cleaned
+    assert sanitize_terminal_text(raw) == "before  after"
+
+
+def test_nested_osc_payload_view_keeps_scanner_key_bytes_across_sinks() -> None:
+    raw = (
+        "x\x1b]\x1b]inner\x07 "
+        "\x1b[api_key= hunter2\x07 visible"
+    )
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "x[redacted]"
+        assert "hunter2" not in cleaned
+    assert sanitize_terminal_text(raw) == "x visible"
+
+
+@pytest.mark.parametrize(
+    ("payload", "suffix"),
+    (
+        ("a\x1b[31muthorization", "=hunter2"),
+        ("au\x1b[31mthorization", " hunter2"),
+        ("authoriz\x1b[31mation", ": hunter2"),
+    ),
+    ids=("equals", "space", "colon"),
+)
+def test_nested_osc_payload_clean_view_omits_complete_controls_across_sinks(
+    payload: str,
+    suffix: str,
+) -> None:
+    raw = f"prefix \x1b]0;{payload}\x07{suffix}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert cleaned == "prefix [redacted]"
+        assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "introducer",
+    (
+        "\x1b]",
+        "\x9d",
+        "\x1bP",
+        "\x90",
+        "\x1b^",
+        "\x9e",
+        "\x1b_",
+        "\x9f",
+        "\x1bX",
+        "\x98",
+    ),
+    ids=(
+        "osc-7-bit",
+        "osc-8-bit",
+        "dcs-7-bit",
+        "dcs-8-bit",
+        "pm-7-bit",
+        "pm-8-bit",
+        "apc-7-bit",
+        "apc-8-bit",
+        "sos-7-bit",
+        "sos-8-bit",
+    ),
+)
+def test_unterminated_nested_string_controls_consume_the_outer_span_everywhere(
+    introducer: str,
+) -> None:
+    marker = "Zx7Qp9Lm4V2"
+    raw = f"before {introducer}{introducer}inner {marker}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact(raw),
+    ):
+        assert marker not in cleaned
+        assert cleaned in ("[redacted]", "before [redacted]")
+    assert sanitize_terminal_text(raw) == "before "
+
+
+@pytest.mark.parametrize(
     "introducer",
     (
         "\x1b]",
@@ -514,6 +650,26 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
                 lines.extend(
                     payload_keyword + suffix for suffix in payload_c0_suffixes
                 )
+            for nested_control in (
+                "\x1b[31m",
+                "\x9b31m",
+                "\x1b7",
+                "\x1b(0",
+            ):
+                for nested_split in range(1, len(keyword)):
+                    payload_keyword = (
+                        "prefix "
+                        + introducer
+                        + "0;"
+                        + keyword[:nested_split]
+                        + nested_control
+                        + keyword[nested_split:]
+                        + terminator
+                    )
+                    lines.extend(
+                        payload_keyword + suffix
+                        for suffix in payload_c0_suffixes
+                    )
 
         for c0 in ("\x08", "\x00", "\x7f", "\r"):
             split = max(1, len(keyword) // 2)
@@ -527,12 +683,18 @@ def test_controlled_line_keyword_views_cover_scanner_control_joins() -> None:
     lines.append("passwor\x1b[31!d\x1b]0;=\x07 hunter2")
     raw = "\n".join(lines)
 
-    for cleaned in (
-        redact_shared(raw, limit=None),
-        redact_lane_text(raw, limit=None),
-        redact(raw),
-    ):
-        assert "hunter2" not in cleaned
+    sinks = (
+        ("shared", redact_shared(raw, limit=None)),
+        ("lane", redact_lane_text(raw, limit=None)),
+        ("errors", redact(raw)),
+    )
+    for sink, cleaned in sinks:
+        cleaned_lines = cleaned.split("\n")
+        assert len(cleaned_lines) == len(lines)
+        for source, cleaned_line in zip(lines, cleaned_lines, strict=True):
+            assert "hunter2" not in cleaned_line, (
+                f"{sink} leaked generated line {source!r}"
+            )
 
 
 def test_assignment_scanner_rechecks_operator_after_control_completes_key(
@@ -1160,83 +1322,130 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "logical line" in normalized
         assert "removable C0" in normalized
         assert (
-            "Removable control bytes inside retained string-control payloads "
-            "are omitted from every structural view"
+            "Nested string controls keep their payload text at every nesting depth"
             in normalized
         )
+        assert (
+            "Retained string-control payloads are checked in both a "
+            "payload-clean view and a payload-key-join view"
+            in normalized
+        )
+        assert "payload-clean view omits complete nested CSI spans" in normalized
+        assert (
+            "payload-key-join view contributes exactly the key characters"
+            in normalized
+        )
+        assert "assignment scanner may join into a key" in normalized
+        assert (
+            "second view is built lazily only for payloads that contain nested controls"
+            in normalized
+        )
+        assert "keyword in either view activates the line rule" in normalized
+        assert (
+            "An unterminated nested string control fails closed and treats the "
+            "whole logical line as matched"
+            in normalized
+        )
+        assert "linear, nesting-aware" in normalized
+        assert "every string-control span boundary" in normalized
         assert "introducer" in normalized
         assert "swallows every following physical line" in normalized
 
     assert (
-        "then classifies secret assignments on the full\nraw text. During that scan,\n"
+        "then classifies secret assignments on the full raw text. During that scan, "
         "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "Only after assignment classification does the pipeline replace those\n"
+        "Only after assignment classification does the pipeline replace those "
         "spans with `[redacted]` on the classified text, before whitespace tokenization"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "Before granting that exemption, the secret\n"
+        "Before granting that exemption, the secret "
         "matcher checks the SGR parameter bytes joined to the visible text"
-        in documented
+        in " ".join(documented.split())
     )
-    assert "a match\nredacts the entire token" in documented
+    assert "a match redacts the entire token" in " ".join(documented.split())
     assert (
-        "The assignment scan treats complete and unterminated string-control\n"
-        "spans as opaque; only after that classification are they replaced with\n"
+        "The assignment scan treats complete and unterminated string-control "
+        "spans as opaque; only after that classification are they replaced with "
         "`[redacted]` before tokenization"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
         "split as `pass` + span + `word` still joins to `password`" in documented
     )
     assert (
-        "a terminal control ends an unquoted key\n"
-        "only when an operator follows the skipped whitespace and controls before any\n"
+        "a terminal control ends an unquoted key "
+        "only when an operator follows the skipped whitespace and controls before any "
         "further key character"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "only when no visible\n"
-        "operator follows may a skipped, validly terminated string control supply its\n"
+        "only when no visible "
+        "operator follows may a skipped, validly terminated string control supply its "
         "payload operator"
-        in documented
+        in " ".join(documented.split())
     )
     assert (
-        "BEL terminates\n"
+        "BEL terminates "
         "only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST."
-        in documented
+        in " ".join(documented.split())
+    )
+    normalized_documented = " ".join(documented.split())
+    for phrase in (
+        "the reported merge head against the reviewed head first",
+        "An unreadable pull request state is retried on the next tick",
+        "this evidence-base boundary is evaluated before the second-review outcome",
+        "pending, missing, or moved evidence therefore stops the tick without "
+        "starting or checking the merged-head second-review timeout",
+        "starts or checks its timeout on every tick, including when the newest "
+        "review is passing",
+        "The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls "
+        "back to the first merged observation only when that timestamp is unavailable "
+        "or invalid",
+        "happen before merged-report visibility and cumulative-CI lookups",
+    ):
+        assert phrase in normalized_documented
+    assert "review record's timestamp" in documented
+    assert "the tick time is never substituted" in " ".join(documented.split())
+    assert "stored report body" in documented
+    assert "live repository value" in documented
+    assert "same control lexer" in " ".join(documented.split())
+    for text in (documented, ai_accounts, readme, skill):
+        normalized = " ".join(text.split())
+        assert (
+            "Nested string controls keep their payload text at every nesting depth"
+            in normalized
+        )
+        assert (
+            "Retained string-control payloads are checked in both a "
+            "payload-clean view and a payload-key-join view"
+            in normalized
+        )
+    assert (
+        "even while cumulative CI is pending or temporarily unavailable"
+        in " ".join(documented.split())
     )
     assert (
-        "Before `task-done` is evaluated for a merged A38 head, `await_merge` evaluates\n"
-        "the merged-head second-review outcome and starts or checks its timeout on every\n"
-        "tick."
-        in documented
+        "a raw whitespace token that contained a string-control span"
+        in " ".join(documented.split())
     )
     assert (
-        "even\nwhile cumulative CI is pending or temporarily unavailable"
-        in documented
+        "Credential assignments are then classified on the full raw text"
+        in " ".join(ai_accounts.split())
     )
     assert (
-        "a raw whitespace token that contained a string-control\nspan"
-        in documented
-    )
-    assert (
-        "Credential assignments are\nthen classified on the full raw text"
-        in ai_accounts
-    )
-    assert (
-        "a terminal control ends an unquoted key only when, after\n"
+        "a terminal control ends an unquoted key only when, after "
         "skipping whitespace and controls"
-        in ai_accounts
+        in " ".join(ai_accounts.split())
     )
     assert (
-        "A raw whitespace token that\n"
+        "A raw whitespace token that "
         "contained a string-control span and contains a secret keyword is "
         "redacted whole"
-        in ai_accounts
+        in " ".join(ai_accounts.split())
     )
     assert "BEL terminates OSC only" in ai_accounts
     assert (
@@ -1252,20 +1461,23 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in " ".join(readme.split())
     )
     assert (
-        "A control ends an unquoted key only when an operator occurs\n"
+        "A control ends an unquoted key only when an operator occurs "
         "before another key character"
-        in readme
+        in " ".join(readme.split())
     )
     assert (
-        "Otherwise the control stays inside the sticky key, so suffixes such as `_file`\n"
+        "Otherwise the control stays inside the sticky key, so suffixes such as `_file` "
         "and `suffix` remain part of the secret key."
-        in readme
+        in " ".join(readme.split())
     )
     assert (
         "payload operator remains opaque and later key fragments still join"
         in readme
     )
-    assert "BEL ends\nonly OSC; the other string controls require ST." in readme
+    assert (
+        "BEL ends only OSC; the other string controls require ST."
+        in " ".join(readme.split())
+    )
 
 
 def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:

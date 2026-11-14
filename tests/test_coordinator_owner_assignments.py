@@ -1812,10 +1812,22 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
 def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
     from agent_cli.allow import CHECKLIST_KEYS
     from agent_cli.coordinator_a38 import merged_base_evidence_satisfied
+    from agent_cli.local_ci import LocalCiReport, SCHEMA_ID, render_block
 
     head = "a" * 40
     base = "b" * 40
     task_id = "55555555-5555-4555-8555-555555555555"
+    report_body = render_block(
+        LocalCiReport(
+            schema=SCHEMA_ID,
+            repo="Example/owned",
+            head=head,
+            private=False,
+            recorded_at="2026-01-01T00:00:00Z",
+            required=(),
+            runs=(),
+        )
+    )
     source = {
         "repo": "Example/owned",
         "number": 7,
@@ -1867,11 +1879,18 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
                     "base_sha": base,
                     "policy_revision": base,
                     "activity_id": "owner-early-merge-report",
+                    "body": report_body,
                 },
                 "second_review": {
                     "head": head,
                     "status": "posted",
-                    "reviews": [{"blocks_merge": False}],
+                    "requirement_satisfied_at": "2026-01-01T00:00:00Z",
+                    "reviews": [
+                        {
+                            "blocks_merge": False,
+                            "at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
                 },
             },
         }},
@@ -1944,6 +1963,10 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
 
 def _patch_early_merge_readiness(monkeypatch, head):
     monkeypatch.setattr(
+        "agent_cli.coordinator_a38._repository_visibility",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
         "agent_cli.coordinator_github.scoped", lambda _store, _session, runner: runner
     )
     monkeypatch.setattr(
@@ -1971,6 +1994,108 @@ def _patch_early_merge_readiness(monkeypatch, head):
         "agent_cli.coordinator_github._observe_exact_head_ci",
         lambda *_args, **_kwargs: SimpleNamespace(kind="green"),
     )
+
+
+@pytest.mark.parametrize(
+    "report_private",
+    [True, False],
+    ids=["private-to-public", "public-to-private"],
+)
+def test_a38_merged_report_visibility_change_blocks_completion(
+    monkeypatch, tmp_path, report_private
+):
+    from agent_cli.coordinator_github import phase_await_merge
+    from agent_cli.local_ci import LocalCiReport, SCHEMA_ID, render_block
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    report = task["payload"]["coordinator"]["a38"]["report"]
+    report["body"] = render_block(
+        LocalCiReport(
+            schema=SCHEMA_ID,
+            repo="Example/owned",
+            head=head,
+            private=report_private,
+            recorded_at="2026-01-01T00:00:00Z",
+            required=(),
+            runs=(),
+        )
+    )
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._repository_visibility",
+        lambda *_args: not report_private,
+    )
+
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match="merged PR visibility differs from the stored A38 report",
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    assert store.row("task", task_id)["state"] != "done"
+
+
+def test_a38_merged_visibility_uses_configured_github_runner(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    github_calls: list[list[str]] = []
+
+    def configured_runner(argv):
+        github_calls.append(argv)
+        return Completed(0, "false", "")
+
+    def raw_runner(_argv):
+        raise AssertionError("raw runner must not perform GitHub calls")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped",
+        lambda _store, _session, _runner: configured_runner,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._repository_visibility",
+        lambda api, repo: api(
+            ["gh", "api", f"repos/{repo}", "--jq", ".private"]
+        ).stdout
+        == "true",
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), raw_runner
+    ) == ["human merge verified Example/owned#42; task done"]
+    assert github_calls == [
+        ["gh", "api", "repos/Example/owned", "--jq", ".private"]
+    ]
 
 
 def test_a38_merge_during_ci_rechecks_all_green_and_uses_real_allow(
@@ -2135,6 +2260,8 @@ def test_a38_merged_task_blocks_recoverably_on_a_ci_protocol_fault(
 def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
     monkeypatch, tmp_path, kind
 ):
+    from datetime import datetime
+
     from agent_cli.coordinator_github import _CiObservation, phase_await_merge
 
     store = Store(tmp_path)
@@ -2165,7 +2292,13 @@ def test_a38_merged_task_retries_unavailable_cumulative_ci_without_effects(
     )
 
     assert "retrying await_merge" in lines[0]
-    assert store.row("task", task_id) == before
+    after = store.row("task", task_id)
+    after_a38 = after["payload"]["coordinator"]["a38"]
+    assert after_a38.pop("merged_waiting_since") == "2026-10-01T12:00:00Z"
+    assert after_a38.pop("merged_waiting_since_source") == "merged_at"
+    updated_at = after.pop("updated_at")
+    assert datetime.fromisoformat(updated_at.replace("Z", "+00:00")).tzinfo is not None
+    assert after == before
     assert store.rows("activity") == []
 
 
@@ -2223,16 +2356,13 @@ def test_a38_merged_task_times_out_second_review_while_ci_stays_pending(
     )
 
     first = phase_await_merge(store, worker, store.row("task", task_id), object())
-    second = phase_await_merge(store, worker, store.row("task", task_id), object())
-    third = phase_await_merge(store, worker, store.row("task", task_id), object())
 
-    assert "retrying await_merge" in first[0]
-    assert "retrying await_merge" in second[0]
-    assert third == ["blocker merged-without-second-review"]
-    assert observations == ["pending", "pending"]
+    assert first == ["blocker merged-without-second-review"]
+    assert observations == []
     assert published == ["merged-without-second-review"]
     saved = store.row("task", task_id)["payload"]["coordinator"]
-    assert saved["a38"]["merged_waiting_since"] == "2026-11-05T10:00:00Z"
+    assert saved["a38"]["merged_waiting_since"] == "2026-10-01T12:00:00Z"
+    assert saved["a38"]["merged_waiting_since_source"] == "merged_at"
     assert saved["phase"] == "blocked"
 
 

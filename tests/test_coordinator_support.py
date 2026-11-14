@@ -345,6 +345,7 @@ class FakeGh:
         self.staged = False
         self.commit_count = 0
         self.pr_guard_body: str | None = None
+        self.private = False
         self.revoke_one_review_on_pr_comment = False
         self.fail_pr_guard_after_comment = False
         self.ready_calls = 0
@@ -375,6 +376,13 @@ class FakeGh:
 
         if argv == ["gh", "api", "user", "--jq", ".login"]:
             return Completed(0, "worker-bot", "")
+
+        if (
+            argv[:3] == ["gh", "api", "repos/example/project"]
+            and "--jq" in argv
+            and argv[argv.index("--jq") + 1] == ".private"
+        ):
+            return Completed(0, json.dumps(self.private), "")
 
         if argv[:2] == ["gh", "api"] and "/pulls?state=open" in argv[-1]:
             if self.open_pulls_rc != 0:

@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -1243,12 +1244,14 @@ def _observe_exact_head_ci(
         return _CiObservation("transport", "PR view temporarily unavailable")
     if not isinstance(pr, dict):
         return _CiObservation("protocol", "PR view failed")
-    observed_head = str(pr.get("headRefOid") or "")
-    if observed_head.lower() != head.lower():
+    observed_head = str(pr.get("headRefOid") or "").lower()
+    if not is_sha(observed_head):
+        return _CiObservation("transport", "PR head temporarily unavailable")
+    if observed_head != head.lower():
         return _CiObservation(
             "head_changed",
             "PR head changed",
-            new_head=(observed_head or head).lower(),
+            new_head=observed_head,
         )
     rollup = pr.get("statusCheckRollup")
     # Absent rollup must not skip head workflow inventory: action_required (and
@@ -1800,9 +1803,16 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
             ]
         if not isinstance(before_readiness, dict):
             raise CoordinatorError("PR view failed")
-        if str(before_readiness.get("headRefOid") or "").lower() != head:
-            raise CoordinatorError("PR head does not match clean signed head")
+        observed_head = str(before_readiness.get("headRefOid") or "").lower()
         observed_base = str(before_readiness.get("baseRefOid") or "").lower()
+        if not is_sha(observed_head) or not is_sha(observed_base):
+            c["phase"] = "readiness"
+            save_task(store, task)
+            return [
+                f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"
+            ]
+        if observed_head != head:
+            raise CoordinatorError("PR head does not match clean signed head")
         from .coordinator_a38 import _reconcile_pending_base, invalidate_base_evidence
 
         if _reconcile_pending_base(store, task, observed_base):
@@ -1856,11 +1866,16 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         return [f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"]
     if not isinstance(pr, dict):
         raise CoordinatorError("PR view failed")
+    observed_head = str(pr.get("headRefOid") or "").lower()
+    observed_base = str(pr.get("baseRefOid") or "").lower()
+    if not is_sha(observed_head) or (worker.a38 and not is_sha(observed_base)):
+        c["phase"] = "readiness"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"]
     account = account_for(store, worker.session_id)
-    if str(pr.get("headRefOid") or "").lower() != head:
+    if observed_head != head:
         raise CoordinatorError("PR head does not match clean signed head")
     if worker.a38:
-        observed_base = str(pr.get("baseRefOid") or "").lower()
         from .coordinator_a38 import _reconcile_pending_base
 
         if _reconcile_pending_base(store, task, observed_base):
@@ -2886,10 +2901,17 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
         second_review_wait: list[str] | None = None
-        sha = str(info.get("merge_commit_sha") or "")
-        merged_at = str(info.get("merged_at") or "")
+        reported_sha = str(info.get("merge_commit_sha") or "")
+        normalized_sha = reported_sha.lower()
+        sha = normalized_sha if is_sha(normalized_sha) else None
+        reported_merged_at = str(info.get("merged_at") or "") or None
+        merged_at = (
+            reported_merged_at
+            if parse_utc_timestamp(reported_merged_at) is not None
+            else None
+        )
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
-        if not sha or not merged_at:
+        if sha is None or (not worker.a38 and merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
             return ["merge observed but mergedBy missing"]
@@ -2916,6 +2938,15 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
+        observed_head = str((info.get("head") or {}).get("sha") or "").lower()
+        if not is_sha(observed_head):
+            return ["merge observed but head SHA missing or invalid"]
+        if observed_head != expected_head.lower():
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
         if worker.a38:
             moved_base = c.get("base_moved_after_evidence")
             if isinstance(moved_base, dict):
@@ -2968,14 +2999,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR base moved after evidence from "
                     f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
                 )
-        if str((info.get("head") or {}).get("sha") or "") != expected_head:
-            clear_reply_recovery(c)
-            raise NonRecoverableCoordinatorError(
-                "task-done refused: merged PR head differs from reviewed head; "
-                "a merged PR cannot be remeasured"
-            )
         if worker.a38:
-            from .coordinator_a38 import merged_base_evidence_satisfied
+            from .coordinator_a38 import (
+                merged_base_evidence_satisfied,
+                merged_report_visibility_satisfied,
+            )
 
             if not merged_base_evidence_satisfied(
                 store,
@@ -2991,22 +3019,45 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
             from .coordinator_checks import second_review_waived
 
+            review_waived = second_review_waived(store, task)
             second_review = (
                 "passed"
-                if second_review_waived(store, task)
+                if review_waived
                 else _a38_second_review_outcome(c, expected_head)
             )
-            if second_review != "passed":
+            if not review_waived:
                 second_review_wait = _await_second_review_after_merge(
                     store,
                     worker,
                     task,
                     runner,
                     expected_head,
-                    blocking=second_review == "blocking",
+                    outcome=second_review,
+                    merged_at=merged_at,
                 )
                 if c.get("phase") == "blocked":
-                    return second_review_wait
+                    return second_review_wait or [
+                        "blocked: merged-head second-review deadline failed"
+                    ]
+            try:
+                visibility_satisfied = merged_report_visibility_satisfied(
+                    store,
+                    worker,
+                    task,
+                    scoped_runner,
+                )
+            except NonRecoverableCoordinatorError:
+                raise
+            except CoordinatorError:
+                return [
+                    "merge observed but repository visibility is temporarily "
+                    "unavailable; retrying await_merge"
+                ]
+            if not visibility_satisfied:
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR visibility differs from the stored "
+                    "A38 report; a merged PR cannot be remeasured"
+                )
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -3063,6 +3114,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
         if second_review_wait is not None:
             return second_review_wait
+        if merged_at is None:
+            return ["merge observed but incomplete metadata"]
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -3195,34 +3248,29 @@ def _await_second_review_after_merge(
     runner: Runner,
     head: str,
     *,
-    blocking: bool,
-) -> list[str]:
-    """Handle a merged head whose required second review is missing or blocking."""
+    outcome: str,
+    merged_at: str | None = None,
+) -> list[str] | None:
+    """Evaluate the merged-head second review against its merge-time deadline."""
     c = coord(task)
     model = a38_model_second(c)
-    if blocking:
-        c["phase"] = "blocked"
-        c["blocker"] = (
-            f"merged although the model second review blocks the merge on {head}"
-            if model
-            else f"merged although the external second review blocks the merge on {head}"
-        )
-        clear_reply_recovery(c)
-        save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            (
-                f"Pull request was merged on {head[:7]} although the model second review blocks the merge."
-                if model
-                else f"Pull request was merged on {head[:7]} although the external second review blocks the merge."
-            ),
-            kind="merged-with-blocking-second-review",
-        )
     if model:
-        # No model review can arrive after the merge; do not wait.
+        if outcome == "blocking":
+            c["phase"] = "blocked"
+            c["blocker"] = f"merged although the model second review blocks the merge on {head}"
+            clear_reply_recovery(c)
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                f"Pull request was merged on {head[:7]} although the model second review blocks the merge.",
+                kind="merged-with-blocking-second-review",
+            )
+        if outcome == "passed":
+            return None
+        # No model review can arrive after the merge; do not wait for one.
         c["phase"] = "blocked"
         c["blocker"] = f"merged before the model second review was posted on {head}"
         clear_reply_recovery(c)
@@ -3238,15 +3286,63 @@ def _await_second_review_after_merge(
     a38 = c.setdefault("a38", {})
     stamp = utcnow()
     now = _parse_coordinator_time(stamp)
-    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
     if now is None:
         raise CoordinatorError("coordinator clock returned an invalid timestamp")
-    if since is None:
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    source = str(a38.get("merged_waiting_since_source") or "")
+    merged_since = _parse_coordinator_time(merged_at)
+    if merged_since is not None:
+        if since != merged_since or source != "merged_at":
+            a38["merged_waiting_since"] = merged_at
+            a38["merged_waiting_since_source"] = "merged_at"
+            save_task(store, task)
+        since = merged_since
+    elif since is None:
         a38["merged_waiting_since"] = stamp
+        a38["merged_waiting_since_source"] = "first_observation"
         save_task(store, task)
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
-    if (now - since).total_seconds() < worker.second_review_timeout_seconds:
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+        since = now
+    elif source not in ("merged_at", "first_observation"):
+        a38["merged_waiting_since_source"] = "first_observation"
+        save_task(store, task)
+
+    if outcome == "blocking":
+        c["phase"] = "blocked"
+        c["blocker"] = (
+            f"merged although the external second review blocks the merge on {head}"
+        )
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            kind="merged-with-blocking-second-review",
+        )
+
+    deadline = since + timedelta(seconds=worker.second_review_timeout_seconds)
+    satisfied_at = None
+    state = a38.get("second_review")
+    if outcome == "passed" and isinstance(state, dict) and state.get("head") == head:
+        satisfied_at = _parse_coordinator_time(state.get("requirement_satisfied_at"))
+        reviews = state.get("reviews")
+        entries = [review for review in reviews or [] if isinstance(review, dict)]
+        if entries and entries[-1].get("blocks_merge") is not True:
+            review_at = _parse_coordinator_time(entries[-1].get("at"))
+            if review_at is not None:
+                satisfied_at = review_at
+                if state.get("requirement_satisfied_at") != entries[-1].get("at"):
+                    state["requirement_satisfied_at"] = entries[-1].get("at")
+                    save_task(store, task)
+    if satisfied_at is not None and satisfied_at <= deadline:
+        return None
+    if satisfied_at is None and now < deadline:
+        return [
+            f"human merge observed on {head[:7]}; "
+            "awaiting the external second review"
+        ]
     c["phase"] = "blocked"
     c["blocker"] = f"merged without an external second review on {head}"
     clear_reply_recovery(c)
