@@ -2136,6 +2136,7 @@ def phase_inner_review(
             "Review the current worktree. Read-only. Do not run Git; use the script diff.\n"
             + diff_note,
         ),
+        read_commands=False,
         runner=runner,
         lane_runner=lane_runner,
     )

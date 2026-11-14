@@ -801,6 +801,20 @@ def test_shared_redaction_keeps_an_unquoted_secret_value_whole(
             assert cleaned == expected
 
 
+def test_shared_redaction_scans_a_second_assignment_inside_an_unquoted_secret_value() -> None:
+    cases = (
+        ("token=abc;password: hunter2", ("hunter2",)),
+        ('token=a,password="qx zq"', ("qx", "zq")),
+        ('token=abc,"password": "s3cr3t"', ("s3cr3t",)),
+        ('token=a;password="kq,vw zz"', ("kq", "vw", "zz")),
+    )
+
+    for raw, secrets in cases:
+        for cleaned in _shared_lane_and_error_redactions(raw):
+            for secret in secrets:
+                assert secret not in cleaned
+
+
 def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:
     raw = '"pass\x1b[31mword"="first secret words" visible'
 

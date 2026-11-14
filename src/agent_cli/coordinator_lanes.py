@@ -1099,13 +1099,20 @@ def _lane_result_from_reviewer_replay(outcome: dict[str, Any]) -> LaneResult:
     )
 
 
-def render_spec(role: str, body: str) -> str:
-    return f"# Role: {role}\n\n{prompt_prohibitions()}\n{body}\n"
+def render_spec(role: str, body: str, *, read_commands: bool = True) -> str:
+    return (
+        f"# Role: {role}\n\n"
+        f"{prompt_prohibitions(read_commands=read_commands)}\n{body}\n"
+    )
 
 
-def write_spec(path: Path, role: str, body: str) -> None:
+def write_spec(
+    path: Path, role: str, body: str, *, read_commands: bool = True
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_spec(role, body), encoding="utf-8")
+    path.write_text(
+        render_spec(role, body, read_commands=read_commands), encoding="utf-8"
+    )
 
 
 def blocking_working_agent(
@@ -1403,6 +1410,7 @@ def launch_lane(
     round_num: int | None,
     spec_body: str,
     record_spec_body: str | None = None,
+    read_commands: bool = True,
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> tuple[dict[str, Any], LaneResult]:
@@ -1490,7 +1498,7 @@ def launch_lane(
         if overlap is not None:
             raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}.md"
-    write_spec(spec_path, role, spec_body)
+    write_spec(spec_path, role, spec_body, read_commands=read_commands)
     spec_text = spec_path.read_text(encoding="utf-8")
 
     aid = str(uuid.uuid4())
@@ -1548,7 +1556,9 @@ def launch_lane(
                     limit=LANE_MODEL_LIMIT,
                 ),
                 "prompt": (
-                    render_spec(role, record_spec_body)
+                    render_spec(
+                        role, record_spec_body, read_commands=read_commands
+                    )
                     if record_spec_body is not None
                     else spec_text
                 ),

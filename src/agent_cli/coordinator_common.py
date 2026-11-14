@@ -914,7 +914,10 @@ def _redact_secret_assignments(text: str) -> str:
     Before the keyword, a string-control payload remains opaque.
     Quoted values run through their closing quote, or through the bounded input
     end when no close exists; an unquoted value stops at outside whitespace,
-    and after a quoted key also at a comma or semicolon.  Preserve the
+    and after a quoted key also at a comma or semicolon.  After an unquoted
+    value, scanning resumes after its last comma or semicolon outside an
+    embedded quoted fragment so a later assignment in the token is inspected.
+    Preserve the
     established whole-token replacement for a plain, compact ``key=value``
     assignment; structured and quoted assignments retain their key and
     delimiters while only their value is replaced.
@@ -1064,6 +1067,9 @@ def _redact_secret_assignments(text: str) -> str:
             break
         compact_after = cursor == value_prefix
         value_start = cursor
+        last_delimiter = None
+        embedded_quote = None
+        embedded_escape = False
         if cursor < length and text[cursor] in ("\"", "'"):
             value_quote = text[cursor]
             content_start = cursor + 1
@@ -1092,7 +1098,19 @@ def _redact_secret_assignments(text: str) -> str:
                 # payload whitespace is not an unquoted-value delimiter.
                 cursor = control_end
                 continue
-            if text[cursor].isspace() or (quoted_key and text[cursor] in ",;"):
+            character = text[cursor]
+            if embedded_quote is not None:
+                if embedded_escape:
+                    embedded_escape = False
+                elif character == "\\":
+                    embedded_escape = True
+                elif character == embedded_quote:
+                    embedded_quote = None
+            elif character in "\"'":
+                embedded_quote = character
+            elif character in ",;":
+                last_delimiter = cursor + 1
+            if character.isspace() or (quoted_key and character in ",;"):
                 break
             cursor += 1
         replacement_start = (
@@ -1104,13 +1122,16 @@ def _redact_secret_assignments(text: str) -> str:
             else value_start
         )
         replacements.append((replacement_start, cursor, "[redacted]"))
-        index = max(cursor, value_start + 1)
+        index = max(last_delimiter or cursor, value_start + 1)
 
     if not replacements:
         return text
     pieces: list[str] = []
     previous = 0
     for start, end, replacement in replacements:
+        if pieces and start <= previous:
+            previous = max(previous, end)
+            continue
         pieces.extend((text[previous:start], replacement))
         previous = end
     pieces.append(text[previous:])
@@ -1708,10 +1729,15 @@ def task_text_reference(text: str) -> str:
     return f"[task text: sha256 {digest}, {len(text)} characters]"
 
 
-def prompt_prohibitions() -> str:
+def prompt_prohibitions(read_commands: bool = True) -> str:
+    command_prohibition = (
+        "- Do not run tests, builds, installs, or any command that changes files or starts software. Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed.\n"
+        if read_commands
+        else "- Do not run tests, builds, installs, or any shell/Bash commands.\n"
+    )
     return (
         "Strict prohibitions (script-enforced ownership):\n"
-        "- Do not run tests, builds, installs, or any command that changes files or starts software. Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed.\n"
+        f"{command_prohibition}"
         "- Do not access GitHub (no gh, no API, no browser).\n"
         "- Do not run git commit/push/fetch; the script owns Git.\n"
         "- Do not start subagents, monitors, polls, or background waits.\n"

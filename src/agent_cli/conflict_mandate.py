@@ -669,7 +669,7 @@ def _lane_spec(
     if any("```" in value for value in request_data):
         raise _Blocker("request data cannot be passed to the lane safely")
     lines = [
-        prompt_prohibitions(),
+        prompt_prohibitions(read_commands=False),
         "",
         "Resolve the current Git rebase conflict in this worktree.",
         "",
