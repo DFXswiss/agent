@@ -1575,6 +1575,60 @@ def test_task_models_changes_implementer_and_omits_a_redundant_pin(
         store.close()
 
 
+def test_task_models_changes_implementer_after_a_blocked_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["task", "state", tid, "implementing"])
+    _run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "claude", "--round", "1",
+        ],
+    )
+    aid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "blocked"])
+    capsys.readouterr()
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        assert store.row("task", tid)["state"] == "failed"
+    finally:
+        store.close()
+
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "implementer",
+            "--vendor", "deepseek", "--reason", "claude implementer unavailable",
+        ],
+    )
+    assert capsys.readouterr().out == (
+        f"task {tid} implementer=deepseek (was claude)\n"
+    )
+    _run(tmp_path, ["round", "start", "--task", tid])
+    assert capsys.readouterr().out == f"task {tid} round 2\n"
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "deepseek", "--round", "2",
+        ],
+    )
+    assert capsys.readouterr().out.startswith("agent ")
+
+
 def test_task_models_first_change_moves_an_absent_implementer_pin(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1731,9 +1785,21 @@ def test_task_models_refuses_invalid_or_unavailable_changes(
             ],
         )
 
-    _run(tmp_path, ["task", "state", tid, "superseded"])
-    with pytest.raises(SystemExit, match="terminal task"):
-        _run(tmp_path, [*base, "--vendor", "openrouter", "--reason", "quota"])
+    for state in ("done", "merged", "superseded"):
+        os.environ["AGENT_HOME"] = str(tmp_path)
+        store = open_store()
+        try:
+            closed = {
+                key: value
+                for key, value in (store.row("task", tid) or {}).items()
+                if not key.startswith("_")
+            }
+            closed["state"] = state
+            store.write("task", "update", tid, closed)
+        finally:
+            store.close()
+        with pytest.raises(SystemExit, match="closed task"):
+            _run(tmp_path, [*base, "--vendor", "openrouter", "--reason", "quota"])
 
     legacy_tid = new_task()
     _remove_task_models(tmp_path, legacy_tid)

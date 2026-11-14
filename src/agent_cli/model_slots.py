@@ -1,9 +1,10 @@
 """Two logical model slots for the lane chain: ``first`` and ``second``.
 
-Which provider fills each slot is device-local configuration
-(``ai-accounts.json`` → ``models``). Ledger stages and checklist keys use
-vendor-neutral slot names. Historical vendor-bound names remain readable and
-are accepted as deprecated CLI aliases.
+The device ``ai-accounts.json`` supplies each slot's default provider when a
+task is created; the task pin governs and can be changed with
+``agent task models``. Ledger stages and checklist keys use vendor-neutral slot
+names. Historical vendor-bound names remain readable and are accepted as
+deprecated CLI aliases.
 
 ``LEGACY_RECORDED_SLOTS`` exists only to read or display agent and gate rows
 recorded before tasks pinned model slots. It is never a device assignment and

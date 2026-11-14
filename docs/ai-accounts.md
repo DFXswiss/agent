@@ -340,12 +340,21 @@ agent task models --id <task-uuid> --slot first|second|implementer \
 the task's `model_changes` history with the old provider, the new provider, the
 reason and the time. Later agent rows of that slot require the new provider;
 for review slots, later `agent gate record` calls do as well. Agent and gate
-rows already recorded keep their vendor. The command refuses a coordinator task
-because its model slots are the device AI configuration pinned when the
-coordinator accepted it. It also refuses
-a terminal task, a task without a model pin, and a change of `second` when the
-task's second review is external. A review that cannot run is still recorded as
-`unavailable` with evidence before the switch; no fallback happens automatically.
+rows already recorded keep their vendor. The command refuses `done`, `merged`
+and `superseded` tasks, and coordinator tasks because their model slots are the
+device AI configuration pinned when the coordinator accepted them. It also
+refuses a task without a model pin, and a change of `second` when the task's
+second review is external.
+
+If the implementer cannot run, finish its agent row with
+`agent agent finish --id <implementer-uuid> --verdict blocked`; the task becomes
+`failed`. Change the implementer with `agent task models`, then start a new round
+with `agent round start --task <task-uuid>` and start the implementer with the
+new vendor. If a PR reviewer cannot run, finish its agent row with
+`agent agent finish --id <reviewer-uuid> --verdict unavailable`, then
+`agent gate record --verdict unavailable`, then
+`agent close-step --status unavailable` for the matching gate key, and then
+change the pin. No fallback happens automatically.
 
 For a task pinned with `second: null`, `gate record --stage review-2` is refused;
 the external result is recorded in the two `review_2_*` checklist keys with

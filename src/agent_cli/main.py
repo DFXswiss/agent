@@ -183,6 +183,7 @@ ROUND_START_STATES = frozenset(
         "failed",
     }
 )
+MODEL_CHANGE_CLOSED_STATES = frozenset({"done", "merged", "superseded"})
 PING_KINDS = ("review-request", "ping", "question")
 ACTIVITY_TYPES = frozenset(
     {
@@ -231,7 +232,9 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
-# Supported provider adapters. Which one runs a slot is device configuration.
+# Supported provider adapters. `ai-accounts.json` supplies a slot's default
+# when a task is created; the task pin governs and can be changed with
+# `agent task models`.
 VENDORS = LANE_VENDORS
 N_A_ALLOWED = frozenset(
     {
@@ -954,8 +957,8 @@ def cmd_task(args: list[str]) -> None:
                 die(
                     "coordinator tasks keep the model slots pinned from ai-accounts.json when the coordinator accepted them"
                 )
-            if str(row.get("state") or "") in TERMINAL_STATES:
-                die("cannot change the model slots of a terminal task")
+            if str(row.get("state") or "") in MODEL_CHANGE_CLOSED_STATES:
+                die("cannot change the model slots of a closed task")
             if row.get("models") is None:
                 die(TASK_MODELS_NOT_CONFIGURED)
             models = models_for_new_record(row)
