@@ -195,6 +195,8 @@ def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[s
         [
             "codex",
             "exec",
+            "-c",
+            'model_reasoning_effort="high"',
             "--model",
             model,
             "--sandbox",

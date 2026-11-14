@@ -296,6 +296,18 @@ def test_render_spec_is_what_write_spec_writes(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_pg
+def test_prompt_prohibitions_allow_read_only_commands() -> None:
+    from agent_cli.coordinator_common import prompt_prohibitions
+
+    prohibitions = prompt_prohibitions()
+    assert (
+        "Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed."
+        in prohibitions
+    )
+    assert "any shell/Bash commands" not in prohibitions
+
+
+@pytest.mark.no_pg
 def test_ci_failure_findings_keep_the_checks_and_the_end() -> None:
     from agent_cli.coordinator_github import _ci_failure_findings
 

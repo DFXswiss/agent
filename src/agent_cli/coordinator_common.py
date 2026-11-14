@@ -1710,7 +1710,7 @@ def task_text_reference(text: str) -> str:
 def prompt_prohibitions() -> str:
     return (
         "Strict prohibitions (script-enforced ownership):\n"
-        "- Do not run tests, builds, installs, or any shell/Bash commands.\n"
+        "- Do not run tests, builds, installs, or any command that changes files or starts software. Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed.\n"
         "- Do not access GitHub (no gh, no API, no browser).\n"
         "- Do not run git commit/push/fetch; the script owns Git.\n"
         "- Do not start subagents, monitors, polls, or background waits.\n"

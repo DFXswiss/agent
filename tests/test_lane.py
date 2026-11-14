@@ -409,6 +409,18 @@ def test_codex_implementer_argv_requires_explicit_model() -> None:
     assert argv[argv.index("--model") + 1] == "explicit-codex-model"
 
 
+def test_codex_argv_sets_reasoning_effort_high() -> None:
+    for write in (False, True):
+        argv = codex_argv(
+            cwd="/work",
+            write=write,
+            output_file="/tmp/out.txt",
+            model="explicit-codex-model",
+        )
+        assert argv[argv.index("exec") + 1] == "-c"
+        assert argv[argv.index("exec") + 2] == 'model_reasoning_effort="high"'
+
+
 def test_codex_reviewer_argv_requires_explicit_model() -> None:
     argv = codex_argv(
         cwd="/work", write=False, output_file="/tmp/out.txt", model="explicit-codex-ro"
