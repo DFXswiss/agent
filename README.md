@@ -250,8 +250,9 @@ control-interleaved config-directory paths on the complete source before this
 structural rule, apply their length bound next, and run precise redaction last.
 Credential assignments use one scanner over complete, unbounded key tokens,
 including quoted JSON keys. It is linear, except where whitespace follows
-terminal controls that hold key characters (a digit or the letter final byte of
-a CSI or ESC sequence, or a key character in a string-control payload); such
+terminal controls that hold key characters (a key character (a letter, a digit,
+`_` or `-`) among the parameter, intermediate or final bytes of a CSI or ESC
+sequence, or a key character in a string-control payload); such
 text costs time quadratic in the number of those controls. Quoted values are consumed through their
 closing quote or the bounded input end. The scanner recognizes the legacy
 `passwd` and `access_key` / `access-key` / `accesskey` key forms and consumes

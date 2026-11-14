@@ -892,8 +892,9 @@ def _redact_secret_assignments(text: str) -> str:
     """Redact secret-key assignment values with one lexical scan.
 
     The scan is linear, except where whitespace follows terminal controls that
-    hold key characters (a digit or the letter final byte of a CSI or ESC
-    sequence, or a key character in an OSC, DCS, PM, APC or SOS payload): a
+    hold key characters (a key character (a letter, a digit, _ or -) among
+    the parameter, intermediate or final bytes of a CSI or ESC sequence, or a
+    key character in a string-control payload): a
     key starts inside each such control, and the operator search after each
     of these keys reads the following whitespace and controls again, which
     costs time quadratic in the number of those controls. Text without ESC and
