@@ -437,6 +437,10 @@ pair.
    implementer result that lacks summaries or its
    reused and added list is not retried. Pull-request review-pair preparation
    failure is not retried.
+   A `no-change` result that adds no commit, on a task that already holds both
+   summaries from an earlier round (and, when `REVIEW.md` exists at the base, a
+   reused and added list), keeps them and closes its round like `done`; it
+   does not block.
    A lane exception closes its agent row and retries under the same bound.
    After the retries it becomes a resumable `lane-failed` blocker with fixed
    text `Model lane interrupted in <phase>; not a code rejection.`. Exception
@@ -1150,7 +1154,9 @@ SUMMARY_DE: Die tatsächliche Änderung hier beschreiben.
 ```
 
 The script records these semantic summaries; it does not invent them at merge.
-Missing summaries block progression. The remaining body is bounded. Empty,
+Missing summaries block progression, except after a `no-change` result that
+adds no commit while the task holds summaries from an earlier round. The
+remaining body is bounded. Empty,
 partial, timeout, or unavailable output is
 never zero findings and never approval. Nonzero process exits cannot approve,
 even when stdout claims completion. Model text cannot certify checks, CI,

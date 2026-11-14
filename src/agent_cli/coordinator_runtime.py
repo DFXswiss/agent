@@ -1551,6 +1551,17 @@ def _apply_implementer_outcome(
                 f"SUMMARY_EN: {replay_en}\nSUMMARY_DE: {replay_de}\n"
             )
     summaries = structured_summaries or parse_change_summaries(stdout)
+    unchanged = model_result == "no-change" and not sha
+    if summaries is None and unchanged:
+        kept_en = task.get("change_summary_en")
+        kept_de = task.get("change_summary_de")
+        if (
+            isinstance(kept_en, str)
+            and kept_en
+            and isinstance(kept_de, str)
+            and kept_de
+        ):
+            summaries = (kept_en, kept_de)
     if summaries is None:
         c = _commit_replay_blocker(
             "completed patch lacks concrete English/German change summaries"
@@ -1572,6 +1583,13 @@ def _apply_implementer_outcome(
         # Structured checkpoint data and a held list both outlive the prefix.
         if _held_surface_list(task) is None:
             listed = _replayed_surface_list(replay) or parse_surface_list(stdout)
+            if listed is None and unchanged:
+                listed = _replayed_surface_list(
+                    {
+                        "reused_lines": task.get("reused_lines"),
+                        "added_lines": task.get("added_lines"),
+                    }
+                )
             if listed is None:
                 c = _commit_replay_blocker(
                     "completed patch lacks a reused and added list with file and line"

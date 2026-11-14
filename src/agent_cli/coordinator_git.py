@@ -598,13 +598,12 @@ def draft_pr_body(
     reused: list[str] | None = None,
     added: list[str] | None = None,
 ) -> str:
-    """Draft text. Empty headings stay until the script has a real list to post."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
-    else:
-        details = "Reused:\nAdded:\n\n"
     if source.get("kind") == ORDER_KIND:
         short = str(source.get("order_id") or "")[:8]
         title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
@@ -617,6 +616,8 @@ def draft_pr_body(
             f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
             f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
         )
+    if not details:
+        return visible
     return visible + (
         "<details>\n<summary>Details</summary>\n\n"
         f"{details}"

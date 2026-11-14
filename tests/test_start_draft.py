@@ -466,6 +466,54 @@ def test_no_change_with_real_commits_is_not_closed(
     assert checkpoint["phase"] == "inner_review"
 
 
+@pytest.mark.parametrize("review_md", [None, "# Review\n"])
+def test_no_change_without_a_commit_keeps_the_summaries_and_closes_its_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, review_md: str | None
+) -> None:
+    store, worker, fake, lane = _env(tmp_path, monkeypatch)
+    fake.review_md = review_md
+    fake.model_outputs["implementer"] = (
+        "STATUS: complete\nRESULT: done\n"
+        "SUMMARY_EN: Correct widget initialization.\n"
+        "SUMMARY_DE: Widget-Initialisierung korrigiert.\n"
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "ADDED: `src/habit.ts:12` member habit route\n"
+    )
+    _drive(store, worker, fake, lane, "implement")
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _c(store)["phase"] == "inner_review"
+    head = _c(store)["head_sha"]
+    reused = _task(store).get("reused_lines")
+    edits = list(fake.pr_edits)
+
+    fake.model_outputs["reviewer"] = (
+        "STATUS: complete\nRESULT: rejected\nfix the widget\n"
+    )
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _c(store)["phase"] == "implement"
+    fake.model_outputs["implementer"] = NO_CHANGE
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+
+    task = _task(store)
+    checkpoint = _c(store)
+    assert "implementer done round=2" in lines
+    assert checkpoint["phase"] == "inner_review"
+    assert checkpoint.get("blocker") is None
+    assert checkpoint["head_sha"] == head
+    assert task["change_summary_en"] == "Correct widget initialization."
+    assert task["change_summary_de"] == "Widget-Initialisierung korrigiert."
+    assert task.get("reused_lines") == reused
+    assert fake.pr_edits == edits
+    rounds = {
+        row["round"]: row
+        for row in store.rows("task_round")
+        if row["task_id"] == task["id"]
+    }
+    assert rounds[2]["implementer_verdict"] == "done"
+
+
 def test_no_change_close_keeps_the_live_task_when_the_save_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
