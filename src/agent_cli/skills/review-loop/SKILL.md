@@ -28,8 +28,15 @@ Neither lane starts monitors or waits/polls for tests, CI, or another lane.
 Return the implementation result, findings, or blocker to the script. It owns
 monitoring and informs the model when an event provides useful work.
 
-No round cap. Repeat until the reviewer sets `approved` or the implementer is
-`blocked`.
+Repeat until the reviewer sets `approved` or the implementer is `blocked`. A
+session that runs this loop by hand has no round cap. A coordinator task has a
+round limit, pinned when the task is created: the submitted `--max-rounds` of
+an order, then `max_rounds_by_model`, then `max_rounds`, then 10; no value
+disables it. Before the next round would exceed it, the script asks a human,
+with the opinion of one assessment check lane (`unavailable` for an issue-only
+worker without a check binding). A reply grants the same number of rounds
+again, and a cancel ends an order. See
+[docs/issue-coordinator.md](../../../../docs/issue-coordinator.md).
 
 ```bash
 agent round start --task <uuid>

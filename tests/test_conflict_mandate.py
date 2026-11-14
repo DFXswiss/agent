@@ -2874,7 +2874,7 @@ def test_worker_isolation_ignores_another_logins_unfinished_request(
     assert unfinished_requests(second, "other-bot") == []
 
 
-def test_lane_spec_contains_the_shared_prompt_prohibitions(
+def test_lane_spec_that_forbids_git_does_not_allow_read_only_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
@@ -2890,7 +2890,8 @@ def test_lane_spec_contains_the_shared_prompt_prohibitions(
         / "pr-42-c7"
         / "lane-s1-a1.md"
     ).read_text(encoding="utf-8")
-    assert prompt_prohibitions() in spec
+    assert prompt_prohibitions(read_commands=False) in spec
+    assert "Reading files with read-only commands" not in spec
     assert "Answer with STATUS:, RESULT:, SUMMARY_EN:, and SUMMARY_DE:" in spec
     assert "RESULT: blocked followed by one factual sentence" not in spec
 
@@ -6603,6 +6604,33 @@ def test_script_mandate_reports_an_open_outcome_as_pending(
         (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").read_text()
     )
     assert state["phase"] == "transient"
+    store.close()
+
+
+def test_script_mandate_pending_reason_ignores_audit_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    fake.lane_results = [(127, "")]
+
+    def fail_record(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("audit store unavailable")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", fail_record)
+    run = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert run.outcome == "pending"
+    assert run.reason == "transient: lane was unavailable"
+    assert "lane record not written: audit store unavailable" in run.lines
+    assert fake.pr_comments == []
     store.close()
 
 

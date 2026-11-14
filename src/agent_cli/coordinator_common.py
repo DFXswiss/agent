@@ -115,7 +115,7 @@ _SECRET_ASSIGNMENT_KEYWORD = re.compile(
     ),
     re.IGNORECASE,
 )
-_ASSIGNMENT_KEY_RUN = re.compile(r"[A-Za-z0-9_-]+")
+_ASSIGNMENT_KEY_RUN = re.compile(r"[\w-]+")
 _TERMINAL_STRING_CONTROL_INTRODUCER = re.compile(
     r"\x1b(?:\]|P|\^|_|X)|[\x90\x98\x9d\x9e\x9f]"
 )
@@ -400,7 +400,7 @@ def _terminal_control_span(
 
 
 def _is_assignment_key_char(char: str) -> bool:
-    return char.isascii() and (char.isalnum() or char in "_-")
+    return char.isalnum() or char in "_-"
 
 
 def _terminal_control_key_chars(
@@ -441,7 +441,7 @@ def _extend_secret_assignment_key_tail(tail: str, char: str) -> tuple[str, bool]
 def _extend_secret_assignment_key_run(
     tail: str, text: str, start: int, end: int
 ) -> tuple[str, bool]:
-    """Extend one key tail from an ASCII run without per-character strings."""
+    """Extend one key tail from one key run without per-character strings."""
     matched = _SECRET_ASSIGNMENT_KEYWORD.search(text, start, end) is not None
     if not matched and tail:
         prefix_end = min(end, start + _SECRET_ASSIGNMENT_KEYWORD_MAX)
@@ -889,9 +889,21 @@ def _assignment_operator_after_key(
 
 
 def _redact_secret_assignments(text: str) -> str:
-    """Redact secret-key assignment values with one linear lexical scan.
+    """Redact secret-key assignment values with one lexical scan.
 
-    Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
+    The scan is linear, except where whitespace follows terminal controls that
+    hold key characters (a key character (a letter, a digit, _ or -) among
+    the parameter, intermediate or final bytes of a CSI or ESC sequence, or a
+    key character in a string-control payload): a
+    key starts inside each such control, and the operator search after each
+    of these keys reads the following whitespace and controls again, which
+    costs time quadratic in the number of those controls. Text without ESC and
+    C1 bytes is scanned in linear time.
+
+    Keys are complete, unbounded tokens of Unicode letters and numbers, ``_``
+    and ``-``, and may be quoted. A secret key that ends directly before a
+    quote is read as the end of a quoted key that also holds other characters
+    (``"access token"``, ``'auth.token'``); the quote belongs to the key.
     Removable terminal controls may interleave their bytes, and terminal string
     controls remain one opaque span even when their payload contains whitespace.
     After a complete secret keyword, a control ends an unquoted key only when
@@ -901,10 +913,14 @@ def _redact_secret_assignments(text: str) -> str:
     remains an opaque interleave inside the key.
     Before the keyword, a string-control payload remains opaque.
     Quoted values run through their closing quote, or through the bounded input
-    end when no close exists; unquoted values stop at outside whitespace, comma,
-    or semicolon.  Preserve the established whole-token replacement for a
-    plain, compact ``key=value`` assignment; structured and quoted assignments
-    retain their key and delimiters while only their value is replaced.
+    end when no close exists; an unquoted value stops at outside whitespace,
+    and after a quoted key also at a comma or semicolon.  After an unquoted
+    value, scanning resumes after its last comma or semicolon outside an
+    embedded quoted fragment so a later assignment in the token is inspected.
+    Preserve the
+    established whole-token replacement for a plain, compact ``key=value``
+    assignment; structured and quoted assignments retain their key and
+    delimiters while only their value is replaced.
     """
     if not text:
         return text
@@ -956,9 +972,13 @@ def _redact_secret_assignments(text: str) -> str:
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
+                # One operator search per control run: a search that finds no
+                # operator from one position of the run finds none from a later
+                # position of that run, because both walk the same separators
+                # to the same end.
+                operator_searched = secret_key and quote is None
                 if (
-                    secret_key
-                    and quote is None
+                    operator_searched
                     and _assignment_operator_after_key(
                         text,
                         cursor,
@@ -984,18 +1004,18 @@ def _redact_secret_assignments(text: str) -> str:
                         )
                         secret_key = secret_key or matched
                     cursor = control_end
-                    if (
-                        secret_key
-                        and quote is None
-                        and _assignment_operator_after_key(
-                            text,
-                            cursor,
-                            allow_string_control_operator=True,
-                        )
-                        is not None
-                    ):
-                        key_end = cursor
-                        break
+                    if not operator_searched and secret_key and quote is None:
+                        operator_searched = True
+                        if (
+                            _assignment_operator_after_key(
+                                text,
+                                cursor,
+                                allow_string_control_operator=True,
+                            )
+                            is not None
+                        ):
+                            key_end = cursor
+                            break
                     if cursor >= length:
                         break
                     control_end, _final = _terminal_control_span(
@@ -1008,11 +1028,18 @@ def _redact_secret_assignments(text: str) -> str:
         if key_length == 0:
             index += 1
             continue
+        quoted_key = quote is not None
         if quote is not None:
             if cursor >= length or text[cursor] != quote:
                 index = max(cursor, index + 1)
                 continue
             cursor += 1
+        elif secret_key and cursor < length and text[cursor] in ("\"", "'"):
+            # Closing quote of a quoted key that also holds other characters,
+            # such as "access token" or 'auth.token'.
+            key_end = cursor
+            cursor += 1
+            quoted_key = True
         if key_end is None:
             key_end = cursor
         operator_match = _assignment_operator_after_key(
@@ -1040,6 +1067,9 @@ def _redact_secret_assignments(text: str) -> str:
             break
         compact_after = cursor == value_prefix
         value_start = cursor
+        last_delimiter = None
+        embedded_quote = None
+        embedded_escape = False
         if cursor < length and text[cursor] in ("\"", "'"):
             value_quote = text[cursor]
             content_start = cursor + 1
@@ -1068,7 +1098,19 @@ def _redact_secret_assignments(text: str) -> str:
                 # payload whitespace is not an unquoted-value delimiter.
                 cursor = control_end
                 continue
-            if text[cursor].isspace() or text[cursor] in ",;":
+            character = text[cursor]
+            if embedded_quote is not None:
+                if embedded_escape:
+                    embedded_escape = False
+                elif character == "\\":
+                    embedded_escape = True
+                elif character == embedded_quote:
+                    embedded_quote = None
+            elif character in "\"'":
+                embedded_quote = character
+            elif character in ",;":
+                last_delimiter = cursor + 1
+            if character.isspace() or (quoted_key and character in ",;"):
                 break
             cursor += 1
         replacement_start = (
@@ -1080,13 +1122,16 @@ def _redact_secret_assignments(text: str) -> str:
             else value_start
         )
         replacements.append((replacement_start, cursor, "[redacted]"))
-        index = max(cursor, value_start + 1)
+        index = max(last_delimiter or cursor, value_start + 1)
 
     if not replacements:
         return text
     pieces: list[str] = []
     previous = 0
     for start, end, replacement in replacements:
+        if pieces and start <= previous:
+            previous = max(previous, end)
+            continue
         pieces.extend((text[previous:start], replacement))
         previous = end
     pieces.append(text[previous:])
@@ -1669,7 +1714,7 @@ def write_task_text(worker: WorkerConfig, task_id: str, text: str) -> tuple[str,
 
 
 def read_task_text(worker: WorkerConfig, task: dict[str, Any]) -> str:
-    """The stored task text, or the source preview when no file exists."""
+    """The stored task text, or the source preview when the file is missing, unreadable, not valid UTF-8, or empty."""
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     try:
@@ -1684,10 +1729,15 @@ def task_text_reference(text: str) -> str:
     return f"[task text: sha256 {digest}, {len(text)} characters]"
 
 
-def prompt_prohibitions() -> str:
+def prompt_prohibitions(read_commands: bool = True) -> str:
+    command_prohibition = (
+        "- Do not run tests, builds, installs, or any command that changes files or starts software. Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed.\n"
+        if read_commands
+        else "- Do not run tests, builds, installs, or any shell/Bash commands.\n"
+    )
     return (
         "Strict prohibitions (script-enforced ownership):\n"
-        "- Do not run tests, builds, installs, or any shell/Bash commands.\n"
+        f"{command_prohibition}"
         "- Do not access GitHub (no gh, no API, no browser).\n"
         "- Do not run git commit/push/fetch; the script owns Git.\n"
         "- Do not start subagents, monitors, polls, or background waits.\n"

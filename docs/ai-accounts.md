@@ -207,6 +207,8 @@ execute software, and the codex lane (`codex exec --sandbox workspace-write`)
 cannot be kept from running commands. It also refuses a configured implementer
 that differs from `models.first`; separate implementers are not supported by
 the coordinator yet. `agent lane run` and `agent run` accept `models.first = codex`.
+Every codex lane also passes `-c model_reasoning_effort="high"`, so the reasoning
+effort of the account's own codex configuration does not apply to lanes.
 
 The `claude` and `openrouter` adapters run Claude Code with `--restricted`,
 `--strict-mcp-config`, `--disable-slash-commands`, and an explicit file-tool
@@ -289,8 +291,12 @@ trailing strict SGR wrapper whose parameter bytes joined to the visible text do
 not match a secret pattern.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
-bounding. Credential assignments use a linear lexical scan of complete,
-unbounded key tokens, including quoted JSON keys. Control-tolerant URL schemes, terminal escape
+bounding. Credential assignments use a lexical scan of complete, unbounded key
+tokens, including quoted JSON keys. The scan is linear, except where whitespace
+follows terminal controls that hold key characters (a key character (a letter,
+a digit, `_` or `-`) among the parameter, intermediate or final bytes of a CSI
+or ESC sequence, or a key character in a string-control payload);
+such text costs time quadratic in the number of those controls. Control-tolerant URL schemes, terminal escape
 parameters, and removable-control interleaves have fixed matching windows so
 long separatorless text remains linear to process. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result

@@ -17,6 +17,7 @@ from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
     redact as redact_shared,
 )
+from agent_cli.errors import redact as redact_error
 from agent_cli.lane import (
     CODEX_CHECK_LANE_REFUSED,
     LANE_GITHUB_TOKEN_ENV,
@@ -408,6 +409,18 @@ def test_codex_implementer_argv_requires_explicit_model() -> None:
     assert argv[argv.index("--model") + 1] == "explicit-codex-model"
 
 
+def test_codex_argv_sets_reasoning_effort_high() -> None:
+    for write in (False, True):
+        argv = codex_argv(
+            cwd="/work",
+            write=write,
+            output_file="/tmp/out.txt",
+            model="explicit-codex-model",
+        )
+        assert argv[argv.index("exec") + 1] == "-c"
+        assert argv[argv.index("exec") + 2] == 'model_reasoning_effort="high"'
+
+
 def test_codex_reviewer_argv_requires_explicit_model() -> None:
     argv = codex_argv(
         cwd="/work", write=False, output_file="/tmp/out.txt", model="explicit-codex-ro"
@@ -719,6 +732,87 @@ def test_shared_redaction_covers_userinfo_after_a_long_scheme() -> None:
     ):
         assert "hunter2" not in cleaned
         assert "://[redacted]@localhost" in cleaned
+
+
+def _shared_lane_and_error_redactions(raw: str) -> tuple[str, str, str]:
+    return (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact_error(raw),
+    )
+
+
+def test_shared_redaction_covers_a_secret_key_with_a_unicode_suffix() -> None:
+    for cleaned in _shared_lane_and_error_redactions("token\u00e9=hunter2 visible"):
+        assert cleaned == "[redacted] visible"
+
+
+def test_shared_redaction_covers_a_single_quoted_key_with_other_characters() -> None:
+    raw = "{'access token': 's3cr3t', 'visible': 'keep-me'}"
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == "{'access token': '[redacted]', 'visible': 'keep-me'}"
+
+
+def test_shared_redaction_covers_a_quoted_key_followed_by_an_equals_sign() -> None:
+    raw = '"access token"="s3cr3t" visible'
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == '"access token"="[redacted]" visible'
+
+
+def test_shared_redaction_covers_an_unquoted_value_after_a_quoted_key() -> None:
+    raw = '{"access token": 12345, "visible": "keep-me"}'
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == '{"access token": [redacted], "visible": "keep-me"}'
+
+
+def test_shared_redaction_is_linear_on_a_large_unicode_key() -> None:
+    raw = "token" + "\u00e9" * 1_000_000 + "=hunter2 visible"
+    started = time.monotonic()
+    results = _shared_lane_and_error_redactions(raw)
+    elapsed = time.monotonic() - started
+    assert results == ("[redacted] visible",) * 3
+    assert elapsed < 2, f"redaction took {elapsed:.3f}s"
+
+
+@pytest.mark.parametrize("separator", (",", ";"), ids=("comma", "semicolon"))
+def test_shared_redaction_keeps_an_unquoted_secret_value_whole(
+    separator: str,
+) -> None:
+    for raw, expected in (
+        (f"ERROR password=correct{separator}horse", "ERROR [redacted]"),
+        (
+            f"ERROR password=correct{separator}horse visible",
+            "ERROR [redacted] visible",
+        ),
+        (
+            f"ERROR password: correct{separator}horse visible",
+            "ERROR password: [redacted] visible",
+        ),
+        (
+            f"ERROR api_key = a{separator}b{separator}c visible",
+            "ERROR api_key = [redacted] visible",
+        ),
+        (
+            f'ERROR password="correct"{separator}horse visible',
+            f'ERROR password="[redacted]"{separator}horse visible',
+        ),
+    ):
+        for cleaned in _shared_lane_and_error_redactions(raw):
+            assert cleaned == expected
+
+
+def test_shared_redaction_scans_a_second_assignment_inside_an_unquoted_secret_value() -> None:
+    cases = (
+        ("token=abc;password: hunter2", ("hunter2",)),
+        ('token=a,password="qx zq"', ("qx", "zq")),
+        ('token=abc,"password": "s3cr3t"', ("s3cr3t",)),
+        ('token=a;password="kq,vw zz"', ("kq", "vw", "zz")),
+    )
+
+    for raw, secrets in cases:
+        for cleaned in _shared_lane_and_error_redactions(raw):
+            for secret in secrets:
+                assert secret not in cleaned
 
 
 def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:

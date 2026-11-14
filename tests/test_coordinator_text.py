@@ -296,6 +296,96 @@ def test_render_spec_is_what_write_spec_writes(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_pg
+def test_prompt_prohibitions_allow_read_only_commands() -> None:
+    from agent_cli.coordinator_common import prompt_prohibitions
+
+    prohibitions = prompt_prohibitions()
+    assert (
+        "Reading files with read-only commands (cat, head, sed -n, grep, ls, git diff, git show, git log) is allowed."
+        in prohibitions
+    )
+    assert "any shell/Bash commands" not in prohibitions
+
+
+def test_prompts_that_forbid_git_do_not_allow_read_only_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import prompt_prohibitions
+    from agent_cli.coordinator_runtime import phase_inner_review
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "inner-review-prompt"
+    worktree.mkdir()
+    task_id = "aa000001-0000-4000-8000-000000000234"
+    task = {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "pr_number": 5,
+                "head_sha": "a" * 40,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", task_id, task)
+    store.write(
+        "task_round",
+        "insert",
+        f"{task_id}-round",
+        {
+            "id": f"{task_id}-round",
+            "task_id": task_id,
+            "round": 1,
+            "implementer_verdict": "done",
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    phase_inner_review(
+        store,
+        worker,
+        saved,
+        lambda _argv: Completed(0, "", ""),
+        lambda _argv, _stdin: Completed(
+            0, "STATUS: complete\nRESULT: rejected\n", ""
+        ),
+    )
+    inner_reviewer = (
+        worker.workspace_root
+        / ".coordinator-control"
+        / task_id
+        / "reviewer-grok.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Reading files with read-only commands" not in inner_reviewer
+    assert (
+        "- Do not run tests, builds, installs, or any shell/Bash commands."
+        in inner_reviewer
+    )
+    assert "Reading files with read-only commands" in prompt_prohibitions()
+
+
+@pytest.mark.no_pg
 def test_ci_failure_findings_keep_the_checks_and_the_end() -> None:
     from agent_cli.coordinator_github import _ci_failure_findings
 

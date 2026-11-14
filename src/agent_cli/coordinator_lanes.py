@@ -602,9 +602,16 @@ def _checkpoint_reviewer_outcome(
     return entry
 
 
+def _require_plain_agent_id(agent_id: str) -> None:
+    """Refuse an agent id that cannot be one file name in a lane directory."""
+    if not agent_id or "/" in agent_id or "\x00" in agent_id:
+        raise CoordinatorError("agent id must be a safe single path component")
+
+
 def _reviewer_spool_path(
     store: Store, worker: WorkerConfig, task_id: str, agent_id: str
 ) -> Path:
+    _require_plain_agent_id(agent_id)
     path = (
         store.home
         / "coordinator-reviewer-spools"
@@ -649,6 +656,7 @@ def _owned_reviewer_output(
 def _legacy_reviewer_spool_path(
     worker: WorkerConfig, task_id: str, agent_id: str
 ) -> Path:
+    _require_plain_agent_id(agent_id)
     return control_dir(worker, task_id) / "reviewer-checkpoints" / f"{agent_id}.json"
 
 
@@ -936,6 +944,7 @@ def cleanup_finished_reviewer_spools(
 ) -> None:
     """Remove and verify deterministic raw files left after a committed outcome."""
     task_id = str(task["id"])
+    local_origin: str | None = None
     for agent in store.rows("agent"):
         role = str(agent.get("role") or "")
         if (
@@ -947,6 +956,10 @@ def cleanup_finished_reviewer_spools(
                 "pr-reviewer-logic",
             )
         ):
+            continue
+        if local_origin is None:
+            local_origin = store.device_id()
+        if agent.get("_origin_device_id") != local_origin:
             continue
         agent_id = str(agent["id"])
         output_file = _owned_reviewer_output(store, worker, task_id, agent)
@@ -1086,13 +1099,20 @@ def _lane_result_from_reviewer_replay(outcome: dict[str, Any]) -> LaneResult:
     )
 
 
-def render_spec(role: str, body: str) -> str:
-    return f"# Role: {role}\n\n{prompt_prohibitions()}\n{body}\n"
+def render_spec(role: str, body: str, *, read_commands: bool = True) -> str:
+    return (
+        f"# Role: {role}\n\n"
+        f"{prompt_prohibitions(read_commands=read_commands)}\n{body}\n"
+    )
 
 
-def write_spec(path: Path, role: str, body: str) -> None:
+def write_spec(
+    path: Path, role: str, body: str, *, read_commands: bool = True
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_spec(role, body), encoding="utf-8")
+    path.write_text(
+        render_spec(role, body, read_commands=read_commands), encoding="utf-8"
+    )
 
 
 def blocking_working_agent(
@@ -1147,6 +1167,7 @@ LANE_PROCESS_DIR = "lanes"
 
 
 def lane_process_path(worker: WorkerConfig, task_id: str, agent_id: str) -> Path:
+    _require_plain_agent_id(agent_id)
     return control_dir(worker, task_id) / LANE_PROCESS_DIR / f"{agent_id}.json"
 
 
@@ -1389,6 +1410,7 @@ def launch_lane(
     round_num: int | None,
     spec_body: str,
     record_spec_body: str | None = None,
+    read_commands: bool = True,
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> tuple[dict[str, Any], LaneResult]:
@@ -1476,7 +1498,7 @@ def launch_lane(
         if overlap is not None:
             raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}.md"
-    write_spec(spec_path, role, spec_body)
+    write_spec(spec_path, role, spec_body, read_commands=read_commands)
     spec_text = spec_path.read_text(encoding="utf-8")
 
     aid = str(uuid.uuid4())
@@ -1534,7 +1556,9 @@ def launch_lane(
                     limit=LANE_MODEL_LIMIT,
                 ),
                 "prompt": (
-                    render_spec(role, record_spec_body)
+                    render_spec(
+                        role, record_spec_body, read_commands=read_commands
+                    )
                     if record_spec_body is not None
                     else spec_text
                 ),

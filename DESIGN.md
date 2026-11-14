@@ -983,9 +983,12 @@ events and acknowledge them.
 `agent order reply`, `agent order override`, and `agent order cancel` write an
 `order.reply` row for the next coordinator tick. A reply resumes the exact
 `resume_phase` like an authorized pull-request or issue comment. A repeated
-question requires a new reply. A cancel closes the pull request with the fixed comment
-and ends the order as failed with kind `cancelled`. An answer acknowledges the
-question or blocker it answers.
+question requires a new reply. A cancel closes an open pull request of the
+order with the fixed comment and ends the order as failed with kind
+`cancelled`. Without an open pull request (none yet, or a closed one) it ends
+the order the same way without a comment; a cancel is refused when the pull
+request is already merged. An answer acknowledges the question or blocker it
+answers.
 
 Events name accepted answers. `ready`, `failed`, and `cancelled` accept `ack`.
 A question or blocker accepts `reply` unless its failed check requires only an
