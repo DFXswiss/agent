@@ -1312,7 +1312,12 @@ def _finalize_report_evidence(
 def phase_tests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
-    """Run the optional trusted precheck, complete A38 suite, and publish its report."""
+    """Run the optional trusted precheck and the complete A38 suite, and publish its report.
+
+    A markdown-only or guard-docs change set binds the inventory waiver
+    evidence instead; then neither the precheck nor the suite runs and no
+    report is published.
+    """
     if not worker.a38:
         raise CoordinatorError("A38 tests phase called for a non-A38 worker")
     if post_suite_checkpoint_pending(task):

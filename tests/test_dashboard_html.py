@@ -265,3 +265,23 @@ def test_orders_script_is_a_second_element() -> None:
     for opening, closing in (("{", "}"), ("(", ")"), ("[", "]")):
         assert code.count(opening) == code.count(closing)
     assert code.count("`") % 2 == 0
+
+
+def test_order_actions_drop_answers_for_another_order() -> None:
+    html = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "agent_cli"
+        / "static"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    code = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[1]
+    for element_id in ("od-reply", "od-override", "od-cancel", "od-report"):
+        start = code.index(
+            f'document.getElementById("{element_id}").addEventListener("click"'
+        )
+        handler = code[start : code.index("\n});\n", start)]
+        assert "const id = selectedOrderId;" in handler
+        assert "order_id: id" in handler
+        assert "order_id: selectedOrderId" not in handler
+        assert handler.count("if (selectedOrderId === id)") == 2

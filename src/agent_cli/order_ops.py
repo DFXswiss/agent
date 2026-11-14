@@ -295,39 +295,40 @@ def op_submit(
     skips = skip_checks_param(skip_checks)
     limit = int_param(max_rounds, "--max-rounds", minimum=1)
     config = load_coordinator_config(home)
-    if worker is not None:
-        if worker not in config:
-            raise OrderError("coordinator session is not configured")
-        selected = config[worker]
-    else:
-        candidates = [
-            candidate
-            for candidate in config.values()
-            if candidate.orders and serves_repo(candidate, repo)
-        ]
-        if not candidates:
-            raise OrderError(f"no order-enabled worker serves {repo}")
-        from .coordinator_runtime import runnable_count
+    with store.exclusive(f"order-submit:{store.device_id()}"):
+        if worker is not None:
+            if worker not in config:
+                raise OrderError("coordinator session is not configured")
+            selected = config[worker]
+        else:
+            candidates = [
+                candidate
+                for candidate in config.values()
+                if candidate.orders and serves_repo(candidate, repo)
+            ]
+            if not candidates:
+                raise OrderError(f"no order-enabled worker serves {repo}")
+            from .coordinator_runtime import runnable_count
 
-        selected = min(
-            candidates,
-            key=lambda candidate: (
-                runnable_count(store, candidate),
-                candidate.session_id,
-            ),
+            selected = min(
+                candidates,
+                key=lambda candidate: (
+                    runnable_count(store, candidate),
+                    candidate.session_id,
+                ),
+            )
+        task = create_order_task(
+            store,
+            selected,
+            repo=repo,
+            title=title,
+            text=text,
+            submitted_by=by,
+            requested_base=base,
+            notify_session=notify_session,
+            max_rounds=limit,
+            skipped_checks=skips,
         )
-    task = create_order_task(
-        store,
-        selected,
-        repo=repo,
-        title=title,
-        text=text,
-        submitted_by=by,
-        requested_base=base,
-        notify_session=notify_session,
-        max_rounds=limit,
-        skipped_checks=skips,
-    )
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     return {
@@ -573,6 +574,8 @@ def op_override(
         if refusal is not None:
             raise OrderError(f"check review_2 cannot be waived: {refusal}")
     require_reason(reason)
+    if not reason.strip():
+        raise OrderError("reason must be one line of 1..500 characters")
     event_id = checkpoint_event_id(task)
     intent_id = insert_intent(
         store,

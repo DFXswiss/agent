@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import re
@@ -394,6 +395,57 @@ def test_submit_picks_the_least_loaded_worker(device, capsys) -> None:
     assert submit("First")["worker"] == "another-session"
     assert submit("Second")["worker"] == "worker-session"
     assert submit("Third", "--worker", "worker-session")["worker"] == "worker-session"
+
+
+def test_submit_chooses_and_inserts_under_the_submit_lock(
+    device, capsys, monkeypatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    key = f"order-submit:{device.store.device_id()}"
+    held: list[str] = []
+    seen: list[tuple[str, bool]] = []
+    original_exclusive = Store.exclusive
+    original_count = coordinator_runtime.runnable_count
+    original_create = order_ops.create_order_task
+
+    @contextlib.contextmanager
+    def exclusive(self, lock_key):
+        with original_exclusive(self, lock_key):
+            held.append(lock_key)
+            try:
+                yield
+            finally:
+                held.remove(lock_key)
+
+    def runnable_count(store, worker):
+        seen.append(("runnable_count", key in held))
+        return original_count(store, worker)
+
+    def create_order_task(store, worker, **kwargs):
+        seen.append(("create_order_task", key in held))
+        return original_create(store, worker, **kwargs)
+
+    monkeypatch.setattr(Store, "exclusive", exclusive)
+    monkeypatch.setattr(coordinator_runtime, "runnable_count", runnable_count)
+    monkeypatch.setattr(order_ops, "create_order_task", create_order_task)
+
+    order(
+        "submit",
+        "--repo",
+        "example/project",
+        "--title",
+        "First",
+        "--body-file",
+        body_file(device.home, "First"),
+        "--json",
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert seen == [("runnable_count", True), ("create_order_task", True)]
+    assert held == []
+    assert result["worker"] == "worker-session"
+    assert device.store.row("task", result["order_id"]) is not None
 
 
 @pytest.mark.parametrize(
@@ -1337,6 +1389,7 @@ def test_override_inserts_an_intent(device, capsys) -> None:
         ("spec_available", "because", "check spec_available cannot be overridden"),
         ("duplicates_checked", "two\nlines", "reason must be one line of 1..500 characters"),
         ("duplicates_checked", "x" * 501, "reason must be one line of 1..500 characters"),
+        ("duplicates_checked", "   ", "reason must be one line of 1..500 characters"),
     ),
 )
 def test_override_errors(device, check: str, reason: str, message: str) -> None:

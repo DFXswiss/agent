@@ -172,3 +172,26 @@ def test_skill_contracts_name_the_model_route() -> None:
         "src/agent_cli/skills/review-loop/SKILL.md",
     ):
         assert 'a38_second_review: "model"' in _read(relative)
+
+
+def test_review_loop_skill_names_the_round_limit() -> None:
+    prose = _ws(_read("src/agent_cli/skills/review-loop/SKILL.md"))
+    assert "No round cap." not in prose
+    assert "A session that runs this loop by hand has no round cap." in prose
+    assert "A coordinator task has a round limit" in prose
+    assert "`max_rounds_by_model`" in prose
+
+
+def test_cancel_text_names_the_order_without_an_open_pull_request() -> None:
+    for relative in ("DESIGN.md", "docs/issue-coordinator.md"):
+        prose = _ws(_read(relative))
+        assert "closes the pull request with the fixed comment" not in prose
+        assert (
+            "closes an open pull request of the order with the fixed comment"
+            in prose
+        )
+        assert (
+            "Without an open pull request (none yet, or a closed one) it ends "
+            "the order the same way without a comment; a cancel is refused "
+            "when the pull request is already merged."
+        ) in prose

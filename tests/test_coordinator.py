@@ -15931,6 +15931,58 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
     )
 
 
+def test_finished_spool_cleanup_ignores_a_foreign_agent_row(tmp_path: Path) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import CoordinatorError
+
+    store = Store(tmp_path)
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-000000000250"
+    victim = tmp_path / "victim"
+    kept = (tmp_path / "victim.json", tmp_path / "victim.output")
+    for path in kept:
+        path.write_text("keep", encoding="utf-8")
+    store.apply_replica_row(
+        {
+            "table": "agent",
+            "row_id": "foreign-agent",
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": str(victim),
+                "session_id": worker.session_id,
+                "task_id": tid,
+                "role": "reviewer",
+                "status": "done",
+                "reviewer_output": coordinator_lanes._reviewer_output_checkpoint(
+                    str(victim)
+                ),
+            },
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    coordinator_lanes.cleanup_finished_reviewer_spools(store, worker, {"id": tid})
+
+    assert [path.read_text(encoding="utf-8") for path in kept] == ["keep", "keep"]
+    builders = (
+        lambda agent_id: coordinator_lanes._reviewer_spool_path(
+            store, worker, tid, agent_id
+        ),
+        lambda agent_id: coordinator_lanes._legacy_reviewer_spool_path(
+            worker, tid, agent_id
+        ),
+        lambda agent_id: coordinator_lanes.lane_process_path(worker, tid, agent_id),
+    )
+    for bad in ("", "../x", str(victim), "a\x00b"):
+        for build in builders:
+            with pytest.raises(
+                CoordinatorError,
+                match="agent id must be a safe single path component",
+            ):
+                build(bad)
+    store.close()
+
+
 @pytest.mark.parametrize("ambiguous_stage", ["review-1", "review-2"])
 def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguous_stage: str
@@ -16101,6 +16153,541 @@ def test_advance_one_ordering_unavailable_skips_rejection_and_blocker_publicatio
     assert not [
         row for row in store.rows("agent") if row.get("task_id") == tid
     ]
+
+
+def test_advance_one_ordering_unavailable_in_gate_phase_parks_the_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes, coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-000000000251"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    monkeypatch.setattr(
+        store,
+        "row_insert_sequences",
+        lambda table: {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        lambda *_a, **_k: pytest.fail("saved rejection intent was reconciled"),
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_prepare_pr_review_agent",
+        lambda *_a, **_k: pytest.fail("reviewer lane was prepared"),
+    )
+    published: list[tuple[str, dict[str, Any]]] = []
+
+    def record_blocker(_store, _worker, _task, _runner, message, **kwargs):  # noqa: ANN001
+        published.append((message, kwargs))
+        return [f"blocked: {message}"]
+
+    monkeypatch.setattr(coordinator_runtime, "publish_blocker", record_blocker)
+
+    lines = coordinator_runtime.advance_one(
+        store,
+        worker,
+        runner=lambda _argv: pytest.fail("GitHub runner was called"),
+        lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+    )
+
+    message = "review-2/quality gate history ordering is unavailable"
+    assert lines == [f"blocked: {message}"]
+    assert published == [
+        (
+            message,
+            {
+                "kind": "phase-error",
+                "reply_checkpoint": True,
+                "occurrence": f"{tid}:0",
+            },
+        )
+    ]
+    stored = store.row("task", tid)
+    checkpoint = stored["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["blocker"] == message
+    assert coordinator_runtime.parked(stored, worker)
+    assert not [
+        row for row in store.rows("agent") if row.get("task_id") == tid
+    ]
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "review.post"
+    ]
+
+
+def test_advance_one_ordering_unavailable_retries_a_failed_blocker_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes, coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-000000000252"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    monkeypatch.setattr(
+        store,
+        "row_insert_sequences",
+        lambda table: {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        lambda *_a, **_k: pytest.fail("saved rejection intent was reconciled"),
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_prepare_pr_review_agent",
+        lambda *_a, **_k: pytest.fail("reviewer lane was prepared"),
+    )
+    executions: list[str] = []
+
+    def failure_then_done(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            executions.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            if len(executions) == 1:
+                updated["execution_status"] = "error"
+                updated["execution_error"] = "temporary GitHub failure"
+            else:
+                updated["execution_status"] = "done"
+                updated.pop("execution_error", None)
+                updated["result"] = {"id": 99, "url": "https://x"}
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.execute_github", failure_then_done
+    )
+
+    def visit() -> list[str]:
+        return coordinator_runtime.advance_one(
+            store,
+            worker,
+            runner=lambda _argv: pytest.fail("GitHub runner was called"),
+            lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+        )
+
+    message = "review-2/quality gate history ordering is unavailable"
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker publish failed locally visible: issue comment phase-error "
+        "not verified published: temporary GitHub failure",
+    ]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["blocker_publish_once"] is True
+    assert checkpoint["blocker_publish_kind"] == "phase-error"
+    assert "blocker_activity_id" not in checkpoint
+    assert "question_activity_id" not in checkpoint
+
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker published on example/project#7",
+    ]
+    comments = [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert comments[0]["execution_status"] == "done"
+    assert executions == [comments[0]["id"], comments[0]["id"]]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["blocker_activity_id"] == comments[0]["id"]
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+
+    assert visit() == [message]
+    assert len(executions) == 2
+
+
+def test_ordering_blocker_retry_after_the_history_becomes_orderable_posts_one_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-000000000253"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    history_orderable = False
+
+    def row_insert_sequences(_table: str) -> dict[str, int]:
+        if history_orderable:
+            return durable_sequences
+        return {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        }
+
+    monkeypatch.setattr(store, "row_insert_sequences", row_insert_sequences)
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        lambda *_a, **_k: [],
+    )
+    executions: list[str] = []
+
+    def failure_then_done(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            executions.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            if len(executions) == 1:
+                updated["execution_status"] = "error"
+                updated["execution_error"] = "temporary GitHub failure"
+            else:
+                updated["execution_status"] = "done"
+                updated.pop("execution_error", None)
+                updated["result"] = {"id": 99, "url": "https://x"}
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.execute_github", failure_then_done
+    )
+
+    def visit() -> list[str]:
+        return coordinator_runtime.advance_one(
+            store,
+            worker,
+            runner=lambda _argv: pytest.fail("GitHub runner was called"),
+            lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+        )
+
+    message = "review-2/quality gate history ordering is unavailable"
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker publish failed locally visible: issue comment phase-error "
+        "not verified published: temporary GitHub failure",
+    ]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["blocker_publish_occurrence"] == f"{tid}:0"
+    assert "blocker_activity_id" not in checkpoint
+
+    history_orderable = True
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker published on example/project#7",
+    ]
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert comments[0]["execution_status"] == "done"
+    assert executions == [comments[0]["id"], comments[0]["id"]]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+    assert checkpoint["blocker_activity_id"] == comments[0]["id"]
+
+
+def test_phase_error_after_an_unpublished_ordering_blocker_clears_its_publish_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-000000000254"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    history_orderable = False
+
+    def row_insert_sequences(_table: str) -> dict[str, int]:
+        if history_orderable:
+            return durable_sequences
+        return {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        }
+
+    monkeypatch.setattr(store, "row_insert_sequences", row_insert_sequences)
+
+    def reconcile(*_args, **_kwargs):  # noqa: ANN001
+        if history_orderable:
+            raise coordinator_runtime.CoordinatorError("boom")
+        return []
+
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "reconcile_rejection_review_intents",
+        reconcile,
+    )
+    executions: list[str] = []
+
+    def failure_then_done(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            executions.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            if len(executions) == 1:
+                updated["execution_status"] = "error"
+                updated["execution_error"] = "temporary GitHub failure"
+            else:
+                updated["execution_status"] = "done"
+                updated.pop("execution_error", None)
+                updated["result"] = {"id": 99, "url": "https://x"}
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.execute_github", failure_then_done
+    )
+
+    def visit() -> list[str]:
+        return coordinator_runtime.advance_one(
+            store,
+            worker,
+            runner=lambda _argv: pytest.fail("GitHub runner was called"),
+            lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+        )
+
+    message = "review-2/quality gate history ordering is unavailable"
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker publish failed locally visible: issue comment phase-error "
+        "not verified published: temporary GitHub failure",
+    ]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert "blocker_publish_once" in checkpoint
+    assert "blocker_publish_kind" in checkpoint
+    assert "blocker_publish_occurrence" in checkpoint
+    assert "blocker_activity_id" not in checkpoint
+
+    history_orderable = True
+    visit()
+
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["blocker"] == "boom"
+    for key in (
+        "blocker_publish_once",
+        "blocker_publish_kind",
+        "blocker_publish_occurrence",
+        "blocker_activity_id",
+    ):
+        assert key not in checkpoint
+
+
+def test_unexpected_error_after_an_unpublished_ordering_blocker_clears_its_publish_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    tid = "aa000001-0000-4000-8000-000000000255"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    ambiguous_ids = {
+        f"{tid}-ambiguous-approved",
+        f"{tid}-ambiguous-rejected",
+    }
+    for gate_id, verdict, recorded_at in (
+        (f"{tid}-ambiguous-approved", "approved", "2026-01-01T00:00:02Z"),
+        (f"{tid}-ambiguous-rejected", "rejected", "not-a-timestamp"),
+    ):
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": "quality",
+                "vendor": "codex",
+                "verdict": verdict,
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"{gate_id}-agent",
+                "recorded_at": recorded_at,
+            },
+        )
+    durable_sequences = store.row_insert_sequences("review_gate")
+    history_orderable = False
+
+    def row_insert_sequences(_table: str) -> dict[str, int]:
+        if history_orderable:
+            return durable_sequences
+        return {
+            row_id: sequence
+            for row_id, sequence in durable_sequences.items()
+            if row_id not in ambiguous_ids
+        }
+
+    monkeypatch.setattr(store, "row_insert_sequences", row_insert_sequences)
+
+    def unexpected(*_args, **_kwargs):  # noqa: ANN001
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(coordinator_runtime, "phase_blocked", unexpected)
+    executions: list[str] = []
+
+    def failure_then_done(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            executions.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            if len(executions) == 1:
+                updated["execution_status"] = "error"
+                updated["execution_error"] = "temporary GitHub failure"
+            else:
+                updated["execution_status"] = "done"
+                updated.pop("execution_error", None)
+                updated["result"] = {"id": 99, "url": "https://x"}
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.execute_github", failure_then_done
+    )
+
+    def visit() -> list[str]:
+        return coordinator_runtime.advance_one(
+            store,
+            worker,
+            runner=lambda _argv: pytest.fail("GitHub runner was called"),
+            lane_runner=lambda *_a: pytest.fail("reviewer lane was launched"),
+        )
+
+    message = "review-2/quality gate history ordering is unavailable"
+    assert visit() == [
+        f"blocked: {message}",
+        "blocker publish failed locally visible: issue comment phase-error "
+        "not verified published: temporary GitHub failure",
+    ]
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert "blocker_publish_once" in checkpoint
+    assert "blocker_publish_kind" in checkpoint
+    assert "blocker_publish_occurrence" in checkpoint
+    assert "blocker_activity_id" not in checkpoint
+
+    history_orderable = True
+    visit()
+
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["blocker"] == "boom"
+    for key in (
+        "blocker_publish_once",
+        "blocker_publish_kind",
+        "blocker_publish_occurrence",
+        "blocker_activity_id",
+    ):
+        assert key not in checkpoint
 
 
 def test_review_two_post_lane_recheck_stops_on_review_one_ordering_unavailable(

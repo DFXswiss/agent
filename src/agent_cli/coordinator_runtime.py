@@ -2136,6 +2136,7 @@ def phase_inner_review(
             "Review the current worktree. Read-only. Do not run Git; use the script diff.\n"
             + diff_note,
         ),
+        read_commands=False,
         runner=runner,
         lane_runner=lane_runner,
     )
@@ -2521,6 +2522,17 @@ def _recover_uncertain_lane(
     )
 
 
+def _drop_blocker_publish_state(c: dict) -> None:
+    """Forget how an earlier blocker was to be published, before a phase error replaces it."""
+    for key in (
+        "blocker_publish_once",
+        "blocker_publish_kind",
+        "blocker_publish_occurrence",
+        "blocker_activity_id",
+    ):
+        c.pop(key, None)
+
+
 def _advance_task(
     store: Store,
     worker: WorkerConfig,
@@ -2551,7 +2563,37 @@ def _advance_task(
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)
     if ordering_error is not None:
-        return [ordering_error]
+        if phase not in ("blocked", "ask"):
+            c["phase"] = "blocked"
+            c["resume_phase"] = phase
+            c["blocker"] = ordering_error
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "phase-error"
+            c.pop("blocker_activity_id", None)
+            c.pop("blocker_publish_occurrence", None)
+            replies = c.get("authorized_replies")
+            count = len(replies) if isinstance(replies, list) else 0
+            c["blocker_publish_occurrence"] = f"{task['id']}:{count}"
+            save_task(store, task)
+        elif not (
+            phase == "blocked"
+            and c.get("blocker_publish_once") is True
+            and c.get("blocker_publish_kind") == "phase-error"
+            and not c.get("blocker_activity_id")
+        ):
+            return [ordering_error]
+        # Until publish_blocker records the blocker activity, every visit
+        # repeats the same publication (same text, kind and occurrence).
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            str(coord(task).get("blocker") or ordering_error),
+            kind="phase-error",
+            reply_checkpoint=True,
+            occurrence=str(c.get("blocker_publish_occurrence") or ""),
+        )
     pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
     # A rejection comment is a durable task intent, not an implementation-phase
     # side effect. Reconcile it before every dispatch or early PR-state branch,
@@ -2571,6 +2613,7 @@ def _advance_task(
             c.pop("rejection_review_activity_ids", None)
         if not c.get("resume_phase") and phase not in ("done", "blocked", "ask"):
             c["resume_phase"] = phase
+        _drop_blocker_publish_state(c)
         c["blocker"] = message
         if phase != "done":
             c["phase"] = "blocked"
@@ -2966,6 +3009,7 @@ def _advance_task(
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
+        _drop_blocker_publish_state(c)
         c["blocker"] = str(exc)
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
@@ -2992,6 +3036,7 @@ def _advance_task(
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
+        _drop_blocker_publish_state(c)
         c["blocker"] = redact(str(exc))
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"

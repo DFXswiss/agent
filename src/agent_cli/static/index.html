@@ -612,48 +612,52 @@ document.getElementById("os-send").addEventListener("click", async () => {
 });
 
 document.getElementById("od-reply").addEventListener("click", async event => {
+  const id = selectedOrderId;
   orderStickyError = "";
   event.currentTarget.disabled = true;
   try {
-    await orderCall("reply", { order_id: selectedOrderId, body: document.getElementById("od-reply-body").value });
-    document.getElementById("od-reply-body").value = "";
+    await orderCall("reply", { order_id: id, body: document.getElementById("od-reply-body").value });
+    if (selectedOrderId === id) document.getElementById("od-reply-body").value = "";
   } catch (e) {
-    orderStickyError = e.message;
+    if (selectedOrderId === id) orderStickyError = e.message;
   }
   ordersTick();
 });
 
 document.getElementById("od-override").addEventListener("click", async event => {
+  const id = selectedOrderId;
   orderStickyError = "";
   event.currentTarget.disabled = true;
   try {
-    await orderCall("override", { order_id: selectedOrderId, check: document.getElementById("od-override-check").value, reason: document.getElementById("od-override-reason").value });
-    document.getElementById("od-override-reason").value = "";
+    await orderCall("override", { order_id: id, check: document.getElementById("od-override-check").value, reason: document.getElementById("od-override-reason").value });
+    if (selectedOrderId === id) document.getElementById("od-override-reason").value = "";
   } catch (e) {
-    orderStickyError = e.message;
+    if (selectedOrderId === id) orderStickyError = e.message;
   }
   ordersTick();
 });
 
 document.getElementById("od-cancel").addEventListener("click", async event => {
+  const id = selectedOrderId;
   orderStickyError = "";
   event.currentTarget.disabled = true;
   try {
-    await orderCall("cancel", { order_id: selectedOrderId, reason: document.getElementById("od-cancel-reason").value });
-    document.getElementById("od-cancel-reason").value = "";
+    await orderCall("cancel", { order_id: id, reason: document.getElementById("od-cancel-reason").value });
+    if (selectedOrderId === id) document.getElementById("od-cancel-reason").value = "";
   } catch (e) {
-    orderStickyError = e.message;
+    if (selectedOrderId === id) orderStickyError = e.message;
   }
   ordersTick();
 });
 
 document.getElementById("od-report").addEventListener("click", async () => {
+  const id = selectedOrderId;
   orderStickyError = "";
   try {
-    const result = await orderCall("report", { order_id: selectedOrderId });
-    renderOrderObject(document.getElementById("od-report-body"), result, "report");
+    const result = await orderCall("report", { order_id: id });
+    if (selectedOrderId === id) renderOrderObject(document.getElementById("od-report-body"), result, "report");
   } catch (e) {
-    orderStickyError = e.message;
+    if (selectedOrderId === id) orderStickyError = e.message;
   }
   showOrderNotes();
 });
