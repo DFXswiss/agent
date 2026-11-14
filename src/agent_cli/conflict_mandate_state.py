@@ -549,11 +549,8 @@ def comment_body(
         de = "Die Konfliktlösung ist blockiert. Ein neuer Kommentar ist erforderlich."
     elif kind == "no-conflicts":
         reason = f"GitHub reports {NO_CONFLICTS} for this pull request."
-        en = "No merge conflicts were found. No branch or model lane was started."
-        de = (
-            "Es wurden keine Merge-Konflikte gefunden. "
-            "Es wurde kein Branch und keine Modell-Lane gestartet."
-        )
+        en = "No merge conflicts were found."
+        de = "Es wurden keine Merge-Konflikte gefunden."
     else:
         en = "Conflict resolution completed and the rebased branch was pushed with a lease."
         de = (

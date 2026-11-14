@@ -68,7 +68,7 @@ ORDER_REPLY = "order.reply"
 WAKE_KINDS = frozenset({"question", "blocked", "ready", "failed", "cancelled"})
 EVENT_DIGEST_BOUND = 1500
 REFUSAL_BOUND = 300
-CANCEL_CLOSE_BODY = "Closing this draft: the order was cancelled."
+CANCEL_CLOSE_BODY = "Closing this pull request: the order was cancelled."
 
 
 def serves_repo(worker: WorkerConfig, repo: str) -> bool:

@@ -90,9 +90,9 @@ subsequent notification that provides useful model work belong to the script.
    is incomplete, the payload remains
    opaque so later key fragments still join. BEL terminates OSC only; DCS, PM,
    APC, and SOS require `ESC \` or the eight-bit ST byte.
-   Fixed matching
-   windows apply only to URL schemes, terminal escape parameters, and removable
-   terminal-control interleaves so separatorless log text is handled in linear
+   Fixed matching windows bound control-tolerant URL schemes, e-mail address
+   parts, private-key header words, terminal escape parameters, and removable
+   terminal-control interleaves, so separatorless log text is handled in linear
    time. The script then fingerprints and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.

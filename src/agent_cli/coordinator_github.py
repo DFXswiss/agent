@@ -952,7 +952,8 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
     """Paginate Actions runs for an exact head; fail closed on truncation/unknown shape.
 
     Shape / missing ``workflow_runs`` / pagination truncation raise
-    ``CiInventoryProtocolError`` (recoverable blocked + ``resume_phase=ci``).
+    ``CiInventoryProtocolError`` (recoverable blocked; ``resume_phase=ci``, or
+    ``await_merge`` after a merge).
     Transient ``gh_json`` transport failures raise ``CiObservationTransportError``
     so callers can retry the same static phase without a reply gate.
     """
@@ -3032,6 +3033,25 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     f"{ci_observation.detail} on {expected_head[:7]}; "
                     "retrying await_merge"
                 ]
+            if ci_observation.kind == "protocol":
+                c = coord(task)
+                c["phase"] = "blocked"
+                c["resume_phase"] = "await_merge"
+                c["blocker"] = ci_observation.detail
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    ci_observation.detail,
+                    kind=(
+                        "ci-inventory"
+                        if ci_observation.detail.startswith("CI inventory:")
+                        else "ci-rollup"
+                    ),
+                    reply_checkpoint=True,
+                )
             if ci_observation.kind != "green":
                 return _block_merged_ci(
                     store,

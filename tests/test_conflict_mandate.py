@@ -1545,6 +1545,50 @@ def test_pushing_with_matching_head_keeps_retrying_result_after_24_hours(
     assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"] == "finished"
 
 
+def test_no_conflicts_after_unlanded_push_posts_the_no_conflicts_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.pull["head"]["sha"] = "a" * 40
+    fake.pull["mergeable"] = True
+    fake.comment_post_rc = 1
+    request = Request(
+        repo="example/project", number=42, comment_id=7,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    ctx = context(worker_cfg, request, worker_login="worker-bot")
+    save_state(
+        ctx,
+        "pushing",
+        old_head="a" * 40,
+        new_head="d" * 40,
+        base_ref="develop",
+        base_sha="b" * 40,
+        replayed_commits=2,
+        resolved_files=["src/app.py"],
+        check_result="passed",
+        mergeable="false",
+    )
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["result comment not posted yet: comment failed"]
+    assert fake.pr_comments == []
+    state = json.loads(ctx.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "result-pending"
+    assert "new_head" not in state
+    assert "base_sha" not in state
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert lines == ["result comment posted"]
+    assert len(fake.pr_comments) == 1
+    body = fake.pr_comments[0]["body"]
+    assert "No merge conflicts were found" in body
+    assert "pushed with a lease" not in body
+    assert "- New head:" not in body
+    assert json.loads(ctx.state_path.read_text(encoding="utf-8"))["phase"] == "finished"
+    assert not any(call[:1] == ["clone"] for call in fake.calls)
+
+
 def test_result_pending_marker_lookup_failure_keeps_retrying_after_24_hours(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1875,6 +1919,14 @@ def test_check_tail_and_blocker_comment_mask_paths_after_colons(tmp_path: Path) 
     assert "/srv/private/file" not in body
 
 
+def test_no_conflicts_comment_states_only_the_observation(tmp_path: Path) -> None:
+    body = comment_body(worker(tmp_path), "no-conflicts", "mergeable", [])
+    assert "EN: No merge conflicts were found.\n" in body
+    assert "DE: Es wurden keine Merge-Konflikte gefunden.\n" in body
+    assert "lane" not in body.casefold()
+    assert "branch" not in body.casefold()
+
+
 def test_bounded_tail_masks_secret_before_selecting_tail() -> None:
     secret = "ghp_" + "A" * 36
     output = "x" * 80 + " " + secret + " " + "y" * 10
@@ -1993,7 +2045,10 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "current rebase attempt" in doc
     assert "terminal phase" in doc
     assert "removes both directly without Git" in doc
-    assert "`parse_model_result(stdout, returncode)`" in doc
+    assert (
+        "one `parse_model_result(output, returncode)` call on the raw final lane "
+        "text, before redaction; the redacted text is never parsed again."
+    ) in doc
     assert "A tick processes at most one request through the workflow" in doc
     assert "without Git, a lane, or a comment" in doc
 
@@ -5166,6 +5221,29 @@ def test_lane_duplicate_status_lines_are_not_complete(
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=contradictory_lane)
+    assert any("blocker" in line for line in lines)
+    assert len(fake.lanes) == 2
+    assert "- Failed verification: `lane status was partial`" in fake.pr_comments[0]["body"]
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_lane_duplicate_protocol_hidden_in_a_terminal_string_is_not_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def hidden_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        fake.lane(argv, stdin)
+        return Completed(
+            0,
+            "STATUS: complete\nRESULT: done\n"
+            "\x1b]0;\nSTATUS: complete\nRESULT: blocked\n\x07",
+            "",
+        )
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=hidden_lane)
     assert any("blocker" in line for line in lines)
     assert len(fake.lanes) == 2
     assert "- Failed verification: `lane status was partial`" in fake.pr_comments[0]["body"]

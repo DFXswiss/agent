@@ -700,6 +700,27 @@ def test_assignment_redaction_handles_json_keys_and_bounded_quoted_values() -> N
         assert cleaned_bounded.endswith("\n…[truncated]")
 
 
+def test_shared_redaction_covers_quoted_json_keys_with_spaces_and_dots() -> None:
+    raw = '{"access token":"s3cr3t","auth.token":"t0k3n","visible":"keep-me"}'
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert "s3cr3t" not in cleaned
+        assert "t0k3n" not in cleaned
+        assert '"visible":"keep-me"' in cleaned
+
+
+def test_shared_redaction_covers_userinfo_after_a_long_scheme() -> None:
+    raw = "s" * 65 + "://user:hunter2@localhost"
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert "hunter2" not in cleaned
+        assert "://[redacted]@localhost" in cleaned
+
+
 def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:
     raw = '"pass\x1b[31mword"="first secret words" visible'
 

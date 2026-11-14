@@ -4398,8 +4398,6 @@ def _assignment_issue_url(url: object) -> tuple[str, int] | None:
         number = int(match.group(3))
     except ValueError:
         return None
-    if number < 1:
-        return None
     return f"{match.group(1)}/{match.group(2)}", number
 
 

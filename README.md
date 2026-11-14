@@ -264,7 +264,7 @@ fail-closed defence. Before
 the key is complete, payload operators stay opaque so split key fragments still
 join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
 `ESC \` or the eight-bit ST byte.
-URL schemes, escape parameters, and removable-control interleaves use fixed
+Control-tolerant URL schemes, escape parameters, and removable-control interleaves use fixed
 matching windows. For bounded lane fields, the controlled-line structural rule
 first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.

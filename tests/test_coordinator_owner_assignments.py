@@ -2022,7 +2022,6 @@ def test_a38_merge_during_ci_rechecks_all_green_and_uses_real_allow(
             (),
             (".github/workflows/tests.yml",),
         ),
-        ("protocol", "PR check rollup malformed", (), ()),
     ),
     ids=(
         "failed",
@@ -2030,7 +2029,6 @@ def test_a38_merge_during_ci_rechecks_all_green_and_uses_real_allow(
         "uncovered-skipped",
         "uncovered-neutral",
         "action-required",
-        "malformed",
     ),
 )
 def test_a38_merged_task_blocks_non_green_cumulative_ci_before_real_allow(
@@ -2086,6 +2084,50 @@ def test_a38_merged_task_blocks_non_green_cumulative_ci_before_real_allow(
     assert "resume_phase" not in checkpoint
     assert published == [
         (checkpoint["blocker"], {"kind": "merged-ci-non-green"})
+    ]
+
+
+def test_a38_merged_task_blocks_recoverably_on_a_ci_protocol_fault(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import _CiObservation, phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    detail = "CI inventory: workflow inventory has inconsistent total_count"
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: _CiObservation("protocol", detail),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs))
+        or ["published"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["published"]
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "await_merge"
+    assert checkpoint["blocker"] == detail
+    assert published == [
+        (detail, {"kind": "ci-inventory", "reply_checkpoint": True})
     ]
 
 

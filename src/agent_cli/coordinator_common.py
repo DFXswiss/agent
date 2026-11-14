@@ -147,9 +147,10 @@ _PRIVATE_KEY = re.compile(
 )
 _PRIVATE_PATH = re.compile(r'(?:/Users/|/home/)[^\s"\']++')
 _URL_AUTH = re.compile(
-    rf'(?<![a-zA-Z0-9+.-])'
-    rf'([a-zA-Z][a-zA-Z0-9+.-]{{0,{URL_SCHEME_LIMIT - 1}}}://)'
-    r'[^/:@\s]++:[^/@\s]++@'
+    r'(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*+://)[^/:@\s]++:[^/@\s]++@'
+)
+_JSON_SECRET_PAIR = re.compile(
+    r'("([^"]*+)"\s*+:\s*+")((?:[^"\\]++|\\.)*+)(")', re.S
 )
 
 
@@ -1092,8 +1093,15 @@ def _redact_secret_assignments(text: str) -> str:
     return "".join(pieces)
 
 
+def _redact_json_secret_pair(match: re.Match[str]) -> str:
+    if _SECRET_ASSIGNMENT_KEYWORD.search(match.group(2)) is None:
+        return match.group(0)
+    return match.group(1) + "[redacted]" + match.group(4)
+
+
 def _redact_standard_patterns(text: str) -> str:
     cleaned = _redact_secret_assignments(text)
+    cleaned = _JSON_SECRET_PAIR.sub(_redact_json_secret_pair, cleaned)
     cleaned = _PRIVATE_KEY.sub('[redacted]', cleaned)
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)
     cleaned = _BEARER.sub('[redacted]', cleaned)

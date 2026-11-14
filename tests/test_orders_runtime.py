@@ -2787,6 +2787,7 @@ def test_cancel_closes_the_draft_and_fails_the_order(
     assert len(comments) == 1
     assert comments[0]["payload"]["target"] == "pr"
     assert comments[0]["payload"]["body"] == CANCEL_CLOSE_BODY
+    assert CANCEL_CLOSE_BODY == "Closing this pull request: the order was cancelled."
     task = store.row("task", OID)
     assert task["state"] == "failed"
     assert coord(task)["phase"] == "blocked"

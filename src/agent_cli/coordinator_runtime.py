@@ -1203,7 +1203,11 @@ def close_empty_draft(
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Close a draft that holds only its start commit and end the task as failed (no-change)."""
+    """Close a draft that holds only its start commit and end the task as failed.
+
+    The failure kind is ``no-change``. When the pull request was merged
+    meanwhile, the task goes to ``await_merge`` instead and does not fail.
+    """
 
     def _commit(
         staged: dict[str, Any], staged_round: dict[str, Any] | None = None

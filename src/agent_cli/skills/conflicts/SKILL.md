@@ -40,9 +40,10 @@ are removed from the commit subject. If a value would close the data section,
 the request ends in a blocker and no lane is started. The lane runs in the
 worktree and can read the repository; the script confines the result: after a
 completed lane run it verifies that exactly the conflicted paths changed and
-that their final content passes the deterministic checks. An attempt that did not complete counts as a
-failed
-verification and is retried once; changes outside the conflicted paths are
+that their final content passes the deterministic checks. An attempt that
+ended `partial` or `timeout` counts as a failed verification and is retried
+once; a lane that was `unavailable` or could not be started is transient and
+is retried by a later run; changes outside the conflicted paths are
 restored before the retry, while edits inside the conflicted files stay for the
 retry. Staging happens only after a lane run that completed and passed the
 verification. Nothing is pushed without a passing verification. The script

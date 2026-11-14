@@ -858,7 +858,11 @@ def close_pull_request(
     activity_id: str,
     body: str,
 ) -> str:
-    """Comment on the task's pull request and close it; returns "CLOSED" or "MERGED"."""
+    """Comment on and close the task's open pull request; return "CLOSED" or "MERGED".
+
+    A pull request that is already merged or closed is reported as it is,
+    without a comment.
+    """
     c = coord(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)

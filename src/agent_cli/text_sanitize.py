@@ -73,37 +73,31 @@ def _is_exempt_sgr_wrapped_token(
     index = 0
     content_start = 0
     content_end = len(token)
+    leading: re.Match[str] | None = None
+    trailing: re.Match[str] | None = None
     first = matches[0]
-    if (
-        first.start() == 0
-        and _SGR_WRAPPER_RE.fullmatch(first.group()) is not None
-    ):
-        content_start = first.end()
-        index = 1
+    if first.start() == 0:
+        leading = _SGR_WRAPPER_RE.fullmatch(first.group())
+        if leading is not None:
+            content_start = first.end()
+            index = 1
 
     if index < len(matches):
         last = matches[index]
-        if (
-            last.end() == len(token)
-            and _SGR_WRAPPER_RE.fullmatch(last.group()) is not None
-        ):
-            content_end = last.start()
-            index += 1
+        if last.end() == len(token):
+            trailing = _SGR_WRAPPER_RE.fullmatch(last.group())
+            if trailing is not None:
+                content_end = last.start()
+                index += 1
 
     if index != len(matches) or content_start >= content_end:
         return False
 
     if secret_matcher is not None:
         reconstructed = token[content_start:content_end]
-        if content_start:
-            leading = _SGR_WRAPPER_RE.fullmatch(first.group())
-            if leading is None:
-                return False
+        if leading is not None:
             reconstructed = leading.group(1) + reconstructed
-        if content_end < len(token):
-            trailing = _SGR_WRAPPER_RE.fullmatch(matches[-1].group())
-            if trailing is None:
-                return False
+        if trailing is not None:
             reconstructed += trailing.group(1)
         if secret_matcher(reconstructed):
             return False

@@ -1277,6 +1277,7 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         / "error-fix"
         / "SKILL.md"
     ).read_text(encoding="utf-8")
+    flat = " ".join(documented.split())
 
     assert (
         "Secret-key assignments use a complete, unbounded scanner" in documented
@@ -1284,7 +1285,7 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
     assert "shared controlled-line structural rule" in documented
     assert (
         "each controlled raw logical line gets a compiled case-insensitive candidate check"
-        in " ".join(documented.split())
+        in flat
     )
     assert "Only candidate lines build the three" in documented
     assert "a key-join view" in documented
@@ -1309,10 +1310,11 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in documented
     )
     assert (
-        "Fixed matching\n"
-        "   windows apply only to URL schemes, terminal escape parameters"
-        in documented
+        "Fixed matching windows bound control-tolerant URL schemes, e-mail "
+        "address parts, private-key header words, terminal escape parameters"
+        in flat
     )
+    assert "windows apply only" not in flat
     assert "Secret-key name affixes" not in documented
 
 

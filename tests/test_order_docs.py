@@ -149,6 +149,23 @@ def test_agents_md_names_pull_request_replies_of_orders() -> None:
     assert "`reply_logins`" in prose
 
 
+def test_model_route_readiness_names_the_review_2_waiver() -> None:
+    prose = _ws(_read("docs/issue-coordinator.md"))
+    assert (
+        "after a `review_2` waiver of an order it requires the report, the first "
+        "comment, and the two approved review-1 gates"
+    ) in prose
+
+
+def test_order_deviation_keys_close_at_readiness() -> None:
+    for relative in ("DESIGN.md", "docs/issue-coordinator.md"):
+        assert "submission closes" not in _ws(_read(relative))
+    assert (
+        "readiness closes both deviation keys as `n_a` from the local submission"
+        in _ws(_read("DESIGN.md"))
+    )
+
+
 def test_skill_contracts_name_the_model_route() -> None:
     for relative in (
         "src/agent_cli/skills/pr-review/SKILL.md",

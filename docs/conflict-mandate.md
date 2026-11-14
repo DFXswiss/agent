@@ -16,8 +16,9 @@ started. The lane runs
 in the worktree and can read the repository; the script confines the result:
 after a completed lane run it verifies that exactly the conflicted paths changed
 and that their final content passes the deterministic checks. An attempt that
-did not complete counts as a failed verification and is retried once; changes
-outside the
+ended `partial` or `timeout` counts as a failed verification and is retried
+once; a lane that was `unavailable` or could not be started is transient and
+is retried by a later run; changes outside the
 conflicted paths are restored before the retry, while edits inside the
 conflicted files stay for the retry. Staging happens only after a lane run that
 completed and passed the verification. Nothing is pushed without a passing
@@ -315,9 +316,12 @@ exists on GitHub, without Git, a lane, or a comment.
    raises or returns a non-`complete` status, the script still takes the
    post-run index fingerprint and the `.git` file check before deciding. A
    changed index or `.git` file is the corresponding final blocker. With an
-   unchanged index and `.git` file, the lane status and result come from one
-   `parse_model_result(stdout, returncode)` call; the launcher's own status is
-   never trusted over it. A non-zero exit is never `complete`, even when the
+   unchanged index and `.git` file, the lane status and result are those that
+   the lane launcher computed with one `parse_model_result(output, returncode)`
+   call on the raw final lane text, before redaction; the redacted text is never
+   parsed again. A lane output file that cannot be read or decoded makes the
+   status `unavailable` whatever the exit code. Otherwise a non-zero exit is
+   never `complete`, even when the
    output contains `STATUS: complete`; exit code 124 is `timeout`, another
    non-zero exit is `unavailable`, and a missing or duplicated `STATUS:` or
    `RESULT:` line is `partial`. That one status drives the index handling, the

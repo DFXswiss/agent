@@ -81,9 +81,10 @@ otherwise malformed statement closes neither deviation key and publishes
 `mandate has no explicit deviation statement; issue the assignment through the
 hub with "no deviation authorized"`. No grant is ever inferred; a declared
 deviation still needs an explicit grant through `owner_readiness_argv`.
-For an order, no hub assignment row is used. On this default the local
-submission closes `deviation_declared` and `deviation_granted` as `n_a`, with
-evidence `order <id> submitted by <who>: orders declare no deviation`.
+For an order, no hub assignment row is used. On this default readiness closes
+`deviation_declared` and `deviation_granted` as `n_a` from the local
+submission, with evidence
+`order <id> submitted by <who>: orders declare no deviation`.
 
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
@@ -121,8 +122,9 @@ visibility grace it publishes the explicit-deviation blocker above. A matching
 row without the exact no-deviation statement blocks acceptance at once with the
 same blocker, drops the pinned mandate and resumes at `accept`, so the next
 query picks up a corrected hub assignment; readiness checks the statement again.
-An order on that default performs no hub-mandate verification. Its local
-submission closes both deviation keys as `n_a` with the evidence above.
+An order on that default performs no hub-mandate verification. Readiness
+closes both deviation keys as `n_a` from its local submission, with the
+evidence above.
 
 A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
@@ -914,9 +916,10 @@ is untrusted specification data.
 The mandate is local submission by the device's paired GitHub login. Acting
 operations refuse an unpaired device with `device is not paired`. An order does
 not verify a hub assignment, even under `require_hub_assignment`. On the
-owner-scoped A38 default without `owner_readiness_argv`, submission closes the
-two deviation keys as `n_a` with evidence `order <id> submitted by <who>:
-orders declare no deviation`. Submission cannot declare a deviation.
+owner-scoped A38 default without `owner_readiness_argv`, readiness closes the
+two deviation keys as `n_a` from the submission, with evidence
+`order <id> submitted by <who>: orders declare no deviation`. Submission
+cannot declare a deviation.
 
 The other commands are:
 
@@ -957,7 +960,7 @@ events and acknowledge one.
 
 Reply, override and cancel insert `order.reply`; the next tick consumes it. A
 reply resumes the exact `resume_phase`, like an authorized GitHub reply. A
-repeated question needs a new reply. Cancel closes the draft with the fixed
+repeated question needs a new reply. Cancel closes the pull request with the fixed
 comment and ends the order as failed with kind `cancelled`. These writes and
 `order.event` are script-only; `agent activity add` refuses them with `<type>
 is written by a script, not agent activity add`. Models never write them.
@@ -1250,7 +1253,7 @@ When another key character comes first, the control remains inside the key
 instead of ending it.
 Payload whitespace does not end an unquoted value.
 Quoted values run to their closing quote or the bounded input end; unquoted
-values stop at whitespace, comma, or semicolon. URL schemes, escape parameters, and control
+values stop at whitespace, comma, or semicolon. Control-tolerant URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
 backtracking are possessive. This keeps every redaction pass linear on long
 separatorless provider text. The initial ESC/C1 search and any controlled-line
@@ -1539,7 +1542,9 @@ pull-request author. A rejected pair posts a blocking second comment with
 `blocks_merge: true` and defects equal to the number of rejecting dimensions;
 all rejecting findings return to the implementer. The `review_2_*` checklist
 keys close from the gate rows. Readiness requires the report, the first comment,
-a non-blocking second comment on the head, and all four approved gates. The
+a non-blocking second comment on the head, and all four approved gates; after a
+`review_2` waiver of an order it requires the report, the first comment, and the
+two approved review-1 gates. The
 guard still owns Ready; the coordinator never marks an A38 pull request Ready.
 The tests phase reads pull-request metadata, the paginated file inventory, and
 the metadata again. Head SHA, base SHA, base name, and open state must match
@@ -1700,9 +1705,12 @@ may still return the cumulative-CI pending result, but its timer has already
 been persisted and checked. `await_merge` re-observes the exact-head cumulative
 GitHub check rollup and Actions workflow inventory with the same classifier as
 `ci`. Pending or transport-unavailable
-evidence retries without effects. Failed, cancelled, `action_required`,
-malformed, or uncovered `skipped`/`neutral` evidence leaves the merged task at a
-non-recoverable human-intervention blocker; only a verified exact-head author
+evidence retries without effects. Failed, cancelled, `action_required`, or
+uncovered `skipped`/`neutral` evidence leaves the merged task at a
+non-recoverable human-intervention blocker. A hard protocol fault of the check
+rollup or the workflow inventory is a recoverable blocker with
+`resume_phase=await_merge`, as in `ci`, and a later tick observes the merge
+again. Only a verified exact-head author
 report may cover a matching `skipped` or `neutral` check. This cumulative CI
 gate remains a precondition for `task-done` and its `evaluate_allow` decision;
 it does not defer second-review timeout or blocker handling.

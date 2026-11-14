@@ -290,7 +290,7 @@ not match a secret pattern.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. Credential assignments use a linear lexical scan of complete,
-unbounded key tokens, including quoted JSON keys. URL schemes, terminal escape
+unbounded key tokens, including quoted JSON keys. Control-tolerant URL schemes, terminal escape
 parameters, and removable-control interleaves have fixed matching windows so
 long separatorless text remains linear to process. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result

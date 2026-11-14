@@ -76,6 +76,9 @@ def run_bounded(
 ) -> Completed:
     """Run argv with a hard timeout; kill the process group on expiry.
 
+    When ``on_start`` is given, the timeout starts after it returns, so the
+    child can run for the duration of that callback plus ``timeout``.
+
     Does not use external timeout(1). Preserves stdin and cwd. Injectable
     runners in tests should mirror Completed(returncode, stdout, stderr).
     """

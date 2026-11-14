@@ -100,7 +100,6 @@ from .coordinator_common import (
     Runner,
     account_for,
     harden_grok_write_argv,
-    parse_model_result,
     prompt_prohibitions,
     redact,
 )
@@ -910,7 +909,7 @@ def _run_lane_attempt(
         raise
     stdout = safe(ctx.worker, result.stdout or "")
     stderr = safe(ctx.worker, result.stderr or "")
-    status, parsed_result = parse_model_result(result.stdout, result.returncode)
+    status, parsed_result = result.status, result.protocol_result
     metadata_failure = _lane_metadata_failure(
         ctx,
         expected_git_file,
@@ -942,7 +941,7 @@ def _run_lane_attempt(
         record_lane_run(
             store,
             session_id=ctx.worker.session_id,
-            result=replace(result, status=status, stdout=stdout, stderr=stderr),
+            result=replace(result, stdout=stdout, stderr=stderr),
         )
     except (StoreError, Exception) as exc:  # noqa: BLE001 — audit failure never changes the verdict
         observations.append(
@@ -1178,8 +1177,6 @@ def _dry_run_request(
         lines.append(f"would report {NO_CONFLICTS} without rebasing")
     elif mergeable is None:
         lines.append("transient: GitHub mergeable state is still unknown")
-    elif not isinstance(mergeable, bool):
-        lines.append("transient: GitHub mergeable state is unreadable")
     else:
         lines.append(
             f"would rebase {safe(worker, head_sha)} onto {safe(worker, base_ref)}"
@@ -1630,19 +1627,14 @@ def _run_request(
                         mergeable=mergeable,
                     )
                 raise _Blocker(reason)
-        try:
-            route = _push_route(
-                runtime,
-                ctx.request.repo,
-                head_repo,
-                head_ref,
-                request_runtime.github,
-                dry_run=dry_run,
-            )
-        except _Blocker as exc:
-            if not dry_run:
-                raise
-            route = f"would post blocker: {exc}"
+        route = _push_route(
+            runtime,
+            ctx.request.repo,
+            head_repo,
+            head_ref,
+            request_runtime.github,
+            dry_run=dry_run,
+        )
         if dry_run and route.startswith("would post blocker:"):
             return _dry_run_request(
                 ctx,
@@ -1689,8 +1681,6 @@ def _run_request(
                     mergeable=mergeable,
                 )
             raise _Blocker(reason)
-        if not isinstance(mergeable, (bool, type(None))) and not dry_run:
-            raise ConflictTransientError("GitHub mergeable state is unreadable")
         if mergeable is None and not dry_run:
             raise ConflictTransientError("GitHub mergeable state is still unknown")
         if dry_run:
@@ -1704,6 +1694,16 @@ def _run_request(
                 mergeable=mergeable,
             )
         if mergeable is True:
+            for key in (
+                "old_head",
+                "new_head",
+                "base_sha",
+                "replayed_commits",
+                "resolved_files",
+                "check_result",
+                "mergeable",
+            ):
+                ctx.state.pop(key, None)
             body = comment_body(
                 ctx.worker,
                 "no-conflicts",

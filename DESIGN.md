@@ -956,8 +956,9 @@ operation that records who acted refuses an unpaired device with `device is not
 paired`. The coordinator verifies no hub assignment for an order, even when
 the worker requires hub assignment. Acceptance reads no issue and posts
 nothing on GitHub. On the owner-scoped A38 default without
-`owner_readiness_argv`, submission closes both deviation keys as `n_a` with
-evidence `order <id> submitted by <who>: orders declare no deviation`. Order
+`owner_readiness_argv`, readiness closes both deviation keys as `n_a` from the
+local submission, with evidence
+`order <id> submitted by <who>: orders declare no deviation`. Order
 submission cannot declare a deviation.
 
 Order states are derived, not stored: `queued`, `running`, `waiting`, `ready`,
@@ -982,7 +983,7 @@ events and acknowledge them.
 `agent order reply`, `agent order override`, and `agent order cancel` write an
 `order.reply` row for the next coordinator tick. A reply resumes the exact
 `resume_phase` like an authorized pull-request or issue comment. A repeated
-question requires a new reply. A cancel closes the draft with the fixed comment
+question requires a new reply. A cancel closes the pull request with the fixed comment
 and ends the order as failed with kind `cancelled`. An answer acknowledges the
 question or blocker it answers.
 
