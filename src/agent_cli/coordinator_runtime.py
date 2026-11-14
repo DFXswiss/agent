@@ -2601,6 +2601,13 @@ def _advance_task(
             c.pop("rejection_review_activity_ids", None)
         if not c.get("resume_phase") and phase not in ("done", "blocked", "ask"):
             c["resume_phase"] = phase
+        for key in (
+            "blocker_publish_once",
+            "blocker_publish_kind",
+            "blocker_publish_occurrence",
+            "blocker_activity_id",
+        ):
+            c.pop(key, None)
         c["blocker"] = message
         if phase != "done":
             c["phase"] = "blocked"
@@ -2996,6 +3003,13 @@ def _advance_task(
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
+        for key in (
+            "blocker_publish_once",
+            "blocker_publish_kind",
+            "blocker_publish_occurrence",
+            "blocker_activity_id",
+        ):
+            c.pop(key, None)
         c["blocker"] = str(exc)
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
