@@ -1387,6 +1387,485 @@ def test_gates_follow_a_non_default_pin(tmp_path: Path, capsys: pytest.CaptureFi
         store.close()
 
 
+def test_task_models_changes_second_for_new_agents_and_gates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+
+    def finished(role: str, vendor: str, stage: str | None = None) -> str:
+        argv = [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", role, "--vendor", vendor,
+        ]
+        if stage is not None:
+            argv.extend(["--stage", stage])
+        _run(tmp_path, argv)
+        aid = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("agent ")
+        ][-1].split()[1]
+        _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+        capsys.readouterr()
+        return aid
+
+    head = "abcdef0"
+    for dimension in ("quality", "logic"):
+        aid = finished(f"pr-reviewer-{dimension}", "claude")
+        _run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", "review-1",
+                "--dimension", dimension, "--vendor", "claude",
+                "--verdict", "approved", "--head", head, "--agent", aid,
+            ],
+        )
+    capsys.readouterr()
+    _run(tmp_path, ["task", "state", tid, "pr-review"])
+    old_aid = finished("pr-reviewer-quality", "codex", "review-2")
+    _run(
+        tmp_path,
+        [
+            "gate", "record", "--task", tid, "--stage", "review-2",
+            "--dimension", "quality", "--vendor", "codex",
+            "--verdict", "approved", "--head", head, "--agent", old_aid,
+        ],
+    )
+    capsys.readouterr()
+
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "second",
+            "--vendor", "openrouter", "--reason", "codex quota exhausted",
+        ],
+    )
+    assert capsys.readouterr().out == (
+        f"task {tid} models.second=openrouter (was codex)\n"
+    )
+
+    with pytest.raises(SystemExit, match="stage review-2 requires --vendor openrouter"):
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-2",
+                "--vendor", "codex",
+            ],
+        )
+    aid = finished("pr-reviewer-quality", "openrouter", "review-2")
+    with pytest.raises(SystemExit, match="stage review-2 requires vendor openrouter"):
+        _run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", "review-2",
+                "--dimension", "quality", "--vendor", "codex",
+                "--verdict", "approved", "--head", head, "--agent", aid,
+            ],
+        )
+    _run(
+        tmp_path,
+        [
+            "gate", "record", "--task", tid, "--stage", "review-2",
+            "--dimension", "quality", "--vendor", "openrouter",
+            "--verdict", "approved", "--head", head, "--agent", aid,
+        ],
+    )
+    capsys.readouterr()
+
+    _run(tmp_path, ["task", "show", tid])
+    task = json.loads(capsys.readouterr().out)
+    assert task["models"] == {"first": "claude", "second": "openrouter"}
+    assert task["model_changes"][-1]["slot"] == "second"
+    assert task["model_changes"][-1]["from"] == "codex"
+    assert task["model_changes"][-1]["to"] == "openrouter"
+    assert task["model_changes"][-1]["reason"] == "codex quota exhausted"
+
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        gates = store.rows("review_gate")
+        assert {(g["stage"], g["dimension"], g["vendor"]) for g in gates} == {
+            ("review-1", "quality", "claude"),
+            ("review-1", "logic", "claude"),
+            ("review-2", "quality", "codex"),
+            ("review-2", "quality", "openrouter"),
+        }
+    finally:
+        store.close()
+
+
+def test_task_models_changes_implementer_and_omits_a_redundant_pin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path, implementer="claude")
+    tid = _task(tmp_path, capsys)
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        assert "implementer" not in (store.row("task", tid) or {})
+    finally:
+        store.close()
+
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "implementer",
+            "--vendor", "deepseek", "--reason", "use the separate implementer",
+        ],
+    )
+    assert capsys.readouterr().out == (
+        f"task {tid} implementer=deepseek (was claude)\n"
+    )
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert task["models"] == {"first": "claude", "second": "codex"}
+        assert task["implementer"] == "deepseek"
+    finally:
+        store.close()
+
+    _run(tmp_path, ["task", "state", tid, "implementing"])
+    _run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="implementer requires --vendor deepseek"):
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "implementer", "--vendor", "claude", "--round", "1",
+            ],
+        )
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "deepseek", "--round", "1",
+        ],
+    )
+    capsys.readouterr()
+
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "implementer",
+            "--vendor", "claude", "--reason", "follow model slot first again",
+        ],
+    )
+    assert capsys.readouterr().out == (
+        f"task {tid} implementer=claude (was deepseek)\n"
+    )
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert "implementer" not in task
+        assert [change["to"] for change in task["model_changes"]] == [
+            "deepseek",
+            "claude",
+        ]
+    finally:
+        store.close()
+
+
+def test_task_models_first_change_moves_an_absent_implementer_pin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path, implementer="claude")
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "first",
+            "--vendor", "openrouter", "--reason", "claude quota exhausted",
+        ],
+    )
+    assert capsys.readouterr().out == (
+        f"task {tid} models.first=openrouter (was claude)\n"
+    )
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert task["models"] == {"first": "openrouter", "second": "codex"}
+        assert "implementer" not in task
+    finally:
+        store.close()
+
+    _run(tmp_path, ["task", "state", tid, "implementing"])
+    _run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="implementer requires --vendor openrouter"):
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "implementer", "--vendor", "claude", "--round", "1",
+            ],
+        )
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "openrouter", "--round", "1",
+        ],
+    )
+    assert capsys.readouterr().out.startswith("agent ")
+
+
+def test_task_models_keeps_recorded_agent_rows_unchanged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "pr-reviewer-quality", "--vendor", "claude",
+        ],
+    )
+    aid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+
+    _run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "first",
+            "--vendor", "openrouter", "--reason", "claude quota exhausted",
+        ],
+    )
+    capsys.readouterr()
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        assert store.row("agent", aid)["vendor"] == "claude"
+    finally:
+        store.close()
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    assert f"agent {aid} verdict=approved" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="stage review-1 requires --vendor openrouter"):
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-1",
+                "--vendor", "claude",
+            ],
+        )
+
+
+def test_task_models_refuses_invalid_or_unavailable_changes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+    base = ["task", "models", "--id", tid, "--slot", "second"]
+
+    def new_task() -> str:
+        _run(
+            tmp_path,
+            [
+                "task", "create", "--session", "s", "--workflow", "implement",
+                "--title", "Ship",
+            ],
+        )
+        return [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("task ")
+        ][-1].split()[1]
+
+    with pytest.raises(SystemExit, match="unknown task"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", "missing-task", "--slot", "second",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+    with pytest.raises(SystemExit, match="slot must be"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", tid, "--slot", "third",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+    with pytest.raises(SystemExit, match="vendor must be"):
+        _run(tmp_path, [*base, "--vendor", "gemini", "--reason", "quota"])
+    with pytest.raises(SystemExit, match="--reason must not be empty"):
+        _run(tmp_path, [*base, "--vendor", "openrouter", "--reason", "   "])
+    with pytest.raises(SystemExit, match="models.first and models.second must be different"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", tid, "--slot", "first",
+                "--vendor", "codex", "--reason", "duplicate the second slot",
+            ],
+        )
+    with pytest.raises(SystemExit, match="implementer must differ from models.second"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", tid, "--slot", "implementer",
+                "--vendor", "codex", "--reason", "duplicate the second slot",
+            ],
+        )
+
+    _run(tmp_path, ["task", "state", tid, "superseded"])
+    with pytest.raises(SystemExit, match="terminal task"):
+        _run(tmp_path, [*base, "--vendor", "openrouter", "--reason", "quota"])
+
+    legacy_tid = new_task()
+    _remove_task_models(tmp_path, legacy_tid)
+    with pytest.raises(SystemExit, match="task models is not configured"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", legacy_tid, "--slot", "second",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+
+    external_tid = new_task()
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        external = {
+            key: value
+            for key, value in (store.row("task", external_tid) or {}).items()
+            if not key.startswith("_")
+        }
+        external["models"] = {"first": "grok", "second": None}
+        store.write("task", "update", external_tid, external)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="second review is external"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", external_tid, "--slot", "second",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+
+
+def test_task_models_refuses_a_task_owned_by_another_device(tmp_path: Path) -> None:
+    from agent_cli.store import Store
+
+    _run(tmp_path, ["init"])
+    store = Store(tmp_path)
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "session",
+                "op": "insert",
+                "row_id": "foreign-session",
+                "payload": {
+                    "id": "foreign-session",
+                    "kind": "human",
+                    "status": "active",
+                    "skills": ["spine"],
+                },
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 2,
+                "table": "task",
+                "op": "insert",
+                "row_id": "foreign-task",
+                "payload": {
+                    "id": "foreign-task",
+                    "session_id": "foreign-session",
+                    "workflow": "implement",
+                    "state": "implementing",
+                    "models": {"first": "claude", "second": "codex"},
+                },
+                "occurred_at": "2026-08-13T12:00:01Z",
+            }
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="owned by another device"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", "foreign-task", "--slot", "second",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+
+
+def test_task_models_requires_a_spine_session(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path)
+    _run(tmp_path, ["init"])
+    _run(
+        tmp_path,
+        ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"],
+    )
+    _run(
+        tmp_path,
+        [
+            "task", "create", "--session", "s", "--workflow", "implement",
+            "--title", "Ship",
+        ],
+    )
+    tid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("task ")
+    ][-1].split()[1]
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        session = {
+            key: value
+            for key, value in (store.row("session", "s") or {}).items()
+            if not key.startswith("_")
+        }
+        session["skills"] = []
+        store.write("session", "update", "s", session)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="does not have skill spine"):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", tid, "--slot", "second",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+
+
 
 def test_agent_models_task_prints_the_pin(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     tid = _task(tmp_path, capsys)  # pinned grok/codex

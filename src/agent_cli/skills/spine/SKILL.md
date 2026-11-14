@@ -43,6 +43,7 @@ keys. Quality and logic of the same model-slot stage may be open together.
 
 ```bash
 agent task create --session <session-id> --workflow implement|review|resolve-conflicts --title "…"
+agent task models --id <uuid> --slot first|second|implementer --vendor <provider> --reason "<why>"
 agent next --task <uuid>
 agent close-step --task <uuid> --key session_registered --source script --evidence "session register"
 agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
@@ -50,6 +51,7 @@ agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--t
 ```
 
 Once the draft pull request exists, attach it with `agent task pr --id <task-id> --repo <owner/name> --pr <number>`; the one-review path and queued gate findings read it from there.
+Each task pins the provider of model slots `first` and `second`, plus an optional `implementer`; `ai-accounts.json` supplies those defaults when the task is created. Change a slot explicitly with `agent task models`; the reason is recorded on the task. The change applies to later agent rows of that slot, and for a review slot (`first`, `second`) also to later gate rows; those rows require the new provider. Existing rows keep their recorded vendor. An `unavailable` review is recorded as `unavailable` before the switch.
 After a verified human merge, close the attached task with `agent task close-from-pr --id <task-id>`, or close eligible tasks in one session with `agent task close-from-pr --session <session-id>`.
 
 `run` git-pushes (no force) when `pushed` is open and measures mergeability when `mergeable` is open. Protected branches stay refused.

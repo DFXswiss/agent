@@ -27,6 +27,7 @@ def test_contributing_states_ready_for_review_contract() -> None:
     assert "one_review_authors" in text
     assert "the second review run does not block Ready" not in text
     assert "do not substitute another vendor" in prose
+    assert "agent task models" in text
     assert "Empty, partial, timeout, or unavailable" in text
     assert "is not zero findings" in text
     assert "`skipped` and `cancelled` are not green" in text
@@ -62,6 +63,7 @@ def test_design_locks_ready_for_review() -> None:
     assert "skipped` or `neutral` as green" in section_prose
     assert "`cancelled` and failed still block" in section_prose
     assert "do not substitute another vendor" in section_prose
+    assert "agent task models" in section_prose
     assert "model slot `first`, then model slot `second`" in section_prose
     assert "Vendors are `grok`, then `codex`" not in section_prose
     assert "The first review run is required" in section_prose
@@ -91,6 +93,7 @@ def test_pr_review_and_spine_point_at_ready_for_review() -> None:
     assert "session that authored the diff does not" in pr_review_prose
     assert "agent allow --action pr-ready" in pr_review
     assert "Do not substitute another vendor" in pr_review_prose
+    assert "agent task models" in pr_review
     assert "unavailable output is not zero findings" in pr_review_prose
     assert "both review runs on this head are approved" in pr_review_prose
     assert "Two review runs are required" in pr_review_prose

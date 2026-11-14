@@ -73,6 +73,7 @@ from .model_slots import (
     SLOT_STAGES,
     STAGE_CHOICES,
     STAGE_SLOTS,
+    TASK_MODELS_NOT_CONFIGURED,
     ModelSlots,
     ModelSlotsError,
     PinnedModelSlotsError,
@@ -84,6 +85,8 @@ from .model_slots import (
     model_pins,
     models_for_new_record,
     models_from_snapshot,
+    parse_implementer,
+    parse_model_slots,
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
@@ -753,7 +756,7 @@ def cmd_activity(args: list[str]) -> None:
 
 def cmd_task(args: list[str]) -> None:
     if not args:
-        die("Usage: agent task create|list|show|state|summary|pr|close-from-pr")
+        die("Usage: agent task create|list|show|state|summary|pr|models|close-from-pr")
     store = open_store()
     try:
         sub, rest = args[0], args[1:]
@@ -929,6 +932,74 @@ def cmd_task(args: list[str]) -> None:
             store.write("task", "update", tid, _strip(row))
             print(f"task {tid} pr={repo}#{pr}")
             return
+        if sub == "models":
+            tid = require_flag(rest, "--id")
+            slot = require_flag(rest, "--slot")
+            vendor = require_flag(rest, "--vendor")
+            reason = require_flag(rest, "--reason").strip()
+            if slot not in ("first", "second", "implementer"):
+                die("slot must be first|second|implementer")
+            if not reason:
+                die("--reason must not be empty")
+            if slot == "implementer":
+                if vendor not in IMPLEMENTER_PROVIDERS:
+                    die(f"vendor must be {IMPLEMENTER_PROVIDER_CHOICES}")
+            elif vendor not in VENDORS:
+                die(f"vendor must be {PROVIDER_CHOICES}")
+            row = _need(store, "task", tid)
+            _require_owned(store, row, "task")
+            _require_skill(_need(store, "session", row["session_id"]), "spine")
+            if str(row.get("state") or "") in TERMINAL_STATES:
+                die("cannot change the model slots of a terminal task")
+            if row.get("models") is None:
+                die(TASK_MODELS_NOT_CONFIGURED)
+            models = models_for_new_record(row)
+            if slot == "second" and models.second is None:
+                die(
+                    "cannot change models.second: the task's second review is external"
+                )
+            implementer = implementer_for_new_record(row)
+            old = implementer if slot == "implementer" else models.for_slot(slot)
+            if slot == "first":
+                new_models = ModelSlots(vendor, models.second)
+                new_implementer = (
+                    vendor if row.get("implementer") is None else implementer
+                )
+            elif slot == "second":
+                new_models = ModelSlots(models.first, vendor)
+                new_implementer = implementer
+            else:
+                new_models = models
+                new_implementer = vendor
+            new_models = parse_model_slots(new_models.as_dict())
+            new_implementer = parse_implementer(new_implementer, new_models)
+            pins = model_pins(new_models, new_implementer)
+            row["models"] = pins["models"]
+            if "implementer" in pins:
+                row["implementer"] = pins["implementer"]
+            else:
+                row.pop("implementer", None)
+            changes = row.get("model_changes")
+            if changes is None:
+                changes = []
+            elif not isinstance(changes, list):
+                die("task model_changes history is not a list")
+            now = utcnow()
+            row["model_changes"] = [
+                *changes,
+                {
+                    "slot": slot,
+                    "from": old,
+                    "to": vendor,
+                    "reason": reason,
+                    "at": now,
+                },
+            ]
+            row["updated_at"] = now
+            store.write("task", "update", tid, _strip(row))
+            label = f"models.{slot}" if slot in ("first", "second") else "implementer"
+            print(f"task {tid} {label}={vendor} (was {old})")
+            return
         if sub == "close-from-pr":
             tid = flag(rest, "--id")
             session_id = flag(rest, "--session")
@@ -970,7 +1041,7 @@ def cmd_task(args: list[str]) -> None:
             return
         die(
             f"unknown task command: {sub}\n"
-            "Usage: agent task create|list|show|state|summary|pr|close-from-pr"
+            "Usage: agent task create|list|show|state|summary|pr|models|close-from-pr"
         )
     finally:
         store.close()
