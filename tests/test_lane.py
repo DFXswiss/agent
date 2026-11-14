@@ -1028,6 +1028,31 @@ def test_known_secret_scanners_are_linear_across_one_large_nested_string_control
         assert cleaned == "[redacted]"
 
 
+def test_known_secret_scanners_are_linear_across_repeated_candidates_and_nested_unterminated_controls(
+) -> None:
+    config_dir = "/opt/provider-profile"
+    raw = "/\x1b]" * 100_000
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(raw, config_dir),
+            raw,
+        ),
+        (
+            "lane config path",
+            lambda: redact_lane_text(raw, config_dir=config_dir, limit=None),
+            "/[redacted]",
+        ),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+        assert cleaned == expected
+
+
 @pytest.mark.parametrize(
     "control_run",
     (

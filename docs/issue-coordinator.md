@@ -1744,10 +1744,14 @@ matching-head second-review evaluation and timeout persistence happen before
 merged-report visibility and cumulative-CI lookups. A later valid merge
 timestamp always replaces a fallback anchor. Merge commit ids must be
 40-character hexadecimal SHAs and merge times must be parseable timezone-aware
-timestamps. Invalid values are missing; an A38 fallback may drive only the
-deadline, and no worker records or completes a merge until both metadata values
-are valid. A passing review after the deadline publishes
-`merged-without-second-review`. A blocking review or expired timeout publishes its merge blocker even
+timestamps. Invalid values are missing. For A38, merged-head/base validation and
+the merged-head second-review outcome are evaluated before retrying a missing or
+non-SHA merge commit, and that retry still happens before visibility, CI, merge
+recording or completion. Non-A38 tasks keep the early incomplete-metadata retry.
+An A38 fallback may drive only the deadline, and no worker records or completes
+a merge until both metadata values are valid. A passing review after the
+deadline publishes `merged-without-second-review`. A blocking review or expired
+timeout publishes its merge blocker even
 while cumulative CI is pending or temporarily unavailable. A non-expired wait
 may still return the cumulative-CI pending result, but its timer has already
 been persisted and checked. `await_merge` re-observes the exact-head cumulative

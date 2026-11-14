@@ -2911,7 +2911,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             else None
         )
         merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
-        if sha is None or (not worker.a38 and merged_at is None):
+        if not worker.a38 and (sha is None or merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
             return ["merge observed but mergedBy missing"]
@@ -3039,6 +3039,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     return second_review_wait or [
                         "blocked: merged-head second-review deadline failed"
                     ]
+            if sha is None:
+                return ["merge observed but incomplete metadata"]
             try:
                 visibility_satisfied = merged_report_visibility_satisfied(
                     store,

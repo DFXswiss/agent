@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 
 # Longer escape/control runs are not trusted presentation. The shared raw-token
@@ -159,79 +160,189 @@ def _terminal_string_control_parts(
     return end, terminated, tuple(wrappers), open_depth > 1
 
 
+@dataclass(frozen=True)
+class _TerminalControlAtom:
+    """One pre-tokenized removable terminal-control atom."""
+
+    start: int
+    end: int
+    final_position: int | None
+
+
+@dataclass(frozen=True)
+class _TerminalControlRun:
+    """One maximal run of adjacent terminal-control atoms."""
+
+    end: int
+    next_finals: dict[str, tuple[int | None, ...]]
+    candidate_finals: tuple[int, ...]
+    candidate_offsets: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _TerminalInterleaveIndex:
+    """Control-run lookup keyed by every atom boundary in the source text."""
+
+    positions: dict[int, tuple[_TerminalControlRun, int]]
+
+
+def _terminal_control_atom(
+    text: str, index: int
+) -> _TerminalControlAtom | None:
+    """Tokenize the terminal-control atom at ``index`` without rescanning it."""
+    if index >= len(text):
+        return None
+    codepoint = ord(text[index])
+    if not (
+        codepoint <= 0x08
+        or 0x0B <= codepoint <= 0x1F
+        or 0x7F <= codepoint <= 0x9F
+    ):
+        return None
+    if _is_terminal_string_control(text, index):
+        end, _terminated = _terminal_string_control_end(text, index)
+        return _TerminalControlAtom(index, max(index + 1, end), None)
+
+    cursor = index
+    final_position: int | None = None
+    if text.startswith("\x1b[", cursor) or text[cursor] == "\x9b":
+        cursor += 2 if text[cursor] == "\x1b" else 1
+        parameter_count = 0
+        while (
+            cursor < len(text)
+            and parameter_count < _MAX_ESCAPE_PARAMETER_BYTES
+            and "0" <= text[cursor] <= "?"
+        ):
+            cursor += 1
+            parameter_count += 1
+        intermediate_count = 0
+        while (
+            cursor < len(text)
+            and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
+            and " " <= text[cursor] <= "/"
+        ):
+            cursor += 1
+            intermediate_count += 1
+        if cursor < len(text) and "@" <= text[cursor] <= "~":
+            final_position = cursor
+            cursor += 1
+        return _TerminalControlAtom(index, cursor, final_position)
+
+    if text[cursor] == "\x1b":
+        cursor += 1
+        intermediate_count = 0
+        while (
+            cursor < len(text)
+            and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
+            and " " <= text[cursor] <= "/"
+        ):
+            cursor += 1
+            intermediate_count += 1
+        if cursor < len(text) and "0" <= text[cursor] <= "~":
+            final_position = cursor
+            cursor += 1
+        return _TerminalControlAtom(index, cursor, final_position)
+
+    return _TerminalControlAtom(index, index + 1, None)
+
+
+def _terminal_interleave_index(
+    text: str,
+    relevant_finals: frozenset[str],
+    first_characters: frozenset[str],
+) -> _TerminalInterleaveIndex:
+    """Tokenize every terminal-control run once for exact-secret matching."""
+    positions: dict[int, tuple[_TerminalControlRun, int]] = {}
+    cursor = 0
+    while cursor < len(text):
+        control = _TERMINAL_CONTROL_RE.search(text, cursor)
+        if control is None:
+            break
+        cursor = control.start()
+        first = _terminal_control_atom(text, cursor)
+        if first is None:  # pragma: no cover - guarded by the shared regex
+            raise AssertionError("terminal-control index disagrees with lexer")
+        atoms = [first]
+        cursor = first.end
+        while cursor < len(text):
+            following = _terminal_control_atom(text, cursor)
+            if following is None:
+                break
+            atoms.append(following)
+            cursor = following.end
+
+        observed_finals = {
+            text[atom.final_position]
+            for atom in atoms
+            if atom.final_position is not None
+            and text[atom.final_position] in relevant_finals
+        }
+        next_finals: dict[str, tuple[int | None, ...]] = {}
+        for character in observed_finals:
+            nearest: int | None = None
+            values: list[int | None] = [None] * len(atoms)
+            for ordinal in range(len(atoms) - 1, -1, -1):
+                final_position = atoms[ordinal].final_position
+                if (
+                    final_position is not None
+                    and text[final_position] == character
+                ):
+                    nearest = final_position
+                values[ordinal] = nearest
+            next_finals[character] = tuple(values)
+        candidate_finals: list[int] = []
+        candidate_offsets: list[int] = []
+        for atom in atoms:
+            candidate_offsets.append(len(candidate_finals))
+            if (
+                atom.final_position is not None
+                and text[atom.final_position] in first_characters
+            ):
+                candidate_finals.append(atom.final_position)
+        run = _TerminalControlRun(
+            end=cursor,
+            next_finals=next_finals,
+            candidate_finals=tuple(candidate_finals),
+            candidate_offsets=tuple(candidate_offsets),
+        )
+        for ordinal, atom in enumerate(atoms):
+            positions[atom.start] = (run, ordinal)
+    return _TerminalInterleaveIndex(positions=positions)
+
+
 def _terminal_interleave_positions(
     text: str,
     index: int,
     expected: frozenset[str],
+    terminal_index: _TerminalInterleaveIndex,
 ) -> tuple[int, ...]:
     """Return positions reachable after one removable terminal-control run.
 
-    The linear walk has no per-atom limit: consecutive C0 controls, complete
-    nesting-aware string controls, CSI, and other ESC sequences are one run.
-    For CSI and other ESC sequences, the final byte may instead be the next
-    literal secret byte; both that position and the position after the complete
-    escape remain reachable. String controls must win before the generic ESC
-    case.
+    The precomputed index has no per-atom limit: consecutive C0 controls,
+    complete nesting-aware string controls, CSI, and other ESC sequences are
+    one run. For CSI and other ESC sequences, the final byte may instead be the
+    next literal secret byte; both that position and the position after the
+    complete escape remain reachable. String controls win before the generic
+    ESC case, and no match attempt rescans their payload.
     """
     positions = [index]
-    cursor = index
-    first_final_position: int | None = None
-    while True:
-        if cursor >= len(text):
-            break
-        if _is_terminal_string_control(text, cursor):
-            end, _terminated = _terminal_string_control_end(text, cursor)
-            cursor = max(cursor + 1, end)
-            continue
-
-        if text.startswith("\x1b[", cursor) or text[cursor] == "\x9b":
-            cursor += 2 if text[cursor] == "\x1b" else 1
-            parameter_count = 0
-            while (
-                cursor < len(text)
-                and parameter_count < _MAX_ESCAPE_PARAMETER_BYTES
-                and "0" <= text[cursor] <= "?"
-            ):
-                cursor += 1
-                parameter_count += 1
-            intermediate_count = 0
-            while (
-                cursor < len(text)
-                and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
-                and " " <= text[cursor] <= "/"
-            ):
-                cursor += 1
-                intermediate_count += 1
-            if cursor < len(text) and "@" <= text[cursor] <= "~":
-                if text[cursor] in expected and first_final_position is None:
-                    first_final_position = cursor
-                cursor += 1
-            continue
-
-        if text[cursor] == "\x1b":
-            cursor += 1
-            intermediate_count = 0
-            while (
-                cursor < len(text)
-                and intermediate_count < _MAX_ESCAPE_PARAMETER_BYTES
-                and " " <= text[cursor] <= "/"
-            ):
-                cursor += 1
-                intermediate_count += 1
-            if cursor < len(text) and "0" <= text[cursor] <= "~":
-                if text[cursor] in expected and first_final_position is None:
-                    first_final_position = cursor
-                cursor += 1
-            continue
-
-        if _TERMINAL_CONTROL_RE.match(text, cursor) is not None:
-            cursor += 1
-            continue
-
-        break
+    indexed = terminal_index.positions.get(index)
+    if indexed is None:
+        return (index,)
+    run, ordinal = indexed
+    first_final_position = min(
+        (
+            positions_for_character[ordinal]
+            for character in expected
+            if (positions_for_character := run.next_finals.get(character))
+            is not None
+            and positions_for_character[ordinal] is not None
+        ),
+        default=None,
+    )
     if first_final_position is not None:
         positions.append(first_final_position)
-    positions.append(cursor)
+    positions.append(run.end)
     return tuple(dict.fromkeys(positions))
 
 
@@ -241,6 +352,7 @@ def _match_interleaved_representation(
     representation: tuple[frozenset[str], ...],
     *,
     allow_leading_interleave: bool,
+    terminal_index: _TerminalInterleaveIndex,
 ) -> set[int]:
     """Match one literal or percent-encoded character representation."""
     positions = starts
@@ -249,7 +361,9 @@ def _match_interleaved_representation(
         for position in positions:
             if allow_leading_interleave or offset:
                 candidates.update(
-                    _terminal_interleave_positions(text, position, expected)
+                    _terminal_interleave_positions(
+                        text, position, expected, terminal_index
+                    )
                 )
             else:
                 candidates.add(position)
@@ -277,33 +391,60 @@ def _redact_terminal_interleaved_representations(
         for representation in representations[0]
         for character in representation[0]
     )
+    relevant_finals = frozenset(
+        character
+        for representation in representations
+        for alternative in representation
+        for expected in alternative
+        for character in expected
+    )
+    terminal_index = _terminal_interleave_index(
+        text, relevant_finals, first
+    )
     pieces: list[str] = []
     copied_to = 0
     index = 0
     while index < len(text):
-        if text[index] not in first:
-            index += 1
-            continue
-        positions = {index}
-        for character_index, alternatives in enumerate(representations):
-            matched: set[int] = set()
-            for alternative in alternatives:
-                matched.update(
-                    _match_interleaved_representation(
-                        text,
-                        positions,
-                        alternative,
-                        allow_leading_interleave=character_index > 0,
+        indexed = terminal_index.positions.get(index)
+        candidate_positions: tuple[int, ...] = ()
+        candidate_offset = 0
+        next_index = index + 1
+        if indexed is None:
+            if text[index] in first:
+                candidate_positions = (index,)
+        else:
+            run, ordinal = indexed
+            next_index = run.end
+            candidate_positions = run.candidate_finals
+            candidate_offset = run.candidate_offsets[ordinal]
+
+        match: tuple[int, int] | None = None
+        for candidate_index in range(candidate_offset, len(candidate_positions)):
+            candidate = candidate_positions[candidate_index]
+            positions = {candidate}
+            for character_index, alternatives in enumerate(representations):
+                matched: set[int] = set()
+                for alternative in alternatives:
+                    matched.update(
+                        _match_interleaved_representation(
+                            text,
+                            positions,
+                            alternative,
+                            allow_leading_interleave=character_index > 0,
+                            terminal_index=terminal_index,
+                        )
                     )
-                )
-            positions = matched
-            if not positions:
+                positions = matched
+                if not positions:
+                    break
+            if positions:
+                match = (candidate, max(positions))
                 break
-        if not positions:
-            index += 1
+        if match is None:
+            index = next_index
             continue
-        end = max(positions)
-        pieces.extend((text[copied_to:index], replacement))
+        start, end = match
+        pieces.extend((text[copied_to:start], replacement))
         copied_to = end
         index = end
     if not pieces:
