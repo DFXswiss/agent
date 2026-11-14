@@ -762,6 +762,33 @@ def test_shared_redaction_is_linear_on_a_large_unicode_key() -> None:
     assert elapsed < 2, f"redaction took {elapsed:.3f}s"
 
 
+@pytest.mark.parametrize("separator", (",", ";"), ids=("comma", "semicolon"))
+def test_shared_redaction_keeps_an_unquoted_secret_value_whole(
+    separator: str,
+) -> None:
+    for raw, expected in (
+        (f"ERROR password=correct{separator}horse", "ERROR [redacted]"),
+        (
+            f"ERROR password=correct{separator}horse visible",
+            "ERROR [redacted] visible",
+        ),
+        (
+            f"ERROR password: correct{separator}horse visible",
+            "ERROR password: [redacted] visible",
+        ),
+        (
+            f"ERROR api_key = a{separator}b{separator}c visible",
+            "ERROR api_key = [redacted] visible",
+        ),
+        (
+            f'ERROR password="correct"{separator}horse visible',
+            f'ERROR password="[redacted]"{separator}horse visible',
+        ),
+    ):
+        for cleaned in _shared_lane_and_error_redactions(raw):
+            assert cleaned == expected
+
+
 def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:
     raw = '"pass\x1b[31mword"="first secret words" visible'
 

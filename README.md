@@ -248,8 +248,11 @@ placeholder do not trigger the line rule. Any other byte in that token, or a
 keyword elsewhere on the line, still triggers it. Lane sinks replace raw and
 control-interleaved config-directory paths on the complete source before this
 structural rule, apply their length bound next, and run precise redaction last.
-Credential assignments use one linear scanner over complete, unbounded key
-tokens, including quoted JSON keys; quoted values are consumed through their
+Credential assignments use one scanner over complete, unbounded key tokens,
+including quoted JSON keys. It is linear, except where whitespace follows
+terminal controls that hold key characters (a digit or the letter final byte of
+a CSI or ESC sequence, or a key character in a string-control payload); such
+text costs time quadratic in the number of those controls. Quoted values are consumed through their
 closing quote or the bounded input end. The scanner recognizes the legacy
 `passwd` and `access_key` / `access-key` / `accesskey` key forms and consumes
 removable terminal controls between the key, assignment operator, and value.

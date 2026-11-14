@@ -2551,12 +2551,23 @@ def _advance_task(
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)
     if ordering_error is not None:
-        if phase in ("blocked", "ask"):
+        if phase not in ("blocked", "ask"):
+            c["phase"] = "blocked"
+            c["resume_phase"] = phase
+            c["blocker"] = ordering_error
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "phase-error"
+            c.pop("blocker_activity_id", None)
+            save_task(store, task)
+        elif not (
+            phase == "blocked"
+            and c.get("blocker_publish_once") is True
+            and c.get("blocker_publish_kind") == "phase-error"
+            and not c.get("blocker_activity_id")
+        ):
             return [ordering_error]
-        c["phase"] = "blocked"
-        c["resume_phase"] = phase
-        c["blocker"] = ordering_error
-        save_task(store, task)
+        # Until publish_blocker records the blocker activity, every visit
+        # repeats the same publication (same text, kind and occurrence).
         replies = coord(task).get("authorized_replies")
         count = len(replies) if isinstance(replies, list) else 0
         return publish_blocker(
@@ -2564,7 +2575,7 @@ def _advance_task(
             worker,
             task,
             runner,
-            ordering_error,
+            str(coord(task).get("blocker") or ordering_error),
             kind="phase-error",
             reply_checkpoint=True,
             occurrence=f"{task['id']}:{count}",

@@ -889,7 +889,15 @@ def _assignment_operator_after_key(
 
 
 def _redact_secret_assignments(text: str) -> str:
-    """Redact secret-key assignment values with one linear lexical scan.
+    """Redact secret-key assignment values with one lexical scan.
+
+    The scan is linear, except where whitespace follows terminal controls that
+    hold key characters (a digit or the letter final byte of a CSI or ESC
+    sequence, or a key character in an OSC, DCS, PM, APC or SOS payload): a
+    key starts inside each such control, and the operator search after each
+    of these keys reads the following whitespace and controls again, which
+    costs time quadratic in the number of those controls. Text without ESC and
+    C1 bytes is scanned in linear time.
 
     Keys are complete, unbounded tokens of Unicode letters and numbers, ``_``
     and ``-``, and may be quoted. A secret key that ends directly before a
@@ -904,10 +912,11 @@ def _redact_secret_assignments(text: str) -> str:
     remains an opaque interleave inside the key.
     Before the keyword, a string-control payload remains opaque.
     Quoted values run through their closing quote, or through the bounded input
-    end when no close exists; unquoted values stop at outside whitespace, comma,
-    or semicolon.  Preserve the established whole-token replacement for a
-    plain, compact ``key=value`` assignment; structured and quoted assignments
-    retain their key and delimiters while only their value is replaced.
+    end when no close exists; an unquoted value stops at outside whitespace,
+    and after a quoted key also at a comma or semicolon.  Preserve the
+    established whole-token replacement for a plain, compact ``key=value``
+    assignment; structured and quoted assignments retain their key and
+    delimiters while only their value is replaced.
     """
     if not text:
         return text
@@ -959,9 +968,13 @@ def _redact_secret_assignments(text: str) -> str:
                 text, cursor, stop_at_assignment_operator=True
             )
             if control_end > cursor:
+                # One operator search per control run: a search that finds no
+                # operator from one position of the run finds none from a later
+                # position of that run, because both walk the same separators
+                # to the same end.
+                operator_searched = secret_key and quote is None
                 if (
-                    secret_key
-                    and quote is None
+                    operator_searched
                     and _assignment_operator_after_key(
                         text,
                         cursor,
@@ -987,18 +1000,18 @@ def _redact_secret_assignments(text: str) -> str:
                         )
                         secret_key = secret_key or matched
                     cursor = control_end
-                    if (
-                        secret_key
-                        and quote is None
-                        and _assignment_operator_after_key(
-                            text,
-                            cursor,
-                            allow_string_control_operator=True,
-                        )
-                        is not None
-                    ):
-                        key_end = cursor
-                        break
+                    if not operator_searched and secret_key and quote is None:
+                        operator_searched = True
+                        if (
+                            _assignment_operator_after_key(
+                                text,
+                                cursor,
+                                allow_string_control_operator=True,
+                            )
+                            is not None
+                        ):
+                            key_end = cursor
+                            break
                     if cursor >= length:
                         break
                     control_end, _final = _terminal_control_span(
@@ -1011,6 +1024,7 @@ def _redact_secret_assignments(text: str) -> str:
         if key_length == 0:
             index += 1
             continue
+        quoted_key = quote is not None
         if quote is not None:
             if cursor >= length or text[cursor] != quote:
                 index = max(cursor, index + 1)
@@ -1021,6 +1035,7 @@ def _redact_secret_assignments(text: str) -> str:
             # such as "access token" or 'auth.token'.
             key_end = cursor
             cursor += 1
+            quoted_key = True
         if key_end is None:
             key_end = cursor
         operator_match = _assignment_operator_after_key(
@@ -1076,7 +1091,7 @@ def _redact_secret_assignments(text: str) -> str:
                 # payload whitespace is not an unquoted-value delimiter.
                 cursor = control_end
                 continue
-            if text[cursor].isspace() or text[cursor] in ",;":
+            if text[cursor].isspace() or (quoted_key and text[cursor] in ",;"):
                 break
             cursor += 1
         replacement_start = (

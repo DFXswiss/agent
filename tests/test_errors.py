@@ -199,6 +199,18 @@ def test_error_redaction_is_linear_on_large_words(
         assert "[redacted]" in cleaned
 
 
+@pytest.mark.no_pg
+def test_error_redaction_is_linear_on_a_control_run_after_a_secret_key() -> None:
+    for size in (20_000, 1_000_000):
+        raw = "ERROR password" + "\x01" * size + "x=hunter2 visible"
+        started = time.monotonic()
+        cleaned = redact(raw)
+        elapsed = time.monotonic() - started
+
+        assert cleaned == "ERROR [redacted] visible"
+        assert elapsed < 2, f"{size} control bytes took {elapsed:.3f}s"
+
+
 def test_error_redaction_uses_unbounded_assignment_key_scanner() -> None:
     long_key = "A" * 10_000 + "authorization" + "Z" * 10_000
     cleaned = redact(

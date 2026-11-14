@@ -533,11 +533,14 @@ A record of a check lane is closed the same way, but closing it does not retry t
    publication. The coordinator checks this condition before reconciling saved
    rejection intents. In a gate phase it then blocks the task with a
    `phase-error` blocker that names that gate phase as resume phase, so the
-   task waits instead of being advanced on every tick. A task that is already
-   blocked or asking on such a resume phase returns without publishing another
-   blocker and reads no comment reply while the history cannot be ordered; an
-   order reply given with `agent order reply` or from the dashboard resumes the
-   gate phase, which checks the history again. No review comment is published.
+   task waits instead of being advanced on every tick. Until that blocker is
+   verified as published and its reply checkpoint is saved, each later visit
+   repeats the same publication, and an order reply or an override of
+   `review_2` waits for it. A task that is already blocked or asking on such a
+   resume phase otherwise returns without publishing another blocker and reads
+   no comment reply while the history cannot be ordered; an order reply given
+   with `agent order reply` or from the dashboard resumes the gate phase, which
+   checks the history again. No review comment is published.
    The gate phase stops before preparing either reviewer when a
    needed dimension has that synthetic empty-head verdict. During `review-2`,
    this includes both `review-1` prerequisite dimensions as well as the active
@@ -1262,7 +1265,8 @@ When another key character comes first, the control remains inside the key
 instead of ending it.
 Payload whitespace does not end an unquoted value.
 Quoted values run to their closing quote or the bounded input end; unquoted
-values stop at whitespace, comma, or semicolon. Control-tolerant URL schemes, escape parameters, and control
+values of an unquoted key stop only at whitespace, and those of a quoted key
+also at a comma or semicolon. Control-tolerant URL schemes, escape parameters, and control
 interleaves use fixed matching windows; value runs that do not need delimiter
 backtracking are possessive. This keeps every redaction pass linear on long
 separatorless provider text. The initial ESC/C1 search and any controlled-line

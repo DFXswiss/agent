@@ -80,7 +80,9 @@ subsequent notification that provides useful model work belong to the script.
    splitting, then applies control-tolerant secret redaction, removes terminal
    controls, and applies ordinary error redaction again.
    Secret-key assignments use a complete, unbounded scanner over alphanumeric,
-   underscore, and hyphen key tokens, including quoted JSON keys.
+   underscore, and hyphen key tokens, including quoted JSON keys. The unquoted
+   value of an unquoted secret key runs to the next whitespace, so a comma or
+   semicolon inside it is redacted with it.
    After the key contains a complete secret keyword, a terminal control ends an
    unquoted key only if a visible `=` or `:`, or otherwise an operator inside a
    valid complete string control, occurs before another key character. Without
