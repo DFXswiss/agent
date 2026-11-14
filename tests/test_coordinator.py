@@ -11117,6 +11117,128 @@ def test_a38_tests_retries_an_unreadable_pull_request_head(
     assert before["state"] != "blocked"
 
 
+@pytest.mark.parametrize(
+    "unreadable_field",
+    ("headRefOid", "baseRefOid"),
+    ids=("head", "base"),
+)
+def test_a38_tests_retries_when_post_inventory_metadata_is_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unreadable_field: str,
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "tests"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    before = store.row("task", task_id)
+    metadata_reads = 0
+    inventory_reads = 0
+    monkeypatch.setattr(
+        coordinator_a38, "scoped", lambda _store, _session, runner: runner
+    )
+
+    def unreadable_after(argv: list[str]) -> Completed:
+        nonlocal metadata_reads, inventory_reads
+        if argv[:3] == ["gh", "pr", "view"] and argv[-1] == (
+            "headRefOid,baseRefOid,baseRefName,state"
+        ):
+            metadata_reads += 1
+            metadata = {
+                "headRefOid": fake.head,
+                "baseRefOid": fake.base,
+                "baseRefName": "develop",
+                "state": "OPEN",
+            }
+            if metadata_reads % 2 == 0:
+                metadata[unreadable_field] = None
+            return Completed(0, json.dumps(metadata), "")
+        if argv[:2] == ["gh", "api"] and "/files?per_page=100" in argv[-1]:
+            inventory_reads += 1
+            return Completed(
+                0,
+                json.dumps(
+                    [[{"status": "modified", "filename": "src/app.py"}]]
+                ),
+                "",
+            )
+        return fake(argv)
+
+    assert phase_tests(store, worker, before, unreadable_after) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert metadata_reads == coordinator_a38.A38_CONTEXT_READ_ATTEMPTS * 2
+    assert inventory_reads == coordinator_a38.A38_CONTEXT_READ_ATTEMPTS
+    assert store.row("task", task_id) == before
+    assert before["payload"]["coordinator"]["phase"] == "tests"
+    assert before["state"] != "blocked"
+
+
+def test_a38_tests_rejects_a_different_valid_post_inventory_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "tests"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    metadata_reads = 0
+    monkeypatch.setattr(
+        coordinator_a38, "scoped", lambda _store, _session, runner: runner
+    )
+
+    def changed_after(argv: list[str]) -> Completed:
+        nonlocal metadata_reads
+        if argv[:3] == ["gh", "pr", "view"] and argv[-1] == (
+            "headRefOid,baseRefOid,baseRefName,state"
+        ):
+            metadata_reads += 1
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "headRefOid": fake.head if metadata_reads % 2 else "c" * 40,
+                        "baseRefOid": fake.base,
+                        "baseRefName": "develop",
+                        "state": "OPEN",
+                    }
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and "/files?per_page=100" in argv[-1]:
+            return Completed(
+                0,
+                json.dumps(
+                    [[{"status": "modified", "filename": "src/app.py"}]]
+                ),
+                "",
+            )
+        return fake(argv)
+
+    with pytest.raises(
+        CoordinatorError,
+        match="A38 pull request head differs from the clean signed head",
+    ):
+        phase_tests(store, worker, store.row("task", task_id), changed_after)
+
+    assert metadata_reads == coordinator_a38.A38_CONTEXT_READ_ATTEMPTS * 2
+
+
 def test_a38_tests_still_rejects_a_different_valid_pull_request_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

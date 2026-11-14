@@ -369,9 +369,11 @@ def _pull_a38_context(
         return head, base_sha, base_name, state
 
     last_before: tuple[str | None, str | None, str, str] | None = None
+    last_after: tuple[str | None, str | None, str, str] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS):
         before = metadata()
         last_before = before
+        last_after = None
         if (
             before[0] != expected_head
             or before[1] is None
@@ -398,6 +400,7 @@ def _pull_a38_context(
         # paths before the shared 500-path waiver ceiling is applied.
         markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
         after = metadata()
+        last_after = after
         if after == before:
             observed_base = before[1]
             if observed_base is None:
@@ -405,19 +408,22 @@ def _pull_a38_context(
                     "A38 pull request base revision is not a 40-hex SHA"
                 )
             return observed_base, paths, markdown_only, guard_docs_only
-    if last_before is not None and last_before[0] is None:
+    final_reads = tuple(
+        snapshot for snapshot in (last_before, last_after) if snapshot is not None
+    )
+    if any(snapshot[0] is None for snapshot in final_reads):
         raise _PullRequestHeadUnavailable(
             "A38 pull request head revision is not a 40-hex SHA"
         )
-    if last_before is not None and last_before[0] != expected_head:
+    if any(snapshot[0] != expected_head for snapshot in final_reads):
         raise CoordinatorError(
             "A38 pull request head differs from the clean signed head"
         )
-    if last_before is not None and last_before[1] is None:
+    if any(snapshot[1] is None for snapshot in final_reads):
         raise _PullRequestBaseUnavailable(
             "A38 pull request base revision is not a 40-hex SHA"
         )
-    if last_before is not None and last_before[2] != expected_base:
+    if any(snapshot[2] != expected_base for snapshot in final_reads):
         raise CoordinatorError(
             "A38 pull request base branch differs from coordinator configuration"
         )

@@ -15,6 +15,7 @@ from .github_accounts import AccountError, load_accounts
 from .runtime import Completed
 from .store import Store
 from .text_sanitize import redact_terminal_interleaved_secret
+from .timestamps import parse_utc_timestamp
 
 Runner = Callable[[list[str]], Completed]
 
@@ -979,6 +980,12 @@ def _run_comment_post(
             result: dict[str, Any] = {"repo": repo, "number": number, "url": url}
             if cid is not None:
                 result["id"] = cid
+            created_at = comment.get("created_at")
+            if (
+                isinstance(created_at, str)
+                and parse_utc_timestamp(created_at) is not None
+            ):
+                result["created_at"] = created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
         post_body = body if exact_body else _with_marker(body, rid)
@@ -1024,6 +1031,12 @@ def _run_comment_post(
             result = {"repo": repo, "number": number, "url": url}
             if data.get("id") is not None:
                 result["id"] = data["id"]
+            created_at = data.get("created_at")
+            if (
+                isinstance(created_at, str)
+                and parse_utc_timestamp(created_at) is not None
+            ):
+                result["created_at"] = created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
         if stripped.startswith("https://github.com/"):

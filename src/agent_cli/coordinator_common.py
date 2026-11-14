@@ -1351,6 +1351,13 @@ def completed_comment_timestamp(store: Store, activity_id: Any) -> str | None:
             or row.get("execution_status") != "done"
         ):
             return None
+        result = row.get("result")
+        created_at = result.get("created_at") if isinstance(result, dict) else None
+        if (
+            isinstance(created_at, str)
+            and parse_utc_timestamp(created_at) is not None
+        ):
+            return created_at
         stamp = row.get("_updated_at")
         if isinstance(stamp, str) and parse_utc_timestamp(stamp) is not None:
             return stamp

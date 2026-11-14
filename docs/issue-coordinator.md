@@ -1743,8 +1743,9 @@ the merged-head second-review outcome after the evidence-base boundary is
 satisfied, and starts or checks its timeout on every tick, including when the
 newest review is passing. Intake persists the passing review record's timestamp
 as the time the requirement was satisfied; the model route likewise persists
-the completed second-comment activity time, including when that activity is
-reconciled; the tick time is never substituted.
+GitHub's second-comment `created_at`, including when that activity is
+reconciled, and falls back to the completed activity time only for legacy
+records without a valid GitHub timestamp; the tick time is never substituted.
 On upgrade, a legacy posted passing record without that field recovers the time
 from its referenced completed comment activity and persists it before applying
 the deadline. If that older record has no recoverable authoritative timestamp,
