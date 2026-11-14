@@ -41,6 +41,7 @@ from .allow import (
 from .coordinator_common import (
     a38_model_second,
     check_label,
+    completed_comment_timestamp,
     CoordinatorError,
     NonRecoverableCoordinatorError,
     Runner,
@@ -2498,6 +2499,7 @@ def phase_second_comment(
         activity_id=activity_id,
         body=body,
     )
+    satisfied_at = completed_comment_timestamp(store, activity_id)
     comment = {
         "head": head,
         "activity_id": activity_id,
@@ -2505,6 +2507,8 @@ def phase_second_comment(
         "url": result.get("url"),
         "blocks_merge": blocks,
     }
+    if not blocks and satisfied_at is not None:
+        comment["requirement_satisfied_at"] = satisfied_at
     if blocks:
         _apply_rejected_gate_transition(
             task,
@@ -3029,13 +3033,17 @@ def reconcile_a38_publication_intents(
             activity_id=second_id,
             body=second_body,
         )
-        _a38_state(coord(task))["second_comment"] = {
+        satisfied_at = completed_comment_timestamp(store, second_id)
+        comment = {
             "head": head,
             "activity_id": second_id,
             "id": second_result.get("id"),
             "url": second_result.get("url"),
             "blocks_merge": second_blocks,
         }
+        if not second_blocks and satisfied_at is not None:
+            comment["requirement_satisfied_at"] = satisfied_at
+        _a38_state(coord(task))["second_comment"] = comment
         save_task(store, task)
         lines.append(f"second A38 review comment reconciled on {head[:7]}")
     return lines

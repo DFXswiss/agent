@@ -40,6 +40,7 @@ from .coordinator_common import (
     a38_model_second,
     as_int,
     comment_target,
+    completed_comment_timestamp,
     coord,
     coordinator_env,
     evidence_base_sha,
@@ -3263,23 +3264,6 @@ def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
     return "passed"
 
 
-def _activity_timestamp(store: Store, activity_id: Any) -> str | None:
-    """Return the valid durable timestamp of a referenced completed activity."""
-    if not isinstance(activity_id, str) or not activity_id:
-        return None
-    for row in store.rows("activity"):
-        if (
-            row.get("id") == activity_id
-            and row.get("type") == "comment.post"
-            and row.get("execution_status") == "done"
-        ):
-            stamp = row.get("_updated_at")
-            if isinstance(stamp, str) and _parse_coordinator_time(stamp) is not None:
-                return stamp
-            return None
-    return None
-
-
 def _await_second_review_after_merge(
     store: Store,
     worker: WorkerConfig,
@@ -3293,35 +3277,6 @@ def _await_second_review_after_merge(
     """Evaluate the merged-head second review against its merge-time deadline."""
     c = coord(task)
     model = a38_model_second(c)
-    if model:
-        if outcome == "blocking":
-            c["phase"] = "blocked"
-            c["blocker"] = f"merged although the model second review blocks the merge on {head}"
-            clear_reply_recovery(c)
-            save_task(store, task)
-            return publish_blocker(
-                store,
-                worker,
-                task,
-                runner,
-                f"Pull request was merged on {head[:7]} although the model second review blocks the merge.",
-                kind="merged-with-blocking-second-review",
-            )
-        if outcome == "passed":
-            return None
-        # No model review can arrive after the merge; do not wait for one.
-        c["phase"] = "blocked"
-        c["blocker"] = f"merged before the model second review was posted on {head}"
-        clear_reply_recovery(c)
-        save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            f"Pull request was merged on {head[:7]} before the model second review was posted.",
-            kind="merged-without-second-review",
-        )
     a38 = c.setdefault("a38", {})
     stamp = utcnow()
     now = _parse_coordinator_time(stamp)
@@ -3346,9 +3301,10 @@ def _await_second_review_after_merge(
         save_task(store, task)
 
     if outcome == "blocking":
+        route = "model" if model else "external"
         c["phase"] = "blocked"
         c["blocker"] = (
-            f"merged although the external second review blocks the merge on {head}"
+            f"merged although the {route} second review blocks the merge on {head}"
         )
         clear_reply_recovery(c)
         save_task(store, task)
@@ -3357,44 +3313,60 @@ def _await_second_review_after_merge(
             worker,
             task,
             runner,
-            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            f"Pull request was merged on {head[:7]} although the {route} second review blocks the merge.",
             kind="merged-with-blocking-second-review",
         )
 
     deadline = since + timedelta(seconds=worker.second_review_timeout_seconds)
     satisfied_at = None
     legacy_pass_without_timestamp = False
-    state = a38.get("second_review")
+    state = a38.get("second_comment" if model else "second_review")
     if outcome == "passed" and isinstance(state, dict) and state.get("head") == head:
         requirement_stamp = state.get("requirement_satisfied_at")
         satisfied_at = _parse_coordinator_time(requirement_stamp)
-        reviews = state.get("reviews")
-        entries = [review for review in reviews or [] if isinstance(review, dict)]
-        if entries and entries[-1].get("blocks_merge") is not True:
-            deciding = entries[-1]
-            review_stamp = deciding.get("at")
-            review_at = _parse_coordinator_time(review_stamp)
-            if review_at is not None:
-                satisfied_at = review_at
-                if requirement_stamp != review_stamp:
-                    state["requirement_satisfied_at"] = review_stamp
-                    save_task(store, task)
-            elif requirement_stamp is None and "at" not in deciding:
-                derived = _activity_timestamp(store, deciding.get("activity_id"))
+        if model:
+            if requirement_stamp is None:
+                derived = completed_comment_timestamp(
+                    store, state.get("activity_id")
+                )
                 if derived is not None:
                     state["requirement_satisfied_at"] = derived
                     satisfied_at = _parse_coordinator_time(derived)
                     save_task(store, task)
                 else:
                     legacy_pass_without_timestamp = True
-        elif requirement_stamp is None:
-            derived = _activity_timestamp(store, state.get("activity_id"))
-            if derived is not None:
-                state["requirement_satisfied_at"] = derived
-                satisfied_at = _parse_coordinator_time(derived)
-                save_task(store, task)
-            else:
-                legacy_pass_without_timestamp = True
+        else:
+            reviews = state.get("reviews")
+            entries = [review for review in reviews or [] if isinstance(review, dict)]
+            if entries and entries[-1].get("blocks_merge") is not True:
+                deciding = entries[-1]
+                review_stamp = deciding.get("at")
+                review_at = _parse_coordinator_time(review_stamp)
+                if review_at is not None:
+                    satisfied_at = review_at
+                    if requirement_stamp != review_stamp:
+                        state["requirement_satisfied_at"] = review_stamp
+                        save_task(store, task)
+                elif requirement_stamp is None and "at" not in deciding:
+                    derived = completed_comment_timestamp(
+                        store, deciding.get("activity_id")
+                    )
+                    if derived is not None:
+                        state["requirement_satisfied_at"] = derived
+                        satisfied_at = _parse_coordinator_time(derived)
+                        save_task(store, task)
+                    else:
+                        legacy_pass_without_timestamp = True
+            elif requirement_stamp is None:
+                derived = completed_comment_timestamp(
+                    store, state.get("activity_id")
+                )
+                if derived is not None:
+                    state["requirement_satisfied_at"] = derived
+                    satisfied_at = _parse_coordinator_time(derived)
+                    save_task(store, task)
+                else:
+                    legacy_pass_without_timestamp = True
     if satisfied_at is not None and satisfied_at <= deadline:
         return None
     if legacy_pass_without_timestamp:
@@ -3405,13 +3377,28 @@ def _await_second_review_after_merge(
             state["requirement_satisfied_legacy"] = True
             save_task(store, task)
         return None
+    evidence = c.get("evidence")
+    if (
+        model
+        and isinstance(evidence, dict)
+        and evidence.get("ready_head") == head
+    ):
+        # The model comment is a prerequisite of the guard making this exact
+        # head Ready.  That observed ordering proves the comment preceded the
+        # human merge even when the local activity clock and GitHub's mergedAt
+        # clock are inconsistent.  Early merges have no ready_head and remain
+        # subject to the timestamp deadline above and below.
+        return None
     if satisfied_at is None and now < deadline:
+        route = "model" if model else "external"
         return [
             f"human merge observed on {head[:7]}; "
-            "awaiting the external second review"
+            f"awaiting the {route} second review"
         ]
+    route = "model" if model else "external"
+    article = "a" if model else "an"
     c["phase"] = "blocked"
-    c["blocker"] = f"merged without an external second review on {head}"
+    c["blocker"] = f"merged without {article} {route} second review on {head}"
     clear_reply_recovery(c)
     save_task(store, task)
     return publish_blocker(
@@ -3419,7 +3406,7 @@ def _await_second_review_after_merge(
         worker,
         task,
         runner,
-        f"Pull request was merged on {head[:7]} without an external second review.",
+        f"Pull request was merged on {head[:7]} without {article} {route} second review.",
         kind="merged-without-second-review",
     )
 

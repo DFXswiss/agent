@@ -1742,7 +1742,9 @@ blocker for that different commit. On a matching head, `await_merge` evaluates
 the merged-head second-review outcome after the evidence-base boundary is
 satisfied, and starts or checks its timeout on every tick, including when the
 newest review is passing. Intake persists the passing review record's timestamp
-as the time the requirement was satisfied; the tick time is never substituted.
+as the time the requirement was satisfied; the model route likewise persists
+the completed second-comment activity time, including when that activity is
+reconciled; the tick time is never substituted.
 On upgrade, a legacy posted passing record without that field recovers the time
 from its referenced completed comment activity and persists it before applying
 the deadline. If that older record has no recoverable authoritative timestamp,
@@ -1787,7 +1789,13 @@ non-recoverable blocker `merged-without-second-review` after that, and publishes
 `merged-with-blocking-second-review` at once when the newest posted review blocks the merge.
 Both merge blockers are final like `closed-unmerged`: the task stays blocked, and a
 review that arrives after that blocker is published is not taken in. A model-route
-task merged before its second comment was posted is a final blocker at once. A new head invalidates its report, both comment checkpoints, and
+task uses the same merged second-review deadline for its second comment: a
+passing comment completed within the window is accepted, a later one publishes
+`merged-without-second-review`, and a missing comment waits only until that
+deadline. An already observed Ready state on that same head is stronger ordering
+evidence that the required model comment preceded the human merge, even when the
+local activity clock and GitHub's merge clock disagree. A new head invalidates
+its report, both comment checkpoints, and
 external-review state. A blocking review that arrives after the guard set Ready
 is fixed on the same pull request: an A38 worker pushes the new head to the open
 pull request whether or not it is still a draft, and the guard decides Ready again.

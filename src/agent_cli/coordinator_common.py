@@ -1336,6 +1336,28 @@ def save_task(store: Store, task: dict[str, Any]) -> None:
     store.write("task", "update", task["id"], strip_row(task))
 
 
+def completed_comment_timestamp(store: Store, activity_id: Any) -> str | None:
+    """Return the valid durable completion time of a comment activity."""
+    if not isinstance(activity_id, str) or not activity_id:
+        return None
+    # Store.row() intentionally omits materialization metadata.  Store.rows()
+    # carries the durable updated_at value used by legacy coordinator records
+    # that predate an explicit requirement_satisfied_at checkpoint.
+    for row in store.rows("activity"):
+        if row.get("id") != activity_id:
+            continue
+        if (
+            row.get("type") != "comment.post"
+            or row.get("execution_status") != "done"
+        ):
+            return None
+        stamp = row.get("_updated_at")
+        if isinstance(stamp, str) and parse_utc_timestamp(stamp) is not None:
+            return stamp
+        return None
+    return None
+
+
 def seconds_since(value: object) -> float | None:
     """Seconds between a stored UTC timestamp and now; None when it cannot be read."""
     then = parse_utc_timestamp(value)
