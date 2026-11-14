@@ -72,7 +72,16 @@ CANCEL_CLOSE_BODY = "Closing this pull request: the order was cancelled."
 
 
 def serves_repo(worker: WorkerConfig, repo: str) -> bool:
-    """True when the repository is an explicit entry or belongs to an approved owner."""
+    """True for every repository of an order-enabled worker.
+
+    An explicit ``repositories`` entry keeps precedence for its own base,
+    publication repository and checks. Every other repository is handled like
+    an owner-scoped repository, using the worker's owner-level settings. A
+    worker that does not accept orders keeps the explicit-entry or
+    approved-owner scope for any caller that still asks about it.
+    """
+    if worker.orders:
+        return True
     if any(key.casefold() == repo.casefold() for key in worker.repositories):
         return True
     return repo.split("/", 1)[0].casefold() in worker.repository_owners

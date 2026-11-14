@@ -236,7 +236,11 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
             require_single_first_model(ai, worker)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if not worker.repositories and not worker.repository_owners:
+    if (
+        not worker.repositories
+        and not worker.repository_owners
+        and not worker.orders
+    ):
         raise CoordinatorError("worker has no repositories configured")
     if not worker.workspace_root.is_absolute():
         raise CoordinatorError("workspace_root must be absolute")
@@ -253,10 +257,12 @@ def execution_binding(
     ai: AIAccounts | None = None,
     repository_config: RepositoryConfig | None = None,
     owner_scoped: bool = False,
+    require_owner: bool = True,
 ) -> str:
     """Pin selected execution metadata, never credential contents or unrelated profiles.
 
     ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
+    ``require_owner`` is false for orders, whose worker serves every owner.
     """
     ai = ai if ai is not None else load_ai_accounts(store.home)
     selected = _execution_binding_fields(
@@ -266,6 +272,7 @@ def execution_binding(
         ai,
         repository_config=repository_config,
         owner_scoped=owner_scoped,
+        require_owner=require_owner,
     )
     encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
@@ -279,11 +286,12 @@ def _execution_binding_fields(
     *,
     repository_config: RepositoryConfig | None = None,
     owner_scoped: bool = False,
+    require_owner: bool = True,
 ) -> dict[str, Any]:
     """Return the current binding fields from one AI-manifest snapshot."""
     cfg = repository_config or repo_cfg(worker, repo)
     owner = repo.split("/", 1)[0].casefold() if "/" in repo else ""
-    if owner_scoped and owner not in worker.repository_owners:
+    if owner_scoped and require_owner and owner not in worker.repository_owners:
         raise CoordinatorError(f"repository owner {owner or '?'} is no longer configured")
     github = load_accounts(store.home)
     lanes = [
@@ -337,6 +345,7 @@ def _legacy_execution_binding(
     *,
     repository_config: RepositoryConfig | None = None,
     owner_scoped: bool = False,
+    require_owner: bool = True,
 ) -> str:
     """Reproduce the pre-lane-execution hash for accepted-task migration only.
 
@@ -350,6 +359,7 @@ def _legacy_execution_binding(
         ai,
         repository_config=repository_config,
         owner_scoped=owner_scoped,
+        require_owner=require_owner,
     )
     selected.pop("lane_execution")
     if ai.models == LEGACY_RECORDED_SLOTS:
@@ -368,6 +378,7 @@ def refresh_execution_binding(
     ai = load_ai_accounts(store.home)
     cfg = repo_cfg(worker, repo, task)
     owner_scoped = bool(source.get("owner_scoped"))
+    require_owner = not is_order(task)
     current = execution_binding(
         store,
         worker,
@@ -375,6 +386,7 @@ def refresh_execution_binding(
         ai,
         repository_config=cfg,
         owner_scoped=owner_scoped,
+        require_owner=require_owner,
     )
     stored = checkpoint.get("execution_binding")
     if stored == current:
@@ -386,6 +398,7 @@ def refresh_execution_binding(
         ai,
         repository_config=cfg,
         owner_scoped=owner_scoped,
+        require_owner=require_owner,
     ):
         raise CoordinatorError("task execution configuration changed or is unpinned")
     # Accepted tasks keep working across the binding-formula upgrade. Repin

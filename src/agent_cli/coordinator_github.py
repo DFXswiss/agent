@@ -684,7 +684,13 @@ def pin_owner_repository(
         if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
             raise CoordinatorError("task model configuration changed before acceptance")
         binding = execution_binding(
-            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
+            store,
+            worker,
+            repo,
+            ai,
+            repository_config=cfg,
+            owner_scoped=True,
+            require_owner=not is_order(task),
         )
         source["repository_config"] = {
             "repo": cfg.repo,

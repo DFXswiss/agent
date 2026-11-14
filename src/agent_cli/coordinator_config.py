@@ -245,7 +245,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         owners = tuple(_owner(value) for value in owners_raw)
         if len(set(owners)) != len(owners):
             raise StoreError('repository_owners must be distinct')
-        if not repos and not owners:
+        if not repos and not owners and not orders:
             raise StoreError('worker requires repositories or repository_owners')
         owner_checks = _argv(
             item.get('owner_check_argv', []),

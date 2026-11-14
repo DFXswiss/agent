@@ -1163,15 +1163,19 @@ def test_order_state(task: dict, expected: str) -> None:
 
 
 @pytest.mark.no_pg
-def test_serves_repo(tmp_path: Path) -> None:
-    worker = make_worker(tmp_path)
+def test_serves_repo_accepts_every_repository(tmp_path: Path) -> None:
+    worker = make_order_worker(tmp_path)
     assert serves_repo(worker, "example/project") is True
     assert serves_repo(worker, "Example/Project") is True
-    assert serves_repo(worker, "example/other") is False
+    assert serves_repo(worker, "example/other") is True
     owner_worker = replace(worker, repository_owners=("example",))
     assert serves_repo(owner_worker, "example/other") is True
-    assert serves_repo(owner_worker, "Example/other") is True
-    assert serves_repo(owner_worker, "other/thing") is False
+    assert serves_repo(owner_worker, "other/thing") is True
+    assert serves_repo(replace(worker, repositories={}), "any/repository") is True
+    # A worker without orders keeps its explicit-entry scope for other callers.
+    closed = make_worker(tmp_path)
+    assert serves_repo(closed, "example/project") is True
+    assert serves_repo(closed, "other/thing") is False
 
 
 @pytest.mark.no_pg
@@ -1292,16 +1296,119 @@ def test_create_order_task_refuses_a_worker_without_orders(
     store.close()
 
 
-def test_create_order_task_refuses_an_unserved_repository(
+def test_create_order_task_accepts_an_unlisted_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
-    with pytest.raises(
-        CoordinatorError, match="worker worker-session does not serve other/thing"
-    ):
-        submit_order(store, worker, repo="other/thing")
-    assert store.rows("task") == []
-    assert text_files(worker) == []
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path, monkeypatch, **OWNERS
+    )
+    task = submit_order(store, worker, repo="other/thing")
+    source = coord(task)["source"]
+    assert task["repo"] == "other/thing"
+    assert source["owner_scoped"] is True
+    assert source["require_hub_assignment"] is False
+    assert "base" not in source
+    assert "publication_repo" not in source
+    assert "execution_binding" not in coord(task)
+    store.close()
+
+
+class PushableOwnerGh(FakeGh):
+    """Default-branch and push lookups for a repository outside the config."""
+
+    def __init__(self, repo: str, *, can_push: bool = True) -> None:
+        super().__init__()
+        self.repo = repo
+        self.can_push = can_push
+
+    def __call__(self, argv: list[str]) -> Completed:
+        if argv[-2:] == ["--jq", ".default_branch"]:
+            return Completed(0, "main\n", "")
+        if argv == ["gh", "api", f"repos/{self.repo}"]:
+            return Completed(
+                0, json.dumps({"permissions": {"push": self.can_push}}), ""
+            )
+        return super().__call__(argv)
+
+
+def test_unlisted_order_uses_the_owner_level_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_git import repo_cfg
+
+    fake = PushableOwnerGh("other/thing")
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake, **OWNERS
+    )
+    fake.issues = []
+    order = submit_order(
+        store, worker, repo="other/thing", requested_base="release"
+    )
+    run_tick(store, worker, fake, lane)
+    c = checkpoint(store, order["id"])
+    assert c["phase"] == "checkout"
+    source = c["source"]
+    assert source["owner_scoped"] is True
+    assert source["base"] == "release"
+    assert source["publication_repo"] == "other/thing"
+    assert source["repository_config"] == {
+        "repo": "other/thing",
+        "base": "release",
+        "publication_repo": "other/thing",
+    }
+    cfg = repo_cfg(worker, "other/thing", store.row("task", order["id"]))
+    assert cfg.check_argv == worker.owner_check_argv
+    assert cfg.readiness_argv == worker.owner_readiness_argv
+    assert len(c["execution_binding"]) == 64
+    assert all(character in "0123456789abcdef" for character in c["execution_binding"])
+    lines = run_tick(store, worker, fake, lane)
+    assert "binding_blocker" not in checkpoint(store, order["id"])
+    assert not any(
+        "task execution configuration changed or is unpinned" in line
+        for line in lines
+    )
+    store.close()
+
+
+def test_explicit_repository_keeps_its_own_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path, monkeypatch, **OWNERS
+    )
+    task = submit_order(store, worker)
+    source = coord(task)["source"]
+    assert "owner_scoped" not in source
+    assert source["base"] == "develop"
+    assert source["publication_repo"] == "example/project"
+    assert coord(task)["execution_binding"] == execution_binding(
+        store, worker, "example/project"
+    )
+    store.close()
+
+
+def test_unreadable_repository_blocks_the_order_with_the_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, **OWNERS
+    )
+    fake.issues = []
+    order = submit_order(store, worker, repo="other/thing")
+    run_tick(store, worker, fake, lane)
+    c = checkpoint(store, order["id"])
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "accept"
+    assert "unhandled" in c["blocker"]
+    assert order_state(store.row("task", order["id"])) == "waiting"
+    events = [
+        row["payload"]
+        for row in own_order_events(store)
+        if row["payload"].get("order_id") == order["id"]
+    ]
+    blocked = [event for event in events if event["kind"] == "blocked"]
+    assert blocked
+    assert "unhandled" in blocked[-1]["digest"]
     store.close()
 
 

@@ -348,6 +348,22 @@ def test_worker_requires_repositories_or_repository_owners(tmp_path):
         load_coordinator_config(tmp_path)
 
 
+def test_order_worker_loads_without_repositories_or_owners(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['orders'] = True
+    worker['owner_check_argv'] = ['/operator/owner-checks']
+    worker['owner_readiness_argv'] = ['/operator/owner-readiness']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.orders is True
+    assert loaded.repositories == {}
+    assert loaded.repository_owners == ()
+    assert loaded.owner_check_argv == ('/operator/owner-checks',)
+    assert loaded.owner_readiness_argv == ('/operator/owner-readiness',)
+
+
 def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
     data = config(tmp_path)
     data['workers']['selected-session']['repository_owners'] = ['example']

@@ -457,9 +457,7 @@ def test_submit_chooses_and_inserts_under_the_submit_lock(
         (("--repo", "example/project", "--title", "x" * 257), "title must be 1..256 characters"),
         (("--repo", "example/project", "--title", "two\nlines"), "title must be one line"),
         (("--repo", "example/project", "--title", "t", "--base", "bad..branch"), "invalid base branch"),
-        (("--repo", "other/thing", "--title", "t"), "no order-enabled worker serves other/thing"),
         (("--repo", "example/project", "--title", "t", "--worker", "missing"), "coordinator session is not configured"),
-        (("--repo", "other/thing", "--title", "t", "--worker", "worker-session"), "worker worker-session does not serve other/thing"),
         (("--repo", "example/project", "--title", "t", "--base", "main"), "base main differs from the configured base develop of example/project"),
     ),
 )
@@ -469,6 +467,26 @@ def test_submit_errors(device, arguments: tuple[str, ...], message: str) -> None
         order("submit", *arguments, "--body-file", body_file(device.home))
     assert message in str(exc.value)
     assert device.store.rows("task") == before
+
+
+def test_submit_accepts_an_unlisted_repository(device, capsys) -> None:
+    order(
+        "submit",
+        "--repo",
+        "other/thing",
+        "--title",
+        "t",
+        "--body-file",
+        body_file(device.home),
+        "--json",
+    )
+    result = json.loads(capsys.readouterr().out)
+    task = device.store.row("task", result["order_id"])
+    assert task is not None
+    assert task["repo"] == "other/thing"
+    source = task["payload"]["coordinator"]["source"]
+    assert source["owner_scoped"] is True
+    assert source["require_hub_assignment"] is False
 
 
 def test_submit_body_and_non_order_worker_errors(device) -> None:
