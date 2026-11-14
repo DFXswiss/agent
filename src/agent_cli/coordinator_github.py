@@ -2900,6 +2900,17 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     )
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
+        head_info = info.get("head")
+        head = head_info if isinstance(head_info, dict) else {}
+        observed_head = str(head.get("sha") or "").lower()
+        if not is_sha(observed_head):
+            return ["merge observed but head SHA missing or invalid"]
+        if observed_head != expected_head.lower():
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
         second_review_wait: list[str] | None = None
         reported_sha = str(info.get("merge_commit_sha") or "")
         normalized_sha = reported_sha.lower()
@@ -2910,7 +2921,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             if parse_utc_timestamp(reported_merged_at) is not None
             else None
         )
-        merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
+        merged_by_info = info.get("merged_by")
+        merged_by = merged_by_info if isinstance(merged_by_info, dict) else None
+        base_info = info.get("base")
+        base = base_info if isinstance(base_info, dict) else {}
         if not worker.a38 and (sha is None or merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
@@ -2936,17 +2950,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 kind="nonhuman-merge",
             )
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
-        if str((info.get("base") or {}).get("ref") or "") != cfg.base:
+        if str(base.get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
-        observed_head = str((info.get("head") or {}).get("sha") or "").lower()
-        if not is_sha(observed_head):
-            return ["merge observed but head SHA missing or invalid"]
-        if observed_head != expected_head.lower():
-            clear_reply_recovery(c)
-            raise NonRecoverableCoordinatorError(
-                "task-done refused: merged PR head differs from reviewed head; "
-                "a merged PR cannot be remeasured"
-            )
         if worker.a38:
             moved_base = c.get("base_moved_after_evidence")
             if isinstance(moved_base, dict):
@@ -2957,7 +2962,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     f"{old_base or 'unknown'} to {new_base or 'unknown'}; "
                     "a merged PR cannot be remeasured"
                 )
-            observed_base = str((info.get("base") or {}).get("sha") or "").lower()
+            observed_base = str(base.get("sha") or "").lower()
             a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
             saved_base = str(a38.get("base_sha") or "").lower()
             if not is_sha(observed_base):

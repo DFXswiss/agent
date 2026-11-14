@@ -904,6 +904,128 @@ def test_non_a38_invalid_merge_metadata_retries_without_completion(
     ]
 
 
+@pytest.mark.parametrize(
+    ("merged_by", "base_ref"),
+    (
+        pytest.param(
+            {"login": "dependabot[bot]", "type": "Bot"},
+            "develop",
+            id="nonhuman-actor",
+        ),
+        pytest.param(
+            {"login": "human-owner", "type": "User"},
+            "main",
+            id="base-ref-mismatch",
+        ),
+    ),
+)
+def test_merged_head_mismatch_precedes_actor_and_base_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    merged_by: dict[str, str],
+    base_ref: str,
+) -> None:
+    from agent_cli.coordinator_common import NonRecoverableCoordinatorError
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task_id = "55555555-5555-4555-8555-555555555555"
+    store, worker, fake = _seed_one_review_merge(
+        tmp_path,
+        monkeypatch,
+        tid=task_id,
+        stored_login="alice",
+    )
+    fake.pr["headRefOid"] = "c" * 40
+    fake.pr["baseRefName"] = base_ref
+    fake.pr["mergedBy"] = merged_by
+
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match="merged PR head differs from reviewed head",
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
+def test_nonhuman_merge_on_reviewed_head_still_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task_id = "55555555-5555-4555-8555-555555555556"
+    store, worker, fake = _seed_one_review_merge(
+        tmp_path,
+        monkeypatch,
+        tid=task_id,
+        stored_login="alice",
+    )
+    fake.pr["mergedBy"] = {"login": "dependabot[bot]", "type": "Bot"}
+
+    lines = phase_await_merge(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert "non-human" in checkpoint["blocker"]
+    assert any("not by a human User" in line for line in lines)
+    assert saved["state"] != "done"
+
+
+@pytest.mark.parametrize(
+    "head",
+    (
+        pytest.param("pending", id="string"),
+        pytest.param(None, id="null"),
+        pytest.param({"sha": 5}, id="non-string-sha"),
+    ),
+)
+def test_invalid_rest_head_metadata_retries_await_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head: object,
+) -> None:
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task_id = "55555555-5555-4555-8555-555555555557"
+    store, worker, fake = _seed_one_review_merge(
+        tmp_path,
+        monkeypatch,
+        tid=task_id,
+        stored_login="alice",
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "state": "closed",
+            "merged": True,
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "merged_at": "2026-09-01T12:00:00Z",
+            "merge_commit_sha": "d" * 40,
+            "head": head,
+            "base": {"ref": "develop", "sha": fake.base},
+        },
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), fake
+    ) == ["merge observed but head SHA missing or invalid"]
+
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
 def test_human_merge_done_reads_the_live_one_review_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
