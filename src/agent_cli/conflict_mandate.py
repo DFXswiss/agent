@@ -1041,11 +1041,8 @@ def _finish_result(
     login: str,
     *,
     body: str,
-    dry_run: bool,
     observation: str,
 ) -> list[str]:
-    if dry_run:
-        return [safe(ctx.worker, observation)]
     body = safe(ctx.worker, body)
     save_state(ctx, "result-pending", result_body=body)
     if find_result_comment(
@@ -1494,7 +1491,6 @@ def _post_stored_result(
         request_runtime,
         login,
         body=body,
-        dry_run=False,
         observation=observation,
     )
 
@@ -1721,7 +1717,6 @@ def _run_request(
                 request_runtime,
                 runtime.account.login,
                 body=body,
-                dry_run=False,
                 observation=f"no conflicts reported for {ctx.request.repo}#{ctx.request.number}",
             )
         _head, expected_git_file = _prepare_worktree(
@@ -2016,6 +2011,7 @@ def run_script_mandate(
             "blocked", reason="request state belongs to another worker"
         )
     ctx.mandated_head = mandated_head
+    reason = "request is not finished"
     if ctx.state.get("phase") not in TERMINAL_PHASES:
         observations: list[str] = []
         with store.exclusive(source_lock_key(request.repo, request.number)):
@@ -2027,6 +2023,8 @@ def run_script_mandate(
                 dry_run=False,
                 observations=observations,
             )
+        if lines:
+            reason = lines[-1]
         lines = [*lines, *observations]
     else:
         lines = []
@@ -2056,7 +2054,7 @@ def run_script_mandate(
         )
     return MandateRun(
         "pending",
-        reason=lines[-1] if lines else "request is not finished",
+        reason=reason,
         decided=phase in MARKER_LOOKUP_BLOCKER_EXEMPT_PHASES,
         lines=tuple(lines),
     )

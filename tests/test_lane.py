@@ -17,6 +17,7 @@ from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
     redact as redact_shared,
 )
+from agent_cli.errors import redact as redact_error
 from agent_cli.lane import (
     CODEX_CHECK_LANE_REFUSED,
     LANE_GITHUB_TOKEN_ENV,
@@ -719,6 +720,46 @@ def test_shared_redaction_covers_userinfo_after_a_long_scheme() -> None:
     ):
         assert "hunter2" not in cleaned
         assert "://[redacted]@localhost" in cleaned
+
+
+def _shared_lane_and_error_redactions(raw: str) -> tuple[str, str, str]:
+    return (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+        redact_error(raw),
+    )
+
+
+def test_shared_redaction_covers_a_secret_key_with_a_unicode_suffix() -> None:
+    for cleaned in _shared_lane_and_error_redactions("token\u00e9=hunter2 visible"):
+        assert cleaned == "[redacted] visible"
+
+
+def test_shared_redaction_covers_a_single_quoted_key_with_other_characters() -> None:
+    raw = "{'access token': 's3cr3t', 'visible': 'keep-me'}"
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == "{'access token': '[redacted]', 'visible': 'keep-me'}"
+
+
+def test_shared_redaction_covers_a_quoted_key_followed_by_an_equals_sign() -> None:
+    raw = '"access token"="s3cr3t" visible'
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == '"access token"="[redacted]" visible'
+
+
+def test_shared_redaction_covers_an_unquoted_value_after_a_quoted_key() -> None:
+    raw = '{"access token": 12345, "visible": "keep-me"}'
+    for cleaned in _shared_lane_and_error_redactions(raw):
+        assert cleaned == '{"access token": [redacted], "visible": "keep-me"}'
+
+
+def test_shared_redaction_is_linear_on_a_large_unicode_key() -> None:
+    raw = "token" + "\u00e9" * 1_000_000 + "=hunter2 visible"
+    started = time.monotonic()
+    results = _shared_lane_and_error_redactions(raw)
+    elapsed = time.monotonic() - started
+    assert results == ("[redacted] visible",) * 3
+    assert elapsed < 2, f"redaction took {elapsed:.3f}s"
 
 
 def test_assignment_redaction_handles_terminal_interleaved_quoted_keys() -> None:

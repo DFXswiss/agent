@@ -602,9 +602,16 @@ def _checkpoint_reviewer_outcome(
     return entry
 
 
+def _require_plain_agent_id(agent_id: str) -> None:
+    """Refuse an agent id that cannot be one file name in a lane directory."""
+    if not agent_id or "/" in agent_id or "\x00" in agent_id:
+        raise CoordinatorError("agent id must be a safe single path component")
+
+
 def _reviewer_spool_path(
     store: Store, worker: WorkerConfig, task_id: str, agent_id: str
 ) -> Path:
+    _require_plain_agent_id(agent_id)
     path = (
         store.home
         / "coordinator-reviewer-spools"
@@ -649,6 +656,7 @@ def _owned_reviewer_output(
 def _legacy_reviewer_spool_path(
     worker: WorkerConfig, task_id: str, agent_id: str
 ) -> Path:
+    _require_plain_agent_id(agent_id)
     return control_dir(worker, task_id) / "reviewer-checkpoints" / f"{agent_id}.json"
 
 
@@ -936,6 +944,7 @@ def cleanup_finished_reviewer_spools(
 ) -> None:
     """Remove and verify deterministic raw files left after a committed outcome."""
     task_id = str(task["id"])
+    local_origin: str | None = None
     for agent in store.rows("agent"):
         role = str(agent.get("role") or "")
         if (
@@ -947,6 +956,10 @@ def cleanup_finished_reviewer_spools(
                 "pr-reviewer-logic",
             )
         ):
+            continue
+        if local_origin is None:
+            local_origin = store.device_id()
+        if agent.get("_origin_device_id") != local_origin:
             continue
         agent_id = str(agent["id"])
         output_file = _owned_reviewer_output(store, worker, task_id, agent)
@@ -1147,6 +1160,7 @@ LANE_PROCESS_DIR = "lanes"
 
 
 def lane_process_path(worker: WorkerConfig, task_id: str, agent_id: str) -> Path:
+    _require_plain_agent_id(agent_id)
     return control_dir(worker, task_id) / LANE_PROCESS_DIR / f"{agent_id}.json"
 
 

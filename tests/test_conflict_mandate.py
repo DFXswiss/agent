@@ -6606,6 +6606,33 @@ def test_script_mandate_reports_an_open_outcome_as_pending(
     store.close()
 
 
+def test_script_mandate_pending_reason_ignores_audit_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    fake.lane_results = [(127, "")]
+
+    def fail_record(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("audit store unavailable")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.record_lane_run", fail_record)
+    run = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=fake,
+        lane_runner=fake.lane,
+    )
+    assert run.outcome == "pending"
+    assert run.reason == "transient: lane was unavailable"
+    assert "lane record not written: audit store unavailable" in run.lines
+    assert fake.pr_comments == []
+    store.close()
+
+
 def test_script_mandate_after_a_push_is_pending_and_decided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

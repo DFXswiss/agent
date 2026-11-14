@@ -152,7 +152,11 @@ def post_issue_comment(
     occurrence: str = "",
     target: str = "issue",
 ) -> str:
-    """Publish a deterministic idempotent source-issue status/question comment."""
+    """Publish a deterministic idempotent status/question comment on the given target.
+
+    The target is the source issue (``target="issue"``) or the order's pull
+    request (``target="pr"``).
+    """
     activity_id = queue_issue_comment(
         store,
         worker,
@@ -248,7 +252,10 @@ def publish_blocker(
     binding_notice: bool = False,
     occurrence: str | None = None,
 ) -> list[str]:
-    """Publish a source-issue blocker.
+    """Publish a blocker on the task's comment target.
+
+    The target is the source issue, or the pull request of an order; an order
+    without a pull request only records the blocker.
 
     Recoverable blockers pin ``question_activity_id`` so ``phase_read_replies``
     can resume the exact ``resume_phase``. Eligibility follows task state and
@@ -1514,8 +1521,10 @@ def _fresh_ci_still_green(
     must not manufacture a reply gate or idle a model, and must not proceed to
     APPROVE/Ready. Raises ``CiObservedFailureError`` for an observed actual
     failed CI so ``advance_one`` can route to existing ``phase_ci`` log/implement
-    handling without a same-phase retry setter or human reply gate. Raises for
-    hard protocol faults, action_required, and head change.
+    handling without a same-phase retry setter or human reply gate. An A38
+    worker gets a same-phase retry message for action_required (the guard owns
+    CI authorization). Raises for hard protocol faults, for action_required on
+    other workers, and for a head change.
     """
     c = coord(task)
     target = target_repo(task)

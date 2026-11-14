@@ -115,7 +115,7 @@ _SECRET_ASSIGNMENT_KEYWORD = re.compile(
     ),
     re.IGNORECASE,
 )
-_ASSIGNMENT_KEY_RUN = re.compile(r"[A-Za-z0-9_-]+")
+_ASSIGNMENT_KEY_RUN = re.compile(r"[\w-]+")
 _TERMINAL_STRING_CONTROL_INTRODUCER = re.compile(
     r"\x1b(?:\]|P|\^|_|X)|[\x90\x98\x9d\x9e\x9f]"
 )
@@ -400,7 +400,7 @@ def _terminal_control_span(
 
 
 def _is_assignment_key_char(char: str) -> bool:
-    return char.isascii() and (char.isalnum() or char in "_-")
+    return char.isalnum() or char in "_-"
 
 
 def _terminal_control_key_chars(
@@ -441,7 +441,7 @@ def _extend_secret_assignment_key_tail(tail: str, char: str) -> tuple[str, bool]
 def _extend_secret_assignment_key_run(
     tail: str, text: str, start: int, end: int
 ) -> tuple[str, bool]:
-    """Extend one key tail from an ASCII run without per-character strings."""
+    """Extend one key tail from one key run without per-character strings."""
     matched = _SECRET_ASSIGNMENT_KEYWORD.search(text, start, end) is not None
     if not matched and tail:
         prefix_end = min(end, start + _SECRET_ASSIGNMENT_KEYWORD_MAX)
@@ -891,7 +891,10 @@ def _assignment_operator_after_key(
 def _redact_secret_assignments(text: str) -> str:
     """Redact secret-key assignment values with one linear lexical scan.
 
-    Keys are complete, unbounded ``[A-Za-z0-9_-]`` tokens and may be quoted.
+    Keys are complete, unbounded tokens of Unicode letters and numbers, ``_``
+    and ``-``, and may be quoted. A secret key that ends directly before a
+    quote is read as the end of a quoted key that also holds other characters
+    (``"access token"``, ``'auth.token'``); the quote belongs to the key.
     Removable terminal controls may interleave their bytes, and terminal string
     controls remain one opaque span even when their payload contains whitespace.
     After a complete secret keyword, a control ends an unquoted key only when
@@ -1012,6 +1015,11 @@ def _redact_secret_assignments(text: str) -> str:
             if cursor >= length or text[cursor] != quote:
                 index = max(cursor, index + 1)
                 continue
+            cursor += 1
+        elif secret_key and cursor < length and text[cursor] in ("\"", "'"):
+            # Closing quote of a quoted key that also holds other characters,
+            # such as "access token" or 'auth.token'.
+            key_end = cursor
             cursor += 1
         if key_end is None:
             key_end = cursor
@@ -1669,7 +1677,7 @@ def write_task_text(worker: WorkerConfig, task_id: str, text: str) -> tuple[str,
 
 
 def read_task_text(worker: WorkerConfig, task: dict[str, Any]) -> str:
-    """The stored task text, or the source preview when no file exists."""
+    """The stored task text, or the source preview when the file is missing, unreadable, not valid UTF-8, or empty."""
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     try:

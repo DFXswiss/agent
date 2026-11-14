@@ -2551,7 +2551,24 @@ def _advance_task(
     source = c.get("source") or {}
     ordering_error = gate_ordering_unavailable(store, task, phase=phase)
     if ordering_error is not None:
-        return [ordering_error]
+        if phase in ("blocked", "ask"):
+            return [ordering_error]
+        c["phase"] = "blocked"
+        c["resume_phase"] = phase
+        c["blocker"] = ordering_error
+        save_task(store, task)
+        replies = coord(task).get("authorized_replies")
+        count = len(replies) if isinstance(replies, list) else 0
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            ordering_error,
+            kind="phase-error",
+            reply_checkpoint=True,
+            occurrence=f"{task['id']}:{count}",
+        )
     pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
     # A rejection comment is a durable task intent, not an implementation-phase
     # side effect. Reconcile it before every dispatch or early PR-state branch,

@@ -531,8 +531,14 @@ A record of a check lane is closed the same way, but closing it does not retry t
    histories with a missing or invalid timestamp whose order cannot be
    established, yield an unavailable verdict before a checklist close or review
    publication. The coordinator checks this condition before reconciling saved
-   rejection intents and returns without publishing an issue blocker or any
-   review comment. The gate phase stops before preparing either reviewer when a
+   rejection intents. In a gate phase it then blocks the task with a
+   `phase-error` blocker that names that gate phase as resume phase, so the
+   task waits instead of being advanced on every tick. A task that is already
+   blocked or asking on such a resume phase returns without publishing another
+   blocker and reads no comment reply while the history cannot be ordered; an
+   order reply given with `agent order reply` or from the dashboard resumes the
+   gate phase, which checks the history again. No review comment is published.
+   The gate phase stops before preparing either reviewer when a
    needed dimension has that synthetic empty-head verdict. During `review-2`,
    this includes both `review-1` prerequisite dimensions as well as the active
    `review-2` dimensions. The phase rechecks the shared ordering after each new verdict before closing a checklist key or
@@ -960,8 +966,11 @@ events and acknowledge one.
 
 Reply, override and cancel insert `order.reply`; the next tick consumes it. A
 reply resumes the exact `resume_phase`, like an authorized GitHub reply. A
-repeated question needs a new reply. Cancel closes the pull request with the fixed
-comment and ends the order as failed with kind `cancelled`. These writes and
+repeated question needs a new reply. Cancel closes an open pull request of the
+order with the fixed comment and ends the order as failed with kind
+`cancelled`. Without an open pull request (none yet, or a closed one) it ends
+the order the same way without a comment; a cancel is refused when the pull
+request is already merged. These writes and
 `order.event` are script-only; `agent activity add` refuses them with `<type>
 is written by a script, not agent activity add`. Models never write them.
 
