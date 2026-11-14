@@ -1370,6 +1370,36 @@ def test_unlisted_order_uses_the_owner_level_settings(
     store.close()
 
 
+def test_orders_only_worker_accepts_an_unlisted_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_git import repo_cfg
+
+    fake = PushableOwnerGh("other/thing")
+    store, configured, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake
+    )
+    worker = replace(
+        configured,
+        repositories={},
+        repository_owners=(),
+        owner_check_argv=("/operator/check",),
+        owner_readiness_argv=("/operator/ready",),
+    )
+    fake.issues = []
+    order = submit_order(store, worker, repo="other/thing")
+    assert coord(order)["source"]["owner_scoped"] is True
+    run_tick(store, worker, fake, lane)
+    c = checkpoint(store, order["id"])
+    assert c["phase"] == "checkout"
+    assert c["source"]["publication_repo"] == "other/thing"
+    cfg = repo_cfg(worker, "other/thing", store.row("task", order["id"]))
+    assert cfg.check_argv == ("/operator/check",)
+    assert cfg.readiness_argv == ("/operator/ready",)
+    assert len(c["execution_binding"]) == 64
+    store.close()
+
+
 def test_explicit_repository_keeps_its_own_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
