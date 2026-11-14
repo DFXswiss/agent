@@ -1144,6 +1144,18 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
             "running",
         ),
         ({"state": "open", "payload": {"coordinator": {}}}, "running"),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "await_ready",
+                        "evidence": {"ready_head": "a" * 40},
+                    }
+                },
+            },
+            "running",
+        ),
     ],
 )
 def test_order_state(task: dict, expected: str) -> None:
@@ -2789,6 +2801,24 @@ def test_cancel_closes_the_draft_and_fails_the_order(
     assert len(cancelled) == 1
     assert cancelled[0]["payload"]["wake"] is True
     assert store.row("activity", intent_id)["result"]["effect"] == "cancel"
+    assert fake.launched == []
+    store.close()
+
+
+def test_order_answers_are_consumed_after_orders_are_switched_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
+    seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    intent_id = insert_order_intent(
+        store, worker, OID, "cancel", reason="not needed"
+    )
+    lines = coordinator_runtime.advance_one(
+        store, replace(worker, orders=False), runner=fake, lane_runner=lane
+    )
+    assert lines == [f"order cancelled {OID}"]
+    assert store.row("activity", intent_id)["execution_status"] == "done"
+    assert order_state(store.row("task", OID)) == "cancelled"
     assert fake.launched == []
     store.close()
 

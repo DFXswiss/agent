@@ -499,7 +499,6 @@ def render_order_report(report: dict[str, Any]) -> list[str]:
         lines.append(f"reviews-omitted {report['reviews_omitted']}")
     if int(report.get("comments_omitted") or 0) > 0:
         lines.append(f"comments-omitted {report['comments_omitted']}")
-    facts_end = len(lines)
 
     details: list[str] = []
     for run in reversed(report.get("reviews") or []):
@@ -524,8 +523,9 @@ def render_order_report(report: dict[str, Any]) -> list[str]:
             for item in files.get("listed") or []
         )
     lines.extend(details)
-    if len("\n".join(lines)) > REPORT_TEXT_BOUND:
-        while len(lines) > facts_end and len("\n".join(lines + ["report truncated"])) > REPORT_TEXT_BOUND:
-            lines.pop()
+    text_length = len("\n".join(lines))
+    if text_length > REPORT_TEXT_BOUND:
+        while len(lines) > 1 and text_length + len("\nreport truncated") > REPORT_TEXT_BOUND:
+            text_length -= len(lines.pop()) + 1
         lines.append("report truncated")
     return lines

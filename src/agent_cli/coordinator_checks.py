@@ -795,7 +795,7 @@ def second_review_waiver_refusal(
                 and canonical_stage(str(row.get("stage") or "")) == "review-2"
                 and row.get("verdict") == "rejected"
             ):
-                return "a blocking second review is already posted on this pull request"
+                return "a second review already rejected this pull request"
     if as_int(c.get("pr_number")) is None:
         return "no pull request"
     return None

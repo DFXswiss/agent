@@ -346,7 +346,7 @@ def test_manual_n_a_does_not_drop_the_second_review(tmp_path, monkeypatch) -> No
         ("external", "the second review of this order comes from external reviewers"),
         ("first", "the first review is not complete"),
         ("approved", "a second review was already approved for this pull request"),
-        ("a38-rejected", "a blocking second review is already posted on this pull request"),
+        ("a38-rejected", "a second review already rejected this pull request"),
         ("non-a38-rejected", None),
         ("no-pr", "no pull request"),
     ],

@@ -1060,7 +1060,9 @@ answers retry with backoff under `lane_retries`. More than 200 open pull
 requests, or exhausted lane retries, records `unavailable`; a plain reply tries
 the check again.
 
-Every implementer start counts as one round. The limit is pinned at task
+Every round counts once; an implementer start reuses the current round while
+its implementer has no verdict, so a lane retry stays in its round. The limit
+is pinned at task
 creation from `--max-rounds`, then `max_rounds_by_model`, then `max_rounds`,
 then 10. Its origin is `submit`, `model`, `worker`, or `default`. No value turns
 the limit off. Before exceeding it, the script starts one assessment check lane
@@ -1082,7 +1084,7 @@ required by CI and readiness.
 Only `agent order override --id UUID --check review_2 --reason TEXT` can waive
 review 2, including while it is pending. The script refuses the waiver unless
 the task has a model second review, review 1 is complete, no second review has
-been approved or posted as blocking for the pull request, and the opener is in
+approved the pull request or rejected an A38 pull request, and the opener is in
 `one_review_authors` on the trusted default branch. `review_2` cannot be skipped
 at submit, and manual `n_a` review keys do not waive it. The script never drops
 review 2 on its own.

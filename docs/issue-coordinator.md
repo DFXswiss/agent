@@ -335,7 +335,7 @@ One head follows this order:
 
 Steps 1 and 2 repeat with fresh implementer and reviewer lanes until approval.
 A rejection at step 3, 4, 6 or 8 returns to step 1 with the findings. Every
-implementer start counts against the round limit. Every lane is a fresh process
+round counts against the round limit. Every lane is a fresh process
 without memory of earlier lanes.
 
 The first recorded pull-request review runs after local checks. The checklist
@@ -393,7 +393,10 @@ pair.
    in `coordinator.a38.pending_base_sha` until a report or inventory waiver and
    its local gate are recorded against that base.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
-   and config home. Each implementer start is a round. The limit is pinned when
+   and config home. A round counts once: an implementer start reuses the
+   current round while its implementer has no verdict, so a lane retry and a
+   restart after a blocker that left the verdict open (for example missing
+   summaries) stay in that round. The limit is pinned when
    the task is created: submitted `--max-rounds`, then the implementer model's
    `max_rounds_by_model` entry, then worker `max_rounds`, then 10. Its origin is
    `submit`, `model`, `worker`, or `default`; no value disables it. Before the
@@ -452,8 +455,10 @@ A record of a check lane is closed the same way, but closing it does not retry t
    A finished reviewer result awaiting its transaction is replayed. A legacy
    `uncertain_lane` flag is removed on the next visit unless a lane is alive,
    and the phase retries under the same bound.
-   Each real lane start records its process id and start time in a small file in
-   the task control directory. No code sets `uncertain_lane` any more.
+   Each real implementer or reviewer lane start records its process id and
+   start time in a small file in the task control directory; a check lane
+   records none, so its working row always reads as having no live process.
+   No code sets `uncertain_lane` any more.
    Incomplete, invalid-result, and blocked implementer outcomes stage the task
    and task-round on copies, commit both together, and consume the checkpoint
    only after that commit succeeds.
@@ -1064,7 +1069,7 @@ or a human waived it for this order. CI and readiness require it.
 Only `agent order override --id UUID --check review_2 --reason TEXT` waives it,
 also while pending. The override is refused with `check review_2 cannot be
 waived: <reason>` unless the task has a nonexternal second review, review 1 is
-complete, no second review is approved, no blocking second comment exists, and
+complete, no second review is approved or has rejected an A38 pull request, and
 the pull-request opener is in `one_review_authors` in the trusted default-branch
 configuration. It cannot be skipped at submit. Manual `n_a` review keys do not
 count. The script never drops review 2 itself.

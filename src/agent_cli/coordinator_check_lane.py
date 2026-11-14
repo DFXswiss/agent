@@ -183,12 +183,17 @@ def run_check_lane(
     config_dir = selected.account.config_dir
     replacements = _coordinator_path_replacements(store, worker, task)
     lane_output: str | None = None
-    if vendor in OUTPUT_FILE_VENDORS:
-        fd, lane_output = tempfile.mkstemp(
-            prefix=f"agent-check-{vendor}-", suffix=".txt"
-        )
-        os.close(fd)
     try:
+        if vendor in OUTPUT_FILE_VENDORS:
+            try:
+                fd, lane_output = tempfile.mkstemp(
+                    prefix=f"agent-check-{vendor}-", suffix=".txt"
+                )
+                os.close(fd)
+            except OSError as exc:
+                raise CoordinatorError(
+                    "cannot create a check lane output file"
+                ) from exc
         argv = [
             *selected.env_prefix(),
             *judgment_argv(

@@ -15694,10 +15694,7 @@ def test_sequential_reviewer_baseexception_removes_unspooled_managed_output(
         "_write_reviewer_spool",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
-    with pytest.raises(
-        CoordinatorError,
-        match=coordinator_lanes.REVIEWER_SPOOL_WRITE_ERROR,
-    ):
+    with pytest.raises(KeyboardInterrupt):
         coordinator_lanes.launch_lane(
             store,
             worker,

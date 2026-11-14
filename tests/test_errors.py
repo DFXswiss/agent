@@ -233,6 +233,23 @@ def test_error_redaction_covers_legacy_passwd_and_access_key_assignments() -> No
     assert cleaned.count("[redacted]") == 6
 
 
+@pytest.mark.no_pg
+def test_error_redaction_covers_quoted_json_keys_with_spaces_and_dots() -> None:
+    cleaned = redact(
+        'ERROR {"access token":"s3cr3t","auth.token":"t0k3n","visible":"keep-me"}'
+    )
+    assert "s3cr3t" not in cleaned
+    assert "t0k3n" not in cleaned
+    assert '"visible":"keep-me"' in cleaned
+
+
+@pytest.mark.no_pg
+def test_error_redaction_covers_userinfo_after_a_long_scheme() -> None:
+    cleaned = redact("s" * 65 + "://user:hunter2@localhost")
+    assert "hunter2" not in cleaned
+    assert "://[redacted]@localhost" in cleaned
+
+
 _TERMINATED_CONTROL_EXPECTED = "prefix [redacted]\nvisible line"
 
 

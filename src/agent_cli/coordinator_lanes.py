@@ -1805,6 +1805,10 @@ def launch_lane(
                 str(agent["id"]),
                 lane_output,
             )
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            if isinstance(exc, SystemExit) and not isinstance(exc, StoreError):
+                raise
             raise CoordinatorError(REVIEWER_SPOOL_WRITE_ERROR) from exc
         try:
             _checkpoint_reviewer_outcome(

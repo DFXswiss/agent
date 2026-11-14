@@ -989,6 +989,24 @@ def test_render_is_bounded() -> None:
     assert render_order_report(sample_report())[-1] != "report truncated"
 
 
+@pytest.mark.no_pg
+def test_render_bounds_many_local_checks() -> None:
+    report = sample_report()
+    report["local_checks"] = [
+        {
+            "name": f"check-{index:03d}-" + "c" * 60,
+            "result": "pass",
+            "head": "a" * 40,
+            "ran_at": "2026-11-14T00:00:00Z",
+        }
+        for index in range(200)
+    ]
+    lines = render_order_report(report)
+    assert len("\n".join(lines)) <= REPORT_TEXT_BOUND
+    assert lines[-1] == "report truncated"
+    assert any(line.startswith("ci ") for line in lines)
+
+
 def test_change_stats_are_recorded_for_an_order(tmp_path, monkeypatch) -> None:
     store, worker, fake = env(tmp_path, monkeypatch)
     fake.numstat = "3\t1\tsrc/a.py\n-\t-\timg.png\nbroken line\n"

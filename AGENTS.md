@@ -32,8 +32,10 @@ owns Ready and the second review comes from configured team members through
 the hub, or from model slot `second` when the worker sets
 `a38_second_review: "model"`.
 
-Orders are submitted and answered only through `agent order` or the orders view
-of the local dashboard. Models never write `order.event` or `order.reply` and
+Orders are submitted only through `agent order` or the orders view of the local
+dashboard. They are answered there or, once the draft exists, by an authorized
+pull-request comment from `reply_logins`. Models never write `order.event` or
+`order.reply` and
 never close a precondition check; an override names its check. A model that
 hands orders to the script is a concierge, not an orchestrator: it submits,
 reads status and the acceptance report, relays questions, and passes on the

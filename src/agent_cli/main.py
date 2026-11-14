@@ -2226,7 +2226,11 @@ def cmd_dashboard(args: list[str]) -> None:
             parsed = urlparse(self.path)
             if not parsed.path.startswith(ORDER_PREFIX):
                 return False
-            length = int(self.headers.get("Content-Length") or "0")
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                self.send_error(400)
+                return True
             raw = (
                 self.rfile.read(min(length, MAX_REQUEST_BYTES + 1))
                 if method == "POST" and length > 0

@@ -143,6 +143,12 @@ def test_new_texts_name_the_concierge_only() -> None:
     assert "concierge" in _read("AGENTS.md")
 
 
+def test_agents_md_names_pull_request_replies_of_orders() -> None:
+    prose = _ws(_read("AGENTS.md"))
+    assert "submitted and answered only through" not in prose
+    assert "`reply_logins`" in prose
+
+
 def test_skill_contracts_name_the_model_route() -> None:
     for relative in (
         "src/agent_cli/skills/pr-review/SKILL.md",

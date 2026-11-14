@@ -980,6 +980,14 @@ def test_order_routes_are_served_by_the_dashboard(device, monkeypatch) -> None:
         assert content_type.startswith("text/html")
 
 
+def test_order_route_refuses_an_invalid_content_length(device, monkeypatch) -> None:
+    with _running_dashboard(monkeypatch) as port:
+        status, _, _ = _request(
+            port, "GET", "/api/orders/list", headers={"Content-Length": "abc"}
+        )
+        assert status == 400
+
+
 @pytest.mark.parametrize("reconnect_fails", (False, True))
 def test_order_route_returns_503_on_a_lost_connection(
     device, monkeypatch, reconnect_fails: bool

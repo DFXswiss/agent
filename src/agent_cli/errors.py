@@ -21,7 +21,6 @@ from .skills import has_skill
 from .store import Store, StoreError, utcnow
 from .text_sanitize import sanitize_terminal_text
 
-_URL_SCHEME_LIMIT = 64
 _EMAIL = re.compile(
     r"(?<![A-Z0-9._%+-])[A-Z0-9._%+-]{1,64}@"
     r"[A-Z0-9.-]{1,253}\.[A-Z]{2,63}",
@@ -31,9 +30,10 @@ _BEARER = re.compile(r"(?i)bearer\s+\S++")
 _AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).++")
 _COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).++")
 _USERINFO = re.compile(
-    rf"(?<![a-zA-Z0-9+.-])"
-    rf"([a-zA-Z][a-zA-Z0-9+.-]{{0,{_URL_SCHEME_LIMIT - 1}}}://)"
-    r"[^/:@\s]++:[^/@\s]++@"
+    r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]*+://)[^/:@\s]++:[^/@\s]++@"
+)
+_JSON_PAIR = re.compile(
+    r'("([^"]*+)"\s*+:\s*+")((?:[^"\\]++|\\.)*+)(")', re.S
 )
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}+\b")
 _OTEL_TRACE_ID = re.compile(
@@ -102,6 +102,13 @@ def _is_cred_name(name: object) -> bool:
     if normalized in _CREDENTIAL_KEYS:
         return True
     return any(token in normalized for token in _CREDENTIAL_TOKENS)
+
+
+def _redact_json_secret(match: re.Match[str]) -> str:
+    key = _norm_cred(match.group(2))
+    if any(token in key for token in _CREDENTIAL_TOKENS):
+        return match.group(1) + "[redacted]" + match.group(4)
+    return match.group(0)
 
 
 Fetch = Callable[[dict[str, Any], str | None], tuple[list[dict[str, Any]], str | None]]
@@ -190,7 +197,8 @@ def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:
 
 
 def _redact_error_patterns(text: str) -> str:
-    out = _AUTHORIZATION.sub(r"\1[redacted]", text)
+    out = _JSON_PAIR.sub(_redact_json_secret, text)
+    out = _AUTHORIZATION.sub(r"\1[redacted]", out)
     out = _BEARER.sub("[redacted]", out)
     out = _COOKIE.sub(r"\1[redacted]", out)
     out = _USERINFO.sub(r"\1[redacted]@", out)

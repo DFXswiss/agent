@@ -777,11 +777,7 @@ def _insert_assigned_activity(
         written = collision["row"] or store.row("activity", activity_id)
         if isinstance(written, dict) and _matches(written, activity_id):
             return activity_id
-        if activity_id == fallback_id:
-            raise CoordinatorError(
-                "assignment activity write is missing or mismatched"
-            )
-    raise CoordinatorError("assignment activity id selection failed")
+    raise CoordinatorError("assignment activity write is missing or mismatched")
 
 
 def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> list[str]:
@@ -3106,10 +3102,11 @@ def advance_one(
     lane_runner: LaneRunner | None,
 ) -> list[str]:
     lines: list[str] = []
-    if worker.orders:
-        lines.extend(sweep_terminal_orders(store, worker))
     tasks = _open_tasks(store, worker.session_id)
-    intents = pending_order_intents(store, worker) if worker.orders else {}
+    orders_active = worker.orders or any(is_order(candidate) for candidate in tasks)
+    if orders_active:
+        lines.extend(sweep_terminal_orders(store, worker))
+    intents = pending_order_intents(store, worker) if orders_active else {}
     touched: set[str] = set()
     for task in tasks:  # 1. waiting tasks and pending intents
         tid = str(task["id"])

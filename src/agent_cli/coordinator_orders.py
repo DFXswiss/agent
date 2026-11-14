@@ -312,7 +312,11 @@ def order_state(task: dict[str, Any]) -> str:
     if phase in ("ask", "blocked") or c.get("binding_blocker"):
         return "waiting"
     evidence = c.get("evidence")
-    if isinstance(evidence, dict) and evidence.get("ready_head"):
+    if (
+        phase != "await_ready"
+        and isinstance(evidence, dict)
+        and evidence.get("ready_head")
+    ):
         return "ready"
     return "running"
 

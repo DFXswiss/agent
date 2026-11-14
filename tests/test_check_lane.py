@@ -625,6 +625,28 @@ def test_unreadable_output_file_is_a_failed_attempt(
     assert output_files and not output_files[0].exists()
 
 
+def test_output_file_failure_is_a_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _worker, task, _fake, ctx = setup(
+        tmp_path, monkeypatch, bind=False
+    )
+    _configure_check_provider(store, task, "openrouter")
+
+    def no_space(*_args, **_kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_check_lane.tempfile.mkstemp", no_space
+    )
+    with pytest.raises(
+        CoordinatorError, match="cannot create a check lane output file"
+    ):
+        _resolve(ctx)
+    assert _state(store) is None
+    assert not _agents(store)
+
+
 @pytest.mark.parametrize(
     ("returncode", "lane_status"), [(2, "unavailable"), (124, "timeout")]
 )

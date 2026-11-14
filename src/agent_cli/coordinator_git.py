@@ -797,7 +797,7 @@ def phase_start_draft(
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Open the draft pull request on an empty start commit before the first lane."""
+    """Open the draft pull request on an empty start commit before the first implementation lane."""
     c = coord(task)
     worktree = str(c.get("worktree") or "")
     base_sha = str(c.get("base_sha") or "")
