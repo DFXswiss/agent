@@ -949,6 +949,11 @@ def cmd_task(args: list[str]) -> None:
             row = _need(store, "task", tid)
             _require_owned(store, row, "task")
             _require_skill(_need(store, "session", row["session_id"]), "spine")
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            if payload.get("coordinator"):
+                die(
+                    "coordinator tasks keep the model slots pinned from ai-accounts.json when the coordinator accepted them"
+                )
             if str(row.get("state") or "") in TERMINAL_STATES:
                 die("cannot change the model slots of a terminal task")
             if row.get("models") is None:

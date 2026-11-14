@@ -110,8 +110,8 @@ is not a substitute, and the review names the element and its job.
   checklist key with `close-step --status unavailable` and evidence. Do not
   record `approved`. Never record a gate for a provider the task does not pin;
   to switch provider, record `unavailable` first and then change the pin with
-  `agent task models --reason …`. Do not substitute another vendor without
-  changing the pin first.
+  `agent task models --id <uuid> --slot <slot> --vendor <provider> --reason "<why>"`.
+  Do not substitute another vendor without changing the pin first.
 
 Zero findings only after an explicit complete pass.
 Empty, partial, timeout, or unavailable output is not zero findings.

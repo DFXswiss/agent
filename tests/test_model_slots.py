@@ -1,4 +1,4 @@
-"""Model slots: which provider fills slot ``first`` and ``second`` is device configuration."""
+"""Model slots: task pins default from the device's AI configuration."""
 
 from __future__ import annotations
 
@@ -1767,6 +1767,47 @@ def test_task_models_refuses_invalid_or_unavailable_changes(
                 "--vendor", "openrouter", "--reason", "quota",
             ],
         )
+
+
+def test_task_models_refuses_coordinator_tasks_without_changes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        task = {
+            key: value
+            for key, value in (store.row("task", tid) or {}).items()
+            if not key.startswith("_")
+        }
+        task["payload"] = {"coordinator": {"a38": {"enabled": True}}}
+        store.write("task", "update", tid, task)
+        before = store.row("task", tid)
+    finally:
+        store.close()
+
+    with pytest.raises(
+        SystemExit,
+        match="coordinator tasks keep the model slots pinned from ai-accounts.json when the coordinator accepted them",
+    ):
+        _run(
+            tmp_path,
+            [
+                "task", "models", "--id", tid, "--slot", "first",
+                "--vendor", "openrouter", "--reason", "quota",
+            ],
+        )
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        assert store.row("task", tid) == before
+    finally:
+        store.close()
 
 
 def test_task_models_refuses_a_task_owned_by_another_device(tmp_path: Path) -> None:
