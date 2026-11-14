@@ -1282,6 +1282,45 @@ def test_waived_model_task_passes_readiness_and_merge(
     store.close()
 
 
+@pytest.mark.parametrize("variant", ("model-second", "waived"))
+@pytest.mark.parametrize(
+    "head_ref",
+    (None, int("1" * 40), "not-a-sha"),
+    ids=("null", "forty-digit-integer", "non-sha-string"),
+)
+def test_await_ready_retries_an_unreadable_head_without_blocking(
+    tmp_path, monkeypatch, variant, head_ref
+) -> None:
+    store, worker, fake = model_env(tmp_path, monkeypatch)
+    task = seed_model_task(
+        store,
+        worker,
+        fake,
+        OID,
+        phase="await_ready",
+        first_comment={"head": fake.head},
+        **(
+            {}
+            if variant == "waived"
+            else {"second_comment": {"head": fake.head, "blocks_merge": False}}
+        ),
+    )
+    if variant == "waived":
+        task = model_order(store, task, OID)
+        record_waiver(store, task)
+    fake.pr["headRefOid"] = head_ref
+    before = store.row("task", OID)
+    assert "second_review" not in before["payload"]["coordinator"]["a38"]
+
+    assert phase_await_ready(store, worker, before, fake) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert store.row("task", OID) == before
+    assert before["payload"]["coordinator"]["phase"] == "await_ready"
+    assert before["state"] != "blocked"
+    store.close()
+
+
 def test_unwaived_model_task_still_requires_the_second_comment(
     tmp_path, monkeypatch
 ) -> None:

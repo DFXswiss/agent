@@ -126,6 +126,10 @@ class _PullRequestBaseUnavailable(CoordinatorError):
     """Transient missing or malformed base revision from a pull-request read."""
 
 
+class _PullRequestHeadUnavailable(CoordinatorError):
+    """Transient missing or malformed head revision from a pull-request read."""
+
+
 class _PullRequestNotOpen(CoordinatorError):
     """The pull request closed before an A38 measurement context was accepted."""
 
@@ -400,6 +404,10 @@ def _pull_a38_context(
                     "A38 pull request base revision is not a 40-hex SHA"
                 )
             return observed_base, paths, markdown_only, guard_docs_only
+    if last_before is not None and last_before[0] is None:
+        raise _PullRequestHeadUnavailable(
+            "A38 pull request head revision is not a 40-hex SHA"
+        )
     if last_before is not None and last_before[0] != expected_head:
         raise CoordinatorError(
             "A38 pull request head differs from the clean signed head"
@@ -1420,7 +1428,7 @@ def phase_tests(
         return [
             f"PR {exc.state.lower()} before A38 measurement; verifying the merge"
         ]
-    except _PullRequestBaseUnavailable:
+    except (_PullRequestBaseUnavailable, _PullRequestHeadUnavailable):
         return ["PR state temporarily unavailable; retrying"]
     # Policy migration is intentionally not implemented by this coordinator.
     # Never publish evidence against obsolete base policy or workflow controls.
@@ -3821,10 +3829,12 @@ def phase_await_ready(
         )
     except CoordinatorError:
         return ["PR state temporarily unavailable; retrying"]
-    observed = normalized_sha(view.get("headRefOid")) if isinstance(view, dict) else None
+    if not isinstance(view, dict):
+        raise CoordinatorError("cannot read pull request head while awaiting Ready")
+    observed = normalized_sha(view.get("headRefOid"))
+    if observed is None:
+        return ["PR state temporarily unavailable; retrying"]
     if observed != head:
-        if observed is None:
-            raise CoordinatorError("cannot read pull request head while awaiting Ready")
         c["head_sha"] = observed
         invalidate_head_evidence(c, observed)
         c["phase"] = "tests"

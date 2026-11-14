@@ -1640,11 +1640,14 @@ the recorded local gate promotes it to `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,
 report validation, and review diffs use the live evidence value. The script
 reconciles an existing pending SHA on every stable open-PR context read. A
-missing or non-40-hex pull-request base revision during `tests` is a transient
-read: the phase returns `PR state temporarily unavailable; retrying` without
-changing the saved task phase, base evidence, or pending base. Other invalid
-metadata remains a hard error. A merged or closed pull request moves to merge
-verification before pending-base reconciliation.
+missing or non-40-hex pull-request head or base revision during `tests` is a
+transient read: the phase returns `PR state temporarily unavailable; retrying`
+without changing the saved task phase, head or base evidence, or pending base.
+Other invalid metadata remains a hard error, and only a different valid head is
+a head change. During `await_ready`, a missing or malformed head likewise keeps
+that phase and returns the same transient retry; only a different valid head
+invalidates head-bound evidence and returns to `tests`. A merged or closed pull
+request moves to merge verification before pending-base reconciliation.
 If the branch returns to an earlier trusted SHA before remeasurement, the stale
 pending SHA is replaced and evidence for the currently observed SHA is
 reconstructed before promotion. The script

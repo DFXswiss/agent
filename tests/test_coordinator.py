@@ -10934,6 +10934,61 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
         phase_await_ready(store, worker, task, malformed_draft)
 
 
+@pytest.mark.parametrize(
+    "head_ref",
+    (None, int("1" * 40), "not-a-sha"),
+    ids=("null", "forty-digit-integer", "non-sha-string"),
+)
+def test_a38_tests_retries_an_unreadable_pull_request_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head_ref: object,
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "tests"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["headRefOid"] = head_ref
+    before = store.row("task", task_id)
+
+    assert phase_tests(store, worker, before, fake) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert store.row("task", task_id) == before
+    assert before["payload"]["coordinator"]["phase"] == "tests"
+    assert before["state"] != "blocked"
+
+
+def test_a38_tests_still_rejects_a_different_valid_pull_request_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "tests"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["headRefOid"] = "c" * 40
+
+    with pytest.raises(
+        CoordinatorError,
+        match="A38 pull request head differs from the clean signed head",
+    ):
+        phase_tests(store, worker, store.row("task", task_id), fake)
+
+
 def test_a38_base_move_remeasures_then_allows_merge_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
