@@ -1525,11 +1525,12 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in documented
     )
     assert (
-        "Fixed matching windows bound control-tolerant URL schemes, e-mail "
-        "address parts, private-key header words, terminal escape parameters"
+        "Fixed matching windows apply only to the bounded regex consumers" in flat
+    )
+    assert (
+        "Exact known-secret matching uses the unbounded linear control-run index"
         in flat
     )
-    assert "windows apply only" not in flat
     assert "Secret-key name affixes" not in documented
 
 

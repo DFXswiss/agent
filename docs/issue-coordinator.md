@@ -718,9 +718,9 @@ A record of a check lane is closed the same way, but closing it does not retry t
     must be an object with a non-empty string login and a string type exactly
     `User` (missing, empty, or non-string type is not human; Bot is refused).
     A missing/non-object actor or a missing, empty, or non-string login retries
-    without completion. Also require merge SHA, timestamp, and base/target. An
-    A38 merge must also expose
-    a valid base SHA equal to the promoted `coordinator.a38.base_sha` evidence
+    without completion. Also require merge SHA, timestamp, base/target, and a
+    valid base SHA. An A38 merge must also expose a valid base SHA equal to the
+    promoted `coordinator.a38.base_sha` evidence
     base (the checkout pin is not a completion fallback), with a report or
     waiver and local gate bound to that exact base. If a pending base exists or
     the base moved after evidence and the pull request is already merged, the

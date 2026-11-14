@@ -859,6 +859,94 @@ def test_model_second_review_posted_after_merged_deadline_blocks(
     assert c["blocker"] == f"merged without a model second review on {fake.head}"
 
 
+def test_late_model_second_review_is_accepted_for_the_matching_ready_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = env(tmp_path, monkeypatch)
+    worker = replace(worker, second_review_timeout_seconds=600)
+    task = seed_model_task(
+        store,
+        worker,
+        fake,
+        "60000000-0000-4000-8000-000000000007",
+        phase="await_merge",
+        second_comment={
+            "head": fake.head,
+            "blocks_merge": False,
+            "requirement_satisfied_at": "2026-11-05T10:11:00Z",
+        },
+    )
+    task["payload"]["coordinator"]["evidence"]["ready_head"] = fake.head
+    _update(store, "task", task)
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, **_kwargs: pytest.fail("matching Ready evidence must not block"),
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-11-05T10:12:00Z"
+    )
+
+    assert _await_second_review_after_merge(
+        store,
+        worker,
+        task,
+        fake,
+        fake.head,
+        outcome="passed",
+        merged_at="2026-11-05T10:00:00Z",
+    ) is None
+    c = checkpoint(store, task["id"])
+    assert c["phase"] == "await_merge"
+    assert "blocker" not in c
+
+
+def test_late_model_second_review_blocks_for_a_mismatching_ready_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = env(tmp_path, monkeypatch)
+    worker = replace(worker, second_review_timeout_seconds=600)
+    task = seed_model_task(
+        store,
+        worker,
+        fake,
+        "60000000-0000-4000-8000-000000000008",
+        phase="await_merge",
+        second_comment={
+            "head": fake.head,
+            "blocks_merge": False,
+            "requirement_satisfied_at": "2026-11-05T10:11:00Z",
+        },
+    )
+    task["payload"]["coordinator"]["evidence"]["ready_head"] = "c" * 40
+    _update(store, "task", task)
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+    )
+    monkeypatch.setattr(
+        coordinator_github, "utcnow", lambda: "2026-11-05T10:12:00Z"
+    )
+
+    assert _await_second_review_after_merge(
+        store,
+        worker,
+        task,
+        fake,
+        fake.head,
+        outcome="passed",
+        merged_at="2026-11-05T10:00:00Z",
+    ) == ["blocker merged-without-second-review"]
+    c = checkpoint(store, task["id"])
+    assert c["phase"] == "blocked"
+    assert c["blocker"] == f"merged without a model second review on {fake.head}"
+
+
 def test_model_second_review_pending_past_merged_deadline_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

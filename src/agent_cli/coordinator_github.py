@@ -2695,6 +2695,16 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if verify.get("isDraft") is not False:
         raise CoordinatorError("leave-draft did not clear isDraft")
     verified_head = normalized_sha(verify.get("headRefOid"))
+    if verified_head is None:
+        if verify.get("state") == "OPEN" and verify.get("isDraft") is False:
+            undone = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target, "--undo"])
+            if undone.returncode != 0:
+                raise CoordinatorError(
+                    "PR metadata unavailable after Ready; returning it to Draft also failed"
+                )
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
     if verified_head != head:
         if verify.get("state") == "OPEN" and verify.get("isDraft") is False:
             undone = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target, "--undo"])
@@ -2932,6 +2942,9 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         merged_by = merged_by_info if isinstance(merged_by_info, dict) else None
         base_info = info.get("base")
         base = base_info if isinstance(base_info, dict) else {}
+        observed_base = normalized_sha(base.get("sha"))
+        if observed_base is None:
+            return ["merge observed but incomplete metadata"]
         if not worker.a38 and (sha is None or merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
@@ -2978,11 +2991,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     f"{old_base or 'unknown'} to {new_base or 'unknown'}; "
                     "a merged PR cannot be remeasured"
                 )
-            observed_base = normalized_sha(base.get("sha"))
             a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
             saved_base = normalized_sha(a38.get("base_sha"))
-            if observed_base is None:
-                return ["merge observed but base SHA missing or invalid"]
             pending_base = normalized_sha(a38.get("pending_base_sha"))
             if pending_base:
                 from .coordinator_a38 import mark_base_moved_after_evidence

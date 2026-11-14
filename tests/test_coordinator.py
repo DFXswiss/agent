@@ -1253,6 +1253,55 @@ def test_non_a38_invalid_rest_base_metadata_retries_await_merge(
     ]
 
 
+@pytest.mark.parametrize(
+    "base_sha",
+    (
+        pytest.param(None, id="null"),
+        pytest.param(int("1" * 40), id="forty-digit-integer"),
+        pytest.param("not-a-sha", id="non-sha-string"),
+    ),
+)
+def test_non_a38_invalid_rest_base_sha_retries_without_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_sha: object,
+) -> None:
+    from agent_cli import coordinator_github
+    from agent_cli.coordinator_github import phase_await_merge
+
+    task_id = "55555555-5555-4555-8555-555555555571"
+    store, worker, fake = _seed_one_review_merge(
+        tmp_path,
+        monkeypatch,
+        tid=task_id,
+        stored_login="alice",
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "state": "closed",
+            "merged": True,
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "merged_at": "2026-09-01T12:00:00Z",
+            "merge_commit_sha": "d" * 40,
+            "head": {"sha": fake.head},
+            "base": {"ref": "develop", "sha": base_sha},
+        },
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), fake
+    ) == ["merge observed but incomplete metadata"]
+
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
 def test_human_merge_done_reads_the_live_one_review_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4250,6 +4299,108 @@ def test_leave_draft_skips_review_2_when_opener_is_listed(
     assert not any("missing approved gate review-2/" in line for line in lines)
     assert any("left draft" in line for line in lines)
     assert fake.ready_calls == 1
+
+
+@pytest.mark.parametrize(
+    "head_ref",
+    (None, int("1" * 40), "not-a-sha"),
+    ids=("null", "forty-digit-integer", "non-sha-string"),
+)
+def test_leave_draft_retries_an_unreadable_pull_request_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head_ref: object,
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    _list_opener(fake)
+    tid = "aa000001-0000-4000-8000-000000000054"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    real_gh_json = coordinator_github.gh_json
+
+    def malformed_leave_draft_metadata(runner, argv):  # noqa: ANN001
+        if argv[-1] == "headRefOid,baseRefName,author,isDraft,state,mergeable":
+            return {"headRefOid": head_ref}
+        return real_gh_json(runner, argv)
+
+    monkeypatch.setattr(
+        coordinator_github, "gh_json", malformed_leave_draft_metadata
+    )
+    before = store.row("task", tid)
+    assert before is not None
+
+    assert phase_leave_draft(store, worker, task, fake) == [
+        f"PR metadata temporarily unavailable on {fake.head[:7]}; retrying leave-draft"
+    ]
+    saved = store.row("task", tid)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "leave_draft"
+    assert saved["payload"]["coordinator"]["phase"] == before["payload"][
+        "coordinator"
+    ]["phase"]
+    assert saved["state"] == before["state"] == "pr-review"
+    assert fake.ready_calls == 0
+
+
+@pytest.mark.parametrize(
+    "head_ref",
+    (None, int("1" * 40), "not-a-sha"),
+    ids=("null", "forty-digit-integer", "non-sha-string"),
+)
+def test_leave_draft_retries_an_unreadable_verification_head_after_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head_ref: object,
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    _list_opener(fake)
+    tid = "aa000001-0000-4000-8000-000000000058"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    real_gh_json = coordinator_github.gh_json
+
+    def malformed_verification(runner, argv):  # noqa: ANN001
+        if argv[-1] == "isDraft,headRefOid,state" and fake.ready_calls == 1:
+            return {"isDraft": False, "headRefOid": head_ref, "state": "OPEN"}
+        return real_gh_json(runner, argv)
+
+    monkeypatch.setattr(coordinator_github, "gh_json", malformed_verification)
+
+    assert phase_leave_draft(store, worker, task, fake) == [
+        f"PR metadata temporarily unavailable on {fake.head[:7]}; retrying leave-draft"
+    ]
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "leave_draft"
+    assert "ready_head" not in checkpoint["evidence"]
+    assert fake.ready_calls == 2  # Ready mutation followed by its undo.
 
 
 def test_already_ready_pull_request_sets_ready_head_for_an_order(

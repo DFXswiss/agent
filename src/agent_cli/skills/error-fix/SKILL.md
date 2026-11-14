@@ -101,10 +101,12 @@ subsequent notification that provides useful model work belong to the script.
    is incomplete, the payload remains
    opaque so later key fragments still join. BEL terminates OSC only; DCS, PM,
    APC, and SOS require `ESC \` or the eight-bit ST byte.
-   Fixed matching windows bound control-tolerant URL schemes, e-mail address
-   parts, private-key header words, terminal escape parameters, and removable
-   terminal-control interleaves, so separatorless log text is handled in linear
-   time. The script then fingerprints and inserts or enriches
+   Fixed matching windows apply only to the bounded regex consumers for
+   control-tolerant URL schemes, e-mail address parts, private-key header words,
+   and terminal escape parameters. Exact known-secret matching uses the
+   unbounded linear control-run index for removable terminal-control
+   interleaves, so separatorless log text is handled in linear time. The script
+   then fingerprints and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.
    Enrichment never knocks. The model does not query the log source.
