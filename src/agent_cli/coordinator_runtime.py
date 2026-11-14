@@ -2521,6 +2521,17 @@ def _recover_uncertain_lane(
     )
 
 
+def _drop_blocker_publish_state(c: dict) -> None:
+    """Forget how an earlier blocker was to be published, before a phase error replaces it."""
+    for key in (
+        "blocker_publish_once",
+        "blocker_publish_kind",
+        "blocker_publish_occurrence",
+        "blocker_activity_id",
+    ):
+        c.pop(key, None)
+
+
 def _advance_task(
     store: Store,
     worker: WorkerConfig,
@@ -2601,13 +2612,7 @@ def _advance_task(
             c.pop("rejection_review_activity_ids", None)
         if not c.get("resume_phase") and phase not in ("done", "blocked", "ask"):
             c["resume_phase"] = phase
-        for key in (
-            "blocker_publish_once",
-            "blocker_publish_kind",
-            "blocker_publish_occurrence",
-            "blocker_activity_id",
-        ):
-            c.pop(key, None)
+        _drop_blocker_publish_state(c)
         c["blocker"] = message
         if phase != "done":
             c["phase"] = "blocked"
@@ -3003,13 +3008,7 @@ def _advance_task(
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
-        for key in (
-            "blocker_publish_once",
-            "blocker_publish_kind",
-            "blocker_publish_occurrence",
-            "blocker_activity_id",
-        ):
-            c.pop(key, None)
+        _drop_blocker_publish_state(c)
         c["blocker"] = str(exc)
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
@@ -3036,6 +3035,7 @@ def _advance_task(
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
+        _drop_blocker_publish_state(c)
         c["blocker"] = redact(str(exc))
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
