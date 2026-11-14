@@ -397,6 +397,47 @@ def test_submit_picks_the_least_loaded_worker(device, capsys) -> None:
     assert submit("Third", "--worker", "worker-session")["worker"] == "worker-session"
 
 
+def test_submit_picks_the_least_loaded_worker_for_an_unlisted_repository(
+    device, capsys
+) -> None:
+    config_path = device.home / "coordinator.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    second = json.loads(json.dumps(config["workers"]["worker-session"]))
+    second["workspace_root"] = str(device.home / "work-b")
+    second["review_session"] = "review-session"
+    config["workers"]["another-session"] = second
+    (device.home / "work-b").mkdir()
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    make_session(device.store, "another-session", ["spine", "review-loop", "pr-review"])
+
+    github_path = device.home / "github-accounts.json"
+    github = json.loads(github_path.read_text(encoding="utf-8"))
+    github["sessions"]["another-session"] = "worker"
+    github_path.write_text(json.dumps(github), encoding="utf-8")
+    ai_path = device.home / "ai-accounts.json"
+    ai = json.loads(ai_path.read_text(encoding="utf-8"))
+    ai["sessions"]["another-session"] = json.loads(
+        json.dumps(ai["sessions"]["worker-session"])
+    )
+    ai_path.write_text(json.dumps(ai), encoding="utf-8")
+
+    def submit(title: str) -> dict:
+        order(
+            "submit",
+            "--repo",
+            "other/thing",
+            "--title",
+            title,
+            "--body-file",
+            body_file(device.home, title),
+            "--json",
+        )
+        return json.loads(capsys.readouterr().out)
+
+    assert submit("First")["worker"] == "another-session"
+    assert submit("Second")["worker"] == "worker-session"
+
+
 def test_submit_chooses_and_inserts_under_the_submit_lock(
     device, capsys, monkeypatch
 ) -> None:
