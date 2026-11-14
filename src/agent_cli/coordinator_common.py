@@ -23,6 +23,9 @@ from .runtime import Completed
 from .store import Store, StoreError, utcnow
 from .text_sanitize import (
     TERMINAL_INTERLEAVE_PATTERN,
+    _is_terminal_string_control,
+    _terminal_string_control_end,
+    _terminal_string_control_parts,
     redact_terminal_interleaved_tokens,
     redact_terminal_string_controls,
     sanitize_terminal_text,
@@ -305,21 +308,8 @@ def _terminal_control_span(
             return index + 1, None
         introducer = text[index + 1]
         if introducer in "]P^_X":
-            is_osc = introducer == "]"
-            cursor = index + 2
-            while cursor < len(text):
-                if text[cursor] == "\x9c" or (
-                    is_osc and text[cursor] == "\x07"
-                ):
-                    return cursor + 1, None
-                if (
-                    text[cursor] == "\x1b"
-                    and cursor + 1 < len(text)
-                    and text[cursor + 1] == "\\"
-                ):
-                    return cursor + 2, None
-                cursor += 1
-            return len(text), None
+            end, _terminated = _terminal_string_control_end(text, index)
+            return end, None
         if introducer == "[":
             cursor = index + 2
             while (
@@ -375,21 +365,8 @@ def _terminal_control_span(
             return cursor + 1, text[cursor]
         return cursor, None
     if codepoint in (0x90, 0x98, 0x9D, 0x9E, 0x9F):
-        is_osc = codepoint == 0x9D
-        cursor = index + 1
-        while cursor < len(text):
-            if text[cursor] == "\x9c" or (
-                is_osc and text[cursor] == "\x07"
-            ):
-                return cursor + 1, None
-            if (
-                text[cursor] == "\x1b"
-                and cursor + 1 < len(text)
-                and text[cursor + 1] == "\\"
-            ):
-                return cursor + 2, None
-            cursor += 1
-        return len(text), None
+        end, _terminated = _terminal_string_control_end(text, index)
+        return end, None
     if (
         codepoint <= 0x08
         or 0x0B <= codepoint <= 0x1F
@@ -454,12 +431,6 @@ def _extend_secret_assignment_key_run(
     return (tail + text[start:end].lower())[-_SECRET_ASSIGNMENT_KEYWORD_MAX:], matched
 
 
-def _is_terminal_string_control(text: str, index: int) -> bool:
-    if text[index] == "\x1b":
-        return index + 1 < len(text) and text[index + 1] in "]P^_X"
-    return ord(text[index]) in (0x90, 0x98, 0x9D, 0x9E, 0x9F)
-
-
 def _terminal_control_spans(text: str) -> list[tuple[int, int, bool]]:
     """Index every removable control once on the complete raw input.
 
@@ -504,19 +475,79 @@ def _append_string_control_payload_view(
     pieces: list[str],
     spans: list[tuple[int, int, int]],
     view_length: int,
-    raw_start: int,
-    raw_end: int,
-) -> int:
-    """Append payload bytes while omitting removable controls and mapping gaps."""
-    cursor = raw_start
-    for control in _RAW_REMOVED_CONTROL.finditer(text, raw_start, raw_end):
-        view_length = _append_control_view(
-            text, pieces, spans, view_length, cursor, control.start()
-        )
-        cursor = control.end()
-    return _append_control_view(
-        text, pieces, spans, view_length, cursor, raw_end
+    control_start: int,
+    control_end: int,
+    *,
+    keep_key_chars: bool,
+) -> tuple[int, bool, bool]:
+    """Retain nested payloads, omitting or key-joining their controls."""
+    (
+        scanned_end,
+        terminated,
+        wrappers,
+        unterminated_nested,
+    ) = _terminal_string_control_parts(
+        text,
+        control_start,
+        limit=control_end,
     )
+    if not wrappers:
+        return view_length, unterminated_nested, False
+
+    payload_start = wrappers[0][1]
+    payload_end = scanned_end
+    if terminated and wrappers[-1][1] == scanned_end:
+        payload_end = wrappers[-1][0]
+    wrapper_ends = {
+        start: end
+        for start, end in wrappers[1:]
+        if payload_start <= start < scanned_end
+    }
+
+    cursor = payload_start
+    has_nested_controls = False
+    while cursor < payload_end:
+        control = _RAW_REMOVED_CONTROL.search(text, cursor, payload_end)
+        if control is None:
+            break
+        has_nested_controls = True
+        nested_control_start = control.start()
+        view_length = _append_control_view(
+            text,
+            pieces,
+            spans,
+            view_length,
+            cursor,
+            nested_control_start,
+        )
+        wrapper_end = wrapper_ends.get(nested_control_start)
+        if wrapper_end is not None:
+            cursor = min(payload_end, wrapper_end)
+            continue
+
+        nested_control_end, _final = _terminal_control_span(
+            text, nested_control_start
+        )
+        nested_control_end = min(payload_end, nested_control_end)
+        if keep_key_chars:
+            for raw_offset, _key_char in _terminal_control_key_chars(
+                text,
+                nested_control_start,
+                nested_control_end,
+            ):
+                view_length = _append_control_view(
+                    text,
+                    pieces,
+                    spans,
+                    view_length,
+                    raw_offset,
+                    raw_offset + 1,
+                )
+        cursor = max(nested_control_start + 1, nested_control_end)
+    view_length = _append_control_view(
+        text, pieces, spans, view_length, cursor, payload_end
+    )
+    return view_length, unterminated_nested, has_nested_controls
 
 
 def _is_config_dir_placeholder_token(line: str, raw_offset: int) -> bool:
@@ -554,12 +585,14 @@ def _terminal_keyword_view(
     line: str,
     kind: str,
     control_spans: list[tuple[int, int, bool]],
-) -> tuple[str, list[tuple[int, int, int]]]:
+) -> tuple[str, list[tuple[int, int, int]], bool, bool]:
     """Build one structural keyword view with its raw mapping."""
     pieces: list[str] = []
     spans: list[tuple[int, int, int]] = []
     view_length = 0
     cursor = 0
+    fail_closed = False
+    has_nested_payload_controls = False
     for control_start, control_end, is_string_control in control_spans:
         view_length = _append_control_view(
             line, pieces, spans, view_length, cursor, control_start
@@ -577,24 +610,27 @@ def _terminal_keyword_view(
                     raw_offset,
                     raw_offset + 1,
                 )
-        elif kind == "payload" and is_string_control:
-            payload_start = control_start + (
-                2 if line[control_start] == "\x1b" else 1
-            )
-            payload_end = control_end
-            if line[max(payload_start, control_end - 2) : control_end] == "\x1b\\":
-                payload_end = control_end - 2
-            elif control_end > payload_start and line[control_end - 1] in "\x07\x9c":
-                payload_end = control_end - 1
-            view_length = _append_string_control_payload_view(
+        elif kind in ("payload-clean", "payload-key-join") and is_string_control:
+            (
+                view_length,
+                unterminated_nested,
+                payload_has_nested_controls,
+            ) = _append_string_control_payload_view(
                 line,
                 pieces,
                 spans,
                 view_length,
-                payload_start,
-                payload_end,
+                control_start,
+                control_end,
+                keep_key_chars=kind == "payload-key-join",
             )
-        elif kind == "payload" and line[control_start] == "\x1b":
+            fail_closed = fail_closed or unterminated_nested
+            has_nested_payload_controls = (
+                has_nested_payload_controls or payload_has_nested_controls
+            )
+        elif kind in ("payload-clean", "payload-key-join") and line[
+            control_start
+        ] == "\x1b":
             payload_start = control_start + 1
             if payload_start < control_end and line[payload_start] == "[":
                 payload_start += 1
@@ -611,7 +647,9 @@ def _terminal_keyword_view(
                 payload_start,
                 control_end,
             )
-        elif kind == "payload" and ord(line[control_start]) == 0x9B:
+        elif kind in ("payload-clean", "payload-key-join") and ord(
+            line[control_start]
+        ) == 0x9B:
             payload_start = control_start + 1
             while (
                 payload_start < control_end
@@ -630,7 +668,7 @@ def _terminal_keyword_view(
 
     _append_control_view(line, pieces, spans, view_length, cursor, len(line))
 
-    return "".join(pieces), spans
+    return "".join(pieces), spans, fail_closed, has_nested_payload_controls
 
 
 def _redact_controlled_secret_line(
@@ -647,10 +685,30 @@ def _redact_controlled_secret_line(
         return line
 
     token_start: int | None = None
-    for kind in ("stripped", "payload", "key-join"):
-        view, spans = _terminal_keyword_view(line, kind, control_spans)
+    view_kinds = ["stripped", "payload-clean", "key-join"]
+    kind_index = 0
+    while kind_index < len(view_kinds):
+        kind = view_kinds[kind_index]
+        kind_index += 1
+        (
+            view,
+            spans,
+            fail_closed,
+            has_nested_payload_controls,
+        ) = _terminal_keyword_view(line, kind, control_spans)
+        # The alternate payload interpretation can differ only when a retained
+        # string-control payload itself contains controls.
+        scheduled_payload_key_join = (
+            kind == "payload-clean" and has_nested_payload_controls
+        )
+        if scheduled_payload_key_join:
+            view_kinds.insert(kind_index, "payload-key-join")
+        if fail_closed:
+            return "[redacted]"
         start = _mapped_secret_keyword_start(line, view, spans)
         if start is None:
+            if token_start == 0:
+                break
             continue
         while start > 0 and not line[start - 1].isspace():
             start -= 1
@@ -662,7 +720,7 @@ def _redact_controlled_secret_line(
                 start = control_start
                 break
         token_start = start if token_start is None else min(token_start, start)
-        if token_start == 0:
+        if token_start == 0 and not scheduled_payload_key_join:
             break
     if token_start is None:
         return line
@@ -1278,6 +1336,35 @@ def save_task(store: Store, task: dict[str, Any]) -> None:
     store.write("task", "update", task["id"], strip_row(task))
 
 
+def completed_comment_timestamp(store: Store, activity_id: Any) -> str | None:
+    """Return the valid durable completion time of a comment activity."""
+    if not isinstance(activity_id, str) or not activity_id:
+        return None
+    # Store.row() intentionally omits materialization metadata.  Store.rows()
+    # carries the durable updated_at value used by legacy coordinator records
+    # that predate an explicit requirement_satisfied_at checkpoint.
+    for row in store.rows("activity"):
+        if row.get("id") != activity_id:
+            continue
+        if (
+            row.get("type") != "comment.post"
+            or row.get("execution_status") != "done"
+        ):
+            return None
+        result = row.get("result")
+        created_at = result.get("created_at") if isinstance(result, dict) else None
+        if (
+            isinstance(created_at, str)
+            and parse_utc_timestamp(created_at) is not None
+        ):
+            return created_at
+        stamp = row.get("_updated_at")
+        if isinstance(stamp, str) and parse_utc_timestamp(stamp) is not None:
+            return stamp
+        return None
+    return None
+
+
 def seconds_since(value: object) -> float | None:
     """Seconds between a stored UTC timestamp and now; None when it cannot be read."""
     then = parse_utc_timestamp(value)
@@ -1533,6 +1620,14 @@ def comment_target(task: dict[str, Any]) -> tuple[str, int, str] | None:
 
 def is_sha(value: str) -> bool:
     return bool(_SHA_RE.fullmatch(value))
+
+
+def normalized_sha(value: Any) -> str | None:
+    """Return a canonical SHA only for a genuine string JSON value."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower()
+    return normalized if is_sha(normalized) else None
 
 
 _SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")

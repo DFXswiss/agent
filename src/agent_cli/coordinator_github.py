@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -39,6 +40,7 @@ from .coordinator_common import (
     a38_model_second,
     as_int,
     comment_target,
+    completed_comment_timestamp,
     coord,
     coordinator_env,
     evidence_base_sha,
@@ -46,6 +48,7 @@ from .coordinator_common import (
     gh_list,
     is_sha,
     is_order,
+    normalized_sha,
     order_id,
     redact,
     redact_tail,
@@ -1243,12 +1246,14 @@ def _observe_exact_head_ci(
         return _CiObservation("transport", "PR view temporarily unavailable")
     if not isinstance(pr, dict):
         return _CiObservation("protocol", "PR view failed")
-    observed_head = str(pr.get("headRefOid") or "")
-    if observed_head.lower() != head.lower():
+    observed_head = normalized_sha(pr.get("headRefOid"))
+    if observed_head is None:
+        return _CiObservation("transport", "PR head temporarily unavailable")
+    if observed_head != head.lower():
         return _CiObservation(
             "head_changed",
             "PR head changed",
-            new_head=(observed_head or head).lower(),
+            new_head=observed_head,
         )
     rollup = pr.get("statusCheckRollup")
     # Absent rollup must not skip head workflow inventory: action_required (and
@@ -1573,11 +1578,11 @@ def _parse_readiness_result(stdout: str, *, head: str, base: str, base_name: str
         ) from exc
     if not isinstance(data, dict):
         raise CoordinatorError("readiness JSON must be an object")
-    result_head = str(data.get("head") or "").lower()
-    if not is_sha(result_head) or result_head != head.lower():
+    result_head = normalized_sha(data.get("head"))
+    if result_head is None or result_head != head.lower():
         raise CoordinatorError("readiness JSON head does not match exact clean signed HEAD")
-    result_base = str(data.get("base") or "")
-    base_ok = is_sha(result_base.lower()) and result_base.lower() == base.lower()
+    result_base = normalized_sha(data.get("base"))
+    base_ok = result_base is not None and result_base == base.lower()
     if not base_ok:
         raise CoordinatorError("readiness JSON base does not match pinned base")
     if data.get("contributing_ok") is not True:
@@ -1800,9 +1805,16 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
             ]
         if not isinstance(before_readiness, dict):
             raise CoordinatorError("PR view failed")
-        if str(before_readiness.get("headRefOid") or "").lower() != head:
+        observed_head = normalized_sha(before_readiness.get("headRefOid"))
+        observed_base = normalized_sha(before_readiness.get("baseRefOid"))
+        if observed_head is None or observed_base is None:
+            c["phase"] = "readiness"
+            save_task(store, task)
+            return [
+                f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"
+            ]
+        if observed_head != head:
             raise CoordinatorError("PR head does not match clean signed head")
-        observed_base = str(before_readiness.get("baseRefOid") or "").lower()
         from .coordinator_a38 import _reconcile_pending_base, invalidate_base_evidence
 
         if _reconcile_pending_base(store, task, observed_base):
@@ -1813,8 +1825,8 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
                 "PR base changed before readiness; invalidating A38 report evidence"
             ]
         a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
-        promoted_base = str(a38_state.get("base_sha") or "").lower()
-        if not is_sha(promoted_base) or observed_base != promoted_base:
+        promoted_base = normalized_sha(a38_state.get("base_sha"))
+        if promoted_base is None or observed_base != promoted_base:
             invalidate_base_evidence(store, task, observed_base)
             c = coord(task)
             c["phase"] = "tests"
@@ -1856,11 +1868,16 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         return [f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"]
     if not isinstance(pr, dict):
         raise CoordinatorError("PR view failed")
+    observed_head = normalized_sha(pr.get("headRefOid"))
+    observed_base = normalized_sha(pr.get("baseRefOid"))
+    if observed_head is None or (worker.a38 and observed_base is None):
+        c["phase"] = "readiness"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"]
     account = account_for(store, worker.session_id)
-    if str(pr.get("headRefOid") or "").lower() != head:
+    if observed_head != head:
         raise CoordinatorError("PR head does not match clean signed head")
     if worker.a38:
-        observed_base = str(pr.get("baseRefOid") or "").lower()
         from .coordinator_a38 import _reconcile_pending_base
 
         if _reconcile_pending_base(store, task, observed_base):
@@ -1871,8 +1888,8 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
                 "PR base changed before readiness; invalidating A38 report evidence"
             ]
         a38_state = c.get("a38") if isinstance(c.get("a38"), dict) else {}
-        promoted_base = str(a38_state.get("base_sha") or "").lower()
-        if not is_sha(promoted_base) or observed_base != promoted_base:
+        promoted_base = normalized_sha(a38_state.get("base_sha"))
+        if promoted_base is None or observed_base != promoted_base:
             from .coordinator_a38 import invalidate_base_evidence
 
             invalidate_base_evidence(store, task, observed_base)
@@ -2587,7 +2604,12 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
     if not isinstance(pr, dict):
         raise CoordinatorError("PR view failed")
-    if str(pr.get("headRefOid") or "").lower() != head:
+    observed_head = normalized_sha(pr.get("headRefOid"))
+    if observed_head is None:
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
+    if observed_head != head:
         raise CoordinatorError("PR head mismatch before leave-draft")
     if str(pr.get("mergeable") or "").upper() != "MERGEABLE":
         raise CoordinatorError("PR not mergeable before leave-draft")
@@ -2672,7 +2694,18 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     )
     if verify.get("isDraft") is not False:
         raise CoordinatorError("leave-draft did not clear isDraft")
-    if str(verify.get("headRefOid") or "").lower() != head:
+    verified_head = normalized_sha(verify.get("headRefOid"))
+    if verified_head is None:
+        if verify.get("state") == "OPEN" and verify.get("isDraft") is False:
+            undone = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target, "--undo"])
+            if undone.returncode != 0:
+                raise CoordinatorError(
+                    "PR metadata unavailable after Ready; returning it to Draft also failed"
+                )
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
+    if verified_head != head:
         if verify.get("state") == "OPEN" and verify.get("isDraft") is False:
             undone = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target, "--undo"])
             if undone.returncode != 0:
@@ -2885,22 +2918,48 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     )
     state = str(info.get("state") or "").upper()
     if info.get("merged") is True:
+        head_info = info.get("head")
+        head = head_info if isinstance(head_info, dict) else {}
+        observed_head = normalized_sha(head.get("sha"))
+        if observed_head is None:
+            return ["merge observed but head SHA missing or invalid"]
+        if observed_head != expected_head.lower():
+            clear_reply_recovery(c)
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR head differs from reviewed head; "
+                "a merged PR cannot be remeasured"
+            )
         second_review_wait: list[str] | None = None
-        sha = str(info.get("merge_commit_sha") or "")
-        merged_at = str(info.get("merged_at") or "")
-        merged_by = info.get("merged_by") if isinstance(info.get("merged_by"), dict) else None
-        if not sha or not merged_at:
+        sha = normalized_sha(info.get("merge_commit_sha"))
+        reported_merged_at = info.get("merged_at")
+        merged_at = (
+            reported_merged_at
+            if isinstance(reported_merged_at, str)
+            and parse_utc_timestamp(reported_merged_at) is not None
+            else None
+        )
+        merged_by_info = info.get("merged_by")
+        merged_by = merged_by_info if isinstance(merged_by_info, dict) else None
+        base_info = info.get("base")
+        base = base_info if isinstance(base_info, dict) else {}
+        observed_base = normalized_sha(base.get("sha"))
+        if observed_base is None:
+            return ["merge observed but incomplete metadata"]
+        if not worker.a38 and (sha is None or merged_at is None):
             return ["merge observed but incomplete metadata"]
         if merged_by is None:
             return ["merge observed but mergedBy missing"]
         # REQUIRE actual type User from REST pulls API. Never default missing type to human.
-        merged_type = str(merged_by.get("type") or "")
-        login = str(merged_by.get("login") or "")
-        if not login:
-            return ["merge observed but mergedBy login missing"]
-        if merged_type not in ("User",):
+        merged_type = merged_by.get("type")
+        login = merged_by.get("login")
+        if not isinstance(merged_type, str) or merged_type != "User":
+            actor_type = (
+                merged_type
+                if isinstance(merged_type, str) and merged_type
+                else "missing"
+            )
             c["phase"] = "blocked"
-            c["blocker"] = f"merge by non-human or unknown actor type ({merged_type or 'missing'})"
+            c["blocker"] = f"merge by non-human or unknown actor type ({actor_type})"
             # Intentionally non-recoverable: drop stale ask/CI/formal checkpoints
             # so a later authorized comment cannot resume implement.
             clear_reply_recovery(c)
@@ -2910,11 +2969,17 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 worker,
                 task,
                 runner,
-                f"Merge was not by a human User (got {merged_type or 'missing type'})",
+                "Merge was not by a human User "
+                f"(got {actor_type if actor_type != 'missing' else 'missing type'})",
                 kind="nonhuman-merge",
             )
+        if not isinstance(login, str) or not login:
+            return ["merge observed but mergedBy login missing"]
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
-        if str((info.get("base") or {}).get("ref") or "") != cfg.base:
+        base_ref = base.get("ref")
+        if not isinstance(base_ref, str) or not base_ref.strip():
+            return ["merge observed but incomplete metadata"]
+        if base_ref != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
         if worker.a38:
             moved_base = c.get("base_moved_after_evidence")
@@ -2926,22 +2991,19 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     f"{old_base or 'unknown'} to {new_base or 'unknown'}; "
                     "a merged PR cannot be remeasured"
                 )
-            observed_base = str((info.get("base") or {}).get("sha") or "").lower()
             a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
-            saved_base = str(a38.get("base_sha") or "").lower()
-            if not is_sha(observed_base):
-                return ["merge observed but base SHA missing or invalid"]
-            pending_base = str(a38.get("pending_base_sha") or "").lower()
+            saved_base = normalized_sha(a38.get("base_sha"))
+            pending_base = normalized_sha(a38.get("pending_base_sha"))
             if pending_base:
                 from .coordinator_a38 import mark_base_moved_after_evidence
 
-                if is_sha(saved_base) and saved_base != observed_base:
+                if saved_base is not None and saved_base != observed_base:
                     mark_base_moved_after_evidence(
                         c, old_base=saved_base, new_base=observed_base
                     )
                 reopen_base_bound_checklist(store, task)
                 save_task(store, task)
-                if is_sha(saved_base) and saved_base != observed_base:
+                if saved_base is not None and saved_base != observed_base:
                     raise NonRecoverableCoordinatorError(
                         "task-done refused: merged PR base moved after evidence from "
                         f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
@@ -2950,10 +3012,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR base evidence was still pending; "
                     "a merged PR cannot be remeasured"
                 )
-            if not is_sha(saved_base) or observed_base != saved_base:
+            if saved_base is None or observed_base != saved_base:
                 from .coordinator_a38 import mark_base_moved_after_evidence
 
-                if not is_sha(saved_base):
+                if saved_base is None:
                     clear_reply_recovery(c)
                     raise NonRecoverableCoordinatorError(
                         "task-done refused: merged PR has no trusted evidence base; "
@@ -2968,14 +3030,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     "task-done refused: merged PR base moved after evidence from "
                     f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
                 )
-        if str((info.get("head") or {}).get("sha") or "") != expected_head:
-            clear_reply_recovery(c)
-            raise NonRecoverableCoordinatorError(
-                "task-done refused: merged PR head differs from reviewed head; "
-                "a merged PR cannot be remeasured"
-            )
         if worker.a38:
-            from .coordinator_a38 import merged_base_evidence_satisfied
+            from .coordinator_a38 import (
+                merged_base_evidence_satisfied,
+                merged_report_visibility_satisfied,
+            )
 
             if not merged_base_evidence_satisfied(
                 store,
@@ -2991,22 +3050,47 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
             from .coordinator_checks import second_review_waived
 
+            review_waived = second_review_waived(store, task)
             second_review = (
                 "passed"
-                if second_review_waived(store, task)
+                if review_waived
                 else _a38_second_review_outcome(c, expected_head)
             )
-            if second_review != "passed":
+            if not review_waived:
                 second_review_wait = _await_second_review_after_merge(
                     store,
                     worker,
                     task,
                     runner,
                     expected_head,
-                    blocking=second_review == "blocking",
+                    outcome=second_review,
+                    merged_at=merged_at,
                 )
                 if c.get("phase") == "blocked":
-                    return second_review_wait
+                    return second_review_wait or [
+                        "blocked: merged-head second-review deadline failed"
+                    ]
+            if sha is None:
+                return ["merge observed but incomplete metadata"]
+            try:
+                visibility_satisfied = merged_report_visibility_satisfied(
+                    store,
+                    worker,
+                    task,
+                    scoped_runner,
+                )
+            except NonRecoverableCoordinatorError:
+                raise
+            except CoordinatorError:
+                return [
+                    "merge observed but repository visibility is temporarily "
+                    "unavailable; retrying await_merge"
+                ]
+            if not visibility_satisfied:
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR visibility differs from the stored "
+                    "A38 report; a merged PR cannot be remeasured"
+                )
         # Do not manufacture checklist values or boilerplate summaries here.
         # The ordinary route closes readiness before Ready; an early A38 merge
         # closes it below from the same trusted source before task-done.
@@ -3063,6 +3147,8 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 )
         if second_review_wait is not None:
             return second_review_wait
+        if merged_at is None:
+            return ["merge observed but incomplete metadata"]
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -3195,60 +3281,134 @@ def _await_second_review_after_merge(
     runner: Runner,
     head: str,
     *,
-    blocking: bool,
-) -> list[str]:
-    """Handle a merged head whose required second review is missing or blocking."""
+    outcome: str,
+    merged_at: str | None = None,
+) -> list[str] | None:
+    """Evaluate the merged-head second review against its merge-time deadline."""
     c = coord(task)
     model = a38_model_second(c)
-    if blocking:
-        c["phase"] = "blocked"
-        c["blocker"] = (
-            f"merged although the model second review blocks the merge on {head}"
-            if model
-            else f"merged although the external second review blocks the merge on {head}"
-        )
-        clear_reply_recovery(c)
-        save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            (
-                f"Pull request was merged on {head[:7]} although the model second review blocks the merge."
-                if model
-                else f"Pull request was merged on {head[:7]} although the external second review blocks the merge."
-            ),
-            kind="merged-with-blocking-second-review",
-        )
-    if model:
-        # No model review can arrive after the merge; do not wait.
-        c["phase"] = "blocked"
-        c["blocker"] = f"merged before the model second review was posted on {head}"
-        clear_reply_recovery(c)
-        save_task(store, task)
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            f"Pull request was merged on {head[:7]} before the model second review was posted.",
-            kind="merged-without-second-review",
-        )
     a38 = c.setdefault("a38", {})
     stamp = utcnow()
     now = _parse_coordinator_time(stamp)
-    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
     if now is None:
         raise CoordinatorError("coordinator clock returned an invalid timestamp")
-    if since is None:
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    source = str(a38.get("merged_waiting_since_source") or "")
+    merged_since = _parse_coordinator_time(merged_at)
+    if merged_since is not None:
+        if since != merged_since or source != "merged_at":
+            a38["merged_waiting_since"] = merged_at
+            a38["merged_waiting_since_source"] = "merged_at"
+            save_task(store, task)
+        since = merged_since
+    elif since is None:
         a38["merged_waiting_since"] = stamp
+        a38["merged_waiting_since_source"] = "first_observation"
         save_task(store, task)
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
-    if (now - since).total_seconds() < worker.second_review_timeout_seconds:
-        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+        since = now
+    elif source not in ("merged_at", "first_observation"):
+        a38["merged_waiting_since_source"] = "first_observation"
+        save_task(store, task)
+
+    if outcome == "blocking":
+        route = "model" if model else "external"
+        c["phase"] = "blocked"
+        c["blocker"] = (
+            f"merged although the {route} second review blocks the merge on {head}"
+        )
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} although the {route} second review blocks the merge.",
+            kind="merged-with-blocking-second-review",
+        )
+
+    deadline = since + timedelta(seconds=worker.second_review_timeout_seconds)
+    satisfied_at = None
+    legacy_pass_without_timestamp = False
+    state = a38.get("second_comment" if model else "second_review")
+    if outcome == "passed" and isinstance(state, dict) and state.get("head") == head:
+        requirement_stamp = state.get("requirement_satisfied_at")
+        satisfied_at = _parse_coordinator_time(requirement_stamp)
+        if model:
+            if requirement_stamp is None:
+                derived = completed_comment_timestamp(
+                    store, state.get("activity_id")
+                )
+                if derived is not None:
+                    state["requirement_satisfied_at"] = derived
+                    satisfied_at = _parse_coordinator_time(derived)
+                    save_task(store, task)
+                else:
+                    legacy_pass_without_timestamp = True
+        else:
+            reviews = state.get("reviews")
+            entries = [review for review in reviews or [] if isinstance(review, dict)]
+            if entries and entries[-1].get("blocks_merge") is not True:
+                deciding = entries[-1]
+                review_stamp = deciding.get("at")
+                review_at = _parse_coordinator_time(review_stamp)
+                if review_at is not None:
+                    satisfied_at = review_at
+                    if requirement_stamp != review_stamp:
+                        state["requirement_satisfied_at"] = review_stamp
+                        save_task(store, task)
+                elif requirement_stamp is None and "at" not in deciding:
+                    derived = completed_comment_timestamp(
+                        store, deciding.get("activity_id")
+                    )
+                    if derived is not None:
+                        state["requirement_satisfied_at"] = derived
+                        satisfied_at = _parse_coordinator_time(derived)
+                        save_task(store, task)
+                    else:
+                        legacy_pass_without_timestamp = True
+            elif requirement_stamp is None:
+                derived = completed_comment_timestamp(
+                    store, state.get("activity_id")
+                )
+                if derived is not None:
+                    state["requirement_satisfied_at"] = derived
+                    satisfied_at = _parse_coordinator_time(derived)
+                    save_task(store, task)
+                else:
+                    legacy_pass_without_timestamp = True
+    if satisfied_at is not None and satisfied_at <= deadline:
+        return None
+    if legacy_pass_without_timestamp:
+        # Older installations persisted a verified posted pass without a time.
+        # With no authoritative timestamp left to recover, preserve that pass
+        # instead of manufacturing a late-review blocker during an upgrade.
+        if state.get("requirement_satisfied_legacy") is not True:
+            state["requirement_satisfied_legacy"] = True
+            save_task(store, task)
+        return None
+    evidence = c.get("evidence")
+    if (
+        model
+        and isinstance(evidence, dict)
+        and evidence.get("ready_head") == head
+    ):
+        # The model comment is a prerequisite of the guard making this exact
+        # head Ready.  That observed ordering proves the comment preceded the
+        # human merge even when the local activity clock and GitHub's mergedAt
+        # clock are inconsistent.  Early merges have no ready_head and remain
+        # subject to the timestamp deadline above and below.
+        return None
+    if satisfied_at is None and now < deadline:
+        route = "model" if model else "external"
+        return [
+            f"human merge observed on {head[:7]}; "
+            f"awaiting the {route} second review"
+        ]
+    route = "model" if model else "external"
+    article = "a" if model else "an"
     c["phase"] = "blocked"
-    c["blocker"] = f"merged without an external second review on {head}"
+    c["blocker"] = f"merged without {article} {route} second review on {head}"
     clear_reply_recovery(c)
     save_task(store, task)
     return publish_blocker(
@@ -3256,7 +3416,7 @@ def _await_second_review_after_merge(
         worker,
         task,
         runner,
-        f"Pull request was merged on {head[:7]} without an external second review.",
+        f"Pull request was merged on {head[:7]} without {article} {route} second review.",
         kind="merged-without-second-review",
     )
 

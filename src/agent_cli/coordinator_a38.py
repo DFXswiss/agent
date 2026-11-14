@@ -41,6 +41,7 @@ from .allow import (
 from .coordinator_common import (
     a38_model_second,
     check_label,
+    completed_comment_timestamp,
     CoordinatorError,
     NonRecoverableCoordinatorError,
     Runner,
@@ -51,11 +52,13 @@ from .coordinator_common import (
     gh_json,
     infra_failure,
     is_sha,
+    normalized_sha,
     redact,
     redact_tail,
     reopen_base_bound_checklist,
     save_task,
     scoped,
+    strip_row,
     target_repo,
 )
 from .coordinator_config import WorkerConfig
@@ -83,6 +86,8 @@ from .coordinator_lanes import (
 from .github_act import (
     ACTIVITY_MARKER,
     A38_REPORT_BINDING_KEY,
+    A38_MODEL_SECOND_REVIEW_COMMENT,
+    COMMENT_KIND_KEY,
     a38_report_activity_lock,
     a38_report_task_lock,
     coordinator_a38_report_activity_id,
@@ -123,6 +128,10 @@ _LANE_KEYS = frozenset(
 
 class _PullRequestBaseUnavailable(CoordinatorError):
     """Transient missing or malformed base revision from a pull-request read."""
+
+
+class _PullRequestHeadUnavailable(CoordinatorError):
+    """Transient missing or malformed head revision from a pull-request read."""
 
 
 class _PullRequestNotOpen(CoordinatorError):
@@ -348,12 +357,12 @@ def _pull_a38_context(
         "headRefOid,baseRefOid,baseRefName,state",
     ]
 
-    def metadata() -> tuple[str, str, str, str]:
+    def metadata() -> tuple[str | None, str | None, str, str]:
         view = gh_json(api, metadata_argv)
         if not isinstance(view, dict):
             raise CoordinatorError("A38 pull request metadata is invalid")
-        head = str(view.get("headRefOid") or "").lower()
-        base_sha = str(view.get("baseRefOid") or "").lower()
+        head = normalized_sha(view.get("headRefOid"))
+        base_sha = normalized_sha(view.get("baseRefOid"))
         base_name = str(view.get("baseRefName") or "")
         state = str(view.get("state") or "").upper()
         if state in ("MERGED", "CLOSED"):
@@ -362,13 +371,15 @@ def _pull_a38_context(
             raise CoordinatorError("A38 pull request state is invalid")
         return head, base_sha, base_name, state
 
-    last_before: tuple[str, str, str, str] | None = None
+    last_before: tuple[str | None, str | None, str, str] | None = None
+    last_after: tuple[str | None, str | None, str, str] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS):
         before = metadata()
         last_before = before
+        last_after = None
         if (
             before[0] != expected_head
-            or not is_sha(before[1])
+            or before[1] is None
             or before[2] != expected_base
         ):
             continue
@@ -392,17 +403,30 @@ def _pull_a38_context(
         # paths before the shared 500-path waiver ceiling is applied.
         markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
         after = metadata()
+        last_after = after
         if after == before:
-            return before[1], paths, markdown_only, guard_docs_only
-    if last_before is not None and last_before[0] != expected_head:
+            observed_base = before[1]
+            if observed_base is None:
+                raise _PullRequestBaseUnavailable(
+                    "A38 pull request base revision is not a 40-hex SHA"
+                )
+            return observed_base, paths, markdown_only, guard_docs_only
+    final_reads = tuple(
+        snapshot for snapshot in (last_before, last_after) if snapshot is not None
+    )
+    if any(snapshot[0] is None for snapshot in final_reads):
+        raise _PullRequestHeadUnavailable(
+            "A38 pull request head revision is not a 40-hex SHA"
+        )
+    if any(snapshot[0] != expected_head for snapshot in final_reads):
         raise CoordinatorError(
             "A38 pull request head differs from the clean signed head"
         )
-    if last_before is not None and not is_sha(last_before[1]):
+    if any(snapshot[1] is None for snapshot in final_reads):
         raise _PullRequestBaseUnavailable(
             "A38 pull request base revision is not a 40-hex SHA"
         )
-    if last_before is not None and last_before[2] != expected_base:
+    if any(snapshot[2] != expected_base for snapshot in final_reads):
         raise CoordinatorError(
             "A38 pull request base branch differs from coordinator configuration"
         )
@@ -452,6 +476,17 @@ def _repository_visibility(api: Runner, repo: str) -> bool:
     if not isinstance(visibility, bool):
         raise CoordinatorError("target repository visibility lookup did not return a boolean")
     return visibility
+
+
+def _report_body_private(body: str) -> bool:
+    """Read the exact visibility asserted by a stored local-CI report body."""
+    try:
+        report = parse_comment(body)
+    except LocalCiError as exc:
+        raise NonRecoverableCoordinatorError(
+            "stored A38 report body is invalid"
+        ) from exc
+    return report.private
 
 
 def _validate_report_body(
@@ -638,19 +673,16 @@ def _validated_post_suite_checkpoint(value: Any) -> dict[str, Any]:
 
 
 def _stable_live_pr_context(
-    store: Store,
-    worker: WorkerConfig,
     task: Mapping[str, Any],
-    runner: Runner,
+    api: Runner,
 ) -> dict[str, Any] | None:
-    """Read one stable live PR identity, head, base, branch and state snapshot."""
+    """Read one stable live PR snapshot through an already scoped GitHub runner."""
     candidate = dict(task)
     c = coord(candidate)
     number = as_int(c.get("pr_number") or candidate.get("ref"))
     repo = target_repo(candidate)
     if number is None or not repo:
         return None
-    api = scoped(store, worker.session_id, runner)
     previous: dict[str, Any] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS + 1):
         try:
@@ -674,15 +706,15 @@ def _stable_live_pr_context(
         current = {
             "repo": repo,
             "number": as_int(view.get("number")),
-            "head": str(view.get("headRefOid") or "").lower(),
-            "base_sha": str(view.get("baseRefOid") or "").lower(),
+            "head": normalized_sha(view.get("headRefOid")),
+            "base_sha": normalized_sha(view.get("baseRefOid")),
             "base_name": str(view.get("baseRefName") or ""),
             "state": str(view.get("state") or "").upper(),
         }
         if (
             current["number"] != number
-            or not is_sha(current["head"])
-            or not is_sha(current["base_sha"])
+            or current["head"] is None
+            or current["base_sha"] is None
             or not current["base_name"]
             or current["state"] not in ("OPEN", "CLOSED", "MERGED")
         ):
@@ -915,6 +947,7 @@ def _resume_post_suite_report(
     worker: WorkerConfig,
     task: dict[str, Any],
     runner: Runner,
+    api: Runner,
 ) -> list[str]:
     """Finish only live-head validation, publication, and evidence promotion."""
     c = coord(task)
@@ -988,13 +1021,65 @@ def _resume_post_suite_report(
             "and remeasuring"
         ]
 
-    live = _stable_live_pr_context(store, worker, task, runner)
+    live = _stable_live_pr_context(task, api)
     if live is None:
         return ["PR state temporarily unavailable after the A38 suite; retrying"]
     mismatch_lines = validate_live_context(live)
     if mismatch_lines is not None:
         return mismatch_lines
     live_state = str(live["state"])
+
+    def validate_live_visibility(api: Runner) -> list[str] | None:
+        try:
+            live_visibility = _repository_visibility(api, cfg.repo)
+        except CoordinatorError:
+            return [
+                "repository visibility temporarily unavailable before A38 report "
+                "finalization; retrying"
+            ]
+        if (
+            _report_body_private(report_body) is visibility
+            and live_visibility is visibility
+        ):
+            return None
+        reason = "A38 report visibility no longer matches the target repository"
+        if live_state == "MERGED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="tests",
+            )
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: merged PR visibility differs from the stored "
+                "A38 report; a merged PR cannot be remeasured"
+            )
+        if live_state == "CLOSED":
+            _retire_post_suite_checkpoint(
+                store,
+                task,
+                reason=reason,
+                phase="await_merge",
+            )
+            return [
+                "PR closed after repository visibility changed; verifying the merge "
+                "without promoting the A38 report"
+            ]
+        _retire_post_suite_checkpoint(
+            store,
+            task,
+            reason=reason,
+            phase="tests",
+        )
+        return [
+            "repository visibility changed after A38 measurement; invalidating "
+            "the report and remeasuring"
+        ]
+
+    # A transient visibility lookup must not trigger draft or report effects.
+    visibility_lines = validate_live_visibility(api)
+    if visibility_lines is not None:
+        return visibility_lines
     draft_lines: list[str] = []
     if live_state == "OPEN":
         draft_lines = ensure_draft(store, worker, task, runner)
@@ -1018,13 +1103,17 @@ def _resume_post_suite_report(
 
     # Publication gets a final coherent live join after draft/checklist recovery.
     # No report intent is queued from an unreadable or changed snapshot.
-    live = _stable_live_pr_context(store, worker, task, runner)
+    live = _stable_live_pr_context(task, api)
     if live is None:
         return ["PR state temporarily unavailable before A38 publication; retrying"]
     mismatch_lines = validate_live_context(live)
     if mismatch_lines is not None:
         return mismatch_lines
     live_state = str(live["state"])
+
+    visibility_lines = validate_live_visibility(api)
+    if visibility_lines is not None:
+        return visibility_lines
 
     default_activity_id = _report_activity_id(
         str(task["id"]),
@@ -1132,6 +1221,12 @@ def _resume_post_suite_report(
     ):
         raise CoordinatorError("A38 report comment was not verified published")
 
+    # Close the visibility race after publication and immediately before the
+    # report becomes completion evidence.
+    visibility_lines = validate_live_visibility(api)
+    if visibility_lines is not None:
+        return visibility_lines
+
     _finalize_report_evidence(
         store,
         worker,
@@ -1233,6 +1328,7 @@ def _finalize_report_evidence(
                     "base_sha": base_sha,
                     "policy_revision": policy_revision,
                     "activity_id": activity_id,
+                    "body": str(payload["body"]),
                     "id": result.get("id"),
                     "url": result["url"],
                 }
@@ -1315,8 +1411,9 @@ def phase_tests(
     """Run the optional trusted precheck, complete A38 suite, and publish its report."""
     if not worker.a38:
         raise CoordinatorError("A38 tests phase called for a non-A38 worker")
+    api = scoped(store, worker.session_id, runner)
     if post_suite_checkpoint_pending(task):
-        return _resume_post_suite_report(store, worker, task, runner)
+        return _resume_post_suite_report(store, worker, task, runner, api)
     checkpoint_state = copy.deepcopy(_report_checkpoint_state(task))
     c = coord(task)
     source = c["source"]
@@ -1327,7 +1424,6 @@ def phase_tests(
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 measurement requires a pull request number")
-    api = scoped(store, worker.session_id, runner)
     try:
         base_sha, changed_paths, markdown_only, guard_docs_only = _pull_a38_context(
             api,
@@ -1342,7 +1438,7 @@ def phase_tests(
         return [
             f"PR {exc.state.lower()} before A38 measurement; verifying the merge"
         ]
-    except _PullRequestBaseUnavailable:
+    except (_PullRequestBaseUnavailable, _PullRequestHeadUnavailable):
         return ["PR state temporarily unavailable; retrying"]
     # Policy migration is intentionally not implemented by this coordinator.
     # Never publish evidence against obsolete base policy or workflow controls.
@@ -1419,7 +1515,7 @@ def phase_tests(
         def current_waiver_context() -> tuple[
             dict[str, Any] | None, list[str] | None
         ]:
-            live = _stable_live_pr_context(store, worker, task, runner)
+            live = _stable_live_pr_context(task, api)
             if live is None:
                 return None, [
                     "PR state temporarily unavailable before A38 inventory waiver "
@@ -1631,7 +1727,7 @@ def phase_tests(
                 "private": visibility,
             },
         )
-        return _resume_post_suite_report(store, worker, task, runner)
+        return _resume_post_suite_report(store, worker, task, runner, api)
 
     if cfg.check_argv:
         from .coordinator_common import coordinator_env
@@ -1824,7 +1920,7 @@ def phase_tests(
             "private": visibility,
         },
     )
-    return _resume_post_suite_report(store, worker, task, runner)
+    return _resume_post_suite_report(store, worker, task, runner, api)
 
 
 def _summary(task: Mapping[str, Any], language: str) -> str:
@@ -1933,18 +2029,36 @@ def _post_comment(
     *,
     activity_id: str,
     body: str,
+    comment_kind: str | None = None,
 ) -> dict[str, Any]:
     c = coord(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 comment requires a pull request number")
-    payload = {
+    base_payload = {
         "repo": target_repo(task),
         "number": number,
         "body": body,
         "target": "pr",
     }
+    payload = dict(base_payload)
+    if comment_kind is not None:
+        payload[COMMENT_KIND_KEY] = comment_kind
     row = store.row("activity", activity_id)
+    if (
+        isinstance(row, dict)
+        and comment_kind is not None
+        and _own_comment_activity(store, worker, row, base_payload)
+    ):
+        if row.get("execution_status") == "done":
+            # Completed records from before comment kinds existed retain their
+            # local completion fallback and are never executed again.
+            payload = base_payload
+        else:
+            updated = strip_row(row)
+            updated["payload"] = payload
+            store.write("activity", "update", activity_id, updated)
+            row = store.row("activity", activity_id)
     if isinstance(row, dict) and not _own_comment_activity(
         store, worker, row, payload
     ):
@@ -2411,7 +2525,9 @@ def phase_second_comment(
         runner,
         activity_id=activity_id,
         body=body,
+        comment_kind=A38_MODEL_SECOND_REVIEW_COMMENT,
     )
+    satisfied_at = completed_comment_timestamp(store, activity_id)
     comment = {
         "head": head,
         "activity_id": activity_id,
@@ -2419,6 +2535,8 @@ def phase_second_comment(
         "url": result.get("url"),
         "blocks_merge": blocks,
     }
+    if not blocks and satisfied_at is not None:
+        comment["requirement_satisfied_at"] = satisfied_at
     if blocks:
         _apply_rejected_gate_transition(
             task,
@@ -2942,14 +3060,19 @@ def reconcile_a38_publication_intents(
             runner,
             activity_id=second_id,
             body=second_body,
+            comment_kind=A38_MODEL_SECOND_REVIEW_COMMENT,
         )
-        _a38_state(coord(task))["second_comment"] = {
+        satisfied_at = completed_comment_timestamp(store, second_id)
+        comment = {
             "head": head,
             "activity_id": second_id,
             "id": second_result.get("id"),
             "url": second_result.get("url"),
             "blocks_merge": second_blocks,
         }
+        if not second_blocks and satisfied_at is not None:
+            comment["requirement_satisfied_at"] = satisfied_at
+        _a38_state(coord(task))["second_comment"] = comment
         save_task(store, task)
         lines.append(f"second A38 review comment reconciled on {head[:7]}")
     return lines
@@ -3029,10 +3152,7 @@ def fresh_pr_head(
         )
     except CoordinatorError:
         return None
-    head = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
-    if not is_sha(head):
-        raise CoordinatorError("cannot read current pull request head")
-    return head
+    return normalized_sha(view.get("headRefOid")) if isinstance(view, dict) else None
 
 
 def pr_state(
@@ -3294,6 +3414,9 @@ def intake_second_reviews(
             _mark_message_read(store, worker, message_id)
             lines.append(f"blocking external second review by @{login} recorded")
             continue
+        # Merge-deadline checks use this durable review-record timestamp, not
+        # the later coordinator tick that happens to ingest the mail.
+        state["requirement_satisfied_at"] = at
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
@@ -3639,6 +3762,53 @@ def merged_base_evidence_satisfied(
     )
 
 
+def merged_report_visibility_satisfied(
+    store: Store,
+    worker: WorkerConfig,
+    task: Mapping[str, Any],
+    api: Runner,
+) -> bool:
+    """Compare a finalized report body with current repository visibility.
+
+    Inventory waivers have no local-CI report body and therefore no stored
+    visibility assertion to revalidate here.
+    """
+    candidate = dict(task)
+    c = coord(candidate)
+    report = _a38_state(c).get("report")
+    if not isinstance(report, Mapping):
+        return True
+    activity_id = report.get("activity_id")
+    activity = (
+        store.row("activity", activity_id)
+        if isinstance(activity_id, str) and activity_id
+        else None
+    )
+    if not isinstance(activity, dict) or not _own_report_activity(
+        store,
+        worker,
+        candidate,
+        activity,
+        str(report.get("head") or ""),
+    ):
+        activity = None
+    payload = activity.get("payload") if isinstance(activity, Mapping) else None
+    activity_body = payload.get("body") if isinstance(payload, Mapping) else None
+    body = report.get("body")
+    if isinstance(activity_body, str) and activity_body:
+        if isinstance(body, str) and body and body != activity_body:
+            raise NonRecoverableCoordinatorError(
+                "task-done refused: stored A38 report bodies differ"
+            )
+        body = activity_body
+    if not isinstance(body, str) or not body:
+        raise NonRecoverableCoordinatorError(
+            "task-done refused: stored A38 report body is unavailable"
+        )
+    live_visibility = _repository_visibility(api, target_repo(candidate))
+    return _report_body_private(body) is live_visibility
+
+
 def mark_base_moved_after_evidence(
     c: dict[str, Any], *, old_base: str, new_base: str
 ) -> None:
@@ -3696,10 +3866,12 @@ def phase_await_ready(
         )
     except CoordinatorError:
         return ["PR state temporarily unavailable; retrying"]
-    observed = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
+    if not isinstance(view, dict):
+        raise CoordinatorError("cannot read pull request head while awaiting Ready")
+    observed = normalized_sha(view.get("headRefOid"))
+    if observed is None:
+        return ["PR state temporarily unavailable; retrying"]
     if observed != head:
-        if not is_sha(observed):
-            raise CoordinatorError("cannot read pull request head while awaiting Ready")
         c["head_sha"] = observed
         invalidate_head_evidence(c, observed)
         c["phase"] = "tests"
@@ -3722,11 +3894,11 @@ def phase_await_ready(
     pending_base = str(a38.get("pending_base_sha") or "").lower()
     saved_base = evidence_base_sha(c, a38=True)
     observed_base = (
-        str(view.get("baseRefOid") or "").lower()
+        normalized_sha(view.get("baseRefOid"))
         if isinstance(view, dict)
-        else ""
+        else None
     )
-    if (pending_base or is_sha(saved_base)) and not is_sha(observed_base):
+    if (pending_base or is_sha(saved_base)) and observed_base is None:
         return ["PR state temporarily unavailable; retrying"]
     if pending_base and _reconcile_pending_base(store, task, observed_base):
         c = coord(task)

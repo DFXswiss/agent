@@ -9,7 +9,13 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from agent_cli.github_act import ACTIVITY_MARKER, scan_github as account_scan_github
+from agent_cli.coordinator_common import completed_comment_timestamp
+from agent_cli.github_act import (
+    ACTIVITY_MARKER,
+    A38_MODEL_SECOND_REVIEW_COMMENT,
+    COMMENT_KIND_KEY,
+    scan_github as account_scan_github,
+)
 from agent_cli.main import main
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -608,6 +614,7 @@ def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
 
 def test_github_failure_row_redacts_controls_credentials_and_account_paths(
     tmp_path: Path,
+    nested_terminal_string_control: str,
 ) -> None:
     store = Store(tmp_path)
     _owned_session(store)
@@ -619,7 +626,8 @@ def test_github_failure_row_redacts_controls_credentials_and_account_paths(
         {"repo": "dfxswiss/agent", "title": "T", "head": "feat"},
     )
     raw_error = (
-        "profile /test/\x1b[31mgh and key /test/\x1b[32mkey\n"
+        f"profile /test/{nested_terminal_string_control}gh and "
+        f"key /test/{nested_terminal_string_control}key\n"
         + ("x" * 410)
         + " token=g\x1b[33mh\x1b[0mp_CONTROL_INTERLEAVED_SECRET"
     )
@@ -638,6 +646,80 @@ def test_github_failure_row_redacts_controls_credentials_and_account_paths(
     assert "CONTROL_INTERLEAVED_SECRET" not in error
     assert "<gh_config_dir>" in error
     assert "<signing_key>" in error
+
+
+def test_safe_execution_error_redacts_configured_paths_before_and_after_sanitizing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import github_act
+
+    store = Store(tmp_path)
+    _owned_session(store)
+    gh_config_dir = "/opt/github-profile"
+    signing_key = "/opt/signing/worker-key"
+    (tmp_path / "github-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "worker": {
+                        "login": "theo-vane",
+                        "gh_config_dir": gh_config_dir,
+                        "git": {
+                            "name": "Test Worker",
+                            "email": "test@example.com",
+                            "signing_format": "ssh",
+                            "signing_key": signing_key,
+                        },
+                    }
+                },
+                "sessions": {"s1": "worker"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    original = github_act.redact_terminal_interleaved_secret
+    calls: list[tuple[str, str]] = []
+
+    def recording_redaction(
+        text: str, secret: str, *, replacement: str = "[redacted]"
+    ) -> str:
+        calls.append((secret, replacement))
+        return original(text, secret, replacement=replacement)
+
+    monkeypatch.setattr(
+        github_act, "redact_terminal_interleaved_secret", recording_redaction
+    )
+    runs = (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    )
+
+    for control_run in runs:
+        raw = (
+            f"profile /opt/{control_run}github-profile/config and "
+            f"key /opt/signing/{control_run}worker-key"
+        )
+        cleaned = github_act._safe_execution_error(
+            store, {"session_id": "s1"}, raw
+        )
+        assert gh_config_dir not in cleaned
+        assert signing_key not in cleaned
+        assert cleaned == (
+            "profile <gh_config_dir>/config and key <signing_key>"
+        )
+
+    assert calls == [
+        (secret, replacement)
+        for _control_run in runs
+        for secret, replacement in (
+            (gh_config_dir, "<gh_config_dir>"),
+            (signing_key, "<signing_key>"),
+            (gh_config_dir, "<gh_config_dir>"),
+            (signing_key, "<signing_key>"),
+        )
+    ]
 
 
 def test_pr_open_view_token_not_found_no_create(tmp_path: Path) -> None:
@@ -1010,7 +1092,17 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "comment"]:
             body = argv[argv.index("--body") + 1]
             assert marker in body
-            return Completed(0, f"{comment_url}\n", "")
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 9,
+                        "html_url": comment_url,
+                        "created_at": "2026-11-05T10:00:05Z",
+                    }
+                ),
+                "",
+            )
         raise AssertionError(argv)
 
     lines = scan_github(store, runner)
@@ -1021,6 +1113,7 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     assert row["result"]["number"] == 3
     assert row["result"]["url"] == comment_url
+    assert row["result"]["created_at"] == "2026-11-05T10:00:05Z"
 
     act2 = "c-2"
     marker2 = ACTIVITY_MARKER.format(id=act2)
@@ -1243,6 +1336,7 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
             "id": 31,
             "body": f"found\n{marker}",
             "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-31",
+            "created_at": "2026-11-05T09:59:00Z",
             "user": {"login": "theo-vane"},
         },
     ]
@@ -1265,6 +1359,7 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     assert row["result"]["id"] == 31
     assert row["result"]["url"] == "https://github.com/dfxswiss/agent/issues/3#issuecomment-31"
+    assert row["result"]["created_at"] == "2026-11-05T09:59:00Z"
 
 
 def test_comment_post_slurp_non_dict_errors(tmp_path: Path) -> None:
@@ -1337,6 +1432,118 @@ def test_comment_post_target_pr_posts(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "done"
     assert row["result"]["url"] == comment_url
+
+
+def test_comment_post_url_only_reads_and_persists_github_created_at_for_model_second_review(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-model-second-review"
+    comment_url = "https://github.com/dfxswiss/agent/pull/8#issuecomment-120"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 8,
+            "body": "second review",
+            "target": "pr",
+            COMMENT_KIND_KEY: A38_MODEL_SECOND_REVIEW_COMMENT,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "pr", "comment"]:
+            return Completed(0, f"{comment_url}\n", "")
+        if argv == [
+            "gh",
+            "api",
+            "repos/dfxswiss/agent/issues/comments/120",
+        ]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 120,
+                        "html_url": comment_url,
+                        "created_at": "2026-11-05T10:11:00Z",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["id"] == 120
+    assert row["result"]["url"] == comment_url
+    assert row["result"]["created_at"] == "2026-11-05T10:11:00Z"
+    assert calls[-1] == [
+        "gh",
+        "api",
+        "repos/dfxswiss/agent/issues/comments/120",
+    ]
+
+
+def test_comment_post_created_at_lookup_failure_finishes_without_reposting_and_uses_local_fallback(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-model-second-review-lookup-failure"
+    comment_url = "https://github.com/dfxswiss/agent/issues/8#issuecomment-121"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 8,
+            "body": "second review",
+            COMMENT_KIND_KEY: A38_MODEL_SECOND_REVIEW_COMMENT,
+        },
+    )
+    post_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal post_calls
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "comment"]:
+            post_calls += 1
+            return Completed(0, f"{comment_url}\n", "")
+        if argv == [
+            "gh",
+            "api",
+            "repos/dfxswiss/agent/issues/comments/121",
+        ]:
+            return Completed(1, "", "lookup failed")
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["id"] == 121
+    assert "created_at" not in row["result"]
+    materialized = next(
+        item for item in store.rows("activity") if item["id"] == act_id
+    )
+    assert completed_comment_timestamp(store, act_id) == materialized["_updated_at"]
+
+    def must_not_run(argv: list[str]) -> Completed:
+        raise AssertionError(f"completed comment must not run again: {argv}")
+
+    assert scan_github(store, must_not_run) == []
+    assert post_calls == 1
 
 
 def test_comment_post_invalid_target_errors(tmp_path: Path) -> None:

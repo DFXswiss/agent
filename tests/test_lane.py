@@ -46,6 +46,7 @@ from agent_cli.text_sanitize import (
     redact_terminal_interleaved_secret,
     redact_terminal_interleaved_tokens,
     redact_terminal_interleaved_urlencoded_secret,
+    redact_terminal_string_controls,
     sanitize_terminal_text,
 )
 
@@ -591,9 +592,14 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
     assert hide_config_dir("unchanged", None) == "unchanged"
 
 
-def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() -> None:
+def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
+    nested_terminal_string_control: str,
+) -> None:
     config_dir = "/opt/profiles/router"
-    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    split_path = (
+        f"/opt/profi{nested_terminal_string_control}"
+        "les/router/openrouter-api-key"
+    )
     raw = f"provider failed at {split_path}"
 
     assert hide_config_dir(raw, config_dir) == (
@@ -782,6 +788,51 @@ def test_assignment_redaction_classifies_around_raw_string_controls(
         assert cleaned == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key\x07\x1b\\",
+        "\x90prefix \x9dapi_key\x07\x9c",
+    ),
+    ids=("7-bit-nested-string", "8-bit-nested-string"),
+)
+@pytest.mark.parametrize(
+    "suffix",
+    ("=topsecret-value", " topsecret-value", ": topsecret-value"),
+    ids=("equals", "space", "colon-space"),
+)
+def test_assignment_redaction_keeps_nested_string_payload_for_classification(
+    control: str, suffix: str
+) -> None:
+    raw = f"{control}{suffix}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key",
+        "\x90prefix \x9dapi_key",
+    ),
+    ids=("7-bit", "8-bit"),
+)
+def test_assignment_redaction_fails_closed_on_unterminated_nested_string_control(
+    control: str,
+) -> None:
+    raw = f"visible {control}=topsecret-value"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
 def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
     for redact_value in (
         lambda value: redact_shared(value, limit=None),
@@ -916,6 +967,158 @@ def test_public_terminal_redaction_helpers_are_linear_on_large_words(
         call()
         elapsed = time.monotonic() - started
         assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+
+
+def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
+) -> None:
+    depth = 100_000
+    raw = ("\x1bP" * depth) + "Zx7Qp9Lm4V2" + ("\x1b\\" * depth)
+    calls = (
+        (
+            "shared redaction",
+            lambda: redact_shared(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "lane redaction",
+            lambda: redact_lane_text(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "string-control redaction",
+            lambda: redact_terminal_string_controls(raw),
+            "[redacted]",
+        ),
+        ("terminal sanitization", lambda: sanitize_terminal_text(raw), ""),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == expected
+
+
+def test_known_secret_scanners_are_linear_across_one_large_nested_string_control(
+) -> None:
+    depth = 100_000
+    control = ("\x1bP" * depth) + "opaque payload" + ("\x1b\\" * depth)
+    raw = f"api_key=model-{control}secret"
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+        (
+            "urlencoded",
+            lambda: redact_terminal_interleaved_urlencoded_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+    )
+
+    for label, call in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == "[redacted]"
+
+
+def test_known_secret_scanners_are_linear_across_repeated_candidates_and_nested_unterminated_controls(
+) -> None:
+    config_dir = "/opt/provider-profile"
+    raw = "/\x1b]" * 100_000
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(raw, config_dir),
+            raw,
+        ),
+        (
+            "lane config path",
+            lambda: redact_lane_text(raw, config_dir=config_dir, limit=None),
+            "/[redacted]",
+        ),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+        assert cleaned == expected
+
+
+@pytest.mark.parametrize(
+    "control_run",
+    (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    ),
+    ids=("65-osc", "1000-osc", "65-c0", "mixed"),
+)
+@pytest.mark.parametrize("encoded", (False, True), ids=("exact", "percent-encoded"))
+def test_known_secret_scanners_cross_unbounded_terminal_control_runs(
+    control_run: str, encoded: bool
+) -> None:
+    secret = "/opt/key"
+    representation = (
+        "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+        if encoded
+        else secret
+    )
+    split_at = 1
+    raw = (
+        f"before {representation[:split_at]}{control_run}"
+        f"{representation[split_at:]} after"
+    )
+    redact_secret = (
+        redact_terminal_interleaved_urlencoded_secret
+        if encoded
+        else redact_terminal_interleaved_secret
+    )
+
+    started = time.monotonic()
+    cleaned = redact_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+def test_known_secret_scanner_is_linear_across_ambiguous_csi_final_bytes() -> None:
+    secret = "/opt/key"
+    control_run = "\x1b[o" * 1_000
+    raw = f"before /{control_run}opt/key after"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
+    config_dir = "/opt/provider-profile"
+    runs = (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    )
+
+    for control_run in runs:
+        raw = f"failed at /opt/{control_run}provider-profile/key"
+        assert redact_diagnostic(raw, config_dir=config_dir) == (
+            "failed at <config_dir>/key"
+        )
 
 
 def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:

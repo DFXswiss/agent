@@ -15,11 +15,14 @@ from .github_accounts import AccountError, load_accounts
 from .runtime import Completed
 from .store import Store
 from .text_sanitize import redact_terminal_interleaved_secret
+from .timestamps import parse_utc_timestamp
 
 Runner = Callable[[list[str]], Completed]
 
 ACTIVITY_MARKER = "<!-- agent-activity:{id} -->"
 A38_REPORT_BINDING_KEY = "_coordinator_a38_report"
+COMMENT_KIND_KEY = "_agent_comment_kind"
+A38_MODEL_SECOND_REVIEW_COMMENT = "a38-model-second-review"
 
 # Typed executor facts for APPROVE discover-before-POST fail-closed outcomes.
 # Coordinator recovery must match these exactly — never infer dismissal from
@@ -33,6 +36,10 @@ REVIEW_APPROVE_COMMIT_MISMATCH = (
 
 _URL_RE = re.compile(
     r"https://github\.com/[^/\s]+/[^/\s]+/(?:pulls?|issues)/(\d+)"
+)
+_COMMENT_URL_RE = re.compile(
+    r"^https://github\.com/([^/\s]+)/([^/\s]+)/(?:issues|pull)/(\d+)"
+    r"#issuecomment-(\d+)$"
 )
 # Full commit SHA for optional review.post commit_id (exact-head APPROVE binding).
 _FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -404,16 +411,22 @@ def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> s
         )
     except AccountError:
         account = None
+    configured_paths: list[tuple[str, str]] = []
     if account is not None:
-        configured_paths = [(account.gh_config_dir, "<gh_config_dir>")]
+        configured_paths.append((account.gh_config_dir, "<gh_config_dir>"))
         if account.git_identity is not None:
             configured_paths.append(
                 (account.git_identity["signing_key"], "<signing_key>")
             )
-        for path, replacement in configured_paths:
-            safe = redact_terminal_interleaved_secret(
-                safe, path, replacement=replacement
-            )
+    for path, replacement in configured_paths:
+        safe = redact_terminal_interleaved_secret(
+            safe, path, replacement=replacement
+        )
+    safe = redact(safe, limit=None)
+    for path, replacement in configured_paths:
+        safe = redact_terminal_interleaved_secret(
+            safe, path, replacement=replacement
+        )
     return redact(safe, limit=500)
 
 
@@ -530,6 +543,50 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
         detail = (completed.stderr or completed.stdout or "gh failed").strip()
         raise _GhError(detail or "gh failed")
     return completed.stdout or ""
+
+
+def _posted_comment_created_at(
+    payload: dict[str, Any],
+    *,
+    repo: str,
+    number: int,
+    url: str,
+    runner: Runner,
+) -> tuple[int | None, str | None]:
+    """Read GitHub's timestamp for comment kinds whose post time is a gate fact."""
+    if payload.get(COMMENT_KIND_KEY) != A38_MODEL_SECOND_REVIEW_COMMENT:
+        return None, None
+    match = _COMMENT_URL_RE.fullmatch(url)
+    if match is None:
+        return None, None
+    owner, name = repo.split("/", 1)
+    url_owner, url_name, url_number, comment_id = match.groups()
+    if (
+        url_owner.casefold() != owner.casefold()
+        or url_name.casefold() != name.casefold()
+        or int(url_number) != number
+    ):
+        return None, None
+    try:
+        comment = _gh_json(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{name}/issues/comments/{comment_id}",
+            ],
+            runner,
+        )
+    except _GhError:
+        return int(comment_id), None
+    if not isinstance(comment, dict):
+        return int(comment_id), None
+    created_at = comment.get("created_at")
+    if (
+        not isinstance(created_at, str)
+        or parse_utc_timestamp(created_at) is None
+    ):
+        return int(comment_id), None
+    return int(comment_id), created_at
 
 
 def _gh_not_found(completed: Completed) -> bool:
@@ -973,6 +1030,12 @@ def _run_comment_post(
             result: dict[str, Any] = {"repo": repo, "number": number, "url": url}
             if cid is not None:
                 result["id"] = cid
+            created_at = comment.get("created_at")
+            if (
+                isinstance(created_at, str)
+                and parse_utc_timestamp(created_at) is not None
+            ):
+                result["created_at"] = created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
         post_body = body if exact_body else _with_marker(body, rid)
@@ -1018,10 +1081,39 @@ def _run_comment_post(
             result = {"repo": repo, "number": number, "url": url}
             if data.get("id") is not None:
                 result["id"] = data["id"]
+            created_at = data.get("created_at")
+            if (
+                isinstance(created_at, str)
+                and parse_utc_timestamp(created_at) is not None
+            ):
+                result["created_at"] = created_at
+            elif isinstance(url, str):
+                comment_id, looked_up_created_at = _posted_comment_created_at(
+                    payload,
+                    repo=repo,
+                    number=number,
+                    url=url,
+                    runner=runner,
+                )
+                if comment_id is not None and "id" not in result:
+                    result["id"] = comment_id
+                if looked_up_created_at is not None:
+                    result["created_at"] = looked_up_created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
         if stripped.startswith("https://github.com/"):
             result = {"repo": repo, "number": number, "url": stripped}
+            comment_id, created_at = _posted_comment_created_at(
+                payload,
+                repo=repo,
+                number=number,
+                url=stripped,
+                runner=runner,
+            )
+            if comment_id is not None:
+                result["id"] = comment_id
+            if created_at is not None:
+                result["created_at"] = created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
         raise _GhError("gh stdout has no github pull/issue URL")
