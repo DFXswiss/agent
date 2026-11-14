@@ -922,8 +922,9 @@ unpublishable repository is not refused at submit time; acceptance ends
 `blocked` or `failed` with the GitHub reason.
 
 Without `--worker`, the order-enabled worker with the fewest runnable tasks
-receives the order. A new order stays `queued` while that worker has runnable
-work. The oldest queued order moves to `accept` when a tick finds none.
+receives the order, including for a repository it does not list. A new order
+stays `queued` while that worker has runnable work. The oldest queued order
+moves to `accept` when a tick finds none.
 Acceptance reads no issue and posts no GitHub comment.
 
 The order text is at most 60,000 characters and is stored once at
