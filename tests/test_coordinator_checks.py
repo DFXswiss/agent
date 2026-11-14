@@ -1027,7 +1027,7 @@ def test_pr_mergeable_classifies_computed_values(
     monkeypatch.setattr(
         coordinator_checks,
         "_fetch_pr_json",
-        lambda *args, **kwargs: {"mergeable": mergeable},
+        lambda *args, **kwargs: {"mergeable": mergeable, "state": "OPEN"},
     )
     value = resolve_pr_mergeable(
         CheckContext(
@@ -1057,7 +1057,7 @@ def test_unknown_mergeability_is_a_same_phase_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(
         coordinator_checks,
         "_fetch_pr_json",
-        lambda *args, **kwargs: {"mergeable": "UNKNOWN"},
+        lambda *args, **kwargs: {"mergeable": "UNKNOWN", "state": "OPEN"},
     )
     value = resolve_pr_mergeable(
         CheckContext(
@@ -1073,3 +1073,34 @@ def test_unknown_mergeability_is_a_same_phase_retry(tmp_path, monkeypatch):
     assert value.lines == [
         f"PR mergeability not yet computed on {H[:7]}; retrying leave_draft"
     ]
+
+
+def test_pr_mergeable_refuses_a_pull_request_that_is_not_open(tmp_path, monkeypatch):
+    store, worker, fake = _setup(tmp_path, monkeypatch)
+    task = _issue(
+        store,
+        worker,
+        phase="readiness",
+        pr_number=42,
+        head_sha=H,
+    )
+    fields = []
+
+    def fetch(*args, **kwargs):
+        fields.append(args[3])
+        return {"mergeable": "UNKNOWN", "state": "CLOSED"}
+
+    monkeypatch.setattr(coordinator_checks, "_fetch_pr_json", fetch)
+    with pytest.raises(CoordinatorError, match="PR is not open"):
+        resolve_pr_mergeable(
+            CheckContext(
+                store,
+                worker,
+                task,
+                fake,
+                None,
+                CHECKS["pr_mergeable"],
+                "readiness",
+            )
+        )
+    assert fields == ["mergeable,state"]

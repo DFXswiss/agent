@@ -934,6 +934,34 @@ def test_show_in_ask_uses_the_resume_phase(device, capsys) -> None:
     assert not any(line.startswith("check ") for line in text.splitlines())
 
 
+def test_show_while_blocked_lists_the_phase_bound_checks_of_the_resume_phase(
+    device, capsys
+) -> None:
+    blocked = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        blocked,
+        phase="blocked",
+        resume_phase="pr_gates_codex",
+        blocker="Needs a decision",
+    )
+    before = device.store.row("task", blocked)
+    order("show", "--id", blocked, "--json")
+    result = json.loads(capsys.readouterr().out)
+    assert result["phase"] == "blocked"
+    assert result["action"] == "second_review"
+    assert [item["key"] for item in result["checks"]] == [
+        "order_active",
+        "review_1_quality",
+        "review_1_logic",
+        "head_signed_clean",
+        "checkout_owned",
+        "no_live_lane",
+    ]
+    assert device.store.row("task", blocked) == before
+
+
 def test_show_unknown_and_foreign_ids(device) -> None:
     missing = str(uuid.uuid4())
     with pytest.raises(SystemExit, match="unknown task:"):

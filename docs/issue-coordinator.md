@@ -1708,6 +1708,8 @@ task merged before its second comment was posted is a final blocker at once. A n
 external-review state. A blocking review that arrives after the guard set Ready
 is fixed on the same pull request: an A38 worker pushes the new head to the open
 pull request whether or not it is still a draft, and the guard decides Ready again.
+When the script had already composed the second comment for the merged head, it finishes that comment at
+the merge, for an issue task only while its issue is still open and assigned, and the merge check reads it.
 
 `a38_second_review: "model"` enters the task execution binding. The default
 external mode does not, so existing A38 hashes remain stable. Other A38

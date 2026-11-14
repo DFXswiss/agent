@@ -6,6 +6,7 @@ a rule about orders.
 
 from __future__ import annotations
 
+import copy
 import re
 import uuid
 from collections.abc import Callable
@@ -406,7 +407,10 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
         else phase
     )
     action = PHASE_ACTION.get(anchor)
-    facts = TaskFacts(store, task)
+    view = copy.deepcopy(task)
+    if action is not None:
+        coord(view)["phase"] = anchor
+    facts = TaskFacts(store, view)
     checks = (
         []
         if action is None
@@ -417,7 +421,7 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
                 "source": value.source,
                 "evidence": value.evidence,
             }
-            for declared, value in action_checks(facts, task, action)
+            for declared, value in action_checks(facts, view, action)
         ]
     )
     used_overrides = {
@@ -429,7 +433,7 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
     overridable_checks = [
         {
             "key": key,
-            "status": read_fact(facts, task, CHECKS[key]).status,
+            "status": read_fact(facts, view, CHECKS[key]).status,
         }
         for key in sorted(OVERRIDABLE)
         if key in used_overrides

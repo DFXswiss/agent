@@ -425,7 +425,7 @@ def test_assessment_is_not_repeated_for_the_same_limit(tmp_path, monkeypatch) ->
 
 
 def test_opinion_is_kept_on_the_fact_after_a_grant(tmp_path, monkeypatch) -> None:
-    store, _worker, task, fake, ctx = prepare(
+    store, worker, task, fake, ctx = prepare(
         tmp_path, monkeypatch, assessment_output=CHANGE
     )
     try:
@@ -437,6 +437,7 @@ def test_opinion_is_kept_on_the_fact_after_a_grant(tmp_path, monkeypatch) -> Non
         row = store.row("checklist_item", row_id)
         assert row["status"] == "nein"
         assert row["opinion"] == value.opinion
+        raise_check_question(store, worker, task, fake, CHECKS["round_budget"], value)
         coord(task).setdefault("authorized_replies", []).append(
             "try the allowlist"
         )
@@ -461,11 +462,12 @@ def test_opinion_is_kept_on_the_fact_after_a_grant(tmp_path, monkeypatch) -> Non
 
 
 def test_second_round_limit_gets_a_new_assessment(tmp_path, monkeypatch) -> None:
-    store, _worker, task, fake, ctx = prepare(
+    store, worker, task, fake, ctx = prepare(
         tmp_path, monkeypatch, assessment_output=CHANGE
     )
     try:
         first = resolve_round_budget(ctx)
+        raise_check_question(store, worker, task, fake, CHECKS["round_budget"], first)
         coord(task).setdefault("authorized_replies", []).append("continue")
         save_task(store, task)
         assert resolve_round_budget(ctx).status == "ja"
@@ -592,7 +594,7 @@ def test_missing_check_lane_gives_an_opinion_without_a_lane(
 def test_only_a_reply_after_the_question_grants_rounds(
     tmp_path, monkeypatch
 ) -> None:
-    store, _worker, task, fake, ctx = prepare(
+    store, worker, task, fake, ctx = prepare(
         tmp_path,
         monkeypatch,
         lane_retries=1,
@@ -613,7 +615,30 @@ def test_only_a_reply_after_the_question_grants_rounds(
         assert coord(task)["round_limit_question"]["replies"] == 1
         assert resolve_round_budget(ctx).status == "nein"
         assert fake.launched.count("assessment") == 1
+        raise_check_question(store, worker, task, fake, CHECKS["round_budget"], value)
         coord(task)["authorized_replies"].append("the answer to this question")
+        save_task(store, task)
+        assert resolve_round_budget(ctx).status == "ja"
+        assert coord(task)["round_limit"]["limit"] == 4
+    finally:
+        store.close()
+
+
+def test_a_reply_before_the_question_is_raised_grants_no_rounds(
+    tmp_path, monkeypatch
+) -> None:
+    store, worker, task, fake, ctx = prepare(tmp_path, monkeypatch)
+    try:
+        value = resolve_round_budget(ctx)
+        assert value.status == "nein"
+        coord(task)["authorized_replies"] = ["a reply to another blocker"]
+        save_task(store, task)
+        assert resolve_round_budget(ctx).status == "nein"
+        assert coord(task)["round_limit"]["limit"] == 2
+        raise_check_question(store, worker, task, fake, CHECKS["round_budget"], value)
+        assert coord(task)["round_limit_question"]["raised"] is True
+        assert coord(task)["round_limit_question"]["replies"] == 1
+        coord(task)["authorized_replies"].append("grant two more rounds")
         save_task(store, task)
         assert resolve_round_budget(ctx).status == "ja"
         assert coord(task)["round_limit"]["limit"] == 4

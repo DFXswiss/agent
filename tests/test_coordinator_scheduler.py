@@ -307,7 +307,7 @@ def test_step_two_takes_the_oldest_runnable_task(
     monkeypatch.setattr(
         coordinator_checks,
         "_fetch_pr_json",
-        lambda *args, **kwargs: {"mergeable": "MERGEABLE"},
+        lambda *args, **kwargs: {"mergeable": "MERGEABLE", "state": "OPEN"},
     )
     monkeypatch.setattr(
         coordinator_checks,

@@ -797,6 +797,35 @@ def test_model_task_merged_without_second_comment_blocks_at_once(
     )
 
 
+def test_merge_reconcile_restores_a_posted_second_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = env(tmp_path, monkeypatch)
+    tid = "60000000-0000-4000-8000-000000000004"
+    task = seed_model_task(
+        store, worker, fake, tid, phase="a38_second_comment",
+        second={"quality": ("approved", None), "logic": ("approved", None)}, second_review_passes=1,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.execute_github", lambda *a, **k: [])
+    with pytest.raises(CoordinatorError, match="A38 review comment was not verified published"):
+        phase_second_comment(store, worker, task, fake)
+    rows = comments(store)
+    assert len(rows) == 1 and rows[0]["execution_status"] == "pending"
+    assert "second_comment" not in checkpoint(store, tid)["a38"]
+    patch_execute_github(monkeypatch)
+    assert reconcile_a38_publication_intents(store, worker, store.row("task", tid), fake) == [
+        f"second A38 review comment reconciled on {fake.head[:7]}"
+    ]
+    c = checkpoint(store, tid)
+    assert c["a38"]["second_comment"] == {
+        "head": fake.head, "activity_id": rows[0]["id"], "id": 99, "url": "https://x", "blocks_merge": False,
+    }
+    assert store.row("activity", rows[0]["id"])["execution_status"] == "done"
+    assert _a38_second_review_outcome(c, fake.head) == "passed"
+    assert reconcile_a38_publication_intents(store, worker, store.row("task", tid), fake) == []
+    assert len(comments(store)) == 1
+
+
 def test_unreadable_pull_request_state_retries_the_second_comment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

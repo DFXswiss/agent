@@ -2813,12 +2813,13 @@ def reconcile_a38_publication_intents(
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Finish a saved first-comment/ping occurrence without creating another.
+    """Finish a saved first comment, model second comment or ping occurrence without creating another.
 
-    This is intentionally narrower than :func:`phase_first_comment` and
-    :func:`send_second_review_requests`: it never prepares an occurrence.  It
-    only verifies/publishes the deterministic saved comment and fills missing
-    ping ids from the saved plan, including after the pull request was merged.
+    This is intentionally narrower than :func:`phase_first_comment`,
+    :func:`phase_second_comment` and :func:`send_second_review_requests`: it
+    never prepares an occurrence.  It only verifies/publishes a deterministic
+    saved comment and fills missing ping ids from the saved plan, including
+    after the pull request was merged.
     """
     if not worker.a38:
         return []
@@ -2858,7 +2859,43 @@ def reconcile_a38_publication_intents(
         and second.get("head") == head
         and _saved_second_review_request_needs_reconcile(store, task, head, second)
     )
-    if not first_pending and not pings_pending:
+    second_due: tuple[str, str, bool] | None = None
+    current_a38 = _a38_state(coord(task))
+    if a38_model_second(coord(task)):
+        second_passes = int(current_a38.get("second_review_passes") or 0)
+        second_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"coordinator-a38-second-model:{task['id']}:{head}:{second_passes}",
+            )
+        )
+        saved_second = current_a38.get("second_comment")
+        second_row = store.row("activity", second_id)
+        second_payload = (
+            second_row.get("payload") if isinstance(second_row, dict) else None
+        )
+        second_body = (
+            second_payload.get("body") if isinstance(second_payload, dict) else None
+        )
+        if (
+            not (
+                isinstance(saved_second, dict)
+                and saved_second.get("activity_id") == second_id
+            )
+            and isinstance(second_body, str)
+            and second_body
+        ):
+            try:
+                second_declaration = parse_review_block(second_body)
+            except ReviewError:
+                second_declaration = {}
+            if second_declaration.get("head") == head:
+                second_due = (
+                    second_id,
+                    second_body,
+                    second_declaration.get("blocks_merge") is not False,
+                )
+    if not first_pending and not pings_pending and second_due is None:
         return []
     plan = (
         _stored_second_review_request_plan(store, worker, task, second)
@@ -2896,6 +2933,25 @@ def reconcile_a38_publication_intents(
         lines.append(
             f"second-review request occurrence {int(plan['occurrence'])} reconciled"
         )
+    if second_due is not None:
+        second_id, second_body, second_blocks = second_due
+        second_result = _post_comment(
+            store,
+            worker,
+            task,
+            runner,
+            activity_id=second_id,
+            body=second_body,
+        )
+        _a38_state(coord(task))["second_comment"] = {
+            "head": head,
+            "activity_id": second_id,
+            "id": second_result.get("id"),
+            "url": second_result.get("url"),
+            "blocks_merge": second_blocks,
+        }
+        save_task(store, task)
+        lines.append(f"second A38 review comment reconciled on {head[:7]}")
     return lines
 
 

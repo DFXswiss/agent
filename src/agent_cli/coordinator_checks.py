@@ -1410,6 +1410,10 @@ def raise_check_question(
         else:
             c.pop("question_activity_id", None)
             c.pop("replies_consumed_through", None)
+        question = c.get("round_limit_question")
+        if check.key == "round_budget" and isinstance(question, dict):
+            question["raised"] = True
+            question["replies"] = len(c.get("authorized_replies") or [])
 
     _commit(store, task, change)
 
@@ -1431,7 +1435,11 @@ def resolve_round_budget(ctx: CheckContext) -> CheckValue | Deferred:
     c = coord(task)
     question = c.get("round_limit_question")
     replies = len(c.get("authorized_replies") or [])
-    if isinstance(question, dict) and replies > int(question.get("replies") or 0):
+    if (
+        isinstance(question, dict)
+        and question.get("raised") is True
+        and replies > int(question.get("replies") or 0)
+    ):
         limit = int(question.get("limit") or pin["limit"]) + pin["max_rounds"]
 
         def grant(t: dict[str, Any]) -> None:
@@ -1482,7 +1490,7 @@ def resolve_pr_mergeable(ctx: CheckContext) -> CheckValue | Deferred:
             scoped(store, worker.session_id, ctx.runner),
             target_repo(task),
             number,
-            "mergeable",
+            "mergeable,state",
         )
     except CiObservationTransportError:
         return Deferred(
@@ -1491,6 +1499,8 @@ def resolve_pr_mergeable(ctx: CheckContext) -> CheckValue | Deferred:
                 f"retrying {label}"
             ]
         )
+    if isinstance(view, dict) and str(view.get("state") or "").upper() != "OPEN":
+        raise CoordinatorError("PR is not open")
     value = str(view.get("mergeable") or "").upper() if isinstance(view, dict) else ""
     if value == "MERGEABLE":
         return CheckValue("ja", f"mergeable on {head}", head=head or None)
