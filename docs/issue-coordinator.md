@@ -37,8 +37,9 @@ Each configured worker explicitly names `workspace_root`, `reply_logins`,
 both: it accepts an order for every repository, and a repository without an
 explicit `repositories` entry uses the same owner-level settings
 (`owner_check_argv`, `owner_readiness_argv`, A38 mode) as an owner-scoped
-repository. Issue and hub-assignment pickup still scan only the configured
-`repositories` and `repository_owners`.
+repository, so outside A38 mode it must supply both argv. Issue and
+hub-assignment pickup still scan only the configured `repositories` and
+`repository_owners`.
 Non-A38 workers also name `review_session`; A38 workers use the second-review
 configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. An explicit entry keeps precedence for its

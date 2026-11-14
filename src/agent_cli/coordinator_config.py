@@ -247,17 +247,20 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
             raise StoreError('repository_owners must be distinct')
         if not repos and not owners and not orders:
             raise StoreError('worker requires repositories or repository_owners')
+        # An orders-only worker serves every repository; each unlisted one is
+        # owner-scoped, so it needs the same non-A38 argv as a configured owner.
+        order_only = orders and not repos and not owners
         owner_checks = _argv(
             item.get('owner_check_argv', []),
             'owner_check_argv',
-            allow_empty=a38 if owners else True,
+            allow_empty=a38 or not (owners or order_only),
         )
         readiness_raw = item.get('owner_readiness_argv')
         owner_readiness = (
             _argv(readiness_raw, 'owner_readiness_argv')
             if readiness_raw is not None else None
         )
-        if owners and not a38 and owner_readiness is None:
+        if (owners or order_only) and not a38 and owner_readiness is None:
             raise StoreError('non-A38 owner-scoped workers require owner_readiness_argv')
         require_hub = item.get('require_hub_assignment', False)
         if not isinstance(require_hub, bool):

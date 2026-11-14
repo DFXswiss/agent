@@ -364,6 +364,21 @@ def test_order_worker_loads_without_repositories_or_owners(tmp_path):
     assert loaded.owner_readiness_argv == ('/operator/owner-readiness',)
 
 
+def test_orders_only_worker_requires_non_a38_owner_argv(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['orders'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='owner_check_argv'):
+        load_coordinator_config(tmp_path)
+
+    worker['owner_check_argv'] = ['/operator/owner-checks']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='owner_readiness_argv'):
+        load_coordinator_config(tmp_path)
+
+
 def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
     data = config(tmp_path)
     data['workers']['selected-session']['repository_owners'] = ['example']
