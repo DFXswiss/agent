@@ -43,6 +43,11 @@ from agent_cli.coordinator_runtime import (
     phase_handlers,
     preflight_worker,
 )
+from agent_cli.github_act import (
+    A38_MODEL_SECOND_REVIEW_COMMENT,
+    COMMENT_KIND_KEY,
+    scan_github,
+)
 from agent_cli.local_ci import BEGIN_MARK, LocalCiReport, SCHEMA_ID, render_block
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -504,6 +509,7 @@ def test_second_comment_is_rendered_by_the_guard_renderer(tmp_path: Path, monkey
     assert phase_second_comment(store, worker, task, fake) == [f"second A38 review comment posted on {fake.head[:7]}"]
     rows = comments(store)
     assert len(rows) == 1 and rows[0]["payload"]["target"] == "pr"
+    assert rows[0]["payload"][COMMENT_KIND_KEY] == A38_MODEL_SECOND_REVIEW_COMMENT
     body = rows[0]["payload"]["body"]
     assert body.startswith("EN:\nSecond review with codex-model\nNo defects.")
     assert "conformity-b" in body and "logic-b" in body
@@ -857,6 +863,110 @@ def test_model_second_review_posted_after_merged_deadline_blocks(
     assert c["phase"] == "blocked" and "resume_phase" not in c
     assert c["a38"]["merged_waiting_since"] == "2026-11-05T10:00:00Z"
     assert c["blocker"] == f"merged without a model second review on {fake.head}"
+
+
+def test_url_only_model_second_review_uses_late_github_time_when_local_clock_is_before_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli import coordinator_github, github_accounts
+
+    store, worker, fake = env(tmp_path, monkeypatch)
+    worker = replace(worker, second_review_timeout_seconds=10)
+    activity_id = "60000000-0000-4000-8000-000000000009"
+    task = seed_model_task(
+        store,
+        worker,
+        fake,
+        "60000000-0000-4000-8000-000000000010",
+        phase="await_merge",
+        second_comment={
+            "head": fake.head,
+            "blocks_merge": False,
+            "activity_id": activity_id,
+        },
+    )
+    local_completion = "2026-11-05T10:05:00Z"
+    github_created_at = "2026-11-05T10:11:00Z"
+    comment_url = (
+        "https://github.com/example/project/pull/42#issuecomment-122"
+    )
+    monkeypatch.setattr("agent_cli.store.utcnow", lambda: local_completion)
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": "second review",
+                "target": "pr",
+                COMMENT_KIND_KEY: A38_MODEL_SECOND_REVIEW_COMMENT,
+            },
+            "execution_status": "pending",
+        },
+    )
+
+    def account_runner(self, _base, **_kwargs):  # noqa: ANN001
+        assert self.login == "worker-bot"
+
+        def run(argv: list[str]) -> Completed:
+            if argv[:3] == ["gh", "api", "--paginate"]:
+                return Completed(0, "[]", "")
+            if argv[:3] == ["gh", "pr", "comment"]:
+                return Completed(0, f"{comment_url}\n", "")
+            if argv == [
+                "gh",
+                "api",
+                "repos/example/project/issues/comments/122",
+            ]:
+                return Completed(
+                    0,
+                    json.dumps(
+                        {
+                            "id": 122,
+                            "html_url": comment_url,
+                            "created_at": github_created_at,
+                        }
+                    ),
+                    "",
+                )
+            raise AssertionError(argv)
+
+        return run
+
+    monkeypatch.setattr(github_accounts.Account, "runner", account_runner)
+    assert scan_github(store, fake) == [f"comment.post {activity_id} done"]
+    materialized = next(
+        row for row in store.rows("activity") if row["id"] == activity_id
+    )
+    assert materialized["_updated_at"] == local_completion
+    assert materialized["result"]["created_at"] == github_created_at
+
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: local_completion)
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+    )
+    assert _await_second_review_after_merge(
+        store,
+        worker,
+        task,
+        fake,
+        fake.head,
+        outcome="passed",
+        merged_at="2026-11-05T10:00:00Z",
+    ) == ["blocker merged-without-second-review"]
+    saved = checkpoint(store, task["id"])
+    assert saved["a38"]["second_comment"]["requirement_satisfied_at"] == (
+        github_created_at
+    )
+    assert saved["phase"] == "blocked"
 
 
 def test_late_model_second_review_is_accepted_for_the_matching_ready_head(

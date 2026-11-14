@@ -9,7 +9,13 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from agent_cli.github_act import ACTIVITY_MARKER, scan_github as account_scan_github
+from agent_cli.coordinator_common import completed_comment_timestamp
+from agent_cli.github_act import (
+    ACTIVITY_MARKER,
+    A38_MODEL_SECOND_REVIEW_COMMENT,
+    COMMENT_KIND_KEY,
+    scan_github as account_scan_github,
+)
 from agent_cli.main import main
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -1426,6 +1432,118 @@ def test_comment_post_target_pr_posts(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "done"
     assert row["result"]["url"] == comment_url
+
+
+def test_comment_post_url_only_reads_and_persists_github_created_at_for_model_second_review(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-model-second-review"
+    comment_url = "https://github.com/dfxswiss/agent/pull/8#issuecomment-120"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 8,
+            "body": "second review",
+            "target": "pr",
+            COMMENT_KIND_KEY: A38_MODEL_SECOND_REVIEW_COMMENT,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "pr", "comment"]:
+            return Completed(0, f"{comment_url}\n", "")
+        if argv == [
+            "gh",
+            "api",
+            "repos/dfxswiss/agent/issues/comments/120",
+        ]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 120,
+                        "html_url": comment_url,
+                        "created_at": "2026-11-05T10:11:00Z",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["id"] == 120
+    assert row["result"]["url"] == comment_url
+    assert row["result"]["created_at"] == "2026-11-05T10:11:00Z"
+    assert calls[-1] == [
+        "gh",
+        "api",
+        "repos/dfxswiss/agent/issues/comments/120",
+    ]
+
+
+def test_comment_post_created_at_lookup_failure_finishes_without_reposting_and_uses_local_fallback(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-model-second-review-lookup-failure"
+    comment_url = "https://github.com/dfxswiss/agent/issues/8#issuecomment-121"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 8,
+            "body": "second review",
+            COMMENT_KIND_KEY: A38_MODEL_SECOND_REVIEW_COMMENT,
+        },
+    )
+    post_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal post_calls
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "comment"]:
+            post_calls += 1
+            return Completed(0, f"{comment_url}\n", "")
+        if argv == [
+            "gh",
+            "api",
+            "repos/dfxswiss/agent/issues/comments/121",
+        ]:
+            return Completed(1, "", "lookup failed")
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["id"] == 121
+    assert "created_at" not in row["result"]
+    materialized = next(
+        item for item in store.rows("activity") if item["id"] == act_id
+    )
+    assert completed_comment_timestamp(store, act_id) == materialized["_updated_at"]
+
+    def must_not_run(argv: list[str]) -> Completed:
+        raise AssertionError(f"completed comment must not run again: {argv}")
+
+    assert scan_github(store, must_not_run) == []
+    assert post_calls == 1
 
 
 def test_comment_post_invalid_target_errors(tmp_path: Path) -> None:

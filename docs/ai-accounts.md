@@ -301,9 +301,11 @@ not match a secret pattern.
 The pipeline then applies control-tolerant secret and raw/resolved config-path
 redaction on raw text, terminal sanitization, a second redaction pass, then
 bounding. Credential assignments use a linear lexical scan of complete,
-unbounded key tokens, including quoted JSON keys. Control-tolerant URL schemes, terminal escape
-parameters, and removable-control interleaves have fixed matching windows so
-long separatorless text remains linear to process. For bounded lane fields, the
+unbounded key tokens, including quoted JSON keys. Fixed matching windows apply
+only to bounded regex consumers for control-tolerant URL schemes, e-mail address
+parts, private-key header words, and terminal escape parameters. Exact
+known-secret, path, and bearer matching uses the unbounded linear control-run
+index for removable terminal-control interleaves. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
 matching; a token split by that cut is redacted in full before the ordinary

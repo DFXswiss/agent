@@ -1351,6 +1351,34 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "introducer" in normalized
         assert "swallows every following physical line" in normalized
 
+    for text in (documented, ai_accounts, readme):
+        normalized = " ".join(text.split())
+        assert (
+            "Fixed matching windows apply only to bounded regex consumers"
+            in normalized
+        )
+        assert (
+            "Exact known-secret, path, and bearer matching uses the unbounded "
+            "linear control-run index"
+            in normalized
+        )
+
+    normalized_documented = " ".join(documented.split())
+    assert (
+        "an unreadable head before Ready returns to `leave_draft` and retries "
+        "without calling `gh pr ready`"
+        in normalized_documented
+    )
+    assert (
+        "After the Ready mutation, an unreadable verification head on an open "
+        "Ready pull request calls `gh pr ready --undo`"
+        in normalized_documented
+    )
+    assert (
+        "`ready_head` is recorded only after the verification head matches"
+        in normalized_documented
+    )
+
     assert (
         "then classifies secret assignments on the full raw text. During that scan, "
         "every complete or unterminated OSC, DCS, PM, APC, or SOS span is one opaque"
@@ -1402,9 +1430,12 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "starting or checking the merged-head second-review timeout",
         "starts or checks its timeout on every tick, including when the newest "
         "review is passing",
-        "a legacy posted passing record without that field recovers the time from "
-        "its referenced completed comment activity",
-        "this fail-open applies only to the pre-timestamp legacy shape",
+        "For the model route, the merged second-review deadline uses GitHub's "
+        "second-comment `created_at`: the executor reads it after posting a "
+        "URL-only comment response",
+        "a posted passing record without a saved requirement time recovers the "
+        "time from its referenced completed comment activity",
+        "this fail-open applies only to the legacy shape",
         "The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls "
         "back to the first merged observation only when that timestamp is unavailable "
         "or invalid",

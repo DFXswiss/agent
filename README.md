@@ -279,8 +279,11 @@ fail-closed defence. Before
 the key is complete, payload operators stay opaque so split key fragments still
 join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
 `ESC \` or the eight-bit ST byte.
-Control-tolerant URL schemes, escape parameters, and removable-control interleaves use fixed
-matching windows. For bounded lane fields, the controlled-line structural rule
+Fixed matching windows apply only to bounded regex consumers for control-tolerant
+URL schemes, e-mail address parts, private-key header words, and terminal escape
+parameters. Exact known-secret, path, and bearer matching uses the unbounded
+linear control-run index for removable terminal-control interleaves. For bounded
+lane fields, the controlled-line structural rule
 first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,

@@ -58,6 +58,7 @@ from .coordinator_common import (
     reopen_base_bound_checklist,
     save_task,
     scoped,
+    strip_row,
     target_repo,
 )
 from .coordinator_config import WorkerConfig
@@ -85,6 +86,8 @@ from .coordinator_lanes import (
 from .github_act import (
     ACTIVITY_MARKER,
     A38_REPORT_BINDING_KEY,
+    A38_MODEL_SECOND_REVIEW_COMMENT,
+    COMMENT_KIND_KEY,
     a38_report_activity_lock,
     a38_report_task_lock,
     coordinator_a38_report_activity_id,
@@ -2026,18 +2029,36 @@ def _post_comment(
     *,
     activity_id: str,
     body: str,
+    comment_kind: str | None = None,
 ) -> dict[str, Any]:
     c = coord(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 comment requires a pull request number")
-    payload = {
+    base_payload = {
         "repo": target_repo(task),
         "number": number,
         "body": body,
         "target": "pr",
     }
+    payload = dict(base_payload)
+    if comment_kind is not None:
+        payload[COMMENT_KIND_KEY] = comment_kind
     row = store.row("activity", activity_id)
+    if (
+        isinstance(row, dict)
+        and comment_kind is not None
+        and _own_comment_activity(store, worker, row, base_payload)
+    ):
+        if row.get("execution_status") == "done":
+            # Completed records from before comment kinds existed retain their
+            # local completion fallback and are never executed again.
+            payload = base_payload
+        else:
+            updated = strip_row(row)
+            updated["payload"] = payload
+            store.write("activity", "update", activity_id, updated)
+            row = store.row("activity", activity_id)
     if isinstance(row, dict) and not _own_comment_activity(
         store, worker, row, payload
     ):
@@ -2504,6 +2525,7 @@ def phase_second_comment(
         runner,
         activity_id=activity_id,
         body=body,
+        comment_kind=A38_MODEL_SECOND_REVIEW_COMMENT,
     )
     satisfied_at = completed_comment_timestamp(store, activity_id)
     comment = {
@@ -3038,6 +3060,7 @@ def reconcile_a38_publication_intents(
             runner,
             activity_id=second_id,
             body=second_body,
+            comment_kind=A38_MODEL_SECOND_REVIEW_COMMENT,
         )
         satisfied_at = completed_comment_timestamp(store, second_id)
         comment = {
