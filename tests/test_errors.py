@@ -1402,6 +1402,9 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "starting or checking the merged-head second-review timeout",
         "starts or checks its timeout on every tick, including when the newest "
         "review is passing",
+        "a legacy posted passing record without that field recovers the time from "
+        "its referenced completed comment activity",
+        "this fail-open applies only to the pre-timestamp legacy shape",
         "The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls "
         "back to the first merged observation only when that timestamp is unavailable "
         "or invalid",

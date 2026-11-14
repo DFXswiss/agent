@@ -1593,6 +1593,14 @@ def is_sha(value: str) -> bool:
     return bool(_SHA_RE.fullmatch(value))
 
 
+def normalized_sha(value: Any) -> str | None:
+    """Return a canonical SHA only for a genuine string JSON value."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower()
+    return normalized if is_sha(normalized) else None
+
+
 _SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
 _BACKTICK_FRAGMENT = re.compile(r"`([^`\n]+)`")
 _DRIVE_SURFACE_REF = re.compile(r"^[A-Za-z]:")

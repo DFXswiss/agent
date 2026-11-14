@@ -714,9 +714,12 @@ A record of a check lane is closed the same way, but closing it does not retry t
    missing key, or an empty list keeps two reviews required. An entry that
    exists only on the pull request head does not count.
    `allow pr-ready`, then leave draft and verify `isDraft=false`. **Never merge.**
-10. **Complete** only after a verified **human** merge: GitHub merge actor type
-    must be exactly `User` (missing type is not human; Bot is refused). Also
-    require merge SHA, timestamp, and base/target. An A38 merge must also expose
+10. **Complete** only after a verified **human** merge: the GitHub merge actor
+    must be an object with a non-empty string login and a string type exactly
+    `User` (missing, empty, or non-string type is not human; Bot is refused).
+    A missing/non-object actor or a missing, empty, or non-string login retries
+    without completion. Also require merge SHA, timestamp, and base/target. An
+    A38 merge must also expose
     a valid base SHA equal to the promoted `coordinator.a38.base_sha` evidence
     base (the checkout pin is not a completion fallback), with a report or
     waiver and local gate bound to that exact base. If a pending base exists or
@@ -1737,6 +1740,12 @@ the merged-head second-review outcome after the evidence-base boundary is
 satisfied, and starts or checks its timeout on every tick, including when the
 newest review is passing. Intake persists the passing review record's timestamp
 as the time the requirement was satisfied; the tick time is never substituted.
+On upgrade, a legacy posted passing record without that field recovers the time
+from its referenced completed comment activity and persists it before applying
+the deadline. If that older record has no recoverable authoritative timestamp,
+the already-verified legacy pass is treated as timely rather than creating an
+irreversible late-review blocker; this fail-open applies only to the pre-timestamp
+legacy shape.
 The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls back to
 the first merged observation only when that timestamp is unavailable or
 invalid, so an observation outage cannot extend the review window. This

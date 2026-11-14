@@ -51,6 +51,7 @@ from .coordinator_common import (
     gh_json,
     infra_failure,
     is_sha,
+    normalized_sha,
     redact,
     redact_tail,
     reopen_base_bound_checklist,
@@ -348,12 +349,12 @@ def _pull_a38_context(
         "headRefOid,baseRefOid,baseRefName,state",
     ]
 
-    def metadata() -> tuple[str, str, str, str]:
+    def metadata() -> tuple[str | None, str | None, str, str]:
         view = gh_json(api, metadata_argv)
         if not isinstance(view, dict):
             raise CoordinatorError("A38 pull request metadata is invalid")
-        head = str(view.get("headRefOid") or "").lower()
-        base_sha = str(view.get("baseRefOid") or "").lower()
+        head = normalized_sha(view.get("headRefOid"))
+        base_sha = normalized_sha(view.get("baseRefOid"))
         base_name = str(view.get("baseRefName") or "")
         state = str(view.get("state") or "").upper()
         if state in ("MERGED", "CLOSED"):
@@ -362,13 +363,13 @@ def _pull_a38_context(
             raise CoordinatorError("A38 pull request state is invalid")
         return head, base_sha, base_name, state
 
-    last_before: tuple[str, str, str, str] | None = None
+    last_before: tuple[str | None, str | None, str, str] | None = None
     for _attempt in range(A38_CONTEXT_READ_ATTEMPTS):
         before = metadata()
         last_before = before
         if (
             before[0] != expected_head
-            or not is_sha(before[1])
+            or before[1] is None
             or before[2] != expected_base
         ):
             continue
@@ -393,12 +394,17 @@ def _pull_a38_context(
         markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
         after = metadata()
         if after == before:
-            return before[1], paths, markdown_only, guard_docs_only
+            observed_base = before[1]
+            if observed_base is None:
+                raise _PullRequestBaseUnavailable(
+                    "A38 pull request base revision is not a 40-hex SHA"
+                )
+            return observed_base, paths, markdown_only, guard_docs_only
     if last_before is not None and last_before[0] != expected_head:
         raise CoordinatorError(
             "A38 pull request head differs from the clean signed head"
         )
-    if last_before is not None and not is_sha(last_before[1]):
+    if last_before is not None and last_before[1] is None:
         raise _PullRequestBaseUnavailable(
             "A38 pull request base revision is not a 40-hex SHA"
         )
@@ -682,15 +688,15 @@ def _stable_live_pr_context(
         current = {
             "repo": repo,
             "number": as_int(view.get("number")),
-            "head": str(view.get("headRefOid") or "").lower(),
-            "base_sha": str(view.get("baseRefOid") or "").lower(),
+            "head": normalized_sha(view.get("headRefOid")),
+            "base_sha": normalized_sha(view.get("baseRefOid")),
             "base_name": str(view.get("baseRefName") or ""),
             "state": str(view.get("state") or "").upper(),
         }
         if (
             current["number"] != number
-            or not is_sha(current["head"])
-            or not is_sha(current["base_sha"])
+            or current["head"] is None
+            or current["base_sha"] is None
             or not current["base_name"]
             or current["state"] not in ("OPEN", "CLOSED", "MERGED")
         ):
@@ -3101,10 +3107,7 @@ def fresh_pr_head(
         )
     except CoordinatorError:
         return None
-    head = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
-    if not is_sha(head):
-        return None
-    return head
+    return normalized_sha(view.get("headRefOid")) if isinstance(view, dict) else None
 
 
 def pr_state(
@@ -3818,9 +3821,9 @@ def phase_await_ready(
         )
     except CoordinatorError:
         return ["PR state temporarily unavailable; retrying"]
-    observed = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
+    observed = normalized_sha(view.get("headRefOid")) if isinstance(view, dict) else None
     if observed != head:
-        if not is_sha(observed):
+        if observed is None:
             raise CoordinatorError("cannot read pull request head while awaiting Ready")
         c["head_sha"] = observed
         invalidate_head_evidence(c, observed)
@@ -3844,11 +3847,11 @@ def phase_await_ready(
     pending_base = str(a38.get("pending_base_sha") or "").lower()
     saved_base = evidence_base_sha(c, a38=True)
     observed_base = (
-        str(view.get("baseRefOid") or "").lower()
+        normalized_sha(view.get("baseRefOid"))
         if isinstance(view, dict)
-        else ""
+        else None
     )
-    if (pending_base or is_sha(saved_base)) and not is_sha(observed_base):
+    if (pending_base or is_sha(saved_base)) and observed_base is None:
         return ["PR state temporarily unavailable; retrying"]
     if pending_base and _reconcile_pending_base(store, task, observed_base):
         c = coord(task)

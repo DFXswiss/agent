@@ -2052,6 +2052,148 @@ def test_a38_merged_report_visibility_change_blocks_completion(
     assert store.row("task", task_id)["state"] != "done"
 
 
+@pytest.mark.parametrize(
+    "base",
+    (
+        pytest.param(None, id="null"),
+        pytest.param("x", id="non-object"),
+        pytest.param({"ref": 5}, id="non-string-ref"),
+    ),
+)
+def test_a38_invalid_rest_base_metadata_retries_await_merge(
+    monkeypatch,
+    tmp_path,
+    base,
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.gh_json",
+        lambda *_args, **_kwargs: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": base,
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["merge observed but incomplete metadata"]
+
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body_case", "message"),
+    (
+        pytest.param(
+            "different",
+            "task-done refused: stored A38 report bodies differ",
+            id="different-activity-body",
+        ),
+        pytest.param(
+            "missing",
+            "task-done refused: stored A38 report body is unavailable",
+            id="missing-body",
+        ),
+        pytest.param(
+            "empty",
+            "task-done refused: stored A38 report body is unavailable",
+            id="empty-body",
+        ),
+        pytest.param(
+            "invalid",
+            "stored A38 report body is invalid",
+            id="invalid-body",
+        ),
+    ),
+)
+def test_a38_merged_invalid_stored_report_body_blocks_completion(
+    monkeypatch,
+    tmp_path,
+    body_case,
+    message,
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    report = task["payload"]["coordinator"]["a38"]["report"]
+    if body_case == "different":
+        store.write(
+            "activity",
+            "insert",
+            report["activity_id"],
+            {
+                "id": report["activity_id"],
+                "session_id": worker.session_id,
+                "type": "comment.post",
+                "payload": {
+                    "exact_body": True,
+                    "repo": "Example/owned",
+                    "number": 42,
+                    "body": "different stored report body",
+                },
+                "execution_status": "done",
+            },
+        )
+    elif body_case == "missing":
+        report.pop("body")
+    elif body_case == "empty":
+        report["body"] = ""
+    else:
+        report["body"] = "not an A38 report"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+
+    with pytest.raises(NonRecoverableCoordinatorError) as exc_info:
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
+    assert str(exc_info.value) == message
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
+
+
 def test_a38_merged_visibility_uses_configured_github_runner(
     monkeypatch, tmp_path
 ):
