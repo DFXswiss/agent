@@ -2558,6 +2558,10 @@ def _advance_task(
             c["blocker_publish_once"] = True
             c["blocker_publish_kind"] = "phase-error"
             c.pop("blocker_activity_id", None)
+            c.pop("blocker_publish_occurrence", None)
+            replies = c.get("authorized_replies")
+            count = len(replies) if isinstance(replies, list) else 0
+            c["blocker_publish_occurrence"] = f"{task['id']}:{count}"
             save_task(store, task)
         elif not (
             phase == "blocked"
@@ -2568,8 +2572,6 @@ def _advance_task(
             return [ordering_error]
         # Until publish_blocker records the blocker activity, every visit
         # repeats the same publication (same text, kind and occurrence).
-        replies = coord(task).get("authorized_replies")
-        count = len(replies) if isinstance(replies, list) else 0
         return publish_blocker(
             store,
             worker,
@@ -2578,7 +2580,7 @@ def _advance_task(
             str(coord(task).get("blocker") or ordering_error),
             kind="phase-error",
             reply_checkpoint=True,
-            occurrence=f"{task['id']}:{count}",
+            occurrence=str(c.get("blocker_publish_occurrence") or ""),
         )
     pending_post_suite = worker.a38 and post_suite_checkpoint_pending(task)
     # A rejection comment is a durable task intent, not an implementation-phase

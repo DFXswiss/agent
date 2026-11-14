@@ -953,6 +953,7 @@ def resume_after_second_review_waiver(task: dict[str, Any]) -> None:
             "blocker_publish_once",
             "blocker_publish_kind",
             "blocker_activity_id",
+            "blocker_publish_occurrence",
         ):
             c.pop(key, None)
 

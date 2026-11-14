@@ -659,6 +659,7 @@ def pin_owner_repository(
             )
             if c.get("blocker") != message:
                 c.pop("blocker_activity_id", None)
+                c.pop("blocker_publish_occurrence", None)
             c["blocker"] = message
             c["resume_phase"] = "accept"
             c["phase"] = "blocked"
@@ -758,6 +759,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                 public = HUB_CONFIGURATION_BLOCKER
                 if c.get("blocker") != public:
                     c.pop("blocker_activity_id", None)
+                    c.pop("blocker_publish_occurrence", None)
                 c["phase"] = "blocked"
                 c["resume_phase"] = "accept"
                 c["blocker"] = public
@@ -807,6 +809,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             )
             if c.get("blocker") != message:
                 c.pop("blocker_activity_id", None)
+                c.pop("blocker_publish_occurrence", None)
             c["blocker"] = message
             c["resume_phase"] = "accept"
             c["phase"] = "blocked"
@@ -841,6 +844,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             source.pop("hub_assignment_row_id", None)
             if c.get("blocker") != MANDATE_DEVIATION_BLOCKER:
                 c.pop("blocker_activity_id", None)
+                c.pop("blocker_publish_occurrence", None)
             c["blocker"] = MANDATE_DEVIATION_BLOCKER
             c["resume_phase"] = "accept"
             c["phase"] = "blocked"
@@ -862,6 +866,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker_publish_once", None)
         c.pop("blocker_publish_kind", None)
         c.pop("blocker_activity_id", None)
+        c.pop("blocker_publish_occurrence", None)
         clear_reply_recovery(c)
     pinned = pin_owner_repository(store, worker, task, runner, scoped_runner, account)
     if pinned is not None:
@@ -3294,6 +3299,7 @@ def apply_authorized_replies(
     c.pop("blocker_publish_once", None)
     c.pop("blocker_publish_kind", None)
     c.pop("blocker_activity_id", None)
+    c.pop("blocker_publish_occurrence", None)
     if resume == "implement":
         task["state"] = "implementing"
     save_task(store, task)
@@ -3436,6 +3442,7 @@ def phase_blocked(
                 blocker,
                 kind=str(c.get("blocker_publish_kind") or "blocker"),
                 reply_checkpoint=True,
+                occurrence=str(c.get("blocker_publish_occurrence") or ""),
             )
     # Try authorized reply recovery without starting a model blindly.
     prior_phase = str(c.get("phase") or "blocked")
