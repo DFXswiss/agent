@@ -1886,7 +1886,7 @@ def cmd_pair(args: list[str]) -> None:
     try:
         if store.meta("device_token"):
             die("this device is already paired")
-        challenge = store.meta("pair_challenge") or secrets.token_hex(16)
+        challenge = secrets.token_hex(16)
         store.set_meta("pair_challenge", challenge)
         store.set_meta("hub_url", hub_url.rstrip("/"))
         hub = Hub(hub_url)

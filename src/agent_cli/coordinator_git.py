@@ -13,6 +13,7 @@ from .coordinator_common import (
     ORDER_KIND,
     PROTECTED_BRANCHES,
     CoordinatorError,
+    DraftHeadNotVerifiedError,
     Runner,
     account_for,
     as_int,
@@ -698,7 +699,7 @@ def ensure_draft(
     if existing_pr is not None:
         after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         if after['head']['sha'] != sha:
-            raise CoordinatorError('updated Draft head is not yet verified')
+            raise DraftHeadNotVerifiedError('updated Draft head is not yet verified')
         c['published_head'] = sha
         c.pop('pending_published_head', None)
         save_task(store, task)

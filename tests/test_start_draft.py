@@ -227,6 +227,60 @@ def test_implementer_commit_is_pushed_to_the_start_draft(
     assert checkpoint["phase"] == "inner_review"
 
 
+def test_a_pull_request_head_that_lags_the_push_is_retried_without_a_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = _env(tmp_path, monkeypatch)
+    worker = replace(worker, lane_retries=1)
+    _drive(store, worker, fake, lane, "implement")
+    fake.dirty = True
+    real_git = fake._git
+    pushed: list[str] = []
+
+    def lagging_git(argv: list[str]):
+        shown = fake.pr["headRefOid"]
+        result = real_git(argv)
+        if "push" in argv and not pushed:
+            pushed.append(fake.head)
+            fake.pr["headRefOid"] = shown
+        return result
+
+    monkeypatch.setattr(fake, "_git", lagging_git)
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+
+    checkpoint = _c(store)
+    assert (
+        "retry 1/1 of implement after updated Draft head is not yet verified; "
+        "next attempt in 30s"
+    ) in lines
+    assert checkpoint["phase"] == "implement"
+    assert checkpoint["retry"]["reason"] == "updated Draft head is not yet verified"
+    assert checkpoint["head_sha"] == checkpoint["pending_published_head"] == pushed[0]
+    assert checkpoint["published_head"] == checkpoint["start_commit"]
+    assert checkpoint.get("blocker") is None
+
+    fake.pr["headRefOid"] = pushed[0]
+    task = _task(store)
+    task["payload"]["coordinator"]["retry"]["at"] = "2020-01-01T00:00:00Z"
+    _save(store, task)
+    tick(store, worker, runner=fake, lane_runner=lane)
+
+    checkpoint = _c(store)
+    assert fake.launched == ["implementer"]
+    assert checkpoint["phase"] == "inner_review"
+    assert checkpoint["published_head"] == checkpoint["head_sha"] == pushed[0]
+    assert "pending_published_head" not in checkpoint
+    assert "retry" not in checkpoint
+    assert checkpoint.get("blocker") is None
+    bodies = [
+        str(row["payload"].get("body") or "")
+        for row in store.rows("activity")
+        if isinstance(row.get("payload"), dict)
+    ]
+    assert not any("not yet verified" in body for body in bodies)
+
+
 def test_no_change_on_the_start_commit_closes_the_draft(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

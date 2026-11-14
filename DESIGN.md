@@ -178,7 +178,7 @@ The hub reads the file from the deployed tree. After merge, the new roster appli
 
 Normal path (from the laptop):
 
-1. `agent pair --hub <url>` (or `AGENT_HUB`) creates or reuses `device_id` and a challenge, persists them in `device.json`, and calls `POST /pair/prepare`.
+1. `agent pair --hub <url>` (or `AGENT_HUB`) creates or reuses `device_id`, creates a new challenge on every run, persists both in `device.json`, and calls `POST /pair/prepare`.
 2. The printed URL opens `/pair?challenge=…`.
 3. If signed out, GitHub OAuth must return to that same `/pair?…` URL (not `/`).
 4. `POST /pair/confirm` with the cookie session binds the device to the GitHub login and issues a **device token** (HMAC, not a GitHub token).

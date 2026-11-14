@@ -264,6 +264,10 @@ class LaneFailedError(CoordinatorError):
     """A lane process ended without a result; retried, then a resumable blocker."""
 
 
+class DraftHeadNotVerifiedError(CoordinatorError):
+    """The pull request does not show the pushed head yet; same-phase retry, then a resumable blocker."""
+
+
 class CiObservationTransportError(CoordinatorError):
     """Transient CI observation transport; same-phase retry, no reply gate."""
 

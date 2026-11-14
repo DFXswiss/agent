@@ -375,3 +375,51 @@ def test_assign_refuses_a_malformed_success_response(monkeypatch, capsys):
             "--title", "Fix widget", "--body", "Detailed mandate",
         ])
     client.close()
+
+
+def test_pair_sends_a_new_challenge_instead_of_the_stored_one(monkeypatch, capsys):
+    class PairStore:
+        def __init__(self) -> None:
+            self.values = {"device_id": "device-1", "pair_challenge": "expired-challenge"}
+
+        def meta(self, key: str):
+            return self.values.get(key)
+
+        def set_meta(self, key: str, value: str) -> None:
+            self.values[key] = value
+
+        def device_id(self) -> str:
+            return self.values["device_id"]
+
+        def close(self) -> None:
+            return None
+
+    store = PairStore()
+    prepared: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/pair/prepare":
+            challenge = json.loads(request.content)["challenge"]
+            prepared.append(challenge)
+            return httpx.Response(
+                200, json={"pair_url": f"https://hub.example/pair?challenge={challenge}"}
+            )
+        assert request.url.path == "/pair/wait"
+        if request.url.params["challenge"] == "expired-challenge":
+            return httpx.Response(410, json={"detail": "pairing challenge expired"})
+        return httpx.Response(
+            200, json={"status": "paired", "token": "device-token", "login": "worker-bot"}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: store)
+    monkeypatch.setattr("agent_cli.main.Hub", lambda url: Hub(url, client=client))
+    monkeypatch.setattr("agent_cli.main.webbrowser.open", lambda _url: True)
+    main(["pair", "--hub", "https://hub.example", "--name", "worker-device", "--timeout", "5"])
+    assert len(prepared) == 1
+    assert prepared[0] != "expired-challenge"
+    assert store.values["pair_challenge"] == prepared[0]
+    assert store.values["device_token"] == "device-token"
+    assert store.values["github_login"] == "worker-bot"
+    assert capsys.readouterr().out.endswith("paired as worker-bot device=device-1\n")
+    client.close()

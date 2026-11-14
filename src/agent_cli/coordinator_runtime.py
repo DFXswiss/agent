@@ -47,6 +47,7 @@ from .coordinator_common import (
     REQUIRED_WORKER_SKILLS,
     CiObservedFailureError,
     CoordinatorError,
+    DraftHeadNotVerifiedError,
     LaneFailedError,
     NonRecoverableCoordinatorError,
     LaneRunner,
@@ -2929,6 +2930,21 @@ def _advance_task(
         ]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
+        if isinstance(exc, DraftHeadNotVerifiedError):
+            retry_lines = lane_retry(
+                store, worker, task, phase=phase, reason=str(exc)
+            )
+            if retry_lines is not None:
+                c = coord(task)
+                lane_observations = c.pop("lane_observations", [])
+                if not isinstance(lane_observations, list):
+                    lane_observations = []
+                elif lane_observations:
+                    save_task(store, task)
+                return [
+                    *(str(item) for item in lane_observations),
+                    *retry_lines,
+                ]
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
             c["resume_phase"] = phase
