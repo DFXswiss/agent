@@ -1394,8 +1394,12 @@ config-path-hidden redacted model value; only provider argv retains the raw
 configured model.
 One shared redaction pipeline handles final text, models, diagnostics, agent
 notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
-a CSI/ESC final byte as a possible token character, so the terminal sanitizer
-cannot assemble an unredacted token by deleting that byte.
+a CSI/ESC final byte, and every reachable end of a truncated CSI/ESC prefix in
+the control run, as a possible token character, so the terminal sanitizer
+cannot assemble an unredacted token by deleting that byte. Literal candidate
+starts and landing positions are evaluated once per distinct first symbol in a
+control run, so many equal first characters do not rescan the run per
+candidate; alternative representations keep their ordered candidates.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
 `ESC \`; their eight-bit forms accept those same ST spellings. BEL terminates
 only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST.

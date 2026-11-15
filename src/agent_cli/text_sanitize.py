@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -167,23 +168,30 @@ class _TerminalControlAtom:
     start: int
     end: int
     final_position: int | None
+    prefix_ends: tuple[int, ...]
 
 
 @dataclass(frozen=True)
 class _TerminalControlRun:
-    """One maximal run of adjacent terminal-control atoms."""
+    """One maximal run of adjacent terminal-control atoms.
+
+    ``boundaries_by_character`` holds every escape-prefix end and final byte
+    that can land a secret character. ``candidates_by_character`` holds the
+    same positions that can start the secret. Literal secrets evaluate only
+    the earliest candidate per first symbol; alternative representations such
+    as percent-encoded bytes keep every ordered candidate.
+    """
 
     end: int
-    next_finals: dict[str, tuple[int | None, ...]]
-    candidate_finals: tuple[int, ...]
-    candidate_offsets: tuple[int, ...]
+    boundaries_by_character: dict[str, tuple[int, ...]]
+    candidates_by_character: dict[str, tuple[int, ...]]
 
 
 @dataclass(frozen=True)
 class _TerminalInterleaveIndex:
     """Control-run lookup keyed by every atom boundary in the source text."""
 
-    positions: dict[int, tuple[_TerminalControlRun, int]]
+    positions: dict[int, _TerminalControlRun]
 
 
 def _terminal_control_atom(
@@ -201,12 +209,14 @@ def _terminal_control_atom(
         return None
     if _is_terminal_string_control(text, index):
         end, _terminated = _terminal_string_control_end(text, index)
-        return _TerminalControlAtom(index, max(index + 1, end), None)
+        end = max(index + 1, end)
+        return _TerminalControlAtom(index, end, None, ())
 
     cursor = index
     final_position: int | None = None
     if text.startswith("\x1b[", cursor) or text[cursor] == "\x9b":
         cursor += 2 if text[cursor] == "\x1b" else 1
+        prefix_ends: list[int] = [cursor]
         parameter_count = 0
         while (
             cursor < len(text)
@@ -215,6 +225,7 @@ def _terminal_control_atom(
         ):
             cursor += 1
             parameter_count += 1
+            prefix_ends.append(cursor)
         intermediate_count = 0
         while (
             cursor < len(text)
@@ -223,13 +234,17 @@ def _terminal_control_atom(
         ):
             cursor += 1
             intermediate_count += 1
+            prefix_ends.append(cursor)
         if cursor < len(text) and "@" <= text[cursor] <= "~":
             final_position = cursor
             cursor += 1
-        return _TerminalControlAtom(index, cursor, final_position)
+        return _TerminalControlAtom(
+            index, cursor, final_position, tuple(dict.fromkeys(prefix_ends))
+        )
 
     if text[cursor] == "\x1b":
         cursor += 1
+        prefix_ends = [cursor]
         intermediate_count = 0
         while (
             cursor < len(text)
@@ -238,12 +253,15 @@ def _terminal_control_atom(
         ):
             cursor += 1
             intermediate_count += 1
+            prefix_ends.append(cursor)
         if cursor < len(text) and "0" <= text[cursor] <= "~":
             final_position = cursor
             cursor += 1
-        return _TerminalControlAtom(index, cursor, final_position)
+        return _TerminalControlAtom(
+            index, cursor, final_position, tuple(dict.fromkeys(prefix_ends))
+        )
 
-    return _TerminalControlAtom(index, index + 1, None)
+    return _TerminalControlAtom(index, index + 1, None, ())
 
 
 def _terminal_interleave_index(
@@ -252,7 +270,7 @@ def _terminal_interleave_index(
     first_characters: frozenset[str],
 ) -> _TerminalInterleaveIndex:
     """Tokenize every terminal-control run once for exact-secret matching."""
-    positions: dict[int, tuple[_TerminalControlRun, int]] = {}
+    positions: dict[int, _TerminalControlRun] = {}
     cursor = 0
     while cursor < len(text):
         control = _TERMINAL_CONTROL_RE.search(text, cursor)
@@ -271,42 +289,52 @@ def _terminal_interleave_index(
             atoms.append(following)
             cursor = following.end
 
-        observed_finals = {
-            text[atom.final_position]
-            for atom in atoms
-            if atom.final_position is not None
-            and text[atom.final_position] in relevant_finals
+        # A lone or partial ESC/CSI prefix may consume the first characters of
+        # a secret. Every prefix end recorded by the atom lexer is therefore a
+        # possible secret start and a possible landing position. Complete
+        # escape finals, lone-ESC intermediates, and run ends keep their
+        # existing fail-closed behaviour.
+        boundaries = sorted(
+            {
+                boundary
+                for atom in atoms
+                for boundary in atom.prefix_ends
+                if boundary < cursor
+            }
+            | {
+                atom.final_position
+                for atom in atoms
+                if atom.final_position is not None
+                and atom.final_position < cursor
+            }
+        )
+        boundaries_by_character: dict[str, list[int]] = {
+            character: [] for character in relevant_finals
         }
-        next_finals: dict[str, tuple[int | None, ...]] = {}
-        for character in observed_finals:
-            nearest: int | None = None
-            values: list[int | None] = [None] * len(atoms)
-            for ordinal in range(len(atoms) - 1, -1, -1):
-                final_position = atoms[ordinal].final_position
-                if (
-                    final_position is not None
-                    and text[final_position] == character
-                ):
-                    nearest = final_position
-                values[ordinal] = nearest
-            next_finals[character] = tuple(values)
-        candidate_finals: list[int] = []
-        candidate_offsets: list[int] = []
-        for atom in atoms:
-            candidate_offsets.append(len(candidate_finals))
-            if (
-                atom.final_position is not None
-                and text[atom.final_position] in first_characters
-            ):
-                candidate_finals.append(atom.final_position)
+        candidates_by_character: dict[str, list[int]] = {
+            character: [] for character in first_characters
+        }
+        for boundary in boundaries:
+            character = text[boundary]
+            if character in boundaries_by_character:
+                boundaries_by_character[character].append(boundary)
+            if character in candidates_by_character:
+                candidates_by_character[character].append(boundary)
         run = _TerminalControlRun(
             end=cursor,
-            next_finals=next_finals,
-            candidate_finals=tuple(candidate_finals),
-            candidate_offsets=tuple(candidate_offsets),
+            boundaries_by_character={
+                character: tuple(values)
+                for character, values in boundaries_by_character.items()
+                if values
+            },
+            candidates_by_character={
+                character: tuple(values)
+                for character, values in candidates_by_character.items()
+                if values
+            },
         )
-        for ordinal, atom in enumerate(atoms):
-            positions[atom.start] = (run, ordinal)
+        for boundary in {*(atom.start for atom in atoms), *boundaries}:
+            positions[boundary] = run
     return _TerminalInterleaveIndex(positions=positions)
 
 
@@ -321,29 +349,31 @@ def _terminal_interleave_positions(
     The precomputed index has no per-atom limit: consecutive C0 controls,
     complete nesting-aware string controls, CSI, and other ESC sequences are
     one run. For CSI and other ESC sequences, the final byte may instead be the
-    next literal secret byte; both that position and the position after the
-    complete escape remain reachable. String controls win before the generic
-    ESC case, and no match attempt rescans their payload.
+    next literal secret byte, and every reachable end of a lone or truncated
+    prefix may start the secret. Those positions and the position after the
+    complete control run remain reachable. String controls win before the
+    generic ESC case, and no match attempt rescans their payload.
     """
-    positions = [index]
+    if index >= len(text):
+        return (index,)
     indexed = terminal_index.positions.get(index)
     if indexed is None:
         return (index,)
-    run, ordinal = indexed
-    first_final_position = min(
-        (
-            positions_for_character[ordinal]
-            for character in expected
-            if (positions_for_character := run.next_finals.get(character))
-            is not None
-            and positions_for_character[ordinal] is not None
-        ),
-        default=None,
-    )
-    if first_final_position is not None:
-        positions.append(first_final_position)
-    positions.append(run.end)
-    return tuple(dict.fromkeys(positions))
+    run = indexed
+    first_boundary: int | None = None
+    for character in expected:
+        candidates = run.boundaries_by_character.get(character)
+        if not candidates:
+            continue
+        offset = bisect_left(candidates, index)
+        if offset < len(candidates):
+            candidate = candidates[offset]
+            if first_boundary is None or candidate < first_boundary:
+                first_boundary = candidate
+    landings = [index, run.end]
+    if first_boundary is not None:
+        landings.append(first_boundary)
+    return tuple(dict.fromkeys(landings))
 
 
 def _match_interleaved_representation(
@@ -401,26 +431,54 @@ def _redact_terminal_interleaved_representations(
     terminal_index = _terminal_interleave_index(
         text, relevant_finals, first
     )
+    # A single-symbol representation is one literal secret character. Its
+    # later candidates cannot succeed where the earliest candidate with the
+    # same symbol fails, so one candidate per distinct symbol is sufficient.
+    # Alternative representations keep the complete candidate order.
+    literal_only = all(
+        len(alternative) == 1
+        for representation in representations
+        for alternative in representation
+    )
     pieces: list[str] = []
     copied_to = 0
     index = 0
     while index < len(text):
         indexed = terminal_index.positions.get(index)
-        candidate_positions: tuple[int, ...] = ()
-        candidate_offset = 0
         next_index = index + 1
+        candidate_positions: tuple[int, ...] = ()
         if indexed is None:
             if text[index] in first:
                 candidate_positions = (index,)
         else:
-            run, ordinal = indexed
+            run = indexed
             next_index = run.end
-            candidate_positions = run.candidate_finals
-            candidate_offset = run.candidate_offsets[ordinal]
+            candidates: list[int] = []
+            for character_positions in run.candidates_by_character.values():
+                offset = bisect_left(character_positions, index)
+                candidates.extend(character_positions[offset:])
+            candidate_positions = tuple(sorted(set(candidates)))
+            if literal_only:
+                earliest: dict[str, int] = {}
+                for character in first:
+                    character_positions = run.candidates_by_character.get(
+                        character
+                    )
+                    if not character_positions:
+                        continue
+                    offset = bisect_left(character_positions, index)
+                    if offset < len(character_positions):
+                        earliest[character] = character_positions[offset]
+                candidate_positions = tuple(sorted(set(earliest.values())))
 
         match: tuple[int, int] | None = None
-        for candidate_index in range(candidate_offset, len(candidate_positions)):
-            candidate = candidate_positions[candidate_index]
+        # A later candidate cannot succeed where the earliest candidate with
+        # the same first symbol fails: the earlier start consumes its own
+        # symbol, then follows the same remaining boundaries inside the run or
+        # skips to the run end. Evaluating one candidate per distinct first
+        # symbol therefore preserves the selected match start while bounding
+        # the work per run.
+        for candidate in candidate_positions:
             positions = {candidate}
             for character_index, alternatives in enumerate(representations):
                 matched: set[int] = set()

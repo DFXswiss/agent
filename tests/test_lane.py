@@ -1221,6 +1221,37 @@ def test_known_secret_scanner_is_linear_across_ambiguous_csi_final_bytes() -> No
     assert cleaned == "before [redacted] after"
 
 
+@pytest.mark.parametrize(
+    "prefix",
+    ("\x1b", "\x1b["),
+    ids=("lone-esc", "lone-csi"),
+)
+def test_lane_config_dir_redaction_crosses_a_truncated_escape_prefix(
+    prefix: str,
+) -> None:
+    config_dir = "/opt/my profile"
+    raw = f"failed {prefix}{config_dir}/key"
+
+    cleaned = redact_lane_text(raw, config_dir=config_dir, limit=None)
+
+    assert config_dir not in cleaned
+    assert "profile/key" not in cleaned
+    assert "my profile" not in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_many_candidate_starts() -> None:
+    n = 20_000
+    raw = "\x1b[a" * n
+    secret = "a" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
 def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
     config_dir = "/opt/provider-profile"
     runs = (
