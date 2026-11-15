@@ -323,18 +323,26 @@ matching; a token split by that cut is redacted in full before the ordinary
 truncation marker is added.
 The known-secret pass builds a fixed set of views and searches each one with
 KMP, overlaps included. Percent-tolerant matching also searches a
-percent-decoded copy of each view. Consecutive `%HH` triplets (either hex case)
+percent-decoded copy of each view. The raw text is percent-decoded once, and
+when that decoded text contains a terminal control the same control views are
+built on it and searched for the literal secret. Their maps compose through
+the decoded text back to raw spans, and those views are not percent-decoded
+again. Consecutive `%HH` triplets (either hex case)
 are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
 one character mapped to the raw span of all of its triplets, and an invalid or
 truncated sequence falls back to one character per byte so those bytes are not
 merged into a character they do not encode. An ASCII `%HH` stays one character
 spanning its three-character raw span, and every other character is copied.
 The literal secret is matched on the undecoded view
-and on that decoded view, and the union of the mapped spans is redacted. Raw,
-fully encoded (`%25` for `%`), and mixed per-character forms are covered, and
-every secret, including one that contains `%`, takes time linear in the view
-length plus the secret length. The views
-are the raw text, text with every terminal control removed, text with only
+and on that decoded view, and on the control views of the once-decoded raw
+text. The union of the mapped spans is redacted. Raw,
+fully encoded (`%25` for `%`), and mixed per-character forms are covered.
+A literal `%` in the secret that itself starts a valid `%HH` next to encoded
+neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
+matched. Every secret, including one that contains `%`, takes time linear in
+the view length plus the secret length. The views
+are the raw text, text that drops complete string controls, complete ESC/CSI
+sequences, and C0/C1 bytes, text with only
 introducers, terminators, and C0/C1 bytes removed, and text with complete
 ESC/CSI sequences removed while string-control payloads stay. One further view
 keeps an ESC final that also introduces a string control and drops `ESC \`.
@@ -344,6 +352,15 @@ bytes, and it keeps string payloads. Another keeps only each control's
 introducer byte. Another keeps only each control's final or string terminator
 and drops string payloads. Both copies use KMP,
 so a repeated prefix does not rescan the text per candidate.
+A control's introducer, final, or terminator counts as a secret character only
+as far as a single view yields it. An occurrence that needs different treatment
+of two controls is not matched, for example one control's final byte used as a
+secret character while another complete control between later secret characters
+is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one
+control's introducer and final both used with parameters between them (`Q[w`
+in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does
+not contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher.
 String-control boundaries still come from the shared nesting-aware scanner.
 Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted

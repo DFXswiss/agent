@@ -1602,6 +1602,69 @@ def test_urlencoded_invalid_utf8_percent_run_is_not_a_false_match(
     assert redact_terminal_interleaved_urlencoded_secret(raw, secret) == raw
 
 
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    (
+        ("se%1B[31mkret", "sekret"),
+        ("se%1B%5B31mkret", "sekret"),
+        ("s%1B[0me%1B[0mkret", "sekret"),
+        ("se%1B%5D0;x%07kret", "sekret"),
+        ("Bearer%20se%1B[31mkret", "Bearer sekret"),
+        ("a%1B[31m%2541", "a%41"),
+    ),
+    ids=(
+        "encoded-csi",
+        "fully-encoded-csi",
+        "repeated-sgr",
+        "encoded-osc",
+        "encoded-bearer-space",
+        "encoded-csi-keeps-literal-percent",
+    ),
+)
+def test_urlencoded_control_views_redact_a_secret_split_by_a_decoded_control(
+    raw: str, secret: str
+) -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(raw, secret)
+        == "[redacted]"
+    )
+
+
+def test_urlencoded_control_views_redact_only_the_mapped_raw_span() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(
+            "xxse%1B[31mkretyy", "sekret"
+        )
+        == "xx[redacted]yy"
+    )
+
+
+def test_urlencoded_control_views_do_not_decode_a_percent_escape_twice() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("%61%41", "a%41")
+        == "%61%41"
+    )
+    assert redact_terminal_interleaved_urlencoded_secret("%2541", "A") == "%2541"
+
+
+def test_urlencoded_double_encoded_esc_is_not_a_control() -> None:
+    raw = "se%251B[31mkret"
+    assert redact_terminal_interleaved_urlencoded_secret(raw, "sekret") == raw
+
+
+def test_urlencoded_control_views_are_linear_on_percent_decoded_csi() -> None:
+    n = 20_000
+    raw = "%1B[31ma" * n
+    secret = "a" * n + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
 def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
     config_dir = "/opt/provider-profile"
     runs = (

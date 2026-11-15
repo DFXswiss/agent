@@ -107,8 +107,9 @@ subsequent notification that provides useful model work belong to the script.
    control-tolerant URL schemes, e-mail address parts, private-key header words,
    and terminal escape parameters. Exact known-secret matching searches a fixed
    set of views with a linear matcher, so separatorless log text is handled in
-   linear time. The views are the raw text, text with terminal controls removed,
-   text with introducers, terminators, and C0/C1 bytes removed, and text with
+   linear time. The views are the raw text, text that drops complete string
+   controls, complete ESC/CSI sequences, and C0/C1 bytes, text with
+   introducers, terminators, and C0/C1 bytes removed, and text with
    complete ESC/CSI sequences removed while string-control payloads stay, plus
    one view that keeps an ESC final used as a string-control introducer and
    drops `ESC \`, one view that keeps every escape final including the `\` of
@@ -117,14 +118,30 @@ subsequent notification that provides useful model work belong to the script.
    keeps only each control's introducer byte, and one view that keeps only each
    control's final or string terminator and drops string payloads.
    Percent-tolerant matching also searches a percent-decoded copy of each view.
+   The raw text is percent-decoded once, and when that decoded text contains a
+   terminal control the same control views are built on it and searched for the
+   literal secret. Their maps compose through the decoded text back to raw
+   spans, and those views are not percent-decoded again.
    Consecutive `%HH` triplets are decoded as UTF-8 in one pass: a valid
    sequence becomes one character mapped to the raw span of its triplets, and
    an invalid or truncated sequence falls back to one character per byte so
    those bytes are not merged into a character they do not encode. An ASCII
    `%HH` stays one character spanning its three-character raw span, and every
    other character is copied. The literal
-   secret is matched on both copies, so every secret, including one that
-   contains `%`, stays linear in the text length plus the secret length. The script
+   secret is matched on both copies and on the control views of the
+   once-decoded raw text. A literal `%` in the secret that itself starts a
+   valid `%HH` next to encoded neighbours in the same run is read decoded,
+   so `a%41` in `%61%41` is not matched. Every secret, including one that
+   contains `%`, stays linear in the text length plus the secret length.
+   A control's introducer, final, or terminator counts as a secret character
+   only as far as a single view yields it. An occurrence that needs different
+   treatment of two controls is not matched, for example one control's final
+   byte used as a secret character while another complete control between
+   later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile` for
+   `/opt/my profile`), or one control's introducer and final both used with
+   parameters between them (`Q[w` in `Q\x1b[32!w`). Such text never renders
+   the secret on a terminal and does not contain it contiguously in raw form;
+   matching every per-control combination would need a non-linear matcher. The script
    then fingerprints and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.

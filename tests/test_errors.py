@@ -1390,6 +1390,13 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
             in normalized
         )
 
+    for text in (documented, ai_accounts, readme, skill):
+        normalized = " ".join(text.split())
+        assert (
+            "An occurrence that needs different treatment of two controls is not matched"
+            in normalized
+        )
+
     normalized_documented = " ".join(documented.split())
     assert (
         "an unreadable head before Ready returns to `leave_draft` and retries "

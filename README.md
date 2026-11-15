@@ -82,9 +82,21 @@ the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
 and records `assignment.created`; the client never prints the device token,
 and hub failure detail or recovery URLs redact the exact bearer even when each
-character is literal or percent-encoded in a mixed representation. One
+character is literal or percent-encoded in a mixed representation. A literal
+`%` in the bearer that itself starts a valid `%HH` next to encoded neighbours
+in the same run is read decoded, so `a%41` in `%61%41` is not matched. Terminal
+controls that appear only after that one percent-decode are removed by the
+same control views. One
 consecutive run of removable terminal controls between bearer characters has
-no per-control count limit. A response
+no per-control count limit. A control's introducer, final, or terminator counts
+as a secret character only as far as a single view yields it. An occurrence
+that needs different treatment of two controls is not matched, for example one
+control's final byte used as a secret character while another complete control
+between later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile`
+for `/opt/my profile`), or one control's introducer and final both used with
+parameters between them (`Q[w` in `Q\x1b[32!w`). Such text never renders the
+secret on a terminal and does not contain it contiguously in raw form; matching
+every per-control combination would need a non-linear matcher. A response
 counts as a mandate only with a positive issue number and a
 matching HTTPS GitHub issue URL.
 
@@ -217,10 +229,12 @@ processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
 redacted, printed, or persisted in that evidence. Raw and resolved provider
-config paths are matched despite interleaved terminal controls before
-sanitization and are hidden again afterward. Exact known-secret, path, and
+config paths are matched across interleaved terminal controls when one fixed
+view yields the path, before sanitization, and are hidden again afterward.
+Exact known-secret, path, and
 bearer matching searches a fixed set of views with a linear matcher. The views
-are the raw text, text with every terminal control removed, text with only
+are the raw text, text that drops complete string controls, complete ESC/CSI
+sequences, and C0/C1 bytes, text with only
 introducers, terminators, and C0/C1 bytes removed, and text with complete
 ESC/CSI sequences removed while string-control payloads stay. One further view
 keeps an ESC final that also introduces a string control and drops `ESC \`.
@@ -230,17 +244,33 @@ bytes, and it keeps string payloads. Another keeps only each control's
 introducer byte. Another keeps only each control's final or string terminator
 and drops string payloads. Each view is searched
 with KMP, overlaps included. Percent-tolerant matching also searches a
-percent-decoded copy of each view. Consecutive `%HH` triplets (either hex case)
+percent-decoded copy of each view. The raw text is percent-decoded once, and
+when that decoded text contains a terminal control the same control views are
+built on it and searched for the literal secret. Their maps compose through
+the decoded text back to raw spans, and those views are not percent-decoded
+again. Consecutive `%HH` triplets (either hex case)
 are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
 one character mapped to the raw span of all of its triplets, and an invalid or
 truncated sequence falls back to one character per byte so those bytes are not
 merged into a character they do not encode. An ASCII `%HH` stays one character
 spanning its three-character raw span, and every other character is copied.
 The literal secret is matched on the undecoded view
-and on that decoded view, and the union of the mapped spans is redacted. Raw,
-fully encoded (`%25` for `%`), and mixed per-character forms are covered, and
-every secret, including one that contains `%`, takes time linear in the view
-length plus the secret length. Both configured and
+and on that decoded view, and on the control views of the once-decoded raw
+text. The union of the mapped spans is redacted. Raw,
+fully encoded (`%25` for `%`), and mixed per-character forms are covered.
+A literal `%` in the secret that itself starts a valid `%HH` next to encoded
+neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
+matched. Every secret, including one that contains `%`, takes time linear in
+the view length plus the secret length. A control's introducer, final, or
+terminator counts as a secret character only as far as a single view yields
+it. An occurrence that needs different treatment of two controls is not
+matched, for example one control's final byte used as a secret character
+while another complete control between later secret characters is skipped
+(`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one control's
+introducer and final both used with parameters between them (`Q[w` in
+`Q\x1b[32!w`). Such text never renders the secret on a terminal and does not
+contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher. Both configured and
 provider-reported model strings are bounded and redacted. Neither activity
 stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,
@@ -313,7 +343,8 @@ Fixed matching windows apply only to bounded regex consumers for control-toleran
 URL schemes, e-mail address parts, private-key header words, and terminal escape
 parameters. Exact known-secret, path, and bearer matching searches a fixed set
 of views with a linear matcher, including truncated CSI/ESC prefixes and
-string-control payloads. For bounded
+string-control payloads. An occurrence that needs different treatment of two
+controls is not matched. For bounded
 lane fields, the controlled-line structural rule
 first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.
@@ -352,7 +383,7 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. Known-secret matching searches fixed views with a linear matcher, so a CSI/ESC final, including one that is the next secret character, a truncated prefix, or a string-control payload cannot hide a credential. Percent-tolerant matching also searches a percent-decoded copy of each view: consecutive `%HH` triplets are decoded as UTF-8 in one pass, a valid sequence becomes one character mapped to the raw span of its triplets, and an invalid or truncated sequence falls back to one character per byte; every secret, including one that contains `%`, stays linear in the text length plus the secret length. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. Known-secret matching searches fixed views with a linear matcher. One view yields a CSI/ESC final that is the next secret character, a truncated prefix, or a string-control payload. A control's introducer, final, or terminator counts as a secret character only as far as a single view yields it. An occurrence that needs different treatment of two controls is not matched, for example one control's final byte used as a secret character while another complete control between later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one control's introducer and final both used with parameters between them (`Q[w` in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does not contain it contiguously in raw form; matching every per-control combination would need a non-linear matcher. Percent-tolerant matching also searches a percent-decoded copy of each view. The raw text is percent-decoded once, and when that decoded text contains a terminal control the same control views are built on it and searched for the literal secret; those views are not percent-decoded again. Consecutive `%HH` triplets are decoded as UTF-8 in one pass, a valid sequence becomes one character mapped to the raw span of its triplets, and an invalid or truncated sequence falls back to one character per byte. A literal `%` in the secret that itself starts a valid `%HH` next to encoded neighbours in the same run is read decoded, so `a%41` in `%61%41` is not matched. Every secret, including one that contains `%`, stays linear in the text length plus the secret length. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
 
 One shared linear, nesting-aware scanner supplies every string-control span
 boundary to redaction, terminal sanitization, logical-line splitting, and all

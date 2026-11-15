@@ -1334,6 +1334,7 @@ also at a comma or semicolon. Fixed matching windows apply only to bounded
 regex consumers for control-tolerant URL schemes, e-mail address parts,
 private-key header words, and terminal escape parameters. Exact known-secret,
 path, and bearer matching searches a fixed set of views with a linear matcher.
+An occurrence that needs different treatment of two controls is not matched.
 Value runs that do not need delimiter backtracking are possessive. This keeps
 every redaction pass linear on long
 separatorless provider text. The initial ESC/C1 search and any controlled-line
@@ -1349,7 +1350,8 @@ logs, are redacted whole without a length limit and only then cut to their
 end, which follows the usual truncation marker; the cut therefore never
 exposes part of a credential.
 Configured paths
-are matched in both raw and resolved form despite interleaved terminal controls,
+are matched in both raw and resolved form across interleaved terminal controls
+when one fixed view yields the path,
 then hidden again after sanitization and before the diagnostic length bound is
 applied. An unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
@@ -1363,9 +1365,16 @@ whitespace. Tmux-backed lane
 diagnostics likewise join soft-wrapped lines before redaction and before their
 bounded text may be printed or stored as `lane.run` evidence. Hub assignment
 failures first remove the raw or header device bearer with an escape- and
-control-tolerant matcher that accepts every bearer character literally or as a
-case-insensitive percent-encoded byte, including mixed representations. The
-matcher uses a percent-decoded copy of each fixed view. Consecutive `%HH`
+control-tolerant matcher that accepts a bearer character literally or as a
+case-insensitive percent-encoded byte, including mixed per-character forms.
+A literal `%` in the bearer that itself starts a valid `%HH` next to encoded
+neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
+matched. The
+matcher uses a percent-decoded copy of each fixed view. The raw bearer text
+is percent-decoded once, and when that decoded text contains a terminal
+control the same control views are built on it and searched for the literal
+bearer; those views are not percent-decoded again. An occurrence that needs
+different treatment of two controls is not matched. Consecutive `%HH`
 triplets are decoded as UTF-8 in one pass, so every bearer,
 including one that contains `%` or a non-ASCII character, stays linear in the
 text length plus the bearer length. They
@@ -1387,6 +1396,15 @@ the `\` of `ESC \`, while dropping introducers, CSI parameters and
 intermediates, ESC intermediates, and C0/C1 bytes, and it keeps string
 payloads. Another keeps only each control's introducer byte. Another keeps
 only each control's final or string terminator and drops string payloads.
+A control's introducer, final, or terminator counts as a secret character only
+as far as a single view yields it. An occurrence that needs different treatment
+of two controls is not matched, for example one control's final byte used as a
+secret character while another complete control between later secret characters
+is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one
+control's introducer and final both used with parameters between them (`Q[w`
+in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does
+not contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher.
 User-facing blockers and questions are
 published on the source issue, or on the pull request of an order, only when
 `execution_status=done` is verified;
@@ -1403,18 +1421,35 @@ config-path-hidden redacted model value; only provider argv retains the raw
 configured model.
 One shared redaction pipeline handles final text, models, diagnostics, agent
 notes, terminal output, hub/GitHub errors, and evidence. Its known-secret
-matcher searches a fixed set of views with KMP, so a CSI/ESC final, a truncated
-prefix, or a string-control payload cannot hide a credential. Literal and
+matcher searches a fixed set of views with KMP. One view yields a CSI/ESC
+final that is the next secret character, a truncated prefix, or a
+string-control payload. A control's introducer, final, or terminator counts
+as a secret character only as far as a single view yields it. An occurrence
+that needs different treatment of two controls is not matched, for example
+one control's final byte used as a secret character while another complete
+control between later secret characters is skipped
+(`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one control's
+introducer and final both used with parameters between them (`Q[w` in
+`Q\x1b[32!w`). Such text never renders the secret on a terminal and does not
+contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher. Literal and
 percent-encoded representations are matched on each view, so a repeated
 prefix or many equal first characters do not rescan the text per candidate.
 Percent-tolerant matching also searches a percent-decoded copy of each view.
+The raw text is percent-decoded once, and when that decoded text contains a
+terminal control the same control views are built on it and searched for the
+literal secret. Their maps compose through the decoded text back to raw
+spans, and those views are not percent-decoded again.
 Consecutive `%HH` triplets (either hex case) are one UTF-8 byte stream,
 decoded in a single pass: a valid sequence becomes one character mapped to
 the raw span of all of its triplets, and an invalid or truncated sequence
 falls back to one character per byte so those bytes are not merged into a
 character they do not encode. An ASCII `%HH` stays one character spanning
 its three-character raw span, and every other character is copied.
-The literal secret is matched on both copies. Every secret, including one
+The literal secret is matched on both copies and on the control views of the
+once-decoded raw text. A literal `%` in the secret that itself starts a valid
+`%HH` next to encoded neighbours in the same run is read decoded, so `a%41`
+in `%61%41` is not matched. Every secret, including one
 that contains `%`, takes time linear in the view length plus the secret
 length.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or

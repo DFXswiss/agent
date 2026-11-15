@@ -525,26 +525,65 @@ def _view_keeping_control_finals(text: str) -> _TextView:
     return _finish_view(chars, starts, ends)
 
 
-def _known_secret_views(text: str) -> tuple[_TextView, ...]:
-    """Return the fixed view set. Plain text is searched once, as raw text.
+def _compose_base_view(base: _TextView, local: _TextView) -> _TextView:
+    """Map a view of ``base.text`` through ``base`` onto the original raw text.
 
-    With a terminal control the set is raw text, controls removed, introducers
-    and terminators and C0/C1 removed, complete ESC/CSI removed with string
-    payloads kept, ESC finals kept except ``ESC \\``, every escape final kept
-    (including that backslash) with introducers and CSI/ESC noise removed,
-    introducer bytes only, and control finals or string terminators only.
+    ``local`` indexes ``base.text``. When ``base`` is the raw text, those
+    indexes are already raw spans.
     """
+    if base.raw_starts is None and base.raw_ends is None:
+        return local
+    if base.raw_starts is None or base.raw_ends is None:
+        raise AssertionError("view raw map is incomplete")
+    if local.raw_starts is None or local.raw_ends is None:
+        raise AssertionError("view raw map is incomplete")
+    if (
+        len(base.raw_starts) != len(base.text)
+        or len(base.raw_ends) != len(base.text)
+        or len(local.raw_starts) != len(local.text)
+        or len(local.raw_ends) != len(local.text)
+    ):
+        raise AssertionError("view raw map length does not match the view")
+    starts: list[int] = []
+    ends: list[int] = []
+    base_limit = len(base.text)
+    for index in range(len(local.text)):
+        base_start = local.raw_starts[index]
+        base_end = local.raw_ends[index]
+        if base_start < 0 or base_end <= base_start or base_end > base_limit:
+            raise AssertionError("view span is outside the base text")
+        raw_start = base.raw_starts[base_start]
+        raw_end = base.raw_ends[base_end - 1]
+        if raw_end <= raw_start:
+            raise AssertionError("composed span did not advance")
+        starts.append(raw_start)
+        ends.append(raw_end)
+    return _TextView(local.text, tuple(starts), tuple(ends))
+
+
+def _known_secret_views(base: _TextView) -> tuple[_TextView, ...]:
+    """Return the fixed view set of ``base``.
+
+    Plain text is searched once, as ``base`` itself. With a terminal control
+    the set is ``base``, controls removed, introducers and terminators and
+    C0/C1 removed, complete ESC/CSI removed with string payloads kept, ESC
+    finals kept except ``ESC \\``, every escape final kept (including that
+    backslash) with introducers and CSI/ESC noise removed, introducer bytes
+    only, and control finals or string terminators only. The builders index
+    ``base.text``; their maps are composed through ``base`` onto raw spans.
+    """
+    text = base.text
     if _TERMINAL_CONTROL_RE.search(text) is None:
-        return (_TextView(text, None, None),)
+        return (base,)
     return (
-        _TextView(text, None, None),
-        _view_without_terminal_controls(text),
-        _view_without_control_markers(text),
-        _view_without_sequences_keep_payloads(text),
-        _view_keeping_escape_finals(text),
-        _view_keeping_every_escape_final(text),
-        _view_keeping_control_introducers(text),
-        _view_keeping_control_finals(text),
+        base,
+        _compose_base_view(base, _view_without_terminal_controls(text)),
+        _compose_base_view(base, _view_without_control_markers(text)),
+        _compose_base_view(base, _view_without_sequences_keep_payloads(text)),
+        _compose_base_view(base, _view_keeping_escape_finals(text)),
+        _compose_base_view(base, _view_keeping_every_escape_final(text)),
+        _compose_base_view(base, _view_keeping_control_introducers(text)),
+        _compose_base_view(base, _view_keeping_control_finals(text)),
     )
 
 
@@ -829,6 +868,12 @@ def _replace_spans(
     return "".join(pieces)
 
 
+def _collect_literal_raw_spans(
+    raw_spans: list[tuple[int, int]], view: _TextView, secret: str
+) -> None:
+    raw_spans.extend(_view_spans_to_raw(view, _literal_spans(view.text, secret)))
+
+
 def _redact_known_secret(
     text: str,
     secret: str,
@@ -836,21 +881,36 @@ def _redact_known_secret(
     percent: bool,
     replacement: str,
 ) -> str:
-    """Redact the union of view matches, including controls inside each span."""
+    """Redact the union of view matches, including controls inside each span.
+
+    Percent mode decodes the raw text once. When that decoded text contains a
+    terminal control, the same control views are searched and their maps
+    compose back to raw spans. Each undecoded view still contributes one
+    percent-decoded copy. Decoded control views are not decoded again.
+    """
     if not text or not secret:
         return text
     raw_spans: list[tuple[int, int]] = []
-    for view in _known_secret_views(text):
-        raw_spans.extend(
-            _view_spans_to_raw(view, _literal_spans(view.text, secret))
-        )
-        if percent and "%" in view.text:
+    base = _TextView(text, None, None)
+    decoded_base = (
+        _percent_decoded_view(base) if percent and "%" in text else None
+    )
+    for view in _known_secret_views(base):
+        _collect_literal_raw_spans(raw_spans, view, secret)
+        if not percent or "%" not in view.text:
+            continue
+        if view is base:
+            if decoded_base is None:
+                raise AssertionError("percent-decoded raw text is missing")
+            decoded = decoded_base
+        else:
             decoded = _percent_decoded_view(view)
-            raw_spans.extend(
-                _view_spans_to_raw(
-                    decoded, _literal_spans(decoded.text, secret)
-                )
-            )
+        _collect_literal_raw_spans(raw_spans, decoded, secret)
+    if decoded_base is not None:
+        # Control views of the once-decoded raw text. A second decode would
+        # turn ``%2541`` into ``A``.
+        for view in _known_secret_views(decoded_base)[1:]:
+            _collect_literal_raw_spans(raw_spans, view, secret)
     merged = _merge_spans(raw_spans)
     if not merged:
         return text
@@ -1003,7 +1063,10 @@ def redact_terminal_interleaved_urlencoded_secret(
     """Redact a secret written raw or as percent-encoded UTF-8.
 
     Literal characters stay case-sensitive. Each fixed view is searched with
-    KMP, and so is its percent-decoded copy. Consecutive ``%HH`` triplets
+    KMP, and so is its percent-decoded copy. The raw text is percent-decoded
+    once; when that decoded text contains a terminal control, the same control
+    views are searched and their maps compose back to raw spans. Those decoded
+    control views are not percent-decoded again. Consecutive ``%HH`` triplets
     (either hex case) are one UTF-8 byte stream: a valid sequence becomes one
     character mapped to the raw span of all of its triplets, and an invalid or
     truncated sequence falls back to one character per byte. An ASCII ``%HH``
