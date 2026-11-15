@@ -628,7 +628,11 @@ A record of a check lane is closed the same way, but closing it does not retry t
    Transient observation transport (PR view **or** inventory `gh_json` /
    typed `CiObservationTransportError`) and pending / absent-yet evidence stay
    on static `phase=ci` and retry without an idle model, blind implement, or
-   reply gate. Missing workflow inventory, pending, failure, cancelled, and
+   reply gate. A successful view whose `headRefOid` is missing or non-40-hex,
+   including a 40-digit number, is that transient transport
+   (`PR head temporarily unavailable`): `phase_ci` stays on `phase=ci`,
+   discards no evidence, and the result is not `head_changed` and not a
+   protocol error. Missing workflow inventory, pending, failure, cancelled, and
    uncovered skipped/neutral are not green. This core observes **cumulative GitHub CI** only; target-
    repository policy / A38 live join belongs to configured `readiness_argv`.
    Failures fetch plain-text logs via
@@ -641,7 +645,12 @@ A record of a check lane is closed the same way, but closing it does not retry t
 9. **Ready**: first read the live pull-request base. In A38 mode the script
    reconciles a pending base and invalidates evidence for a moved base before
    it runs `readiness_argv`; the command runs only when the observed base still
-   matches the promoted evidence base. Then run `readiness_argv` (cwd =
+   matches the promoted evidence base. Before `readiness_argv` in A38 mode, a
+   missing or non-40-hex head or base stays on `readiness` and does not run
+   the command. After the command, a missing or non-40-hex head, and in A38
+   mode a missing or non-40-hex base, stays on `readiness` and does not
+   invalidate evidence or the base. Only a different valid head or base is a
+   mismatch. Then run `readiness_argv` (cwd =
    worktree, ambient GitHub tokens cleared). Stdout must be the fixed JSON
    readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
@@ -1765,7 +1774,14 @@ without changing the saved task phase, head or base evidence, or pending base.
 Other invalid metadata remains a hard error, and only a different valid head is
 a head change. During `await_ready`, a missing or malformed head likewise keeps
 that phase and returns the same transient retry; only a different valid head
-invalidates head-bound evidence and returns to `tests`. A merged or closed pull
+invalidates head-bound evidence and returns to `tests`. During `readiness`,
+before `readiness_argv` in A38 mode a missing or non-40-hex head or base keeps
+that phase and does not run the command; after the command a missing or
+non-40-hex head, and in A38 mode a missing or non-40-hex base, does not
+invalidate evidence or the base. Only a different valid head or base is a
+mismatch. Exact-head CI observation treats a missing or non-40-hex `headRefOid`
+in a successful view as transient transport, and `phase_ci` stays on `phase=ci`
+without discarding evidence. A merged or closed pull
 request moves to merge verification before pending-base reconciliation.
 If the branch returns to an earlier trusted SHA before remeasurement, the stale
 pending SHA is replaced and evidence for the currently observed SHA is

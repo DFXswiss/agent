@@ -1474,6 +1474,10 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "back to the first merged observation only when that timestamp is unavailable "
         "or invalid",
         "happen before merged-report visibility and cumulative-CI lookups",
+        "including a 40-digit number, is that transient transport",
+        "does not invalidate evidence or the base",
+        "Exact-head CI observation treats a missing or non-40-hex "
+        "`headRefOid` in a successful view as transient transport",
     ):
         assert phrase in normalized_documented
     assert "review record's timestamp" in documented
