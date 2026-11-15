@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import pytest
 
@@ -124,7 +125,9 @@ class FakeConflictTransport:
         self.push_stderr = "lease rejected"
         self.remote_head_sha = "a" * 40
         self.remote_base_sha = "b" * 40
+        self.base_tip_sha: str | None = None
         self.rev_parse_head = "a" * 40
+        self.base_tip_read_fails = False
         self.remote_read_fails = False
         self.runner_capabilities: list[dict[str, bool]] = []
         self.signed_ok = True
@@ -372,6 +375,16 @@ class FakeConflictTransport:
                 protected = True
             return Completed(0, json.dumps({"name": "feature", "protected": protected}), "")
         if command[:2] == ["gh", "api"] and "/git/ref/heads/" in command[-1]:
+            ref = unquote(command[-1].split("/git/ref/heads/", 1)[1])
+            if ref == self.pull["base"].get("ref"):
+                if self.base_tip_read_fails:
+                    return Completed(1, "", "network unavailable")
+                sha = (
+                    self.base_tip_sha
+                    if self.base_tip_sha is not None
+                    else self.remote_base_sha
+                )
+                return Completed(0, json.dumps({"object": {"sha": sha}}), "")
             if self.remote_read_fails:
                 return Completed(1, "", "network unavailable")
             if self.remote_read_body is not None:
@@ -651,6 +664,40 @@ def test_checks_and_result_use_the_verified_base_sha(
     )
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["base_sha"] == "b" * 40
+
+
+def test_stale_pull_request_base_sha_with_unchanged_base_tip_is_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    fake.pull["base"]["sha"] = "c" * 40
+    fake.remote_base_sha = "b" * 40
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any("pushed" in line for line in lines)
+    assert not any("pull request base moved" in line for line in lines)
+    assert "- Base: `develop " + "b" * 40 + "`" in fake.pr_comments[0]["body"]
+    assert any(
+        "--force-with-lease" in " ".join(call) for call in fake.calls
+    )
+    assert any(
+        call[:2] == ["gh", "api"] and "/git/ref/heads/develop" in call[-1]
+        for call in fake.raw_calls
+    )
+
+
+def test_unreadable_base_branch_tip_is_transient_without_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    fake.base_tip_read_fails = True
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
 def _result_after_push(
@@ -4788,36 +4835,21 @@ def test_pre_push_pull_read_failure_stays_bounded_before_pushing(
     )
 
 
-def test_pull_request_base_moved_during_pre_push_checks_is_transient(
+def test_moved_base_branch_tip_during_pre_push_checks_restarts_without_push(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeConflictTransport(tmp_path)
     store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
-    checks_ran = {"value": False}
 
     def checks(argv: list[str], **kwargs: Any) -> Completed:
-        checks_ran["value"] = True
-        return fake.check(argv, **kwargs)
-
-    def moved_base(argv: list[str]) -> Completed:
-        if checks_ran["value"] and argv[:1] == ["gh"] and any(
-            "/pulls/42" in item for item in argv
-        ):
-            return Completed(
-                0,
-                json.dumps(
-                    {
-                        **fake.pull,
-                        "base": {**fake.pull["base"], "sha": "e" * 40},
-                    }
-                ),
-                "",
-            )
-        return fake(argv)
+        fake.check_calls.append({"argv": argv, **kwargs})
+        fake.base_tip_sha = "e" * 40
+        return Completed(0, "", "")
 
     monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", checks)
-    lines = tick(store, worker_cfg, runner=moved_base, lane_runner=fake.lane)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any(line.startswith("transient:") for line in lines)
+    assert any("pull request base moved" in line for line in lines)
     assert fake.pr_comments == []
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
     state_path = (

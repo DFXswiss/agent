@@ -410,10 +410,12 @@ exists on GitHub, without Git, a lane, or a comment.
 9. Immediately before the push, it re-reads the pull request and the head-branch
    protection with the worker account. The pull request must still be open, its
    head sha must still equal the head sha observed at the start of the request,
-   its head repository, head ref, and base ref must be unchanged, its
-   `base.sha` must equal the sha of `origin/<base>` fetched and verified in this
-   worktree, and the branch must not be protected. A moved head or base, or an
-   unreadable response, is transient:
+   its head repository, head ref, and base ref must be unchanged, the live base
+   branch tip read through the GitHub API must equal the sha of `origin/<base>`
+   fetched and verified in this worktree, and the branch must not be protected.
+   The pull request's `base.sha` does not decide whether the base moved: GitHub
+   keeps it at the base tip of the pull request's last push. A moved head, a
+   moved base branch tip, or an unreadable response is transient:
    nothing is pushed and the next tick starts again from the pull-request read.
    A closed pull request, changed refs or repository, or newly protected branch
    is a blocker without a push. The eventual push sends only
