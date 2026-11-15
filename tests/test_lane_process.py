@@ -360,9 +360,10 @@ while time.time() < deadline:
     if seen:
         break
     time.sleep(0.05)
-sys.stdout.write(sys.argv[2])
+sys.stdout.write(sys.argv[2] if seen else sys.argv[3])
 """
-    stream = grok_messages_stream("RECORD-SEEN\nSTATUS: complete\nRESULT: done")
+    seen_stream = grok_messages_stream("RECORD-SEEN\nSTATUS: complete\nRESULT: done")
+    missing_stream = grok_messages_stream("RECORD-MISSING\nSTATUS: partial")
 
     def provider(_vendor: str, **_kwargs) -> list[str]:
         return [
@@ -370,7 +371,8 @@ sys.stdout.write(sys.argv[2])
             "-c",
             script,
             str(control_dir(worker, TID) / "lanes"),
-            stream,
+            seen_stream,
+            missing_stream,
         ]
 
     monkeypatch.setattr(coordinator_lanes, "provider_argv", provider)
