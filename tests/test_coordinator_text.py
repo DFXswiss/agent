@@ -15,6 +15,7 @@ from agent_cli.store import Store, StoreError
 from test_coordinator_flow import seed_task
 from test_coordinator_support import (
     FakeGh,
+    grok_stream,
     lane_runner,
     make_session,
     make_worker,
@@ -367,7 +368,7 @@ def test_prompts_that_forbid_git_do_not_allow_read_only_commands(
         saved,
         lambda _argv: Completed(0, "", ""),
         lambda _argv, _stdin: Completed(
-            0, "STATUS: complete\nRESULT: rejected\n", ""
+            0, grok_stream("STATUS: complete\nRESULT: rejected\n"), ""
         ),
     )
     inner_reviewer = (

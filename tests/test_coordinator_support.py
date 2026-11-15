@@ -16,6 +16,22 @@ from agent_cli.store import Store, utcnow
 from agent_cli.github_act import scan_github as _REAL_SCAN
 
 
+def grok_stream(text: str) -> str:
+    """One Grok streaming-messages-json stream whose terminal result holds ``text``."""
+    return (
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": text,
+                "usage": {},
+            }
+        )
+        + "\n"
+    )
+
+
 def write_accounts(home: Path) -> None:
     (home / "github-accounts.json").write_text(
         json.dumps(
@@ -791,6 +807,8 @@ def lane_runner(fake: FakeGh):
             fake._lane_barrier.wait(timeout=3)
             with fake._lane_lock:
                 fake._inflight_roles.discard(role)
+        if "grok" in argv:
+            return Completed(0, grok_stream(out), "")
         if "claude" in argv:
             stream = json.dumps(
                 {"type": "result", "result": out, "usage": {}}
@@ -840,6 +858,8 @@ def order_lane_runner(
             fake.launched.append("check")
             fake.check_prompts.append(prompt or "")
             output = check_output
+        if "grok" in argv:
+            return Completed(0, grok_stream(output), "")
         if "claude" in argv:
             stream = json.dumps(
                 {"type": "result", "result": output, "usage": {}}

@@ -15,6 +15,7 @@ import pytest
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
 from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
+    parse_model_result,
     redact as redact_shared,
 )
 from agent_cli.errors import redact as redact_error
@@ -49,6 +50,7 @@ from agent_cli.text_sanitize import (
     redact_terminal_interleaved_urlencoded_secret,
     sanitize_terminal_text,
 )
+from test_coordinator_support import grok_stream
 
 pytestmark = pytest.mark.no_pg
 
@@ -91,7 +93,7 @@ def test_judgment_argv_grok_denies_every_tool() -> None:
         "--no-subagents",
         "--disable-web-search",
         "--output-format",
-        "plain",
+        "streaming-messages-json",
         "--cwd",
         "/empty",
     ]
@@ -264,8 +266,13 @@ def run(argv: list[str]) -> None:
 
 def _lane_inner(argv: list[str]) -> list[str]:
     if "--" in argv:
-        return argv[argv.index("--") + 1 :]
-    return list(argv)
+        inner = argv[argv.index("--") + 1 :]
+    else:
+        inner = list(argv)
+    if inner[:2] == ["sh", "-c"]:
+        start = next(index for index, value in enumerate(inner) if value == "env")
+        return inner[start:]
+    return inner
 
 
 def _assert_nested_role_env_prefix(
@@ -326,7 +333,7 @@ def test_grok_implementer_argv_requires_explicit_model() -> None:
         "--allow",
         "Edit",
         "--output-format",
-        "plain",
+        "streaming-messages-json",
         "--cwd",
         "/work",
     ]
@@ -364,7 +371,7 @@ def test_grok_reviewer_argv_requires_explicit_model() -> None:
         "--no-subagents",
         "--disable-web-search",
         "--output-format",
-        "plain",
+        "streaming-messages-json",
         "--cwd",
         "/work",
     ]
@@ -578,6 +585,10 @@ def test_finalize_lane_output_hides_the_account_directory_in_the_final_text(vend
         event = {"type": "result", "subtype": "success", "is_error": False, "result": text}
         out = finalize_lane_output(
             vendor, "", json.dumps(event), cwd="/work", config_dir="/opt/profiles/router"
+        )
+    elif vendor == "grok":
+        out = finalize_lane_output(
+            vendor, grok_stream(text), "", cwd="/work", config_dir="/opt/profiles/router"
         )
     else:
         out = finalize_lane_output(
@@ -903,7 +914,7 @@ def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
 )
 def test_lone_escape_redacts_tokens_across_lane_sinks(raw: str) -> None:
     assert redact_diagnostic(raw) == "[redacted]"
-    finalized = finalize_lane_output("grok", raw, "", cwd="/work")
+    finalized = finalize_lane_output("grok", grok_stream(raw), "", cwd="/work")
     assert finalized.text == "[redacted]"
 
     class CaptureStore:
@@ -1045,6 +1056,83 @@ def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
     assert out.text == "STATUS: complete"
 
 
+def test_grok_finalize_uses_only_the_terminal_result_not_progress_text() -> None:
+    progress = "STATUS: partial\nI am still working through the review."
+    final = "STATUS: complete\nRESULT: approved"
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": progress},
+                    {
+                        "type": "tool_use",
+                        "id": "tool-1",
+                        "name": "Read",
+                        "input": {"file_path": "/work/src/module.py"},
+                    },
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1"}]
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": final}]},
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": final,
+            "usage": {"input_tokens": 7, "output_tokens": 3},
+            "num_turns": 2,
+        },
+    ]
+    stream = "\n".join(json.dumps(event) for event in events)
+
+    out = finalize_lane_output("grok", stream, "", cwd="/work")
+
+    assert out.text == final
+    assert out.source_text == final
+    assert parse_model_result(out.source_text, 0) == ("complete", "approved")
+    assert parse_model_result(progress + "\n" + final, 0) == ("partial", "")
+    assert out.usage is not None
+    assert out.usage.input_tokens == 7
+    assert out.usage.num_turns == 2
+    assert out.tools == ({"tool": "Read", "target": "src/module.py", "error": False},)
+
+
+def test_grok_finalize_fails_closed_without_a_successful_terminal_result() -> None:
+    failed = {
+        "type": "result",
+        "subtype": "error_max_turns",
+        "is_error": True,
+        "result": "STATUS: complete\nRESULT: approved",
+    }
+    assert finalize_lane_output("grok", json.dumps(failed), "", cwd="/work").text == ""
+    assistant_only = {
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "text", "text": "STATUS: complete\nRESULT: approved"}]
+        },
+    }
+    assert (
+        finalize_lane_output("grok", json.dumps(assistant_only), "", cwd="/work").text
+        == ""
+    )
+    assert (
+        finalize_lane_output(
+            "grok", "STATUS: complete\nRESULT: approved", "", cwd="/work"
+        ).text
+        == ""
+    )
+
+
 def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     no_result = json.dumps({"type": "assistant", "message": {"content": []}})
     assert finalize_lane_output("claude", no_result, "", cwd="/work").text == ""
@@ -1069,7 +1157,17 @@ def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     assert len(out.tools[0]["target"]) <= 300
     assert out.usage is not None and out.usage.model == "fallback"
     assert finalize_lane_output("codex", "stdout", "file", cwd="/work").text == "file"
-    assert finalize_lane_output("grok", "stdout", "file", cwd="/work").text == "stdout"
+    assert finalize_lane_output("grok", "stdout", "file", cwd="/work").text == ""
+    assert (
+        finalize_lane_output(
+            "grok",
+            "stdout",
+            grok_stream("file result"),
+            cwd="/work",
+            stream_from_output_file=True,
+        ).text
+        == "file result"
+    )
 
 
 @pytest.mark.parametrize("target_kind", ("other", "inside", "relative"))
@@ -2746,7 +2844,7 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append(stdin_text)
-        return FakeDone(0, "STATUS: complete\nRESULT: done\n", "")
+        return FakeDone(0, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     result = launch(
         role="implementer",
@@ -2798,7 +2896,9 @@ def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
     assert "--" in result.argv
     assert OPERATOR_GROK_MODEL in result.argv
     inner = result.argv[result.argv.index("--") + 1 :]
-    assert inner[0] == "env"
+    assert inner[:2] == ["sh", "-c"]
+    assert inner[3] == "sh"
+    assert inner[4] == "/tmp/agent-lane-grok-dry-run.txt"
     _assert_nested_role_env_prefix(
         result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
     )
@@ -2832,11 +2932,16 @@ def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append(list(argv))
-        return SimpleNamespace(
-            returncode=0,
-            stdout="STATUS: complete\nRESULT: done\n",
-            stderr="",
+        output = next(
+            Path(value)
+            for value in argv
+            if value.endswith(".txt")
+            and Path(value).name.startswith("agent-lane-grok-")
         )
+        output.write_text(
+            grok_stream("STATUS: complete\nRESULT: done\n"), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     result = launch(
         role="implementer",
@@ -2945,7 +3050,7 @@ def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
     assert "[redacted]" in evidence
 
 
-@pytest.mark.parametrize("vendor", ["claude", "openrouter"])
+@pytest.mark.parametrize("vendor", ["claude", "grok", "openrouter"])
 def test_launch_tmux_stream_json_uses_output_file_not_pane_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
 ) -> None:

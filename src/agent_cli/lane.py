@@ -157,7 +157,7 @@ def grok_argv(*, spec_file: str, cwd: str, write: bool, model: str) -> list[str]
                 "--allow",
                 "Edit",
                 "--output-format",
-                "plain",
+                "streaming-messages-json",
                 "--cwd",
                 cwd,
             ]
@@ -180,7 +180,7 @@ def grok_argv(*, spec_file: str, cwd: str, write: bool, model: str) -> list[str]
                 "--no-subagents",
                 "--disable-web-search",
                 "--output-format",
-                "plain",
+                "streaming-messages-json",
                 "--cwd",
                 cwd,
             ]
@@ -420,7 +420,7 @@ def judgment_argv(
             "--no-subagents",
             "--disable-web-search",
             "--output-format",
-            "plain",
+            "streaming-messages-json",
             "--cwd",
             cwd,
         ]
@@ -667,11 +667,9 @@ def _finalize_lane_output(
     stream_from_output_file: bool = False,
 ) -> LaneOutput:
     """Normalize final text, reported usage, and the bounded tool transcript."""
-    if vendor == "grok":
-        return LaneOutput(stdout, None, (), False)
     if vendor == "codex":
         return LaneOutput(output_file_text or stdout, None, (), False)
-    if vendor not in ("claude", "openrouter"):
+    if vendor not in ("claude", "grok", "openrouter"):
         return LaneOutput("", None, (), False)
 
     stream = (
@@ -1015,7 +1013,7 @@ def launch(
         ai.require_lane_execution()
     lane_output_file: str | None = None
     output_file: str | None = None
-    if vendor in OUTPUT_FILE_VENDORS or (vendor == "claude" and tmux):
+    if vendor in OUTPUT_FILE_VENDORS or (vendor in ("claude", "grok") and tmux):
         if dry_run:
             output_file = f"/tmp/agent-lane-{vendor}-dry-run.txt"
         else:
@@ -1063,6 +1061,20 @@ def launch(
                     *argv,
                 ]
                 claude_redirect = True
+            elif vendor == "grok":
+                # Grok's streaming-messages-json lines can exceed a tmux pane width
+                # and its history. Keep the stream in a file and use pane capture
+                # only as process diagnostics, never as the parser input.
+                if output_file is None:
+                    raise SystemExit("grok tmux lane requires an output file")
+                argv = [
+                    "sh",
+                    "-c",
+                    'out=$1; shift; exec "$@" > "$out"',
+                    "sh",
+                    output_file,
+                    *argv,
+                ]
             elif vendor == "openrouter":
                 # Claude Code reads the prompt from stdin only when stdin is not a
                 # TTY; in a tmux pane it is. Redirect this adapter's spec file.
@@ -1131,7 +1143,7 @@ def launch(
                 )
 
         stream_from_output_file = vendor in OUTPUT_FILE_VENDORS or (
-            vendor == "claude" and tmux
+            vendor in ("claude", "grok") and tmux
         )
         finalized = finalize_lane_output(
             vendor,

@@ -27,7 +27,12 @@ from agent_cli.coordinator_lanes import (
 from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
-from test_coordinator_support import make_session, make_worker, write_accounts
+from test_coordinator_support import (
+    grok_stream,
+    make_session,
+    make_worker,
+    write_accounts,
+)
 
 
 TID = "aa000001-0000-4000-8000-000000000601"
@@ -251,7 +256,11 @@ def test_run_prepared_reports_and_forgets_a_real_process(tmp_path: Path) -> None
             "argv": [
                 sys.executable,
                 "-c",
-                "print('STATUS: complete'); print('RESULT: approved')",
+                "import json\n"
+                "print(json.dumps({"
+                "'type': 'result', 'subtype': 'success', 'is_error': False,"
+                " 'result': 'STATUS: complete\\nRESULT: approved', 'usage': {}"
+                "}))",
             ],
             "stdin_text": None,
             "output_file": None,
@@ -354,9 +363,8 @@ while time.time() < deadline:
     if seen:
         break
     time.sleep(0.05)
-print("RECORD-SEEN" if seen else "RECORD-MISSING")
-print("STATUS: complete")
-print("RESULT: done")
+payload = ("RECORD-SEEN" if seen else "RECORD-MISSING") + "\\nSTATUS: complete\\nRESULT: done"
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": payload, "usage": {}}))
 """
 
     def provider(_vendor: str, **_kwargs) -> list[str]:
@@ -406,7 +414,7 @@ def test_injected_lane_runner_writes_no_record(
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=lambda argv, stdin: Completed(
-            0, "STATUS: complete\nRESULT: done\n", ""
+            0, grok_stream("STATUS: complete\nRESULT: done\n"), ""
         ),
     )
     assert result.status == "complete"

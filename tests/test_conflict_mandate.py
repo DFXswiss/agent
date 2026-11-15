@@ -59,7 +59,7 @@ from agent_cli.github_accounts import (
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
-from test_coordinator_support import make_session, write_accounts
+from test_coordinator_support import grok_stream, make_session, write_accounts
 
 
 SCRIPT_REQ = Request(
@@ -426,7 +426,7 @@ class FakeConflictTransport:
         )
         self.lane_output = None
         returncode, output = result if isinstance(result, tuple) else (0, result)
-        return Completed(returncode, output, "")
+        return Completed(returncode, grok_stream(output), "")
 
     def lane(self, argv: list[str], stdin: str | None = None) -> Completed:
         self.lanes.append((stdin or "") + " " + " ".join(argv))
@@ -1276,7 +1276,7 @@ def test_lane_marker_retries_then_blocks_without_push(tmp_path: Path, monkeypatc
         if fake.clone_path is not None:
             (fake.clone_path / "src").mkdir(parents=True, exist_ok=True)
             (fake.clone_path / "src" / "app.py").write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n", encoding="utf-8")
-        return Completed(0, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=bad_lane)
     assert calls["n"] == 2
@@ -1792,7 +1792,11 @@ def test_github_unreachable_still_aborts_rebase(
     def lane(argv: list[str], stdin: str | None = None) -> Completed:
         fake.lane(argv, stdin)
         state["down"] = True
-        return Completed(0, "STATUS: complete\nRESULT: blocked\nNeeds a product decision.\n", "")
+        return Completed(
+            0,
+            grok_stream("STATUS: complete\nRESULT: blocked\nNeeds a product decision.\n"),
+            "",
+        )
 
     lines = tick(store, worker_cfg, runner=failing_github, lane_runner=lane)
     assert any("blocker" in line or "transient" in line for line in lines)
@@ -2228,11 +2232,13 @@ def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
             )
         return Completed(
             0,
-            "STATUS: complete\nRESULT: blocked\n"
-            "SUMMARY_EN: A product decision is required. "
-            + "x" * 700
-            + "\n"
-            "SUMMARY_DE: Eine Produktentscheidung ist erforderlich.\n",
+            grok_stream(
+                "STATUS: complete\nRESULT: blocked\n"
+                "SUMMARY_EN: A product decision is required. "
+                + "x" * 700
+                + "\n"
+                "SUMMARY_DE: Eine Produktentscheidung ist erforderlich.\n"
+            ),
             "",
         )
 
@@ -2406,7 +2412,9 @@ def test_conflicted_file_name_is_rendered_in_code(
                 "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n",
                 encoding="utf-8",
             )
-        return Completed(0, "STATUS: complete\nRESULT: blocked\nNo decision.\n", "")
+        return Completed(
+            0, grok_stream("STATUS: complete\nRESULT: blocked\nNo decision.\n"), ""
+        )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=blocked_lane)
     assert any("blocker" in line for line in lines)
@@ -2928,7 +2936,7 @@ def test_lane_that_rewrites_git_file_blocks_without_push(
     def lane(argv: list[str], stdin: str | None = None) -> Completed:
         if fake.clone_path is not None:
             (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
-        return Completed(0, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
     assert any("blocker" in line for line in lines)
@@ -2946,7 +2954,7 @@ def test_lane_that_rewrites_git_file_still_records_the_lane_run_and_log(
     def lane(argv: list[str], stdin: str | None = None) -> Completed:
         if fake.clone_path is not None:
             (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
-        return Completed(0, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
     assert any("blocker" in line for line in lines)
@@ -2977,7 +2985,7 @@ def test_lane_rewriting_only_git_file_blocks_without_any_later_git_call(
             (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
         fake.calls.clear()
         fake.raw_calls.clear()
-        return Completed(0, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
     assert any("blocker" in line for line in lines)
@@ -5181,7 +5189,7 @@ def test_lane_nonzero_exit_with_complete_status_is_transient(
 
     def failed_lane(argv: list[str], stdin: str | None = None) -> Completed:
         fake.lane(argv, stdin)
-        return Completed(1, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(1, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=failed_lane)
     assert any(line.startswith("transient:") for line in lines)
@@ -5198,7 +5206,7 @@ def test_lane_timeout_exit_with_complete_status_is_timeout_not_complete(
 
     def timed_out_lane(argv: list[str], stdin: str | None = None) -> Completed:
         fake.lane(argv, stdin)
-        return Completed(124, "STATUS: complete\nRESULT: done\n", "")
+        return Completed(124, grok_stream("STATUS: complete\nRESULT: done\n"), "")
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=timed_out_lane)
     assert any("blocker" in line for line in lines)
@@ -5217,7 +5225,7 @@ def test_lane_duplicate_status_lines_are_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            "STATUS: complete\nSTATUS: partial\nRESULT: done\n",
+            grok_stream("STATUS: complete\nSTATUS: partial\nRESULT: done\n"),
             "",
         )
 
@@ -5239,8 +5247,10 @@ def test_lane_duplicate_protocol_hidden_in_a_terminal_string_is_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            "STATUS: complete\nRESULT: done\n"
-            "\x1b]0;\nSTATUS: complete\nRESULT: blocked\n\x07",
+            grok_stream(
+                "STATUS: complete\nRESULT: done\n"
+                "\x1b]0;\nSTATUS: complete\nRESULT: blocked\n\x07"
+            ),
             "",
         )
 
@@ -5261,7 +5271,7 @@ def test_lane_contradicting_status_without_result_is_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            "STATUS: complete\nSTATUS: partial\n",
+            grok_stream("STATUS: complete\nSTATUS: partial\n"),
             "",
         )
 

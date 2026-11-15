@@ -35,6 +35,7 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_coordinator_support import (
     FakeGh,
+    grok_stream,
     lane_runner,
     make_session,
     make_worker,
@@ -6721,7 +6722,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
             resumed,
             fake,
             lambda argv, stdin=None: Completed(
-                0, "STATUS: complete\nRESULT: approved\n", ""
+                0, grok_stream("STATUS: complete\nRESULT: approved\n"), ""
             ),
             vendor="grok",
             stage="review-1",
@@ -6769,7 +6770,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
 
     def recovery_lane(argv: list[str], stdin: str | None = None) -> Completed:
         recovery_invocations.append(argv)
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     recovery_lines = phase_pr_gates(
         store,
@@ -10947,7 +10948,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
             launched.append("quality")
         elif "pr-reviewer-logic" in text or "Logic:" in text:
             launched.append("logic")
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     phase_pr_gates(
         store,
@@ -13437,7 +13438,9 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
             lambda argv: Completed(0, "", ""),
             lambda argv, stdin=None: Completed(
                 0,
-                "STATUS: complete\nRESULT: rejected\npassword=hunter2 defect",
+                grok_stream(
+                    "STATUS: complete\nRESULT: rejected\npassword=hunter2 defect"
+                ),
                 "",
             ),
         )
@@ -13516,11 +13519,13 @@ def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
         launched.append(argv)
         return Completed(
             0,
-            "STATUS: complete\nRESULT: done\n"
-            "SUMMARY_EN: Apply the requested fix.\n"
-            "SUMMARY_DE: Setze die angeforderte Korrektur um.\n"
-            "REUSED: none — no existing surface\n"
-            "ADDED: `src/example.py:1` add behavior\n",
+            grok_stream(
+                "STATUS: complete\nRESULT: done\n"
+                "SUMMARY_EN: Apply the requested fix.\n"
+                "SUMMARY_DE: Setze die angeforderte Korrektur um.\n"
+                "REUSED: none — no existing surface\n"
+                "ADDED: `src/example.py:1` add behavior\n"
+            ),
             "",
         )
 
@@ -13608,7 +13613,7 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
         lane_runner=lambda _argv, _stdin: Completed(
-            0, "STATUS: complete\nRESULT: approved\n", ""
+            0, grok_stream("STATUS: complete\nRESULT: approved\n"), ""
         ),
     )
     assert agent["status"] == "working"
@@ -13684,7 +13689,7 @@ def test_reviewer_audit_failure_retries_checkpoint_without_relaunch(
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
         lane_runner=lambda _argv, _stdin: Completed(
-            0, "STATUS: complete\nRESULT: approved\n", ""
+            0, grok_stream("STATUS: complete\nRESULT: approved\n"), ""
         ),
     )
     assert first_agent["status"] == "working"
@@ -13796,7 +13801,7 @@ def test_implementer_checkpoint_rollback_keeps_running_state(
             spec_body="Implement.",
             runner=lambda _argv: Completed(0, "", ""),
             lane_runner=lambda _argv, _stdin: Completed(
-                0, "STATUS: complete\nRESULT: done\n", ""
+                0, grok_stream("STATUS: complete\nRESULT: done\n"), ""
             ),
         )
 
@@ -13865,7 +13870,7 @@ def test_implementer_checkpoint_rejects_non_relative_surface_paths(
             round_num=1,
             spec_body="Implement.",
             runner=lambda argv: Completed(0, "", ""),
-            lane_runner=lambda _argv, _stdin: Completed(0, output, ""),
+            lane_runner=lambda _argv, _stdin: Completed(0, grok_stream(output), ""),
         )
 
     saved = store.row("task", tid)
@@ -14581,7 +14586,7 @@ def test_hidden_duplicate_protocol_records_cannot_finish_implementer(
         worker,
         task,
         lambda argv: Completed(0, "", ""),
-        lambda _argv, _stdin: Completed(0, output, ""),
+        lambda _argv, _stdin: Completed(0, grok_stream(output), ""),
     )
 
     saved = store.row("task", tid)
@@ -14955,11 +14960,11 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
     [
         (Completed(1, "", "provider output missing"), "unavailable", ""),
         (
-            Completed(0, "STATUS: partial\nRESULT: approved\n", ""),
+            Completed(0, grok_stream("STATUS: partial\nRESULT: approved\n"), ""),
             "partial",
             "approved",
         ),
-        (Completed(0, "not reviewer protocol", ""), "partial", ""),
+        (Completed(0, grok_stream("not reviewer protocol"), ""), "partial", ""),
     ],
     ids=("unavailable", "partial", "malformed"),
 )

@@ -20,6 +20,7 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
+    grok_stream,
     lane_runner,
     make_session,
     make_worker,
@@ -741,7 +742,7 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
             worker,
             task,
             fake,
-            lambda _argv, _stdin: Completed(0, full, ""),
+            lambda _argv, _stdin: Completed(0, grok_stream(full), ""),
         )
 
     saved = store.row("task", tid)
@@ -887,7 +888,7 @@ def test_real_implementer_launch_reuses_checkpoint_and_invalidates_head_same_tic
         worker,
         task,
         lambda _argv: Completed(0, "", ""),
-        lambda _argv, _stdin: Completed(0, full, ""),
+        lambda _argv, _stdin: Completed(0, grok_stream(full), ""),
     )
 
     saved = store.row("task", tid)
@@ -1677,7 +1678,7 @@ def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
         material = " ".join(argv) + "\n" + (stdin or "")
         if "pr-reviewer-quality" in material:
             raise RuntimeError("provider transport failed")
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     lines = tick(store, worker, runner=fake, lane_runner=one_lane_fails)
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
@@ -1841,7 +1842,7 @@ def test_incomplete_pr_review_is_retried_before_blocking(
             if name in material
         )
         started.append(role)
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     tick(store, worker, runner=fake, lane_runner=approve_one)
     assert started == []
@@ -1883,7 +1884,7 @@ def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
         material = " ".join(argv) + "\n" + (stdin or "")
         if "pr-reviewer-quality" in material:
             raise RuntimeError("provider transport failed")
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     lines = tick(store, worker, runner=fake, lane_runner=fail_quality)
     assert lines == [
@@ -1918,7 +1919,7 @@ def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
             if name in material
         )
         started.append(role)
-        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+        return Completed(0, grok_stream("STATUS: complete\nRESULT: approved\n"), "")
 
     tick(store, worker, runner=fake, lane_runner=approve_one)
     assert started == ["pr-reviewer-quality"]
