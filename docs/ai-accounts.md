@@ -322,17 +322,21 @@ of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
 (private-key header words). CSI/ESC parameter and intermediate bytes are
 matched with a fixed window of at most 64 bytes each
 (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-limit and covers only the configured known secrets: the config directory, the gh
-config directory, the signing key, and the device bearer. For bounded lane fields, the
+limit and covers the configured paths from accounts (the config directory, the
+gh config directory, and the signing key), the coordinator path roots (the
+control dir, the worktree, the workspace, the agent home, and the user home),
+and the device bearer. Only the device bearer additionally gets the
+percent-decoded views. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
 matching; a token split by that cut is redacted in full before the ordinary
 truncation marker is added.
 The known-secret pass builds a fixed set of views and searches each one with
-KMP, overlaps included. Percent-tolerant matching also searches a
-percent-decoded copy of each view. The raw text is percent-decoded once, and
-when that decoded text contains a terminal control the same control views are
-built on it and searched for the literal secret. Their maps compose through
+KMP, overlaps included. Only the device bearer additionally gets the
+percent-decoded views. Percent-tolerant matching of that bearer also searches a
+percent-decoded copy of each view. The raw bearer text is percent-decoded once,
+and when that decoded text contains a terminal control the same control views
+are built on it and searched for the literal bearer. Their maps compose through
 the decoded text back to raw spans, and those views are not percent-decoded
 again. Consecutive `%HH` triplets (either hex case)
 are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
@@ -340,14 +344,14 @@ one character mapped to the raw span of all of its triplets, and an invalid or
 truncated sequence falls back to one character per byte so those bytes are not
 merged into a character they do not encode. An ASCII `%HH` stays one character
 spanning its three-character raw span, and every other character is copied.
-The literal secret is matched on the undecoded view
+The literal bearer is matched on the undecoded view
 and on that decoded view, and on the control views of the once-decoded raw
 text. The union of the mapped spans is redacted. Raw,
-fully encoded (`%25` for `%`), and mixed per-character forms are covered.
-A literal `%` in the secret that itself starts a valid `%HH` next to encoded
-neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
-matched. Every secret, including one that contains `%`, takes time linear in
-the view length plus the secret length. The views
+fully encoded (`%25` for `%`), and mixed per-character forms of the bearer are
+covered. A literal `%` in the bearer that itself starts a valid `%HH` next to
+encoded neighbours in the same run is read decoded, so `a%41` in `%61%41` is
+not matched. The bearer, including one that contains `%`, takes time linear in
+the view length plus the bearer length. The views
 are the raw text, text that drops complete string controls, complete ESC/CSI
 sequences, and C0/C1 bytes, text with only
 introducers, terminators, and C0/C1 bytes removed, and text with complete
@@ -357,8 +361,9 @@ Another keeps every escape final, including the `\` of `ESC \`, while dropping
 introducers, CSI parameters and intermediates, ESC intermediates, and C0/C1
 bytes, and it keeps string payloads. Another keeps only each control's
 introducer byte. Another keeps only each control's final or string terminator
-and drops string payloads. Both copies use KMP,
-so a repeated prefix does not rescan the text per candidate.
+and drops string payloads. Each view is searched with KMP, and so is the
+device bearer's percent-decoded copy, so a repeated prefix does not rescan
+the text per candidate.
 A control's introducer, final, or terminator counts as a secret character only
 as far as a single view yields it. An occurrence that needs different treatment
 of two controls is not matched, for example one control's final byte used as a

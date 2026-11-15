@@ -113,9 +113,12 @@ subsequent notification that provides useful model work belong to the script.
    (private-key header words). CSI/ESC parameter and intermediate bytes are
    matched with a fixed window of at most 64 bytes each
    (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-   limit and covers only the configured known secrets: the config directory,
-   the gh config directory, the signing key, and the device bearer, so
-   separatorless log text is handled in linear time. The views are the raw
+   limit and covers the configured paths from accounts (the config directory,
+   the gh config directory, and the signing key), the coordinator path roots
+   (the control dir, the worktree, the workspace, the agent home, and the user
+   home), and the device bearer, so separatorless log text is handled in linear
+   time. Only the device bearer additionally gets the percent-decoded views.
+   The views are the raw
    text, text that drops complete string controls, complete ESC/CSI
    sequences, and C0/C1 bytes, text with
    introducers, terminators, and C0/C1 bytes removed, and text with
@@ -126,22 +129,23 @@ subsequent notification that provides useful model work belong to the script.
    intermediates, and C0/C1 bytes and keeping string payloads, one view that
    keeps only each control's introducer byte, and one view that keeps only each
    control's final or string terminator and drops string payloads.
-   Percent-tolerant matching also searches a percent-decoded copy of each view.
-   The raw text is percent-decoded once, and when that decoded text contains a
-   terminal control the same control views are built on it and searched for the
-   literal secret. Their maps compose through the decoded text back to raw
-   spans, and those views are not percent-decoded again.
-   Consecutive `%HH` triplets are decoded as UTF-8 in one pass: a valid
+   Percent-tolerant matching of the device bearer also searches a
+   percent-decoded copy of each view. The raw bearer text is percent-decoded once, and when that
+   decoded text contains a terminal control the same control views are built on
+   it and searched for the literal bearer. Their maps compose through the
+   decoded text back to raw spans, and those views are not percent-decoded
+   again. Consecutive `%HH` triplets are decoded as UTF-8 in one pass: a valid
    sequence becomes one character mapped to the raw span of its triplets, and
    an invalid or truncated sequence falls back to one character per byte so
    those bytes are not merged into a character they do not encode. An ASCII
    `%HH` stays one character spanning its three-character raw span, and every
-   other character is copied. The literal
-   secret is matched on both copies and on the control views of the
-   once-decoded raw text. A literal `%` in the secret that itself starts a
-   valid `%HH` next to encoded neighbours in the same run is read decoded,
-   so `a%41` in `%61%41` is not matched. Every secret, including one that
-   contains `%`, stays linear in the text length plus the secret length.
+   other character is copied. The literal bearer is matched on both copies and
+   on the control views of the once-decoded raw text. Raw, fully encoded
+   (`%25` for `%`), and mixed per-character forms of the bearer are covered.
+   A literal `%` in the bearer that itself starts a valid `%HH` next to encoded
+   neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
+   matched. The bearer, including one that contains `%`, stays linear in the
+   text length plus the bearer length.
    A control's introducer, final, or terminator counts as a secret character
    only as far as a single view yields it. An occurrence that needs different
    treatment of two controls is not matched, for example one control's final

@@ -1363,8 +1363,11 @@ of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
 (private-key header words). CSI/ESC parameter and intermediate bytes are
 matched with a fixed window of at most 64 bytes each
 (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-limit and covers only the configured known secrets: the config directory, the gh
-config directory, the signing key, and the device bearer.
+limit and covers the configured paths from accounts (the config directory, the
+gh config directory, and the signing key), the coordinator path roots (the
+control dir, the worktree, the workspace, the agent home, and the user home),
+and the device bearer. Only the device bearer additionally gets the
+percent-decoded views.
 An occurrence that needs different treatment of two controls is not matched.
 Value runs that do not need delimiter backtracking are possessive. The fixed
 regex windows and the known-secret view matcher stay linear on long
@@ -1380,11 +1383,12 @@ Outputs that keep their end, such as test and check output and failed-workflow
 logs, are redacted whole without a length limit and only then cut to their
 end, which follows the usual truncation marker; the cut therefore never
 exposes part of a credential.
-Configured paths
-are matched in both raw and resolved form across interleaved terminal controls
-when one fixed view yields the path,
-then hidden again after sanitization and before the diagnostic length bound is
-applied. An unreadable
+The config directory is matched in both raw and resolved form across
+interleaved terminal controls when one fixed view yields the path, then hidden
+again after sanitization and before the diagnostic length bound is applied.
+Coordinator lane text first matches the control dir, the worktree, the
+workspace, the agent home, and the user home in that same raw and resolved
+form, once, before that pipeline. An unreadable
 lane output reports only a fixed error category rather than the raw `OSError`.
 Live terminal frames resolve the attached session's configured provider profile,
 join tmux soft-wrapped lines, and use `redact_lane_text` with that configuration
@@ -1411,15 +1415,15 @@ including one that contains `%` or a non-ASCII character, stays linear in the
 text length plus the bearer length. They
 then use that same generic pipeline; exact bearer removal is repeated after
 sanitization.
-Profile credentials, config directory paths, signing-key paths, and raw auth
-errors must not appear
-in replicated rows or GitHub text. GitHub activity failures replace the exact
-configured profile and signing-key paths in raw text before terminal
-sanitization, repeat that exact replacement after generic sanitization, and
-only then apply the replicated-row length bound. Exact matching of those
-configured paths and of the device bearer searches the same fixed views with a
-linear matcher and has no control-run limit, before any string-control
-replacement. A complete or unterminated OSC, DCS, PM, APC, or SOS span,
+Profile credentials and raw auth errors must not appear in replicated rows or
+GitHub text. Lane and terminal text hide the config directory. GitHub activity
+failures replace the exact gh config directory and signing-key paths, as the
+stored strings, in raw text before terminal sanitization, repeat that exact
+replacement after generic sanitization, and only then apply the replicated-row
+length bound. Those paths use the linear view matcher's raw and control views
+and have no control-run limit, before any string-control replacement. Only the
+device bearer additionally gets the percent-decoded views. A complete or
+unterminated OSC, DCS, PM, APC, or SOS span,
 including nested payload, is removed whole in the view that drops every
 terminal control. The views that drop introducers and terminators keep that
 payload. One further view keeps a printable ESC final that also introduces a
@@ -1464,25 +1468,26 @@ control between later secret characters is skipped
 introducer and final both used with parameters between them (`Q[w` in
 `Q\x1b[32!w`). Such text never renders the secret on a terminal and does not
 contain it contiguously in raw form; matching every per-control combination
-would need a non-linear matcher. Literal and
-percent-encoded representations are matched on each view, so a repeated
-prefix or many equal first characters do not rescan the text per candidate.
-Percent-tolerant matching also searches a percent-decoded copy of each view.
-The raw text is percent-decoded once, and when that decoded text contains a
-terminal control the same control views are built on it and searched for the
-literal secret. Their maps compose through the decoded text back to raw
-spans, and those views are not percent-decoded again.
+would need a non-linear matcher. Each fixed view is searched with KMP, so a
+repeated prefix or many equal first characters do not rescan the text per
+candidate. Only the device bearer additionally gets the percent-decoded views.
+Percent-tolerant matching of that bearer also searches a percent-decoded copy
+of each view. The raw bearer text is percent-decoded once, and when that
+decoded text contains a terminal control the same control views are built on
+it and searched for the literal bearer. Their maps compose through the decoded
+text back to raw spans, and those views are not percent-decoded again.
 Consecutive `%HH` triplets (either hex case) are one UTF-8 byte stream,
 decoded in a single pass: a valid sequence becomes one character mapped to
 the raw span of all of its triplets, and an invalid or truncated sequence
 falls back to one character per byte so those bytes are not merged into a
 character they do not encode. An ASCII `%HH` stays one character spanning
 its three-character raw span, and every other character is copied.
-The literal secret is matched on both copies and on the control views of the
-once-decoded raw text. A literal `%` in the secret that itself starts a valid
-`%HH` next to encoded neighbours in the same run is read decoded, so `a%41`
-in `%61%41` is not matched. Every secret, including one
-that contains `%`, takes time linear in the view length plus the secret
+The literal bearer is matched on both copies and on the control views of the
+once-decoded raw text. Raw, fully encoded (`%25` for `%`), and mixed
+per-character forms of the bearer are covered. A literal `%` in the bearer
+that itself starts a valid `%HH` next to encoded neighbours in the same run
+is read decoded, so `a%41` in `%61%41` is not matched. The bearer, including
+one that contains `%`, takes time linear in the view length plus the bearer
 length.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
 `ESC \`; their eight-bit forms accept those same ST spellings. BEL terminates

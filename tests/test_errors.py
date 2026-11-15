@@ -1393,14 +1393,20 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "window of at most 64 bytes each (`_MAX_ESCAPE_PARAMETER_BYTES`)"
     )
     known_secret_views = (
-        "The linear view matcher has no control-run limit and covers only the "
-        "configured known secrets: the config directory, the gh config "
-        "directory, the signing key, and the device bearer"
+        "The linear view matcher has no control-run limit and covers the "
+        "configured paths from accounts (the config directory, the gh config "
+        "directory, and the signing key), the coordinator path roots (the "
+        "control dir, the worktree, the workspace, the agent home, and the "
+        "user home), and the device bearer"
     )
-    for text in (documented, ai_accounts, readme):
+    bearer_percent_views = (
+        "Only the device bearer additionally gets the percent-decoded views"
+    )
+    for text in (documented, ai_accounts, readme, skill):
         normalized = " ".join(text.split())
         assert control_run_window in normalized
         assert known_secret_views in normalized
+        assert bearer_percent_views in normalized
     assert control_run_window in " ".join(documented.split())
     assert control_run_window in " ".join(ai_accounts.split())
     assert control_run_window in " ".join(readme.split())
@@ -1707,9 +1713,15 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in flat
     )
     assert (
-        "The linear view matcher has no control-run limit and covers only the "
-        "configured known secrets: the config directory, the gh config "
-        "directory, the signing key, and the device bearer"
+        "The linear view matcher has no control-run limit and covers the "
+        "configured paths from accounts (the config directory, the gh config "
+        "directory, and the signing key), the coordinator path roots (the "
+        "control dir, the worktree, the workspace, the agent home, and the "
+        "user home), and the device bearer"
+        in flat
+    )
+    assert (
+        "Only the device bearer additionally gets the percent-decoded views"
         in flat
     )
     assert "Secret-key name affixes" not in documented
