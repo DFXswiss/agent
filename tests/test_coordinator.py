@@ -14314,7 +14314,7 @@ def test_a38_tests_validates_an_executor_job_report_and_checkpoints_it(
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
     resumed: list[dict[str, Any]] = []
 
-    def fake_resume(_store, _worker, task_arg, _runner):  # noqa: ANN001
+    def fake_resume(_store, _worker, task_arg, _runner, _api):  # noqa: ANN001
         resumed.append(
             task_arg["payload"]["coordinator"]["a38"]["post_suite_checkpoint"]
         )
