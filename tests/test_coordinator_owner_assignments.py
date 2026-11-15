@@ -1961,7 +1961,7 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
     return task_id, head
 
 
-def _patch_early_merge_readiness(monkeypatch, head):
+def _patch_early_merge_readiness(monkeypatch, head, *, merge_commit_sha="d" * 40):
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._repository_visibility",
         lambda *_args: False,
@@ -1974,7 +1974,7 @@ def _patch_early_merge_readiness(monkeypatch, head):
         lambda *_args: {
             "state": "closed",
             "merged": True,
-            "merge_commit_sha": "d" * 40,
+            "merge_commit_sha": merge_commit_sha,
             "merged_at": "2026-10-01T12:00:00Z",
             "merged_by": {"login": "human-owner", "type": "User"},
             "base": {"ref": "main", "sha": "b" * 40},
@@ -2416,6 +2416,126 @@ def test_a38_merged_task_blocks_second_review_while_ci_is_pending(
     assert published == ["merged-with-blocking-second-review"]
     saved = store.row("task", task_id)["payload"]["coordinator"]
     assert saved["phase"] == "blocked"
+
+
+def test_a38_invalid_merge_sha_still_publishes_blocking_second_review(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["a38"]["second_review"]["reviews"] = [
+        {"blocks_merge": True}
+    ]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(
+        monkeypatch, head, merge_commit_sha="pending"
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["blocker merged-with-blocking-second-review"]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_invalid_merge_sha_still_publishes_late_second_review(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        second_review_timeout_seconds=600,
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    task = store.row("task", task_id)
+    second_review = task["payload"]["coordinator"]["a38"]["second_review"]
+    second_review["requirement_satisfied_at"] = "2026-10-01T12:11:00Z"
+    second_review["reviews"] = [
+        {"blocks_merge": False, "at": "2026-10-01T12:11:00Z"}
+    ]
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _patch_early_merge_readiness(monkeypatch, head, merge_commit_sha=None)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["blocker merged-without-second-review"]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_invalid_merge_sha_retries_after_passing_in_time_second_review(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(
+        monkeypatch, head, merge_commit_sha="not-a-sha"
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._repository_visibility",
+        lambda *_args: pytest.fail("visibility must wait for a valid merge SHA"),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._observe_exact_head_ci",
+        lambda *_args, **_kwargs: pytest.fail("CI must wait for a valid merge SHA"),
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["merge observed but incomplete metadata"]
+    saved = store.row("task", task_id)
+    assert saved["state"] != "done"
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "pr.merged"
+    ]
 
 
 def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(
