@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5, uuid4
 
-from .a38 import report_fact_reasons, verify_report
+from .a38 import A38Error, load_policy, report_fact_reasons, verify_report
 from .a38_guard import POLICY_PATH, status_context_enforce
 from .a38_review import (
     REVIEW_BEGIN,
@@ -439,10 +439,10 @@ def _load_report_policy(
     )
     require_git_ok(result, "load A38 policy from base")
     try:
-        policy = json.loads(result.stdout or "")
-        if not isinstance(policy, dict):
-            raise ValueError("policy is not an object")
-    except (json.JSONDecodeError, ValueError) as exc:
+        # Normalize exactly as ``agent a38 verify`` does: executor jobs become
+        # command jobs and readme_only becomes readme_only_omit.
+        policy = load_policy(result.stdout or "")
+    except A38Error as exc:
         raise CoordinatorError("A38 base policy is invalid") from exc
     return result, policy
 

@@ -20,6 +20,7 @@ from agent_cli.coordinator_lanes import (
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator import (
+    _a38_policy_text,
     patch_account_runners,
     patch_execute_github,
     patch_run_bounded,
@@ -727,7 +728,7 @@ def _a38_tests_task(
         if parts[0] in ("fetch", "cat-file"):
             return Completed(0, "", "")
         if parts[0] == "show":
-            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+            return Completed(0, _a38_policy_text(), "")
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)

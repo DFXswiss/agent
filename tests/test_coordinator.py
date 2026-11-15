@@ -143,54 +143,85 @@ def patch_run_bounded(monkeypatch: Any, fake: FakeGh) -> None:
     monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
 
 
-def _a38_policy_text() -> str:
+def _a38_policy_text(*, executor: dict | None = None) -> str:
+    job = {
+        "id": "unit",
+        "name": "Unit tests",
+        "timeout_s": 60,
+        "workflow": ".github/workflows/ci.yml",
+        "job": "unit",
+    }
+    if executor is None:
+        job["command"] = "pytest"
+    else:
+        job["executor"] = executor
     return json.dumps(
         {
-            "jobs": [
-                {
-                    "id": "unit",
-                    "name": "Unit tests",
-                    "command": "pytest",
-                    "timeout_s": 60,
-                }
-            ]
+            "schema": "a38/v1",
+            "standard": "A38",
+            "documentation": "docs/a38.md",
+            "mode": "enforce",
+            "jobs": [job],
+            "exclusions": [],
         }
     )
 
 
-def _write_coordinator_a38_report(
-    path: Path, *, head: str, base: str, private: bool = False
+def _write_coordinator_a38_policy_report(
+    path: Path,
+    *,
+    policy: dict,
+    head: str,
+    base: str,
+    private: bool = False,
 ) -> str:
     from agent_cli.a38 import _build_report_dict, _write_report
 
+    changed_paths = ["src/app.py"]
+    runs = [
+        {
+            "id": job["id"],
+            "name": job["name"],
+            "command": job["command"],
+            "result": "pass",
+            "exit_code": 0,
+            "duration_s": 1,
+            "timeout_s": job["timeout_s"],
+        }
+        for job in policy["jobs"]
+    ]
     payload = _build_report_dict(
         repo="example/project",
         head=head,
         private=private,
         recorded_at="2026-11-01T00:00:00Z",
-        required=["unit"],
-        runs=[
-            {
-                "id": "unit",
-                "name": "Unit tests",
-                "command": "pytest",
-                "result": "pass",
-                "exit_code": 0,
-                "duration_s": 1,
-                "timeout_s": 60,
-            }
-        ],
+        required=[job["id"] for job in policy["jobs"]],
+        runs=runs,
         base=base,
-        changed_paths=["src/app.py"],
+        changed_paths=changed_paths,
         omit_reason=None,
     )
     _write_report(
         path,
         payload,
         base_sha=base,
-        changed_paths=["src/app.py"],
+        changed_paths=changed_paths,
     )
     return path.read_text(encoding="utf-8")
+
+
+def _write_coordinator_a38_report(
+    path: Path, *, head: str, base: str, private: bool = False
+) -> str:
+    from agent_cli.a38 import load_policy
+
+    return _write_coordinator_a38_policy_report(
+        path,
+        policy=load_policy(_a38_policy_text()),
+        head=head,
+        base=base,
+        private=private,
+    )
 
 
 def test_harden_grok_write_adds_denies() -> None:
@@ -11025,7 +11056,7 @@ def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
         if parts[0] == "rev-parse":
             return Completed(0, "b" * 40 + "\n", "")
         if parts[0] == "show":
-            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+            return Completed(0, _a38_policy_text(), "")
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
@@ -12708,6 +12739,98 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
         if row.get("task_id") == tid and row.get("key") == "pushed"
     )
     assert pushed["status"] == "ja"
+
+
+def test_a38_tests_validates_an_executor_job_report_and_checkpoints_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A base manifest with an executor job must validate and checkpoint its report."""
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.a38 import load_policy
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    head = "a" * 40
+    base = "b" * 40
+    tid = "33333333-3333-4333-8333-333333333350"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 executor report", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+
+    raw_policy = _a38_policy_text(
+        executor={"adapter": "commands", "config": {"steps": [["true"]]}}
+    )
+    normalized = load_policy(raw_policy)
+    assert "command" not in json.loads(raw_policy)["jobs"][0]
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *a, **k: (base, ["src/app.py"], False, False),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped",
+        lambda *a, **k: lambda argv: Completed(0, "false", ""),
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.run_bounded",
+        lambda argv, **_k: Completed(0, "trusted check passed", ""),
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, raw_policy, "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    report_body = ""
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        nonlocal report_body
+        if argv[0] == "run":
+            report_body = _write_coordinator_a38_policy_report(
+                Path(argv[argv.index("--output") + 1]),
+                policy=normalized,
+                head=head,
+                base=base,
+            )
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+    resumed: list[dict[str, Any]] = []
+
+    def fake_resume(_store, _worker, task_arg, _runner):  # noqa: ANN001
+        resumed.append(
+            task_arg["payload"]["coordinator"]["a38"]["post_suite_checkpoint"]
+        )
+        return [f"A38 passed and report posted on {head[:7]}"]
+
+    monkeypatch.setattr(coordinator_a38, "_resume_post_suite_report", fake_resume)
+
+    assert phase_a38_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    ) == [f"A38 passed and report posted on {head[:7]}"]
+    assert len(resumed) == 1
+    assert resumed[0]["body"] == report_body
+    assert resumed[0]["body_sha256"] == coordinator_a38._report_body_digest(report_body)
+    assert resumed[0]["head"] == head and resumed[0]["base_sha"] == base
 
 
 @pytest.mark.parametrize("live_change", ("unreadable", "head", "base"))
