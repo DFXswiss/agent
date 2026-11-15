@@ -29,6 +29,7 @@ from agent_cli.coordinator_conflicts import (
     resolve_conflict_mandate,
 )
 from agent_cli.coordinator_git import _write_marker, adopt_published_head
+from agent_cli.coordinator_github import phase_await_merge
 from agent_cli.coordinator_orders import own_order_events, reconcile_order_events
 from agent_cli.preconditions import CHECKS, Action, ISSUE, ORDER, Requirement
 from agent_cli.store import utcnow
@@ -886,6 +887,103 @@ def test_issue_task_with_a_conflict_still_blocks(
     assert store.row(
         "checklist_item", registry_row_id(issue_id, "conflict_mandate")
     ) is None
+    store.close()
+
+
+def test_ready_order_in_conflict_returns_to_readiness_and_the_remedy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="await_merge")
+    fake.pr["isDraft"] = False
+    short_readiness(monkeypatch)
+    calls, _ = stub(monkeypatch, pushed(fake))
+    lines = phase_await_merge(store, worker, store.row("task", OID), fake)
+    assert lines == [
+        "pull request example/project#42 is CONFLICTING on aaaaaaa; "
+        "routing to readiness"
+    ]
+    assert checkpoint(store, OID)["phase"] == "readiness"
+    gate_lines = gate(store, worker, fake, lane)
+    assert gate_lines[0] == (
+        "conflict resolution 1 started for example/project#42 on aaaaaaa"
+    )
+    assert gate_lines[-1] == (
+        "conflict resolution 1 rebased aaaaaaa; adopted head ddddddd; "
+        "routing to tests"
+    )
+    assert len(calls) == 1
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "tests"
+    assert saved["head_sha"] == saved["published_head"] == R
+    store.close()
+
+
+@pytest.mark.parametrize("mergeable", ["MERGEABLE", "UNKNOWN", None])
+def test_ready_order_keeps_waiting_for_non_conflicting_mergeability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mergeable: str | None
+) -> None:
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="await_merge")
+    fake.pr["isDraft"] = False
+    fake.pr["mergeable"] = mergeable
+    lines = phase_await_merge(store, worker, store.row("task", OID), fake)
+    assert lines == ["awaiting human merge of example/project#42"]
+    assert checkpoint(store, OID)["phase"] == "await_merge"
+    store.close()
+
+
+def test_ready_order_keeps_waiting_when_mergeability_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="await_merge")
+    fake.pr["isDraft"] = False
+    fake.pr_view_rc = 1
+    lines = phase_await_merge(store, worker, store.row("task", OID), fake)
+    assert lines == ["awaiting human merge of example/project#42"]
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "await_merge"
+    assert "blocker" not in saved
+    store.close()
+
+
+def test_issue_task_in_conflict_keeps_waiting_in_await_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    issue_id = "33333333-3333-4333-8333-333333333333"
+    task = {
+        "id": issue_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "title": "Fix",
+        "repo": "example/project",
+        "state": "open",
+        "current_round": 0,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "await_merge",
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "base": "develop",
+                },
+                "pr_number": 42,
+                "head_sha": H,
+            }
+        },
+        "created_at": utcnow(),
+        "updated_at": utcnow(),
+    }
+    seed_task(store, worker, issue_id, task)
+    fake.pr["mergeable"] = "CONFLICTING"
+    lines = phase_await_merge(
+        store, worker, store.row("task", issue_id), fake
+    )
+    assert lines == ["awaiting human merge of example/project#42"]
+    assert coord(store.row("task", issue_id))["phase"] == "await_merge"
     store.close()
 
 
