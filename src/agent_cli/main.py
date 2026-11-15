@@ -241,6 +241,7 @@ N_A_ALLOWED = frozenset(
     }
 )
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
+STATIC_NEW_ORDER = Path(__file__).resolve().parent / "static" / "orders_new.html"
 
 
 def die(msg: str) -> None:
@@ -2222,6 +2223,16 @@ def cmd_dashboard(args: list[str]) -> None:
             self.end_headers()
             self.wfile.write(body)
 
+        def _html(self, static: Path, missing: str) -> None:
+            if not static.is_file():
+                self.send_error(500, missing)
+                return
+            body = static.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _orders(self, method: str) -> bool:
             parsed = urlparse(self.path)
             if not parsed.path.startswith(ORDER_PREFIX):
@@ -2285,14 +2296,10 @@ def cmd_dashboard(args: list[str]) -> None:
                 self._json(200, snap)
                 return
             if path in ("/", "/index.html"):
-                if not STATIC.is_file():
-                    self.send_error(500, "dashboard missing")
-                    return
-                body = STATIC.read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(body)
+                self._html(STATIC, "dashboard missing")
+                return
+            if path in ("/orders/new", "/orders/new.html"):
+                self._html(STATIC_NEW_ORDER, "new order page missing")
                 return
             self.send_error(404)
 

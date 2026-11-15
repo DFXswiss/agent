@@ -980,6 +980,45 @@ def test_order_routes_are_served_by_the_dashboard(device, monkeypatch) -> None:
         assert content_type.startswith("text/html")
 
 
+def test_new_order_form_is_on_its_own_page(device, monkeypatch) -> None:
+    with _running_dashboard(monkeypatch) as port:
+        status, content_type, raw = _request(port, "GET", "/")
+        assert status == 200
+        assert content_type.startswith("text/html")
+        main_page = raw.decode("utf-8")
+        assert 'id="order-new"' in main_page
+        assert 'href="/orders/new"' in main_page
+        assert main_page.count("New order") == 1
+        assert 'id="os-repo"' not in main_page
+        assert "Submit order" not in main_page
+
+        for path in ("/orders/new", "/orders/new.html"):
+            status, content_type, raw = _request(port, "GET", path)
+            assert status == 200
+            assert content_type.startswith("text/html")
+            page = raw.decode("utf-8")
+            assert 'href="/"' in page
+            for element_id in (
+                "os-repo",
+                "os-title",
+                "os-base",
+                "os-worker",
+                "os-notify",
+                "os-max-rounds",
+                "os-body",
+                "os-skips",
+                "os-add-skip",
+                "os-send",
+                "os-result",
+            ):
+                assert f'id="{element_id}"' in page
+            assert "Submit order" in page
+
+        for path in ("/orders/new/missing", "/unknown"):
+            status, _, _ = _request(port, "GET", path)
+            assert status == 404
+
+
 def test_order_route_refuses_an_invalid_content_length(device, monkeypatch) -> None:
     with _running_dashboard(monkeypatch) as port:
         status, _, _ = _request(
