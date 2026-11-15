@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Agent — New order</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #1a1a1a; background: #f4f1ea; }
+    body { margin: 24px; max-width: 900px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .sub { color: #555; margin-bottom: 20px; }
+    .back { margin: 0 0 16px; }
+    .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
+    .control-form button { padding: 6px 12px; cursor: pointer; }
+    #os-body { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
+    .failed { color: #c00; }
+  </style>
+</head>
+<body>
+  <p class="back"><a href="/">&larr; Back to dashboard</a></p>
+  <h1>New order</h1>
+  <p class="sub">Submit an order to a worker on this device.</p>
+
+  <div id="order-submit">
+    <div class="control-form">
+      <input type="text" id="os-repo" placeholder="owner/name" />
+      <input type="text" id="os-title" placeholder="title" />
+      <input type="text" id="os-base" placeholder="base" />
+      <input type="text" id="os-worker" placeholder="worker" />
+      <input type="text" id="os-notify" placeholder="notify session" />
+      <input type="number" id="os-max-rounds" min="1" placeholder="max rounds" />
+    </div>
+    <textarea id="os-body" placeholder="order text"></textarea>
+    <div id="os-skips"></div>
+    <div class="control-form">
+      <button type="button" id="os-add-skip">Add skipped check</button>
+      <button type="button" id="os-send">Submit order</button>
+    </div>
+    <p id="os-result"></p>
+  </div>
+
+  <script>
+    let skippable = [];
+
+    function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+
+    async function submitOrder(params) {
+      const res = await fetch("/api/orders/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
+      let body = null;
+      try { body = await res.json(); } catch (_) {}
+      if (!res.ok || !body || body.ok !== true) throw new Error((body && body.error) || "HTTP " + res.status);
+      return body.result;
+    }
+
+    async function loadSchema() {
+      try {
+        const res = await fetch("/api/orders/schema");
+        let body = null;
+        try { body = await res.json(); } catch (_) {}
+        if (!res.ok || !body || body.ok !== true) throw new Error((body && body.error) || "HTTP " + res.status);
+        skippable = body.result.skippable || [];
+        if (body.result.enabled !== true) {
+          document.getElementById("order-submit").hidden = true;
+          const resultLine = document.getElementById("os-result");
+          resultLine.className = "failed";
+          resultLine.textContent = "Orders are not enabled on this device.";
+        }
+      } catch (e) {
+        const resultLine = document.getElementById("os-result");
+        resultLine.className = "failed";
+        resultLine.textContent = e.message;
+      }
+    }
+
+    document.getElementById("os-add-skip").addEventListener("click", () => {
+      const row = document.createElement("div");
+      row.className = "control-form os-skip";
+      const options = skippable.map(key => `<option value="${esc(key)}">${esc(key)}</option>`).join("");
+      row.innerHTML = `<select class="os-skip-key">${options}</select><input type="text" class="os-skip-reason" placeholder="reason" /><button type="button" class="os-skip-remove">Remove</button>`;
+      document.getElementById("os-skips").appendChild(row);
+    });
+
+    document.getElementById("os-skips").addEventListener("click", event => {
+      const button = event.target.closest("button.os-skip-remove");
+      if (button) button.closest("div.os-skip").remove();
+    });
+
+    document.getElementById("os-send").addEventListener("click", async () => {
+      const button = document.getElementById("os-send");
+      button.disabled = true;
+      const params = {
+        repo: document.getElementById("os-repo").value,
+        title: document.getElementById("os-title").value,
+        body: document.getElementById("os-body").value,
+      };
+      const optional = [
+        ["base", "os-base"],
+        ["worker", "os-worker"],
+        ["notify_session", "os-notify"],
+        ["max_rounds", "os-max-rounds"],
+      ];
+      for (const [name, elementId] of optional) {
+        const value = document.getElementById(elementId).value;
+        if (value !== "") params[name] = value;
+      }
+      const skips = Array.from(document.querySelectorAll("#os-skips .os-skip")).map(row => ({
+        key: row.querySelector(".os-skip-key").value,
+        reason: row.querySelector(".os-skip-reason").value,
+      }));
+      if (skips.length) params.skip_checks = skips;
+      const resultLine = document.getElementById("os-result");
+      try {
+        const result = await submitOrder(params);
+        resultLine.className = "";
+        resultLine.textContent = "order " + result.order_id + " — ";
+        const back = document.createElement("a");
+        back.href = "/";
+        back.textContent = "Back to dashboard";
+        resultLine.appendChild(back);
+        for (const elementId of ["os-repo", "os-title", "os-base", "os-worker", "os-notify", "os-max-rounds", "os-body"]) {
+          document.getElementById(elementId).value = "";
+        }
+        document.querySelectorAll("#os-skips .os-skip").forEach(row => row.remove());
+      } catch (e) {
+        resultLine.className = "failed";
+        resultLine.textContent = e.message;
+      }
+      button.disabled = false;
+    });
+
+    loadSchema();
+  </script>
+</body>
+</html>

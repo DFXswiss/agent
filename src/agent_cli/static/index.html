@@ -33,7 +33,9 @@
     #order-detail { background: #fff; border: 1px solid #e0d8c8; padding: 14px 16px; margin: 12px 0 8px; }
     #order-detail[hidden] { display: none; }
     #od-question { background: #1a1a1a; color: #d8d8d8; padding: 12px; overflow: auto; max-height: 240px; font-size: 0.85rem; white-space: pre-wrap; }
-    #order-submit textarea, #order-detail textarea { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
+    #order-detail textarea { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
+    a.button { display: inline-block; padding: 6px 12px; background: #efeae0; border: 1px solid #c9c0ad; color: #1a1a1a; text-decoration: none; }
+    a.button:hover { background: #e6dfd0; }
     #orders td, #order-events td, #order-detail td { overflow-wrap: anywhere; }
   </style>
 </head>
@@ -44,23 +46,8 @@
 
   <h2>Orders</h2>
   <p id="orders-note" class="watch-note" hidden></p>
-  <div id="order-submit">
-    <h3>New order</h3>
-    <div class="control-form">
-      <input type="text" id="os-repo" placeholder="owner/name" />
-      <input type="text" id="os-title" placeholder="title" />
-      <input type="text" id="os-base" placeholder="base" />
-      <input type="text" id="os-worker" placeholder="worker" />
-      <input type="text" id="os-notify" placeholder="notify session" />
-      <input type="number" id="os-max-rounds" min="1" placeholder="max rounds" />
-    </div>
-    <textarea id="os-body" placeholder="order text"></textarea>
-    <div id="os-skips"></div>
-    <div class="control-form">
-      <button type="button" id="os-add-skip">Add skipped check</button>
-      <button type="button" id="os-send">Submit order</button>
-    </div>
-    <p id="os-result"></p>
+  <div class="control-form">
+    <a class="button" id="order-new" href="/orders/new">New order</a>
   </div>
   <table id="orders"><thead><tr></tr></thead><tbody></tbody></table>
 
@@ -425,7 +412,6 @@ async function ordersTick() {
       try { j = await res.json(); } catch (_) {}
       if (!res.ok || !j || j.ok !== true) throw new Error((j && j.error) || "HTTP " + res.status);
       orderSchema = j.result;
-      document.getElementById("order-submit").hidden = orderSchema.enabled !== true;
     }
   } catch (e) {
     if (!failure) failure = e.message;
@@ -557,59 +543,6 @@ document.getElementById("order-events").addEventListener("click", async event =>
 
 document.getElementById("ev-wake").addEventListener("change", ordersTick);
 document.getElementById("ev-unacked").addEventListener("change", ordersTick);
-
-document.getElementById("os-add-skip").addEventListener("click", () => {
-  const row = document.createElement("div");
-  row.className = "control-form os-skip";
-  const options = ((orderSchema && orderSchema.skippable) || []).map(key => `<option value="${esc(key)}">${esc(key)}</option>`).join("");
-  setOrderHtml(row, `<select class="os-skip-key">${options}</select><input type="text" class="os-skip-reason" placeholder="reason" /><button type="button" class="os-skip-remove">Remove</button>`);
-  document.getElementById("os-skips").appendChild(row);
-});
-
-document.getElementById("os-skips").addEventListener("click", event => {
-  const button = event.target.closest("button.os-skip-remove");
-  if (button) button.closest("div.os-skip").remove();
-});
-
-document.getElementById("os-send").addEventListener("click", async () => {
-  const button = document.getElementById("os-send");
-  button.disabled = true;
-  const params = {
-    repo: document.getElementById("os-repo").value,
-    title: document.getElementById("os-title").value,
-    body: document.getElementById("os-body").value,
-  };
-  const optional = [
-    ["base", "os-base"],
-    ["worker", "os-worker"],
-    ["notify_session", "os-notify"],
-    ["max_rounds", "os-max-rounds"],
-  ];
-  for (const [name, elementId] of optional) {
-    const value = document.getElementById(elementId).value;
-    if (value !== "") params[name] = value;
-  }
-  const skips = Array.from(document.querySelectorAll("#os-skips .os-skip")).map(row => ({
-    key: row.querySelector(".os-skip-key").value,
-    reason: row.querySelector(".os-skip-reason").value,
-  }));
-  if (skips.length) params.skip_checks = skips;
-  const resultLine = document.getElementById("os-result");
-  try {
-    const result = await orderCall("submit", params);
-    resultLine.className = "";
-    resultLine.textContent = "order " + result.order_id;
-    for (const elementId of ["os-repo", "os-title", "os-base", "os-worker", "os-notify", "os-max-rounds", "os-body"]) {
-      document.getElementById(elementId).value = "";
-    }
-    document.querySelectorAll("#os-skips .os-skip").forEach(row => row.remove());
-    selectOrder(result.order_id);
-  } catch (e) {
-    resultLine.className = "failed";
-    resultLine.textContent = e.message;
-  }
-  button.disabled = false;
-});
 
 document.getElementById("od-reply").addEventListener("click", async event => {
   const id = selectedOrderId;

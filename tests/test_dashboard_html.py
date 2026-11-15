@@ -131,28 +131,21 @@ def test_dashboard_usage_rows_keep_newest_openrouter_snapshot_per_device_alias()
     assert rows == [newest]
 
 
-def test_orders_view_markup() -> None:
-    html = (
+def static_page(name: str) -> str:
+    return (
         Path(__file__).resolve().parents[1]
         / "src"
         / "agent_cli"
         / "static"
-        / "index.html"
+        / name
     ).read_text(encoding="utf-8")
+
+
+def test_orders_view_markup() -> None:
+    html = static_page("index.html")
     ids = (
         "orders-note",
-        "order-submit",
-        "os-repo",
-        "os-title",
-        "os-base",
-        "os-worker",
-        "os-notify",
-        "os-max-rounds",
-        "os-body",
-        "os-skips",
-        "os-add-skip",
-        "os-send",
-        "os-result",
+        "order-new",
         "orders",
         "order-detail",
         "od-id",
@@ -177,13 +170,27 @@ def test_orders_view_markup() -> None:
     for element_id in ids:
         assert html.count(f'id="{element_id}"') == 1
 
+    for element_id in (
+        "order-submit",
+        "os-repo",
+        "os-title",
+        "os-base",
+        "os-worker",
+        "os-notify",
+        "os-max-rounds",
+        "os-body",
+        "os-skips",
+        "os-add-skip",
+        "os-send",
+        "os-result",
+    ):
+        assert html.count(f'id="{element_id}"') == 0
+
     assert "<h2>Orders</h2>" in html
-    assert "<h3>New order</h3>" in html
     assert "<h2>Order events</h2>" in html
+    assert html.count("New order") == 1
+    assert 'href="/orders/new"' in html
     for text in (
-        "Submit order",
-        "Add skipped check",
-        "Remove",
         "Order",
         "Reply",
         "Override",
@@ -195,6 +202,8 @@ def test_orders_view_markup() -> None:
         "Orders are not enabled on this device.",
     ):
         assert text in html
+    for placeholder in ("reply", "reason"):
+        assert f'placeholder="{placeholder}"' in html
     for placeholder in (
         "owner/name",
         "title",
@@ -203,11 +212,8 @@ def test_orders_view_markup() -> None:
         "notify session",
         "max rounds",
         "order text",
-        "reply",
-        "reason",
     ):
-        assert f'placeholder="{placeholder}"' in html
-    assert 'resultLine.textContent = "order " + result.order_id;' in html
+        assert f'placeholder="{placeholder}"' not in html
 
     device = html.index('<p>Device <code id="dev">')
     orders = html.index("<h2>Orders</h2>")
@@ -223,6 +229,50 @@ def test_orders_view_markup() -> None:
     assert "http://" not in without_github
     assert "https://" not in without_github
     assert ".reverse(" not in html
+
+
+def test_new_order_subpage_markup() -> None:
+    html = static_page("orders_new.html")
+    ids = (
+        "order-submit",
+        "os-repo",
+        "os-title",
+        "os-base",
+        "os-worker",
+        "os-notify",
+        "os-max-rounds",
+        "os-body",
+        "os-skips",
+        "os-add-skip",
+        "os-send",
+        "os-result",
+    )
+    for element_id in ids:
+        assert html.count(f'id="{element_id}"') == 1
+
+    assert "<h1>New order</h1>" in html
+    assert 'href="/"' in html
+    for text in ("Submit order", "Add skipped check", "Remove", "Back to dashboard"):
+        assert text in html
+    for placeholder in (
+        "owner/name",
+        "title",
+        "base",
+        "worker",
+        "notify session",
+        "max rounds",
+        "order text",
+        "reason",
+    ):
+        assert f'placeholder="{placeholder}"' in html
+    assert 'fetch("/api/orders/submit"' in html
+    assert '"order " + result.order_id' in html
+    assert "resultLine.textContent = e.message;" in html
+    assert "<form" not in html
+    assert "<script src" not in html
+    assert "<link" not in html
+    assert "http://" not in html
+    assert "https://" not in html
 
 
 def test_orders_script_is_a_second_element() -> None:
