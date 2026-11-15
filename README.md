@@ -108,8 +108,17 @@ agent task create --session <session-id> --workflow implement --title "…"
 agent task pr --id <task-id> --repo <owner/name> --pr <number>
 agent task close-from-pr (--id <task-id> | --session <session-id>)
 agent round start --task <uuid>
-# --vendor is pinned on the task from ai-accounts.json; implementer may be separate,
-# while review providers come from models.
+# --vendor comes from the task pin, defaulted from ai-accounts.json at task creation;
+# implementer may be separate, while review providers come from models. To use another
+# provider for a slot, change the pin explicitly first:
+agent task models --id <task-id> --slot first|second|implementer --vendor <provider> --reason "<why>"
+# The change is recorded on the task; earlier rows keep their vendor.
+# If the implementer cannot run, run agent agent finish --verdict blocked for its
+# row (the task becomes failed), change the implementer pin, then run round start.
+# If a PR reviewer cannot run, run agent agent finish --verdict unavailable for its
+# row, then agent gate record --verdict unavailable, then close-step --status
+# unavailable, then change the pin. Never substitute silently or automatically.
+# agent task models refuses done, merged and superseded tasks, and coordinator tasks.
 agent agent start --session <session-id> --task <uuid> --role implementer --vendor <implementer-provider> --round 1
 agent agent finish --id <implementer-uuid> --verdict done
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --stage review-1 --vendor <first-slot-provider>

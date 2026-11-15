@@ -217,6 +217,9 @@ confirmation.
 Selected execution profiles, repository route and check commands are pinned to
 the task. Changing them blocks that task instead of silently changing its
 execution identity. Adding unrelated profiles does not invalidate the binding.
+The manual `agent task models` command does not apply to coordinator tasks (it
+refuses them), so execution profiles pinned to a coordinator task still cannot
+change without blocking it.
 
 ## Public API
 

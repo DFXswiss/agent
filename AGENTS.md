@@ -45,7 +45,7 @@ does not wait with model turns.
 Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed
 commits on a branch in this repository or a fork of it, model slot `first`
-quality and logic then model slot `second` quality and logic (providers pinned on the task from `ai-accounts.json`) with zero findings on a head that is the current head, or a commit after the pull request base that the current head still contains, CI green on this head, then
+quality and logic then model slot `second` quality and logic (providers pinned on the task, with `ai-accounts.json` supplying the default; change a pin explicitly per task with `agent task models --id UUID --slot first|second|implementer --vendor VENDOR --reason TEXT`) with zero findings on a head that is the current head, or a commit after the pull request base that the current head still contains, CI green on this head, then
 leave-draft. Pull requests to this repository take their second review from
 model slot `second`, not from the A38 external review; the `one_review_authors`
 exception of CONTRIBUTING.md still applies. Ready for review is still not merge
@@ -55,5 +55,7 @@ completion only after that merge is verified. The local-CI comment schema for
 private product repositories is `docs/local-ci-v1.md`.
 
 An optional implementation provider is pinned separately on each task; when it
-is absent, implementation uses model slot `first`. The two PR review pairs
-remain model slots `first` and `second`.
+is absent, implementation uses model slot `first`. The pin is the default from
+`ai-accounts.json` and can be changed explicitly per task with
+`agent task models`. The two PR review pairs remain model slots `first` and
+`second`.

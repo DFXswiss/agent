@@ -177,10 +177,15 @@ coordinator, error-fix tasks). When the configured implementer differs from
 the field stays absent when both are equal. Every later check for that task (`agent agent start` for `reviewer` and
 `implementer`,
 `gate record`, `allow`, `next`, `run`, the coordinator gates) uses the pinned
-values, so changing `models` or `implementer` affects only tasks created
-afterwards, whether by the CLI or error-fix. The issue coordinator is the exception: it refuses a
-separate implementer at preflight, so setting one stops every coordinator tick, including for
-tasks it has already accepted, until `implementer` is removed or set to `models.first`. It hashes the device's `models` and `lane_execution` into each accepted
+values, so changing the device's `models` or `implementer` configuration affects
+only tasks created afterwards, whether by the CLI or error-fix. An existing
+task's pin changes only through the explicit `agent task models` command below.
+The issue coordinator is the exception: its task slots are the device AI
+configuration pinned when the coordinator accepted the task, and
+`agent task models` refuses coordinator tasks.
+The coordinator also refuses a separate implementer at preflight, so setting one
+stops every coordinator tick, including for tasks it has already accepted, until
+`implementer` is removed or set to `models.first`. It hashes the device's `models` and `lane_execution` into each accepted
 task's execution binding: a later change stops the task with "task execution
 configuration changed" until the accepted configuration is restored. A task
 accepted before the current hash formula accepts the matching legacy formula
@@ -320,6 +325,36 @@ which carries no pin, also accepts a finished row of the second provider); `agen
 --stage S --vendor X` requires `X` to be the provider of the slot `S` stands for.
 `agent models implementer [--task <uuid>]` prints the device selection or task
 pin by the same rules as `agent models first|second`.
+
+## Change the provider of a task slot
+
+The pinned provider is the default selected when the task was created. To run
+one slot of an existing task with another provider, change the pin explicitly:
+
+```bash
+agent task models --id <task-uuid> --slot first|second|implementer \
+  --vendor <provider> --reason "<why>"
+```
+
+`--reason` is required and must not be empty. The command appends the change to
+the task's `model_changes` history with the old provider, the new provider, the
+reason and the time. Later agent rows of that slot require the new provider;
+for review slots, later `agent gate record` calls do as well. Agent and gate
+rows already recorded keep their vendor. The command refuses `done`, `merged`
+and `superseded` tasks, and coordinator tasks because their model slots are the
+device AI configuration pinned when the coordinator accepted them. It also
+refuses a task without a model pin, and a change of `second` when the task's
+second review is external.
+
+If the implementer cannot run, finish its agent row with
+`agent agent finish --id <implementer-uuid> --verdict blocked`; the task becomes
+`failed`. Change the implementer with `agent task models`, then start a new round
+with `agent round start --task <task-uuid>` and start the implementer with the
+new vendor. If a PR reviewer cannot run, finish its agent row with
+`agent agent finish --id <reviewer-uuid> --verdict unavailable`, then
+`agent gate record --verdict unavailable`, then
+`agent close-step --status unavailable` for the matching gate key, and then
+change the pin. No fallback happens automatically.
 
 For a task pinned with `second: null`, `gate record --stage review-2` is refused;
 the external result is recorded in the two `review_2_*` checklist keys with

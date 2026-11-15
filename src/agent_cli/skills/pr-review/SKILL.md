@@ -2,13 +2,13 @@
 name: pr-review
 description: >-
   Public review contract: quality and logic gates on a head SHA, model slot
-  first then model slot second (providers per ai-accounts.json). Requires spine. Review lanes execute no software. A human merges.
+  first then model slot second (providers default from ai-accounts.json and are changeable per task with agent task models). Requires spine. Review lanes execute no software. A human merges.
 ---
 
 # Pull-request review contract
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
-Order: model slot `first`, then model slot `second` (a coordinator A38 task with the external second review has no second slot; see Gates). The provider of each configured slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Non-A38 tasks require both slots. A coordinator A38 task requires `models.second: null` for the external second review, and a provider there when its worker sets `a38_second_review: "model"`; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
+Order: model slot `first`, then model slot `second` (a coordinator A38 task with the external second review has no second slot; see Gates). The provider of each configured slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task; the device's `ai-accounts.json` supplies the default at task creation (read it with `agent models first|second --task <uuid>`). To run a slot with another provider, change the pin explicitly first with `agent task models --id <uuid> --slot first|second|implementer --vendor <provider> --reason "<why>"`; the change is recorded on the task and never applies silently. Non-A38 tasks require both slots. A coordinator A38 task requires `models.second: null` for the external second review, and a provider there when its worker sets `a38_second_review: "model"`; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
 The same manifest must declare the current device as a lane host. The local
 harness's lane starter starts review lanes on that external host; Agent has no
 remote SSH execution mode.
@@ -108,7 +108,10 @@ is not a substitute, and the review names the element and its job.
   `resolve-conflicts`, and `review`, and only from state `pr-review` or
   `pushing`. It does not write the checklist. Then close the matching gate
   checklist key with `close-step --status unavailable` and evidence. Do not
-  record `approved`. Do not substitute another vendor.
+  record `approved`. Never record a gate for a provider the task does not pin;
+  to switch provider, record `unavailable` first and then change the pin with
+  `agent task models --id <uuid> --slot <slot> --vendor <provider> --reason "<why>"`.
+  Do not substitute another vendor without changing the pin first.
 
 Zero findings only after an explicit complete pass.
 Empty, partial, timeout, or unavailable output is not zero findings.
