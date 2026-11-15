@@ -647,13 +647,13 @@ A record of a check lane is closed the same way, but closing it does not retry t
    it runs `readiness_argv`; the command runs only when the observed base still
    matches the promoted evidence base. Before `readiness_argv` in A38 mode, a
    missing or non-40-hex head or base stays on `readiness` and does not run
-   the command. After the command, a missing or non-40-hex head, and in A38
-   mode a missing or non-40-hex base, stays on `readiness` and does not
-   invalidate evidence or the base. Only a different valid head or base is a
-   mismatch. Then run `readiness_argv` (cwd =
+   the command. Then run `readiness_argv` (cwd =
    worktree, ambient GitHub tokens cleared). Stdout must be the fixed JSON
    readiness contract below (trusted
-   operator script output — not model/repo input). Re-verify clean signed head
+   operator script output — not model/repo input). After the command, a missing
+   or non-40-hex head, and in A38 mode a missing or non-40-hex base, stays on
+   `readiness` and does not invalidate evidence or the base. Only a different
+   valid head or base is a mismatch. Re-verify clean signed head
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
    head, author/base/mergeability, tests, and all four same-head gates.
    Mergeability is the check `pr_mergeable`, required before `readiness` and
@@ -755,18 +755,19 @@ A record of a check lane is closed the same way, but closing it does not retry t
    exists only on the pull request head does not count.
    `allow pr-ready`, then leave draft and verify `isDraft=false`. In
    `phase_leave_draft`, an unreadable head before Ready returns to `leave_draft`
-   and retries without calling `gh pr ready`. When the pre-Ready view's `state`
-   is `MERGED` or `CLOSED`, compared case-insensitively, a missing or non-40-hex
-   `headRefOid` sets `phase` to `await_merge` without calling `gh pr ready`.
-   After the Ready mutation, an unreadable verification head on an open Ready
-   pull request calls `gh pr ready --undo`, returns to `leave_draft`, and
-   retries; failure to undo is an error. The Ready undo runs only for an `OPEN`
-   pull request with an unreadable head. The `leave_draft` retry remains for
-   every unreadable head whose `state` is not `MERGED` or `CLOSED`. When the
-   verification view's `state` is `MERGED` or `CLOSED`, compared
-   case-insensitively, and the head is unreadable, `phase_leave_draft` sets
-   `phase` to `await_merge` without calling `gh pr ready --undo`. `ready_head`
-   is recorded only after the verification head matches. **Never merge.**
+   and retries without calling `gh pr ready` when `state`, compared
+   case-insensitively, is not `MERGED` or `CLOSED`. When the pre-Ready view's
+   `state` is `MERGED` or `CLOSED`, compared case-insensitively, a missing or
+   non-40-hex `headRefOid` sets `phase` to `await_merge` without calling
+   `gh pr ready`. After the Ready mutation: When the verification view's
+   `state` is `MERGED` or `CLOSED`, compared case-insensitively, and the head
+   is unreadable, `phase_leave_draft` sets `phase` to `await_merge` without
+   calling `gh pr ready --undo`. Otherwise, if `isDraft` is not `False`, the
+   error is `leave-draft did not clear isDraft` (no undo, no retry). Otherwise
+   (unreadable head, `isDraft` false), call `gh pr ready --undo` only when
+   `state` == `"OPEN"` (failure to undo is an error), then return to
+   `leave_draft` and retry. `ready_head` is recorded only after the
+   verification head matches. **Never merge.**
 10. **Complete** only after a verified **human** merge: the GitHub merge actor
     must be an object with a non-empty string login and a string type exactly
     `User` (missing, empty, or non-string type is not human; Bot is refused).

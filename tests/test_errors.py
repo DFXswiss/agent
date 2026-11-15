@@ -1404,8 +1404,9 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in normalized_documented
     )
     assert (
-        "After the Ready mutation, an unreadable verification head on an open "
-        "Ready pull request calls `gh pr ready --undo`"
+        "(unreadable head, `isDraft` false), call `gh pr ready --undo` only "
+        'when `state` == `"OPEN"` (failure to undo is an error), then return '
+        "to `leave_draft` and retry"
         in normalized_documented
     )
     assert (
@@ -1419,9 +1420,8 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         in normalized_documented
     )
     assert (
-        "The Ready undo runs only for an `OPEN` pull request with an unreadable "
-        "head. The `leave_draft` retry remains for every unreadable head whose "
-        "`state` is not `MERGED` or `CLOSED`"
+        "if `isDraft` is not `False`, the error is "
+        "`leave-draft did not clear isDraft` (no undo, no retry)"
         in normalized_documented
     )
     assert (
