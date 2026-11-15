@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .preconditions import CHECKS, REMEDY_ACTIONS
+from .preconditions import CHECKS, ORDER, REMEDY_ACTIONS, action_requiring
 from .conflict_mandate import discard_script_mandate, run_script_mandate
 from .conflict_mandate_config import ConflictRepository, ConflictWorker
 from .conflict_mandate_state import Request
@@ -408,6 +408,16 @@ def run_ci_failure_remedy(
     """
     check = CHECKS["pr_mergeable"]
     head = head_of(task)
+    # ``run_conflict_remedy`` records the ``pr_mergeable`` fact through
+    # ``close_allowed``, which only accepts a check declared by the action.
+    # ``resolve_conflicts`` does not declare ``pr_mergeable``, so record it
+    # under the action that does. The mandate itself is still resolved under
+    # ``REMEDY_ACTIONS`` inside the remedy.
+    action = action_requiring(check.key, ORDER)
+    if action is None:
+        raise CoordinatorError(
+            f"no action declares {check.key} for an {ORDER} source"
+        )
     return run_conflict_remedy(
         CheckContext(
             store,
@@ -416,7 +426,7 @@ def run_ci_failure_remedy(
             runner,
             None,
             check,
-            REMEDY_ACTIONS[check.remedy],
+            action,
         ),
         CheckValue("nein", reason, head=head or None),
         reason=reason,
