@@ -325,10 +325,9 @@ truncation marker is added.
 The known-secret raw pass
 allows a CSI/ESC final byte, and every reachable end of a truncated CSI/ESC
 prefix inside the control run, to be a token character, so sanitization cannot
-assemble a credential that evades the matcher. Literal candidate starts and
-landing positions are evaluated once per distinct first symbol in a control
-run, so many equal first characters do not rescan the run per candidate;
-alternative representations keep their ordered candidates. It uses the shared
+assemble a credential that evades the matcher. Literal and percent-encoded
+representations share one left-to-right scan, so a repeated prefix or many
+equal first characters do not rescan the text per candidate. It uses the shared
 nesting-aware scanner
 before any span replacement;
 each complete or unterminated string-control span, including its payload, is a

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -176,22 +176,27 @@ class _TerminalControlRun:
     """One maximal run of adjacent terminal-control atoms.
 
     ``boundaries_by_character`` holds every escape-prefix end and final byte
-    that can land a secret character. ``candidates_by_character`` holds the
-    same positions that can start the secret. Literal secrets evaluate only
-    the earliest candidate per first symbol; alternative representations such
-    as percent-encoded bytes keep every ordered candidate.
+    that can land a secret character. The matcher consults the run once while
+    scanning left to right; it does not restart at each boundary.
     """
 
     end: int
     boundaries_by_character: dict[str, tuple[int, ...]]
-    candidates_by_character: dict[str, tuple[int, ...]]
 
 
 @dataclass(frozen=True)
 class _TerminalInterleaveIndex:
-    """Control-run lookup keyed by every atom boundary in the source text."""
+    """Control-run lookup keyed by every atom boundary in the source text.
+
+    ``run_starts`` and ``run_ends`` cover each run, including string-control
+    payloads that are not themselves boundary keys. A secret may start only on
+    ordinary text or on a recorded boundary, never inside a payload.
+    """
 
     positions: dict[int, _TerminalControlRun]
+    run_starts: tuple[int, ...]
+    run_ends: tuple[int, ...]
+    runs: tuple[_TerminalControlRun, ...]
 
 
 def _terminal_control_atom(
@@ -267,10 +272,12 @@ def _terminal_control_atom(
 def _terminal_interleave_index(
     text: str,
     relevant_finals: frozenset[str],
-    first_characters: frozenset[str],
 ) -> _TerminalInterleaveIndex:
     """Tokenize every terminal-control run once for exact-secret matching."""
     positions: dict[int, _TerminalControlRun] = {}
+    run_starts: list[int] = []
+    run_ends: list[int] = []
+    runs: list[_TerminalControlRun] = []
     cursor = 0
     while cursor < len(text):
         control = _TERMINAL_CONTROL_RE.search(text, cursor)
@@ -281,6 +288,7 @@ def _terminal_interleave_index(
         if first is None:  # pragma: no cover - guarded by the shared regex
             raise AssertionError("terminal-control index disagrees with lexer")
         atoms = [first]
+        run_start = cursor
         cursor = first.end
         while cursor < len(text):
             following = _terminal_control_atom(text, cursor)
@@ -308,34 +316,30 @@ def _terminal_interleave_index(
                 and atom.final_position < cursor
             }
         )
-        boundaries_by_character: dict[str, list[int]] = {
-            character: [] for character in relevant_finals
-        }
-        candidates_by_character: dict[str, list[int]] = {
-            character: [] for character in first_characters
-        }
+        boundaries_by_character: dict[str, list[int]] = {}
         for boundary in boundaries:
             character = text[boundary]
-            if character in boundaries_by_character:
-                boundaries_by_character[character].append(boundary)
-            if character in candidates_by_character:
-                candidates_by_character[character].append(boundary)
+            if character not in relevant_finals:
+                continue
+            boundaries_by_character.setdefault(character, []).append(boundary)
         run = _TerminalControlRun(
             end=cursor,
             boundaries_by_character={
                 character: tuple(values)
                 for character, values in boundaries_by_character.items()
-                if values
-            },
-            candidates_by_character={
-                character: tuple(values)
-                for character, values in candidates_by_character.items()
-                if values
             },
         )
+        run_starts.append(run_start)
+        run_ends.append(cursor)
+        runs.append(run)
         for boundary in {*(atom.start for atom in atoms), *boundaries}:
             positions[boundary] = run
-    return _TerminalInterleaveIndex(positions=positions)
+    return _TerminalInterleaveIndex(
+        positions=positions,
+        run_starts=tuple(run_starts),
+        run_ends=tuple(run_ends),
+        runs=tuple(runs),
+    )
 
 
 def _terminal_interleave_positions(
@@ -376,35 +380,102 @@ def _terminal_interleave_positions(
     return tuple(dict.fromkeys(landings))
 
 
-def _match_interleaved_representation(
+def _run_covering(
+    index: int, terminal_index: _TerminalInterleaveIndex
+) -> _TerminalControlRun | None:
+    """Return the control run that contains ``index``, including its payload."""
+    starts = terminal_index.run_starts
+    if not starts:
+        return None
+    found = bisect_right(starts, index) - 1
+    if found < 0 or index >= terminal_index.run_ends[found]:
+        return None
+    return terminal_index.runs[found]
+
+
+def _next_boundary_start(
+    run: _TerminalControlRun, index: int, first_symbols: frozenset[str]
+) -> int:
+    """Earliest secret-start boundary at or after ``index``, else the run end."""
+    best = run.end
+    for character in first_symbols:
+        positions = run.boundaries_by_character.get(character)
+        if not positions:
+            continue
+        offset = bisect_left(positions, index)
+        if offset < len(positions) and positions[offset] < best:
+            best = positions[offset]
+    return best
+
+
+def _secret_character_borders(
+    pattern: tuple[tuple[tuple[frozenset[str], ...], ...], ...],
+) -> list[int]:
+    """Longest proper prefix of each secret-character prefix that is a suffix."""
+    borders = [0] * len(pattern)
+    length = 0
+    index = 1
+    while index < len(pattern):
+        if pattern[index] == pattern[length]:
+            length += 1
+            borders[index] = length
+            index += 1
+            continue
+        if length:
+            length = borders[length - 1]
+            continue
+        index += 1
+    return borders
+
+
+def _read_secret_character(
     text: str,
-    starts: set[int],
-    representation: tuple[frozenset[str], ...],
+    index: int,
+    alternatives: tuple[tuple[frozenset[str], ...], ...],
     *,
     allow_leading_interleave: bool,
     terminal_index: _TerminalInterleaveIndex,
-) -> set[int]:
-    """Match one literal or percent-encoded character representation."""
-    positions = starts
-    for offset, expected in enumerate(representation):
-        candidates: set[int] = set()
-        for position in positions:
-            if allow_leading_interleave or offset:
-                candidates.update(
+) -> tuple[tuple[int, int], ...]:
+    """Return ``(start, end)`` spans for one secret character at ``index``.
+
+    Each alternative is literal text or one percent-encoded byte sequence.
+    A control run between symbols is one landing, not a new candidate start.
+    The first symbol of the whole secret does not skip controls; the caller
+    has already placed ``index`` on that byte.
+    """
+    found: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for alternative in alternatives:
+        cursors: list[tuple[int, int | None]] = [(index, None)]
+        for offset, expected in enumerate(alternative):
+            following: list[tuple[int, int | None]] = []
+            step_seen: set[tuple[int, int | None]] = set()
+            for cursor, start in cursors:
+                landings = (
                     _terminal_interleave_positions(
-                        text, position, expected, terminal_index
+                        text, cursor, expected, terminal_index
                     )
+                    if allow_leading_interleave or offset
+                    else (cursor,)
                 )
-            else:
-                candidates.add(position)
-        positions = {
-            position + 1
-            for position in candidates
-            if position < len(text) and text[position] in expected
-        }
-        if not positions:
-            break
-    return positions
+                for landing in landings:
+                    if landing < len(text) and text[landing] in expected:
+                        char_start = landing if start is None else start
+                        step = (landing + 1, char_start)
+                        if step not in step_seen:
+                            step_seen.add(step)
+                            following.append(step)
+            cursors = following
+            if not cursors:
+                break
+        for end, start in cursors:
+            if start is None:
+                continue
+            span = (start, end)
+            if span not in seen:
+                seen.add(span)
+                found.append(span)
+    return tuple(found)
 
 
 def _redact_terminal_interleaved_representations(
@@ -413,13 +484,23 @@ def _redact_terminal_interleaved_representations(
     *,
     replacement: str,
 ) -> str:
-    """Redact non-overlapping known-secret matches with a linear text walk."""
+    """Redact non-overlapping known-secret matches in one left-to-right scan.
+
+    Secret characters form a KMP automaton. A control run, including a
+    truncated ESC or CSI prefix, is a landing that does not advance the
+    secret index by itself. Literal and percent-encoded alternatives share
+    that scan, so repeated prefixes and runs of equal first bytes are not
+    restarted per candidate. Several landings for one character stay on the
+    same secret index; the active cursor follows the furthest landing and the
+    redacted span runs through the furthest completing end. A string-control
+    payload is not a secret start. After each match the scan resumes at its end.
+    """
     if not text or not representations:
         return text
-    first = frozenset(
-        character
-        for representation in representations[0]
-        for character in representation[0]
+    first_symbols = frozenset(
+        symbol
+        for alternative in representations[0]
+        for symbol in alternative[0]
     )
     relevant_finals = frozenset(
         character
@@ -428,83 +509,142 @@ def _redact_terminal_interleaved_representations(
         for expected in alternative
         for character in expected
     )
-    terminal_index = _terminal_interleave_index(
-        text, relevant_finals, first
-    )
-    # A single-symbol representation is one literal secret character. Its
-    # later candidates cannot succeed where the earliest candidate with the
-    # same symbol fails, so one candidate per distinct symbol is sufficient.
-    # Alternative representations keep the complete candidate order.
-    literal_only = all(
-        len(alternative) == 1
-        for representation in representations
-        for alternative in representation
-    )
+    terminal_index = _terminal_interleave_index(text, relevant_finals)
+    borders = _secret_character_borders(representations)
+    pattern = representations
+    count = len(pattern)
     pieces: list[str] = []
     copied_to = 0
     index = 0
-    while index < len(text):
-        indexed = terminal_index.positions.get(index)
-        next_index = index + 1
-        candidate_positions: tuple[int, ...] = ()
-        if indexed is None:
-            if text[index] in first:
-                candidate_positions = (index,)
-        else:
-            run = indexed
-            next_index = run.end
-            candidates: list[int] = []
-            for character_positions in run.candidates_by_character.values():
-                offset = bisect_left(character_positions, index)
-                candidates.extend(character_positions[offset:])
-            candidate_positions = tuple(sorted(set(candidates)))
-            if literal_only:
-                earliest: dict[str, int] = {}
-                for character in first:
-                    character_positions = run.candidates_by_character.get(
-                        character
-                    )
-                    if not character_positions:
-                        continue
-                    offset = bisect_left(character_positions, index)
-                    if offset < len(character_positions):
-                        earliest[character] = character_positions[offset]
-                candidate_positions = tuple(sorted(set(earliest.values())))
+    matched = 0
+    anchor_offset = 0
+    anchors: list[int] = []
+    extra_ends: list[int] = []
+    match_start = 0
+    # False once an adopted landing no longer shares the recorded character
+    # starts. Failure links would then name the wrong text offset, so a later
+    # total failure resumes after this attempt's start instead of shifting.
+    anchors_follow_cursor = True
 
-        match: tuple[int, int] | None = None
-        # A later candidate cannot succeed where the earliest candidate with
-        # the same first symbol fails: the earlier start consumes its own
-        # symbol, then follows the same remaining boundaries inside the run or
-        # skips to the run end. Evaluating one candidate per distinct first
-        # symbol therefore preserves the selected match start while bounding
-        # the work per run.
-        for candidate in candidate_positions:
-            positions = {candidate}
-            for character_index, alternatives in enumerate(representations):
-                matched: set[int] = set()
-                for alternative in alternatives:
-                    matched.update(
-                        _match_interleaved_representation(
-                            text,
-                            positions,
-                            alternative,
-                            allow_leading_interleave=character_index > 0,
-                            terminal_index=terminal_index,
-                        )
-                    )
-                positions = matched
-                if not positions:
-                    break
-            if positions:
-                match = (candidate, max(positions))
-                break
-        if match is None:
-            index = next_index
-            continue
-        start, end = match
-        pieces.extend((text[copied_to:start], replacement))
+    def emit(end: int) -> None:
+        nonlocal copied_to, index, matched, anchor_offset, anchors_follow_cursor
+        pieces.append(text[copied_to:match_start])
+        pieces.append(replacement)
         copied_to = end
         index = end
+        matched = 0
+        anchor_offset = 0
+        anchors.clear()
+        extra_ends.clear()
+        anchors_follow_cursor = True
+
+    def remember(start: int) -> None:
+        nonlocal anchor_offset
+        if anchor_offset + matched != len(anchors):
+            active = anchors[anchor_offset : anchor_offset + matched]
+            anchors[:] = active
+            anchor_offset = 0
+        anchors.append(start)
+
+    def fail_primary() -> None:
+        nonlocal matched, anchor_offset, match_start, anchors_follow_cursor
+        extra_ends.clear()
+        border = borders[matched - 1]
+        anchor_offset = anchor_offset + matched - border
+        matched = border
+        if matched == 0:
+            anchor_offset = 0
+            anchors.clear()
+            anchors_follow_cursor = True
+            return
+        match_start = anchors[anchor_offset]
+
+    def resume_fresh(at: int) -> None:
+        nonlocal index, matched, anchor_offset, anchors_follow_cursor
+        extra_ends.clear()
+        anchors.clear()
+        anchor_offset = 0
+        matched = 0
+        anchors_follow_cursor = True
+        index = at
+
+    while index < len(text) or matched:
+        if matched == 0:
+            if index >= len(text):
+                break
+            run = _run_covering(index, terminal_index)
+            if run is not None:
+                nxt = _next_boundary_start(run, index, first_symbols)
+                if nxt != index:
+                    index = nxt
+                    continue
+            if index >= len(text) or text[index] not in first_symbols:
+                index += 1
+                continue
+            readings = _read_secret_character(
+                text,
+                index,
+                pattern[0],
+                allow_leading_interleave=False,
+                terminal_index=terminal_index,
+            )
+            if not readings:
+                index += 1
+                continue
+            start, end = max(readings, key=lambda span: (span[1], -span[0]))
+            match_start = start
+            anchors = [start]
+            anchor_offset = 0
+            matched = 1
+            index = end
+            extra_ends = [
+                span_end for _start, span_end in readings if span_end != end
+            ]
+            anchors_follow_cursor = True
+            if matched == count:
+                emit(max(span_end for _start, span_end in readings))
+            continue
+
+        primary: list[tuple[int, int]] = []
+        spans: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        cursors = (index, *extra_ends)
+        for cursor_index, cursor in enumerate(cursors):
+            for span in _read_secret_character(
+                text,
+                cursor,
+                pattern[matched],
+                allow_leading_interleave=True,
+                terminal_index=terminal_index,
+            ):
+                if span in seen:
+                    continue
+                seen.add(span)
+                spans.append(span)
+                if cursor_index == 0:
+                    primary.append(span)
+        if not spans:
+            if anchors_follow_cursor:
+                fail_primary()
+            else:
+                resume_fresh(match_start + 1)
+            continue
+        if primary and anchors_follow_cursor:
+            start, end = max(primary, key=lambda span: (span[1], -span[0]))
+            remember(start)
+        elif anchors_follow_cursor and matched == 1:
+            start, end = max(spans, key=lambda span: (span[1], -span[0]))
+            remember(start)
+        else:
+            end = max(spans, key=lambda span: (span[1], -span[0]))[1]
+            anchors_follow_cursor = False
+        index = end
+        extra_ends = [
+            span_end for _start, span_end in spans if span_end != end
+        ]
+        matched += 1
+        if matched == count:
+            emit(max(span_end for _start, span_end in spans))
     if not pieces:
         return text
     pieces.append(text[copied_to:])

@@ -1252,6 +1252,54 @@ def test_known_secret_scanner_is_linear_across_many_candidate_starts() -> None:
     assert cleaned == raw
 
 
+def test_known_secret_scanner_is_linear_across_many_percent_encoded_candidate_starts(
+) -> None:
+    n = 20_000
+    raw = "\x1b[a" * n
+    secret = "a" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_is_linear_across_a_repeated_visible_prefix() -> None:
+    raw = "/opt/" * 20_000
+    secret = "/opt/" * 5_000 + "X"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_is_linear_across_repeated_prefixes_split_by_control_runs(
+) -> None:
+    raw = ("/opt/" + "\x1b[31m") * 20_000
+    secret = "/opt/" * 5_000 + "X"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_redacts_the_match_after_a_long_false_prefix() -> None:
+    secret = "/opt/" * 1_000 + "X"
+    raw = "/opt/" * 3_000 + "X"
+
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+
+    assert cleaned == ("/opt/" * 2_000) + "[redacted]"
+
+
 def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
     config_dir = "/opt/provider-profile"
     runs = (
