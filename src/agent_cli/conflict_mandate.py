@@ -615,7 +615,7 @@ def _verify_push_target(
         current_head_sha,
         current_head_repo,
         current_base_ref,
-        current_base_sha,
+        _current_base_sha,
         _mergeable,
     ) = _pull_fields(pull)
     if (
@@ -628,7 +628,10 @@ def _verify_push_target(
         raise ConflictTransientError(
             "pull request head moved; restarting from the pull request read"
         )
-    if current_base_sha != verified_base_sha:
+    # GitHub keeps base.sha at the base tip of the pull request's last push, so
+    # only the live base branch tip decides whether the base moved.
+    base_tip_sha = read_remote_head(request_runtime.github, repo, base_ref)
+    if base_tip_sha != verified_base_sha:
         raise ConflictTransientError(
             "pull request base moved; restarting from the pull request read"
         )
