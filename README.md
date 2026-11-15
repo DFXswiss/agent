@@ -82,7 +82,21 @@ the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
 and records `assignment.created`; the client never prints the device token,
 and hub failure detail or recovery URLs redact the exact bearer even when each
-character is literal or percent-encoded in a mixed representation. A response
+character is literal or percent-encoded in a mixed representation. A literal
+`%` in the bearer that itself starts a valid `%HH` next to encoded neighbours
+in the same run is read decoded, so `a%41` in `%61%41` is not matched. Terminal
+controls that appear only after that one percent-decode are removed by the
+same control views. One
+consecutive run of removable terminal controls between bearer characters has
+no per-control count limit. A control's introducer, final, or terminator counts
+as a secret character only as far as a single view yields it. An occurrence
+that needs different treatment of two controls is not matched, for example one
+control's final byte used as a secret character while another complete control
+between later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile`
+for `/opt/my profile`), or one control's introducer and final both used with
+parameters between them (`Q[w` in `Q\x1b[32!w`). Such text never renders the
+secret on a terminal and does not contain it contiguously in raw form; matching
+every per-control combination would need a non-linear matcher. A response
 counts as a mandate only with a positive issue number and a
 matching HTTPS GitHub issue URL.
 
@@ -215,8 +229,51 @@ processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are
 redacted, printed, or persisted in that evidence. Raw and resolved provider
-config paths are matched despite interleaved terminal controls before
-sanitization and are hidden again afterward. Both configured and
+config paths are matched across interleaved terminal controls when one fixed
+view yields the path, before sanitization, and are hidden again afterward.
+The linear view matcher has no control-run limit and covers the configured
+paths from accounts (the config directory, the gh config directory, and the
+signing key), the coordinator path roots (the control dir, the worktree, the
+workspace, the agent home, and the user home), and the device bearer. The views
+are the raw text, text that drops complete string controls, complete ESC/CSI
+sequences, and C0/C1 bytes, text with only
+introducers, terminators, and C0/C1 bytes removed, and text with complete
+ESC/CSI sequences removed while string-control payloads stay. One further view
+keeps an ESC final that also introduces a string control and drops `ESC \`.
+Another keeps every escape final, including the `\` of `ESC \`, while dropping
+introducers, CSI parameters and intermediates, ESC intermediates, and C0/C1
+bytes, and it keeps string payloads. Another keeps only each control's
+introducer byte. Another keeps only each control's final or string terminator
+and drops string payloads. Each view is searched
+with KMP, overlaps included. Only the device bearer additionally gets the
+percent-decoded views. Percent-tolerant matching of that bearer also searches a
+percent-decoded copy of each view. The raw bearer text is percent-decoded once,
+and when that decoded text contains a terminal control the same control views
+are built on it and searched for the literal bearer. Their maps compose through
+the decoded text back to raw spans, and those views are not percent-decoded
+again. Consecutive `%HH` triplets (either hex case)
+are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
+one character mapped to the raw span of all of its triplets, and an invalid or
+truncated sequence falls back to one character per byte so those bytes are not
+merged into a character they do not encode. An ASCII `%HH` stays one character
+spanning its three-character raw span, and every other character is copied.
+The literal bearer is matched on the undecoded view
+and on that decoded view, and on the control views of the once-decoded raw
+text. The union of the mapped spans is redacted. Raw,
+fully encoded (`%25` for `%`), and mixed per-character forms of the bearer are
+covered. A literal `%` in the bearer that itself starts a valid `%HH` next to
+encoded neighbours in the same run is read decoded, so `a%41` in `%61%41` is
+not matched. The bearer, including one that contains `%`, takes time linear in
+the view length plus the bearer length. A control's introducer, final, or
+terminator counts as a secret character only as far as a single view yields
+it. An occurrence that needs different treatment of two controls is not
+matched, for example one control's final byte used as a secret character
+while another complete control between later secret characters is skipped
+(`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one control's
+introducer and final both used with parameters between them (`Q[w` in
+`Q\x1b[32!w`). Such text never renders the secret on a terminal and does not
+contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher. Both configured and
 provider-reported model strings are bounded and redacted. Neither activity
 stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,
@@ -229,10 +286,10 @@ without decoding. Any raw ESC or C0/C1
 control byte does the same before path classification.
 The shared text redactor performs one initial ESC/C1 search. For a raw logical
 line that contains ESC/C1, a compiled case-insensitive candidate check
-runs over a control-byte-translated view. Only candidate lines build three views,
-one at a time: a control-stripped view
+runs over a control-byte-translated view. Only candidate lines build three
+primary views, one at a time: a control-stripped view
 (complete or unterminated controls and payloads removed), a payload-kept view
-(only introducers, terminators, and CSI parameter bytes removed), and a key-join
+(the outer introducer, terminator, and CSI parameter bytes removed), and a key-join
 view. The key-join view uses the assignment scanner's own classifier to retain
 only control-sequence bytes that the scanner may join into a key, including a
 key-character CSI/ESC final and a `-` intermediate, while dropping string-control
@@ -241,9 +298,17 @@ keyword, case-insensitively, the raw logical line is redacted
 from the start of the mapped whitespace token through logical-line end.
 Standalone removable C0 bytes, including backspace, NUL, DEL, and carriage
 return, are removed from every structural view but do not activate the rule
-without ESC/C1. Removable control bytes inside retained string-control payloads
-are omitted from every structural view, so they cannot split a keyword in the
-payload-kept view. Complete and unterminated string-control spans are indexed on
+without ESC/C1. Nested string controls keep their payload text at every nesting
+depth; their introducers and terminators are omitted. Retained string-control
+payloads are checked in both a payload-clean view and a payload-key-join view.
+The payload-clean view omits complete nested CSI spans (parameters,
+intermediates, and final), other ESC sequences, C0 bytes, and lone C1 bytes. The
+payload-key-join view contributes exactly the key characters from nested
+CSI/ESC sequences that the assignment scanner may join into a key and omits
+all other control bytes. The second view is built lazily only for payloads that
+contain nested controls, and a keyword in either view activates the line rule.
+An unterminated nested string control fails closed and treats the whole logical
+line as matched. Complete and unterminated string-control spans are indexed on
 the full raw input before lines are formed, so payload newlines are not
 boundaries; a mapped start inside such a span moves to its introducer. Following
 normal lines outside the span remain unchanged. An unterminated string control
@@ -277,8 +342,24 @@ fail-closed defence. Before
 the key is complete, payload operators stay opaque so split key fragments still
 join. BEL terminates OSC only; DCS, PM, APC, and SOS continue through BEL to
 `ESC \` or the eight-bit ST byte.
-Control-tolerant URL schemes, escape parameters, and removable-control interleaves use fixed
-matching windows. For bounded lane fields, the controlled-line structural rule
+The bounded control-run window of at most 64 runs in
+`TERMINAL_INTERLEAVE_PATTERN` applies only to the raw regex consumers
+`_RAW_AUTH_HEADER` (authorization, set-cookie, and cookie headers),
+`_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN` (`gh[pousr]_`,
+`github_pat_`, and `sk-` tokens), `_RAW_AKIA` (`AKIA` plus 16 of `0-9A-Z`),
+`_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths), `_RAW_URL_AUTH`
+(control-tolerant URL schemes), and `_RAW_PRIVATE_KEY` (private-key header
+words). CSI/ESC parameter and intermediate bytes are matched with a fixed
+window of at most 64 bytes each (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear
+view matcher has no control-run limit and covers the configured paths from
+accounts (the config directory, the gh config directory, and the signing key),
+the coordinator path roots (the control dir, the worktree, the workspace, the
+agent home, and the user home), and the device bearer. Only the device bearer
+additionally gets the percent-decoded views. That matcher searches a fixed set
+of views with a linear matcher, including truncated CSI/ESC prefixes and
+string-control payloads. An occurrence that needs different treatment of two
+controls is not matched. For bounded
+lane fields, the controlled-line structural rule
 first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
@@ -316,7 +397,12 @@ agent session stop --id <session-id>
 
 `agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. CSI/ESC final bytes may be token characters during the known-secret raw pass, so neither wrapping nor control removal can make a credential evade redaction. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Tmux soft-wrapped lines are joined before the full capture first has its configured profile path replaced, then passes the controlled-logical-line rule, and then enters the precise raw secret scanner. That scanner classifies assignments while complete or unterminated OSC, DCS, PM, APC, and SOS spans remain opaque, replaces those spans with `[redacted]`, and applies raw-token redaction before terminal sanitization. The configured path replacement and precise redaction then run again on sanitized text; this publication path has no bounded diagnostic limit. Every remaining raw whitespace-delimited token containing an ESC/C1 sequence is redacted in place, whether that sequence is inside the token or at either boundary. The only exemption is otherwise escape-free visible text wrapped by at most one strict leading and/or trailing `ESC [` SGR sequence whose parameters contain only digits and semicolons; the parameter bytes and visible text must not match any applicable secret pattern. Known-secret matching on this publication path is the configured profile path (the config directory) on the linear view matcher's raw and control views. One view yields a CSI/ESC final that is the next secret character, a truncated prefix, or a string-control payload. A control's introducer, final, or terminator counts as a secret character only as far as a single view yields it. An occurrence that needs different treatment of two controls is not matched, for example one control's final byte used as a secret character while another complete control between later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one control's introducer and final both used with parameters between them (`Q[w` in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does not contain it contiguously in raw form; matching every per-control combination would need a non-linear matcher. Only the device bearer additionally gets the percent-decoded views. The line rule still requires ESC/C1 to activate, but all of its structural views remove standalone removable C0 bytes. Newlines inside string controls do not split logical lines, and a redaction boundary inside a string control moves to its introducer so its payload cannot outlive a separately replaced introducer. Sanitization preserves tabs and newlines, and terminal publication otherwise preserves captured whitespace; deduplication compares the complete sanitized capture. Terminal bytes are not store events.
+
+One shared linear, nesting-aware scanner supplies every string-control span
+boundary to redaction, terminal sanitization, logical-line splitting, and all
+structural views, including both payload views; an unterminated outer span
+reaches the end of the text.
 
 For that raw assignment classification, the scanner skips whitespace and
 terminal controls after a complete secret keyword. A control ends an unquoted

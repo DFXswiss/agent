@@ -253,9 +253,9 @@ terminal output, hub/GitHub errors, and evidence all use one shared pipeline:
 one initial ESC/C1 search skips the structural rule entirely when the input has
 no ESC/C1. For each controlled raw logical line, a compiled case-insensitive
 candidate check runs over a control-byte-translated view. Only candidate lines
-build the three views, one at a time: a control-stripped view
+build the three primary views, one at a time: a control-stripped view
 removes complete or unterminated controls and their payloads, a payload-kept
-view removes only introducers, terminators, and CSI parameter bytes, and a
+view removes the outer introducer, terminator, and CSI parameter bytes, and a
 key-join view uses the assignment scanner's own classifier to retain only
 control-sequence bytes that the scanner may join into a key. Those bytes include
 a key-character CSI/ESC final and a `-` intermediate; string-control payloads
@@ -263,13 +263,24 @@ and all other control bytes are dropped. If any view contains a shared secret
 keyword, case-insensitively, the raw logical line is replaced from the start of that
 keyword's mapped whitespace token
 through logical-line end. Standalone removable C0 bytes are removed from every
-view without activating the rule by themselves. Removable control bytes inside
-retained string-control payloads are omitted from every structural view, so
-they cannot split a keyword in the payload-kept view. String-control spans are
+view without activating the rule by themselves. Nested string controls keep
+their payload text at every nesting depth; their introducers and terminators
+are omitted. Retained string-control payloads are checked in both a
+payload-clean view and a payload-key-join view. The payload-clean view omits
+complete nested CSI spans (parameters, intermediates, and final), other ESC
+sequences, C0 bytes, and lone C1 bytes. The payload-key-join view contributes
+exactly the key characters from nested CSI/ESC sequences that the assignment
+scanner may join into a key and omits all other control bytes. The second view
+is built lazily only for payloads that contain nested controls, and a keyword
+in either view activates the line rule. An unterminated nested string control
+fails closed and treats the whole logical line as matched. String-control spans are
 indexed on the complete raw input first, so their payload newlines do not split
 logical lines; a mapped start inside one moves to the introducer and the span is
 never split by two replacement stages. An unterminated string control extends
 through the end of the text and swallows every following physical line into its payload.
+The same linear, nesting-aware scanner supplies every string-control span
+boundary to redaction, terminal sanitization, logical-line splitting, and all
+structural views, including both payload views.
 Other normal lines remain independent, and controlled lines without a keyword
 retain the existing control handling. A whitespace token exactly
 `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one structural
@@ -301,17 +312,69 @@ tokens, including quoted JSON keys. The scan is linear, except where whitespace
 follows terminal controls that hold key characters (a key character (a letter,
 a digit, `_` or `-`) among the parameter, intermediate or final bytes of a CSI
 or ESC sequence, or a key character in a string-control payload);
-such text costs time quadratic in the number of those controls. Control-tolerant URL schemes, terminal escape
-parameters, and removable-control interleaves have fixed matching windows so
-long separatorless text remains linear to process. For bounded lane fields, the
+such text costs time quadratic in the number of those controls. The bounded
+control-run window of at most 64 runs in `TERMINAL_INTERLEAVE_PATTERN` applies
+only to the raw regex consumers `_RAW_AUTH_HEADER` (authorization, set-cookie,
+and cookie headers), `_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN`
+(`gh[pousr]_`, `github_pat_`, and `sk-` tokens), `_RAW_AKIA` (`AKIA` plus 16
+of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
+`_RAW_URL_AUTH` (control-tolerant URL schemes), and `_RAW_PRIVATE_KEY`
+(private-key header words). CSI/ESC parameter and intermediate bytes are
+matched with a fixed window of at most 64 bytes each
+(`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
+limit and covers the configured paths from accounts (the config directory, the
+gh config directory, and the signing key), the coordinator path roots (the
+control dir, the worktree, the workspace, the agent home, and the user home),
+and the device bearer. Only the device bearer additionally gets the
+percent-decoded views. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
 matching; a token split by that cut is redacted in full before the ordinary
 truncation marker is added.
-The known-secret raw pass
-allows a CSI/ESC final byte to be a
-token character, so sanitization cannot assemble a credential that evades the
-matcher. Seven-bit DCS, PM, APC, and SOS strings accept
+The known-secret pass builds a fixed set of views and searches each one with
+KMP, overlaps included. Only the device bearer additionally gets the
+percent-decoded views. Percent-tolerant matching of that bearer also searches a
+percent-decoded copy of each view. The raw bearer text is percent-decoded once,
+and when that decoded text contains a terminal control the same control views
+are built on it and searched for the literal bearer. Their maps compose through
+the decoded text back to raw spans, and those views are not percent-decoded
+again. Consecutive `%HH` triplets (either hex case)
+are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
+one character mapped to the raw span of all of its triplets, and an invalid or
+truncated sequence falls back to one character per byte so those bytes are not
+merged into a character they do not encode. An ASCII `%HH` stays one character
+spanning its three-character raw span, and every other character is copied.
+The literal bearer is matched on the undecoded view
+and on that decoded view, and on the control views of the once-decoded raw
+text. The union of the mapped spans is redacted. Raw,
+fully encoded (`%25` for `%`), and mixed per-character forms of the bearer are
+covered. A literal `%` in the bearer that itself starts a valid `%HH` next to
+encoded neighbours in the same run is read decoded, so `a%41` in `%61%41` is
+not matched. The bearer, including one that contains `%`, takes time linear in
+the view length plus the bearer length. The views
+are the raw text, text that drops complete string controls, complete ESC/CSI
+sequences, and C0/C1 bytes, text with only
+introducers, terminators, and C0/C1 bytes removed, and text with complete
+ESC/CSI sequences removed while string-control payloads stay. One further view
+keeps an ESC final that also introduces a string control and drops `ESC \`.
+Another keeps every escape final, including the `\` of `ESC \`, while dropping
+introducers, CSI parameters and intermediates, ESC intermediates, and C0/C1
+bytes, and it keeps string payloads. Another keeps only each control's
+introducer byte. Another keeps only each control's final or string terminator
+and drops string payloads. Each view is searched with KMP, and so is the
+device bearer's percent-decoded copy, so a repeated prefix does not rescan
+the text per candidate.
+A control's introducer, final, or terminator counts as a secret character only
+as far as a single view yields it. An occurrence that needs different treatment
+of two controls is not matched, for example one control's final byte used as a
+secret character while another complete control between later secret characters
+is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one
+control's introducer and final both used with parameters between them (`Q[w`
+in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does
+not contain it contiguously in raw form; matching every per-control combination
+would need a non-linear matcher.
+String-control boundaries still come from the shared nesting-aware scanner.
+Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
 through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
 continue through BEL until an ST spelling.

@@ -47,6 +47,7 @@ from agent_cli.text_sanitize import (
     redact_terminal_interleaved_secret,
     redact_terminal_interleaved_tokens,
     redact_terminal_interleaved_urlencoded_secret,
+    redact_terminal_string_controls,
     sanitize_terminal_text,
 )
 from test_coordinator_support import grok_messages_stream
@@ -624,9 +625,14 @@ def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None
     assert hide_config_dir("unchanged", None) == "unchanged"
 
 
-def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks() -> None:
+def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
+    nested_terminal_string_control: str,
+) -> None:
     config_dir = "/opt/profiles/router"
-    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    split_path = (
+        f"/opt/profi{nested_terminal_string_control}"
+        "les/router/openrouter-api-key"
+    )
     raw = f"provider failed at {split_path}"
 
     assert hide_config_dir(raw, config_dir) == (
@@ -896,6 +902,51 @@ def test_assignment_redaction_classifies_around_raw_string_controls(
         assert cleaned == "[redacted]"
 
 
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key\x07\x1b\\",
+        "\x90prefix \x9dapi_key\x07\x9c",
+    ),
+    ids=("7-bit-nested-string", "8-bit-nested-string"),
+)
+@pytest.mark.parametrize(
+    "suffix",
+    ("=topsecret-value", " topsecret-value", ": topsecret-value"),
+    ids=("equals", "space", "colon-space"),
+)
+def test_assignment_redaction_keeps_nested_string_payload_for_classification(
+    control: str, suffix: str
+) -> None:
+    raw = f"{control}{suffix}"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "control",
+    (
+        "\x1bPprefix \x1b]api_key",
+        "\x90prefix \x9dapi_key",
+    ),
+    ids=("7-bit", "8-bit"),
+)
+def test_assignment_redaction_fails_closed_on_unterminated_nested_string_control(
+    control: str,
+) -> None:
+    raw = f"visible {control}=topsecret-value"
+
+    for cleaned in (
+        redact_shared(raw, limit=None),
+        redact_lane_text(raw, limit=None),
+    ):
+        assert cleaned == "[redacted]"
+
+
 def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
     for redact_value in (
         lambda value: redact_shared(value, limit=None),
@@ -1032,6 +1083,602 @@ def test_public_terminal_redaction_helpers_are_linear_on_large_words(
         call()
         elapsed = time.monotonic() - started
         assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+
+
+def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
+) -> None:
+    depth = 100_000
+    raw = ("\x1bP" * depth) + "Zx7Qp9Lm4V2" + ("\x1b\\" * depth)
+    calls = (
+        (
+            "shared redaction",
+            lambda: redact_shared(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "lane redaction",
+            lambda: redact_lane_text(raw, limit=None),
+            "[redacted]",
+        ),
+        (
+            "string-control redaction",
+            lambda: redact_terminal_string_controls(raw),
+            "[redacted]",
+        ),
+        ("terminal sanitization", lambda: sanitize_terminal_text(raw), ""),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == expected
+
+
+def test_known_secret_scanners_are_linear_across_one_large_nested_string_control(
+) -> None:
+    depth = 100_000
+    control = ("\x1bP" * depth) + "opaque payload" + ("\x1b\\" * depth)
+    raw = f"api_key=model-{control}secret"
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+        (
+            "urlencoded",
+            lambda: redact_terminal_interleaved_urlencoded_secret(
+                raw, "api_key=model-secret"
+            ),
+        ),
+    )
+
+    for label, call in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} took {elapsed:.3f}s"
+        assert cleaned == "[redacted]"
+
+
+def test_known_secret_scanners_are_linear_across_repeated_candidates_and_nested_unterminated_controls(
+) -> None:
+    config_dir = "/opt/provider-profile"
+    raw = "/\x1b]" * 100_000
+    calls = (
+        (
+            "exact",
+            lambda: redact_terminal_interleaved_secret(raw, config_dir),
+            raw,
+        ),
+        (
+            "lane config path",
+            lambda: redact_lane_text(raw, config_dir=config_dir, limit=None),
+            "/[redacted]",
+        ),
+    )
+
+    for label, call, expected in calls:
+        started = time.monotonic()
+        cleaned = call()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
+        assert cleaned == expected
+
+
+@pytest.mark.parametrize(
+    "control_run",
+    (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    ),
+    ids=("65-osc", "1000-osc", "65-c0", "mixed"),
+)
+@pytest.mark.parametrize("encoded", (False, True), ids=("exact", "percent-encoded"))
+def test_known_secret_scanners_cross_unbounded_terminal_control_runs(
+    control_run: str, encoded: bool
+) -> None:
+    secret = "/opt/key"
+    representation = (
+        "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+        if encoded
+        else secret
+    )
+    split_at = 1
+    raw = (
+        f"before {representation[:split_at]}{control_run}"
+        f"{representation[split_at:]} after"
+    )
+    redact_secret = (
+        redact_terminal_interleaved_urlencoded_secret
+        if encoded
+        else redact_terminal_interleaved_secret
+    )
+
+    started = time.monotonic()
+    cleaned = redact_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+def test_known_secret_scanner_is_linear_across_ambiguous_csi_final_bytes() -> None:
+    secret = "/opt/key"
+    control_run = "\x1b[o" * 1_000
+    raw = f"before /{control_run}opt/key after"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == "before [redacted] after"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ("\x1b", "\x1b["),
+    ids=("lone-esc", "lone-csi"),
+)
+def test_lane_config_dir_redaction_crosses_a_truncated_escape_prefix(
+    prefix: str,
+) -> None:
+    config_dir = "/opt/my profile"
+    raw = f"failed {prefix}{config_dir}/key"
+
+    cleaned = redact_lane_text(raw, config_dir=config_dir, limit=None)
+
+    assert config_dir not in cleaned
+    assert "profile/key" not in cleaned
+    assert "my profile" not in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_many_candidate_starts() -> None:
+    n = 20_000
+    raw = "\x1b[a" * n
+    secret = "a" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_is_linear_across_many_percent_encoded_candidate_starts(
+) -> None:
+    n = 20_000
+    raw = "\x1b[a" * n
+    secret = "a" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_urlencoded_matcher_is_linear_on_a_literal_percent_run() -> None:
+    n = 20_000
+    raw = "%" * n
+    secret = "%" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_urlencoded_matcher_is_linear_on_an_encoded_percent_run() -> None:
+    n = 20_000
+    raw = "%25" * n
+    secret = "%" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_urlencoded_secret_containing_percent_is_redacted_raw_encoded_and_mixed(
+) -> None:
+    secret = "j%41"
+    fully_encoded = "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+    representations = (
+        secret,
+        fully_encoded,
+        fully_encoded.lower(),
+        "j%2541",
+        "%6A%2541",
+        "%6a%25%341",
+        "%6a%25%34%31",
+    )
+
+    for representation in representations:
+        cleaned = redact_terminal_interleaved_urlencoded_secret(
+            f"xx{representation}yy", secret
+        )
+        assert cleaned == "xx[redacted]yy", representation
+
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("xxj%2542yy", secret)
+        == "xxj%2542yy"
+    )
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(
+            "xxj\x1b[31m%2541yy", secret
+        )
+        == "xx[redacted]yy"
+    )
+
+
+def test_known_secret_scanner_is_linear_across_a_repeated_visible_prefix() -> None:
+    raw = "/opt/" * 20_000
+    secret = "/opt/" * 5_000 + "X"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_is_linear_across_repeated_prefixes_split_by_control_runs(
+) -> None:
+    raw = ("/opt/" + "\x1b[31m") * 20_000
+    secret = "/opt/" * 5_000 + "X"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_known_secret_scanner_redacts_the_match_after_a_long_false_prefix() -> None:
+    secret = "/opt/" * 1_000 + "X"
+    raw = "/opt/" * 3_000 + "X"
+
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+
+    assert cleaned == ("/opt/" * 2_000) + "[redacted]"
+
+
+def test_known_secret_redacts_a_path_that_starts_inside_an_osc_payload() -> None:
+    cleaned = redact_lane_text(
+        "failed \x1b]/opt/my\x07 profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+
+    assert "/opt/my profile" not in cleaned
+    assert "profile/key" not in cleaned
+
+
+def test_known_secret_redacts_a_secret_that_starts_on_a_dcs_introducer() -> None:
+    cleaned = redact_terminal_interleaved_secret(
+        "\x1bP\x1b\\rivate-key",
+        "Private-key",
+    )
+
+    assert "Private-key" not in cleaned
+    assert "rivate-key" not in cleaned
+
+
+def test_known_secret_redacts_8bit_osc_and_dcs_payloads() -> None:
+    osc = redact_lane_text(
+        "failed \x9d/opt/my\x07 profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+    assert "/opt/my profile" not in osc
+    assert "profile/key" not in osc
+
+    dcs = redact_terminal_interleaved_secret(
+        "\x90Private\x9c-key",
+        "Private-key",
+    )
+    assert "Private-key" not in dcs
+    assert "Private" not in dcs
+    assert "-key" not in dcs
+
+
+def test_known_secret_redacts_a_secret_split_across_two_string_payloads() -> None:
+    cleaned = redact_terminal_interleaved_secret(
+        "\x1b]/opt/my\x07\x1b] profile\x07",
+        "/opt/my profile",
+    )
+
+    assert "/opt/my profile" not in cleaned
+    assert "/opt/my" not in cleaned
+    assert " profile" not in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_repeated_csi_landings() -> None:
+    n = 20_000
+    raw = "\x1b[aa" * n
+    secret = "a" * (n // 2)
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert "[redacted]" in cleaned
+    assert secret not in cleaned
+
+
+def test_known_secret_redacts_a_csi_final_that_continues_the_secret() -> None:
+    assert (
+        redact_terminal_interleaved_secret("se\x1b[31cret", "secret")
+        == "[redacted]"
+    )
+
+
+def test_known_secret_redacts_an_st_backslash_that_continues_the_secret() -> None:
+    assert redact_terminal_interleaved_secret("a\x1b\\b", "a\\b") == "[redacted]"
+
+
+def test_lane_config_dir_redacts_a_path_continued_by_a_csi_final() -> None:
+    cleaned = redact_lane_text(
+        "failed /opt/m\x1b[31y profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+
+    assert cleaned == "failed <config_dir>/key"
+    assert "profile/key" not in cleaned
+    assert "/opt/m" not in cleaned
+
+
+def _known_secret_control_placements() -> list[tuple[str, str, str, str]]:
+    """Control kind × position. ``before`` / ``between`` / ``c-*`` are (a)/(b)/(c).
+
+    Position (c) makes the control's final or introducer byte the next secret
+    character, with that control's parameters, intermediates, or payload still
+    present. At least one fixed view has to yield the secret.
+    """
+    rows: list[tuple[str, str, str, str]] = []
+    secret = "Qw"
+    for kind, control in (
+        ("lone-esc", "\x1b"),
+        ("esc-intermediate-final", "\x1b(/Z"),
+        ("csi-7", "\x1b[32!Z"),
+        ("csi-8", "\x9b32!Z"),
+        ("osc-7-bel", "\x1b]xx\x07"),
+        ("osc-8-bel", "\x9dxx\x07"),
+        ("osc-7-st", "\x1b]xx\x1b\\"),
+        ("osc-8-st", "\x9dxx\x9c"),
+        ("dcs-7", "\x1bPxx\x1b\\"),
+        ("dcs-8", "\x90xx\x9c"),
+        ("pm-7", "\x1b^xx\x1b\\"),
+        ("pm-8", "\x9exx\x9c"),
+        ("apc-7", "\x1b_xx\x1b\\"),
+        ("apc-8", "\x9fxx\x9c"),
+        ("sos-7", "\x1bXxx\x1b\\"),
+        ("sos-8", "\x98xx\x9c"),
+        ("bel", "\x07"),
+        ("st-7", "\x1b\\"),
+        ("st-8", "\x9c"),
+    ):
+        rows.append((kind, "before", control + secret, secret))
+        rows.append((kind, "between", "Q" + control + "w", secret))
+    rows.extend(
+        (
+            ("lone-esc", "c-introducer", "Q\x1bw", "Q\x1bw"),
+            ("esc-intermediate-final", "c-final", "Q\x1b(/Bw", "QBw"),
+            ("csi-7", "c-final", "Q\x1b[32!mw", "Qmw"),
+            ("csi-7", "c-introducer", "Q\x1b[32!Zw", "Q[w"),
+            ("csi-8", "c-final", "Q\x9b32!mw", "Qmw"),
+            ("csi-8", "c-introducer", "Q\x9b32!Zw", "Q\x9bw"),
+            ("osc-7-bel", "c-introducer", "Q\x1b]xx\x07w", "Q]w"),
+            ("osc-7-bel", "c-terminator", "Q\x1b]xx\x07w", "Q\x07w"),
+            ("osc-8-bel", "c-introducer", "Q\x9dxx\x07w", "Q\x9dw"),
+            ("osc-8-bel", "c-terminator", "Q\x9dxx\x07w", "Q\x07w"),
+            ("osc-7-st", "c-introducer", "Q\x1b]xx\x1b\\w", "Q]w"),
+            ("osc-7-st", "c-final", "Q\x1b]xx\x1b\\w", "Q\\w"),
+            ("osc-8-st", "c-introducer", "Q\x9dxx\x1b\\w", "Q\x9dw"),
+            ("osc-8-st", "c-final", "Q\x9dxx\x1b\\w", "Q\\w"),
+            ("osc-8-st-byte", "c-final", "Q\x9dxx\x9cw", "Q\x9cw"),
+            ("dcs-7", "c-introducer", "Q\x1bPxx\x1b\\w", "QPw"),
+            ("dcs-7", "c-final", "Q\x1bPxx\x1b\\w", "Q\\w"),
+            ("dcs-8", "c-introducer", "Q\x90xx\x9cw", "Q\x90w"),
+            ("dcs-8", "c-final", "Q\x90xx\x1b\\w", "Q\\w"),
+            ("dcs-8-st-byte", "c-final", "Q\x90xx\x9cw", "Q\x9cw"),
+            ("pm-7", "c-introducer", "Q\x1b^xx\x1b\\w", "Q^w"),
+            ("pm-7", "c-final", "Q\x1b^xx\x1b\\w", "Q\\w"),
+            ("pm-8", "c-introducer", "Q\x9exx\x9cw", "Q\x9ew"),
+            ("pm-8", "c-final", "Q\x9exx\x1b\\w", "Q\\w"),
+            ("pm-8-st-byte", "c-final", "Q\x9exx\x9cw", "Q\x9cw"),
+            ("apc-7", "c-introducer", "Q\x1b_xx\x1b\\w", "Q_w"),
+            ("apc-7", "c-final", "Q\x1b_xx\x1b\\w", "Q\\w"),
+            ("apc-8", "c-introducer", "Q\x9fxx\x9cw", "Q\x9fw"),
+            ("apc-8", "c-final", "Q\x9fxx\x1b\\w", "Q\\w"),
+            ("apc-8-st-byte", "c-final", "Q\x9fxx\x9cw", "Q\x9cw"),
+            ("sos-7", "c-introducer", "Q\x1bXxx\x1b\\w", "QXw"),
+            ("sos-7", "c-final", "Q\x1bXxx\x1b\\w", "Q\\w"),
+            ("sos-8", "c-introducer", "Q\x98xx\x9cw", "Q\x98w"),
+            ("sos-8", "c-final", "Q\x98xx\x1b\\w", "Q\\w"),
+            ("sos-8-st-byte", "c-final", "Q\x98xx\x9cw", "Q\x9cw"),
+            ("bel", "c-final", "Q\x07w", "Q\x07w"),
+            ("st-7", "c-final", "Q\x1b\\w", "Q\\w"),
+            ("st-8", "c-final", "Q\x9cw", "Q\x9cw"),
+        )
+    )
+    return rows
+
+
+_CONTROL_PLACEMENTS = _known_secret_control_placements()
+
+
+@pytest.mark.parametrize(
+    ("kind", "position", "text", "secret"),
+    _CONTROL_PLACEMENTS,
+    ids=[
+        f"{kind}-{position}"
+        for kind, position, _text, _secret in _CONTROL_PLACEMENTS
+    ],
+)
+def test_known_secret_views_yield_the_secret_for_every_control_placement(
+    kind: str, position: str, text: str, secret: str
+) -> None:
+    cleaned = redact_terminal_interleaved_secret(text, secret)
+
+    assert secret not in cleaned, f"{kind} {position}"
+    assert "[redacted]" in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_kept_csi_finals() -> None:
+    n = 20_000
+    raw = "\x1b[31a" * n
+    secret = "a" * (n - 1) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+@pytest.mark.parametrize(
+    "representation",
+    (
+        "%74%C3%B6%6B",
+        "%74%c3%b6%6b",
+        "%74%C3%b6%6B",
+        "t%C3%B6k",
+        "t%C3%B6%6B",
+        "%74%C3%B6k",
+        "tö%6B",
+    ),
+)
+def test_urlencoded_utf8_secret_is_redacted_in_any_hex_case(
+    representation: str,
+) -> None:
+    cleaned = redact_terminal_interleaved_urlencoded_secret(
+        f"xx{representation}yy", "tök"
+    )
+
+    assert cleaned == "xx[redacted]yy", representation
+
+
+def test_urlencoded_valid_utf8_is_not_also_matched_as_latin1_bytes() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("%C3%B6", "\u00c3\u00b6")
+        == "%C3%B6"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "xx%FF%FEyy",
+        "xx%C3yy",
+        "xx%C3%28yy",
+        "xx%E2%82yy",
+        "xx%C0%80yy",
+        "xx%ED%A0%80yy",
+    ),
+)
+@pytest.mark.parametrize("secret", ("tök", "€", "\x00"))
+def test_urlencoded_invalid_utf8_percent_run_is_not_a_false_match(
+    raw: str, secret: str
+) -> None:
+    assert redact_terminal_interleaved_urlencoded_secret(raw, secret) == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    (
+        ("se%1B[31mkret", "sekret"),
+        ("se%1B%5B31mkret", "sekret"),
+        ("s%1B[0me%1B[0mkret", "sekret"),
+        ("se%1B%5D0;x%07kret", "sekret"),
+        ("Bearer%20se%1B[31mkret", "Bearer sekret"),
+        ("a%1B[31m%2541", "a%41"),
+    ),
+    ids=(
+        "encoded-csi",
+        "fully-encoded-csi",
+        "repeated-sgr",
+        "encoded-osc",
+        "encoded-bearer-space",
+        "encoded-csi-keeps-literal-percent",
+    ),
+)
+def test_urlencoded_control_views_redact_a_secret_split_by_a_decoded_control(
+    raw: str, secret: str
+) -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(raw, secret)
+        == "[redacted]"
+    )
+
+
+def test_urlencoded_control_views_redact_only_the_mapped_raw_span() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(
+            "xxse%1B[31mkretyy", "sekret"
+        )
+        == "xx[redacted]yy"
+    )
+
+
+def test_urlencoded_control_views_do_not_decode_a_percent_escape_twice() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("%61%41", "a%41")
+        == "%61%41"
+    )
+    assert redact_terminal_interleaved_urlencoded_secret("%2541", "A") == "%2541"
+
+
+def test_urlencoded_double_encoded_esc_is_not_a_control() -> None:
+    raw = "se%251B[31mkret"
+    assert redact_terminal_interleaved_urlencoded_secret(raw, "sekret") == raw
+
+
+def test_urlencoded_control_views_are_linear_on_percent_decoded_csi() -> None:
+    n = 20_000
+    raw = "%1B[31ma" * n
+    secret = "a" * n + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
+    config_dir = "/opt/provider-profile"
+    runs = (
+        "\x1b]\x07" * 65,
+        "\x1b]\x07" * 1_000,
+        "\x07" * 65,
+        "\x1b]\x07\x07\x1b[31m\x1b7\x1bP\x1b\\" * 65,
+    )
+
+    for control_run in runs:
+        raw = f"failed at /opt/{control_run}provider-profile/key"
+        assert redact_diagnostic(raw, config_dir=config_dir) == (
+            "failed at <config_dir>/key"
+        )
 
 
 def test_bounded_lane_redaction_fails_closed_on_the_cut_token() -> None:
