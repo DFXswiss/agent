@@ -1086,7 +1086,17 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "comment"]:
             body = argv[argv.index("--body") + 1]
             assert marker in body
-            return Completed(0, f"{comment_url}\n", "")
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 9,
+                        "html_url": comment_url,
+                        "created_at": "2026-11-05T10:00:05Z",
+                    }
+                ),
+                "",
+            )
         raise AssertionError(argv)
 
     lines = scan_github(store, runner)
@@ -1097,6 +1107,7 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     assert row["result"]["number"] == 3
     assert row["result"]["url"] == comment_url
+    assert row["result"]["created_at"] == "2026-11-05T10:00:05Z"
 
     act2 = "c-2"
     marker2 = ACTIVITY_MARKER.format(id=act2)
@@ -1319,6 +1330,7 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
             "id": 31,
             "body": f"found\n{marker}",
             "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-31",
+            "created_at": "2026-11-05T09:59:00Z",
             "user": {"login": "theo-vane"},
         },
     ]
@@ -1341,6 +1353,7 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     assert row["result"]["id"] == 31
     assert row["result"]["url"] == "https://github.com/dfxswiss/agent/issues/3#issuecomment-31"
+    assert row["result"]["created_at"] == "2026-11-05T09:59:00Z"
 
 
 def test_comment_post_slurp_non_dict_errors(tmp_path: Path) -> None:
