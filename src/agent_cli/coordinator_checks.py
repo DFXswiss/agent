@@ -1565,11 +1565,6 @@ def resolve_order_authorized(context: CheckContext) -> CheckValue:
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     if not worker.orders:
         return _value("nein", "worker does not accept orders")
-    repo = target_repo(task)
-    configured = any(name.casefold() == repo.casefold() for name in worker.repositories)
-    owner = repo.split("/", 1)[0].casefold()
-    if not configured and owner not in worker.repository_owners:
-        return _value("nein", f"worker does not serve {repo}")
     if task.get("_origin_device_id") != context.store.device_id():
         return _value("nein", "order row is not owned by this device")
     submitted_by = source.get("submitted_by")

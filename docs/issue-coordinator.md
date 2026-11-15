@@ -33,12 +33,19 @@ existing session IDs, bound explicitly in `github-accounts.json` and
 
 Each configured worker explicitly names `workspace_root`, `reply_logins`,
 `poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
-`repositories` or `repository_owners`.
+`repositories` or `repository_owners`. A worker with `"orders": true` may omit
+both: it accepts an order for every repository, and a repository without an
+explicit `repositories` entry uses the same owner-level settings
+(`owner_check_argv`, `owner_readiness_argv`, A38 mode) as an owner-scoped
+repository, so outside A38 mode it must supply both argv. Issue and
+hub-assignment pickup still scan only the configured `repositories` and
+`repository_owners`.
 Non-A38 workers also name `review_session`; A38 workers use the second-review
 configuration below. Each repository entry names its `base`, `publication_repo`,
-`check_argv`, and `readiness_argv`. The two argv arrays belong to trusted
-device configuration, never issue text or model output. They run the target
-repository's required tests and additional readiness validation;
+`check_argv`, and `readiness_argv`. An explicit entry keeps precedence for its
+own base, publication repository and checks. The two argv arrays belong to
+trusted device configuration, never issue text or model output. They run the
+target repository's required tests and additional readiness validation;
 repository-specific policy stays outside the core. The publication repository
 can equal the target repository; a different repository requires operator
 authorization for that publication route.
@@ -914,14 +921,19 @@ argument. The printed order id is the task UUID.
 
 The task uses `payload.coordinator.source.kind=order`. An issue task has no kind
 and is read as `github-issue`. The same task state machine and tables serve
-both. A worker accepts orders only with `"orders": true`, and only for a
-repository it already serves. An explicit repository accepts only its
-configured base. An owner-scoped repository pins the submitted base.
+both. A worker accepts orders only with `"orders": true`, and it then accepts
+an order for every repository. An explicit `repositories` entry accepts only
+its configured base and keeps its own publication repository and checks. Every
+other repository is handled like an owner-scoped repository: it uses the
+worker's owner-level settings and pins the submitted base. An unreadable or
+unpublishable repository is not refused at submit time; acceptance ends
+`blocked` or `failed` with the GitHub reason.
 
-Without `--worker`, the order-enabled worker serving the repository with the
-fewest runnable tasks receives the order. A new order stays `queued` while that
-worker has runnable work. The oldest queued order moves to `accept` when a tick
-finds none. Acceptance reads no issue and posts no GitHub comment.
+Without `--worker`, the order-enabled worker with the fewest runnable tasks
+receives the order, including for a repository it does not list. A new order
+stays `queued` while that worker has runnable work. The oldest queued order
+moves to `accept` when a tick finds none.
+Acceptance reads no issue and posts no GitHub comment.
 
 The order text is at most 60,000 characters and is stored once at
 `<workspace_root>/.coordinator-control/<task id>/task-text.md`. The full text is

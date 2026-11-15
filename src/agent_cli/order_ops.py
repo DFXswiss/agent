@@ -307,7 +307,7 @@ def op_submit(
                 if candidate.orders and serves_repo(candidate, repo)
             ]
             if not candidates:
-                raise OrderError(f"no order-enabled worker serves {repo}")
+                raise OrderError("orders are not enabled on this device")
             from .coordinator_runtime import runnable_count
 
             selected = min(
