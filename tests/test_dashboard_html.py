@@ -252,6 +252,8 @@ def test_new_order_subpage_markup() -> None:
 
     assert "<h1>New order</h1>" in html
     assert 'href="/"' in html
+    assert html.count('id="orders-note"') == 1
+    assert html.count("Orders are not enabled on this device.") == 1
     for text in ("Submit order", "Add skipped check", "Remove", "Back to dashboard"):
         assert text in html
     for placeholder in (

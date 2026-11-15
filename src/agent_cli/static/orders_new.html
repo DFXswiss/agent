@@ -9,6 +9,7 @@
     h1 { font-size: 1.4rem; margin: 0 0 4px; }
     .sub { color: #555; margin-bottom: 20px; }
     .back { margin: 0 0 16px; }
+    .watch-note { color: #555; margin-top: 10px; }
     .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
     .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
     .control-form button { padding: 6px 12px; cursor: pointer; }
@@ -20,6 +21,7 @@
   <p class="back"><a href="/">&larr; Back to dashboard</a></p>
   <h1>New order</h1>
   <p class="sub">Submit an order to a worker on this device.</p>
+  <p id="orders-note" class="watch-note" hidden></p>
 
   <div id="order-submit">
     <div class="control-form">
@@ -65,9 +67,9 @@
         skippable = body.result.skippable || [];
         if (body.result.enabled !== true) {
           document.getElementById("order-submit").hidden = true;
-          const resultLine = document.getElementById("os-result");
-          resultLine.className = "failed";
-          resultLine.textContent = "Orders are not enabled on this device.";
+          const note = document.getElementById("orders-note");
+          note.textContent = "Orders are not enabled on this device.";
+          note.hidden = false;
         }
       } catch (e) {
         const resultLine = document.getElementById("os-result");
