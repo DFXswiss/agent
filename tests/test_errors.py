@@ -1507,8 +1507,50 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "does not invalidate evidence or the base",
         "Exact-head CI observation treats a missing or non-40-hex "
         "`headRefOid` in a successful view as transient transport",
+        "before `readiness_argv` in A38 mode, an unreadable head or base "
+        "stays on `readiness` and does not run the command; a different "
+        "valid head raises `PR head does not match clean signed head` "
+        "without discarding evidence; a moved base is reconciled or "
+        "invalidated and returns to `tests`",
+        "After the command, first re-verify the clean signed head "
+        "(`verify_signed_clean_head`): a different head invalidates head "
+        "evidence and returns to `tests` (`head modified by readiness`). "
+        "Then read the PR view: a missing or non-40-hex head, and in A38 "
+        "mode a missing or non-40-hex base, stays on `readiness` and does not "
+        "invalidate evidence or the base; a different valid PR head raises "
+        "`PR head does not match clean signed head` without discarding "
+        "evidence; in A38 mode a different valid base invalidates base "
+        "evidence and returns to `tests`",
+        "A different valid head raises `A38 pull request head differs from "
+        "the clean signed head` and is not a head change",
+        "During `await_second_review`, a missing or non-40-hex head keeps "
+        "that phase, returns `PR state temporarily unavailable; retrying`, "
+        "and changes no head evidence; a different valid head invalidates "
+        "head evidence and returns to `tests`",
+        "The scan is linear, except where whitespace follows terminal "
+        "controls that hold key characters (a key character (a letter, a "
+        "digit, `_` or `-`) among the parameter, intermediate or final "
+        "bytes of a CSI or ESC sequence, or a key character in a "
+        "string-control payload); such text costs time quadratic in the "
+        "number of those controls",
+        "The fixed regex windows and the known-secret view matcher stay "
+        "linear on long separatorless provider text",
     ):
         assert phrase in normalized_documented
+    assert normalized_documented.count(
+        "before `readiness_argv` in A38 mode, an unreadable head or base "
+        "stays on `readiness` and does not run the command"
+    ) == 2
+    assert normalized_documented.count(
+        "After the command, first re-verify the clean signed head "
+        "(`verify_signed_clean_head`)"
+    ) == 2
+    assert "every redaction pass linear" not in normalized_documented
+    assert (
+        "Only a different valid head or base is a mismatch"
+        not in normalized_documented
+    )
+    assert "only a different valid head is a head change" not in normalized_documented
     assert "review record's timestamp" in documented
     assert "the tick time is never substituted" in " ".join(documented.split())
     assert "stored report body" in documented

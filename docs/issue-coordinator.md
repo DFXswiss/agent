@@ -642,20 +642,22 @@ A record of a check lane is closed the same way, but closing it does not retry t
    Transient pending returns without an idle model.
    While CI is pending the task waits and does not block the worker. A failed
    run's bounded log keeps its end.
-9. **Ready**: first read the live pull-request base. In A38 mode the script
-   reconciles a pending base and invalidates evidence for a moved base before
-   it runs `readiness_argv`; the command runs only when the observed base still
-   matches the promoted evidence base. Before `readiness_argv` in A38 mode, a
-   missing or non-40-hex head or base stays on `readiness` and does not run
-   the command. Then run `readiness_argv` (cwd =
-   worktree, ambient GitHub tokens cleared). Stdout must be the fixed JSON
-   readiness contract below (trusted
-   operator script output — not model/repo input). After the command, a missing
-   or non-40-hex head, and in A38 mode a missing or non-40-hex base, stays on
-   `readiness` and does not invalidate evidence or the base. Only a different
-   valid head or base is a mismatch. Re-verify clean signed head
-   **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
-   head, author/base/mergeability, tests, and all four same-head gates.
+9. **Ready**: before `readiness_argv` in A38 mode, an unreadable head or base
+   stays on `readiness` and does not run the command; a different valid head
+   raises `PR head does not match clean signed head` without discarding
+   evidence; a moved base is reconciled or invalidated and returns to `tests`.
+   Then run `readiness_argv` (cwd = worktree, ambient GitHub tokens cleared).
+   Stdout must be the fixed JSON readiness contract below (trusted operator
+   script output — not model/repo input). After the command, first re-verify
+   the clean signed head (`verify_signed_clean_head`): a different head
+   invalidates head evidence and returns to `tests` (`head modified by
+   readiness`). Then read the PR view: a missing or non-40-hex head, and in
+   A38 mode a missing or non-40-hex base, stays on `readiness` and does not
+   invalidate evidence or the base; a different valid PR head raises
+   `PR head does not match clean signed head` without discarding evidence; in
+   A38 mode a different valid base invalidates base evidence and returns to
+   `tests`. Re-observe CI fresh (no stale `ci_green`), author/base/mergeability,
+   tests, and all four same-head gates.
    Mergeability is the check `pr_mergeable`, required before `readiness` and
    `leave_draft` for orders and issues. GitHub `UNKNOWN` is a same-phase retry;
    `CONFLICTING` is no. For an issue task, no creates a resumable blocker of kind
@@ -1347,13 +1349,18 @@ instead of ending it.
 Payload whitespace does not end an unquoted value.
 Quoted values run to their closing quote or the bounded input end; unquoted
 values of an unquoted key stop only at whitespace, and those of a quoted key
-also at a comma or semicolon. Fixed matching windows apply only to bounded
+also at a comma or semicolon. The scan is linear, except where whitespace
+follows terminal controls that hold key characters (a key character (a letter,
+a digit, `_` or `-`) among the parameter, intermediate or final bytes of a CSI
+or ESC sequence, or a key character in a string-control payload);
+such text costs time quadratic in the number of those controls. Fixed matching
+windows apply only to bounded
 regex consumers for control-tolerant URL schemes, e-mail address parts,
 private-key header words, and terminal escape parameters. Exact known-secret,
 path, and bearer matching searches a fixed set of views with a linear matcher.
 An occurrence that needs different treatment of two controls is not matched.
-Value runs that do not need delimiter backtracking are possessive. This keeps
-every redaction pass linear on long
+Value runs that do not need delimiter backtracking are possessive. The fixed
+regex windows and the known-secret view matcher stay linear on long
 separatorless provider text. The initial ESC/C1 search and any controlled-line
 structural pass are linear over the raw input. After that structural rule, a
 sink with an existing length limit takes only that limit plus a small inspection
@@ -1779,15 +1786,26 @@ reconciles an existing pending SHA on every stable open-PR context read. A
 missing or non-40-hex pull-request head or base revision during `tests` is a
 transient read: the phase returns `PR state temporarily unavailable; retrying`
 without changing the saved task phase, head or base evidence, or pending base.
-Other invalid metadata remains a hard error, and only a different valid head is
-a head change. During `await_ready`, a missing or malformed head likewise keeps
+Other invalid metadata remains a hard error. A different valid head raises
+`A38 pull request head differs from the clean signed head` and is not a head
+change. During `await_ready`, a missing or malformed head likewise keeps
 that phase and returns the same transient retry; only a different valid head
-invalidates head-bound evidence and returns to `tests`. During `readiness`,
-before `readiness_argv` in A38 mode a missing or non-40-hex head or base keeps
-that phase and does not run the command; after the command a missing or
-non-40-hex head, and in A38 mode a missing or non-40-hex base, does not
-invalidate evidence or the base. Only a different valid head or base is a
-mismatch. Exact-head CI observation treats a missing or non-40-hex `headRefOid`
+invalidates head-bound evidence and returns to `tests`. During
+`await_second_review`, a missing or non-40-hex head keeps that phase, returns
+`PR state temporarily unavailable; retrying`, and changes no head evidence; a
+different valid head invalidates head evidence and returns to `tests`. During
+`readiness`, before `readiness_argv` in A38 mode, an unreadable head or base
+stays on `readiness` and does not run the command; a different valid head
+raises `PR head does not match clean signed head` without discarding evidence;
+a moved base is reconciled or invalidated and returns to `tests`. After the
+command, first re-verify the clean signed head (`verify_signed_clean_head`):
+a different head invalidates head evidence and returns to `tests` (`head
+modified by readiness`). Then read the PR view: a missing or non-40-hex head,
+and in A38 mode a missing or non-40-hex base, stays on `readiness` and does not
+invalidate evidence or the base; a different valid PR head raises `PR head
+does not match clean signed head` without discarding evidence; in A38 mode a
+different valid base invalidates base evidence and returns to `tests`.
+Exact-head CI observation treats a missing or non-40-hex `headRefOid`
 in a successful view as transient transport, and `phase_ci` stays on `phase=ci`
 without discarding evidence. A merged or closed pull
 request moves to merge verification before pending-base reconciliation.
