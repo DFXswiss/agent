@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .preconditions import REMEDY_ACTIONS
+from .preconditions import CHECKS, ORDER, REMEDY_ACTIONS, action_requiring
 from .conflict_mandate import discard_script_mandate, run_script_mandate
 from .conflict_mandate_config import ConflictRepository, ConflictWorker
 from .conflict_mandate_state import Request
@@ -26,6 +26,7 @@ from .coordinator_checks import (
 )
 from .coordinator_common import (
     CoordinatorError,
+    Runner,
     as_int,
     coord,
     is_sha,
@@ -37,7 +38,7 @@ from .coordinator_config import WorkerConfig
 from .coordinator_git import adopt_published_head, control_dir
 from .coordinator_github import publish_blocker
 from .coordinator_lanes import invalidate_head_evidence, lane_retry
-from .store import utcnow
+from .store import Store, utcnow
 
 
 REMEDY_DIR = "conflict-remedy"
@@ -180,8 +181,20 @@ def _ask(
     )
 
 
-def run_conflict_remedy(ctx: CheckContext, value: CheckValue) -> list[str]:
-    """Start or continue the conflict remedy for one order task."""
+def run_conflict_remedy(
+    ctx: CheckContext,
+    value: CheckValue,
+    *,
+    reason: str | None = None,
+    rebase_when_mergeable: bool = False,
+) -> list[str]:
+    """Start or continue the conflict remedy for one order task.
+
+    ``reason`` replaces the merge-conflict wording when another failure (a
+    failing CI on a branch behind its base) mandates the rebase.
+    ``rebase_when_mergeable`` asks the conflict engine to rebase although
+    GitHub reports the pull request mergeable.
+    """
     del value
     store = ctx.store
     worker = ctx.worker
@@ -193,12 +206,17 @@ def run_conflict_remedy(ctx: CheckContext, value: CheckValue) -> list[str]:
     source = coord(task).get("source")
     source = source if isinstance(source, dict) else {}
     base = str(source.get("base") or "the base branch")
-    prefix = f"pull request has merge conflicts with {base}"
     repo = target_repo(task)
     number = as_int(coord(task).get("pr_number"))
 
     state = remedy_state(task)
     running = state.get("state") == "running"
+    if running:
+        reason = str(state.get("reason") or reason or "") or None
+        rebase_when_mergeable = bool(
+            state.get("rebase_when_mergeable") or rebase_when_mergeable
+        )
+    prefix = reason or f"pull request has merge conflicts with {base}"
     resolved = resolve_action(
         store,
         worker,
@@ -242,6 +260,8 @@ def run_conflict_remedy(ctx: CheckContext, value: CheckValue) -> list[str]:
             "replies": len(coord(task).get("authorized_replies") or []),
             "blocks": int(state.get("blocks") or 0),
             "head": head,
+            "reason": reason,
+            "rebase_when_mergeable": rebase_when_mergeable,
             "mandated_at": now,
             "at": utcnow(),
         }
@@ -279,6 +299,7 @@ def run_conflict_remedy(ctx: CheckContext, value: CheckValue) -> list[str]:
         mandated_head=head,
         runner=runner,
         lane_runner=ctx.lane_runner,
+        rebase_when_mergeable=rebase_when_mergeable,
     )
     lines += [one_line(line, 300) for line in run.lines]
 
@@ -369,3 +390,45 @@ def run_conflict_remedy(ctx: CheckContext, value: CheckValue) -> list[str]:
         f"conflict resolution {k} rebased {head[:7]}; adopted head "
         f"{adopted[:7]}; routing to tests"
     ]
+
+
+def run_ci_failure_remedy(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    reason: str,
+) -> list[str]:
+    """Start or continue the conflict remedy for an order branch behind its base.
+
+    GitHub runs ``pull_request`` CI on the merge of the head with the base, so a
+    failing check may only reproduce after rebasing. The remedy rebases onto the
+    base tip and adopts the new head exactly like a conflict resolution.
+    """
+    check = CHECKS["pr_mergeable"]
+    head = head_of(task)
+    # ``run_conflict_remedy`` records the ``pr_mergeable`` fact through
+    # ``close_allowed``, which only accepts a check declared by the action.
+    # ``resolve_conflicts`` does not declare ``pr_mergeable``, so record it
+    # under the action that does. The mandate itself is still resolved under
+    # ``REMEDY_ACTIONS`` inside the remedy.
+    action = action_requiring(check.key, ORDER)
+    if action is None:
+        raise CoordinatorError(
+            f"no action declares {check.key} for an {ORDER} source"
+        )
+    return run_conflict_remedy(
+        CheckContext(
+            store,
+            worker,
+            task,
+            runner,
+            None,
+            check,
+            action,
+        ),
+        CheckValue("nein", reason, head=head or None),
+        reason=reason,
+        rebase_when_mergeable=True,
+    )

@@ -6585,6 +6585,55 @@ def test_script_mandate_resolves_without_a_comment(
     store.close()
 
 
+def test_script_mandate_rebases_a_mergeable_branch_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    fake.comments = []
+    fake.pull["mergeable"] = True
+    fake.rebase_rc = 0
+    fake.unmerged = False
+    fake.rebase_in_progress = False
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+
+    def runner(argv: list[str]) -> Completed:
+        completed = fake(argv)
+        if "rebase" in argv and "--abort" not in argv and "--continue" not in argv:
+            fake.rebase_in_progress = False
+            fake.rev_parse_head = "d" * 40
+        if "push" in argv:
+            fake.pull["head"]["sha"] = "d" * 40
+            fake.remote_head_sha = "d" * 40
+        return completed
+
+    result = run_script_mandate(
+        store,
+        worker_cfg,
+        SCRIPT_REQ,
+        mandated_head=SCRIPT_HEAD,
+        runner=runner,
+        lane_runner=fake.lane,
+        rebase_when_mergeable=True,
+    )
+    assert result.outcome == "finished"
+    assert result.old_head == SCRIPT_HEAD
+    assert result.new_head == "d" * 40
+    assert fake.lanes == []
+    assert fake.check_calls
+    assert any(
+        "--force-with-lease=refs/heads/feature:" + SCRIPT_HEAD in " ".join(call)
+        for call in fake.calls
+    )
+    assert len(fake.pr_comments) == 1
+    state = json.loads(
+        (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").read_text()
+    )
+    assert state["phase"] == "finished"
+    assert state["new_head"] == "d" * 40
+    store.close()
+
+
 def test_script_mandate_takes_the_pull_request_lock_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

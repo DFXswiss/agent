@@ -142,12 +142,14 @@ def stub(monkeypatch: pytest.MonkeyPatch, *runs: Any):
         mandated_head,
         runner,
         lane_runner=None,
+        rebase_when_mergeable=False,
     ):
         del store, runner, lane_runner
         call = {
             "worker": worker,
             "request": request,
             "mandated_head": mandated_head,
+            "rebase_when_mergeable": rebase_when_mergeable,
         }
         calls.append(call)
         if not queue:
@@ -1060,5 +1062,107 @@ def test_conflict_remedy_does_not_enter_the_execution_binding(
         store, worker, "example/project"
     ) == coordinator_runtime.execution_binding(
         store, replace(worker, conflict_remedy=None), "example/project"
+    )
+    store.close()
+
+
+def failing_ci(fake) -> None:
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "failure", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": 1,
+        }
+    ]
+
+
+def test_failed_ci_on_a_behind_branch_starts_the_remedy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_github import phase_ci
+
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="ci")
+    failing_ci(fake)
+    fake.compare_behind_by = 4
+    calls, _ = stub(monkeypatch, pushed(fake))
+
+    lines = phase_ci(store, worker, store.row("task", OID), fake)
+
+    assert fake.compare_calls == [
+        f"repos/example/project/compare/develop...{H}"
+    ]
+    assert len(calls) == 1
+    assert calls[0]["mandated_head"] == H
+    assert calls[0]["rebase_when_mergeable"] is True
+    assert lines[0] == (
+        f"CI failed on {H[:7]}; branch is 4 behind develop; "
+        "starting conflict resolution"
+    )
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "tests"
+    assert saved["head_sha"] == saved["published_head"] == R
+    assert saved["remedies"]["pr_mergeable"]["reason"] == (
+        f"CI failed on {H[:7]} (tests:failure, "
+        ".github/workflows/ci.yml:failure) while the branch is 4 commits "
+        "behind develop"
+    )
+    assert saved["remedies"]["pr_mergeable"]["rebase_when_mergeable"] is True
+    store.close()
+
+
+def test_failed_ci_on_an_up_to_date_branch_routes_to_the_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_github import phase_ci
+
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="ci")
+    failing_ci(fake)
+    fake.compare_behind_by = 0
+    calls, _ = stub(monkeypatch, pushed(fake))
+
+    phase_ci(store, worker, store.row("task", OID), fake)
+
+    assert calls == []
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "implement"
+    assert store.row("task", OID)["state"] == "implementing"
+    assert saved["evidence"]["ci_green"] is False
+    assert saved["evidence"]["ci_head"] == H
+    assert saved["findings"].startswith(f"CI failed on {H[:7]}:")
+    store.close()
+
+
+def test_unreadable_ci_compare_stays_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_github import phase_ci
+
+    store, worker, fake, _lane = env(tmp_path, monkeypatch)
+    seed(store, worker, fake, phase="ci")
+    failing_ci(fake)
+    fake.compare_rc = 1
+    calls, _ = stub(monkeypatch, pushed(fake))
+
+    lines = phase_ci(store, worker, store.row("task", OID), fake)
+
+    assert calls == []
+    assert lines == [
+        f"CI failed on {H[:7]}; base comparison unavailable; retrying"
+    ]
+    saved = checkpoint(store, OID)
+    assert saved["phase"] == "ci"
+    assert "remedies" not in saved
+    assert store.row("task", OID)["state"] == "open"
+    assert not any(
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
     )
     store.close()
