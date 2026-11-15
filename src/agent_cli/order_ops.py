@@ -301,13 +301,22 @@ def op_submit(
                 raise OrderError("coordinator session is not configured")
             selected = config[worker]
         else:
+            enabled = [
+                candidate for candidate in config.values() if candidate.orders
+            ]
             candidates = [
                 candidate
-                for candidate in config.values()
-                if candidate.orders and serves_repo(candidate, repo)
+                for candidate in enabled
+                if serves_repo(candidate, repo)
             ]
             if not candidates:
-                raise OrderError("orders are not enabled on this device")
+                if not enabled:
+                    raise OrderError("orders are not enabled on this device")
+                raise OrderError(
+                    f"no order-enabled worker can check {repo}: "
+                    "configure owner_check_argv and owner_readiness_argv "
+                    "on a non-A38 worker"
+                )
             from .coordinator_runtime import runnable_count
 
             selected = min(

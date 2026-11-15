@@ -71,20 +71,37 @@ REFUSAL_BOUND = 300
 CANCEL_CLOSE_BODY = "Closing this pull request: the order was cancelled."
 
 
-def serves_repo(worker: WorkerConfig, repo: str) -> bool:
-    """True for every repository of an order-enabled worker.
+def missing_owner_setting(worker: WorkerConfig, repo: str) -> str | None:
+    """The owner-level argv an order worker lacks to check ``repo``, if any.
 
-    An explicit ``repositories`` entry keeps precedence for its own base,
-    publication repository and checks. Every other repository is handled like
-    an owner-scoped repository, using the worker's owner-level settings. A
-    worker that does not accept orders keeps the explicit-entry or
-    approved-owner scope for any caller that still asks about it.
+    An explicit ``repositories`` entry carries its own checks and readiness, and
+    an A38 worker checks without the non-A38 owner-level argv. Every other
+    repository is handled like an owner-scoped repository, using the worker's
+    owner-level settings; without them the worker cannot check that repository.
     """
-    if worker.orders:
-        return True
+    if worker.a38:
+        return None
     if any(key.casefold() == repo.casefold() for key in worker.repositories):
-        return True
-    return repo.split("/", 1)[0].casefold() in worker.repository_owners
+        return None
+    missing = [
+        name
+        for name, value in (
+            ("owner_check_argv", worker.owner_check_argv),
+            ("owner_readiness_argv", worker.owner_readiness_argv),
+        )
+        if not value
+    ]
+    return " and ".join(missing) or None
+
+
+def serves_repo(worker: WorkerConfig, repo: str) -> bool:
+    """True only when this order-enabled worker can check an order for ``repo``.
+
+    Only order paths call it. An explicit ``repositories`` entry and an A38
+    worker accept every repository. A non-A38 worker needs both owner-level
+    argv to accept a repository outside its explicit entries.
+    """
+    return worker.orders and missing_owner_setting(worker, repo) is None
 
 
 def create_order_task(
@@ -103,8 +120,11 @@ def create_order_task(
     """Insert one queued order task for this worker; returns the stored task row."""
     if not worker.orders:
         raise CoordinatorError(f"worker {worker.session_id} does not accept orders")
-    if not serves_repo(worker, repo):
-        raise CoordinatorError(f"worker {worker.session_id} does not serve {repo}")
+    missing = missing_owner_setting(worker, repo)
+    if missing is not None:
+        raise CoordinatorError(
+            f"worker {worker.session_id} cannot check {repo}: configure {missing}"
+        )
     for entry in skipped_checks:
         if entry["key"] not in SKIPPABLE:
             raise CoordinatorError(f"check {entry['key']} cannot be skipped")

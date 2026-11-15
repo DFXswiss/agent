@@ -34,12 +34,17 @@ existing session IDs, bound explicitly in `github-accounts.json` and
 Each configured worker explicitly names `workspace_root`, `reply_logins`,
 `poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
 `repositories` or `repository_owners`. A worker with `"orders": true` may omit
-both: it accepts an order for every repository, and a repository without an
-explicit `repositories` entry uses the same owner-level settings
+both: it accepts an order for any repository it can check, and a repository
+without an explicit `repositories` entry uses the same owner-level settings
 (`owner_check_argv`, `owner_readiness_argv`, A38 mode) as an owner-scoped
-repository, so outside A38 mode it must supply both argv. Issue and
-hub-assignment pickup still scan only the configured `repositories` and
-`repository_owners`.
+repository. A non-A38 order worker that lists explicit `repositories` must
+supply both owner-level argv before it accepts an order outside those entries;
+otherwise submission is refused before any task row or task text is written and
+the message names the missing setting. An A38 worker needs neither, and
+submission without `--worker` considers only workers that can check the
+repository; when none can, its error says so and differs from "orders are not
+enabled on this device". Issue and hub-assignment pickup still scan only the
+configured `repositories` and `repository_owners`.
 Non-A38 workers also name `review_session`; A38 workers use the second-review
 configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. An explicit entry keeps precedence for its
@@ -922,15 +927,21 @@ argument. The printed order id is the task UUID.
 The task uses `payload.coordinator.source.kind=order`. An issue task has no kind
 and is read as `github-issue`. The same task state machine and tables serve
 both. A worker accepts orders only with `"orders": true`, and it then accepts
-an order for every repository. An explicit `repositories` entry accepts only
-its configured base and keeps its own publication repository and checks. Every
-other repository is handled like an owner-scoped repository: it uses the
-worker's owner-level settings and pins the submitted base. An unreadable or
-unpublishable repository is not refused at submit time; acceptance ends
-`blocked` or `failed` with the GitHub reason.
+an order for every repository it can check. An explicit `repositories` entry
+accepts only its configured base and keeps its own publication repository and
+checks. Every other repository is handled like an owner-scoped repository: it
+uses the worker's owner-level settings and pins the submitted base. A non-A38
+worker that lists explicit `repositories` must also configure both
+`owner_check_argv` and `owner_readiness_argv` before it accepts an order
+outside those entries; otherwise submission is refused before any task row or
+task text is written, and the message names the missing setting. An A38 worker
+needs neither. An unreadable or unpublishable repository is not refused at
+submit time; acceptance ends `blocked` or `failed` with the GitHub reason.
 
-Without `--worker`, the order-enabled worker with the fewest runnable tasks
-receives the order, including for a repository it does not list. A new order
+Without `--worker`, the order-enabled worker that can check the repository and
+has the fewest runnable tasks receives the order, including for a repository it
+does not list. When no enabled worker can check it, submission says so, and
+that error differs from "orders are not enabled on this device". A new order
 stays `queued` while that worker has runnable work. The oldest queued order
 moves to `accept` when a tick finds none.
 Acceptance reads no issue and posts no GitHub comment.

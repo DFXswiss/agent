@@ -157,6 +157,16 @@ def test_model_route_readiness_names_the_review_2_waiver() -> None:
     ) in prose
 
 
+def test_orders_docs_describe_the_uncheckable_repository_refusal() -> None:
+    for relative in ("DESIGN.md", "docs/issue-coordinator.md"):
+        prose = _ws(_read(relative))
+        assert "`owner_check_argv`" in prose
+        assert "`owner_readiness_argv`" in prose
+        assert "must also configure both" in prose
+        assert "outside those entries" in prose
+        assert "orders are not enabled on this device" in prose
+
+
 def test_order_deviation_keys_close_at_readiness() -> None:
     for relative in ("DESIGN.md", "docs/issue-coordinator.md"):
         assert "submission closes" not in _ws(_read(relative))

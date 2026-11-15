@@ -935,14 +935,20 @@ The order becomes an ordinary coordinator task. Its
 `payload.coordinator.source.kind` is `order`; an issue task has no kind and is
 read as `github-issue`. Orders use no second state machine and no new table.
 A worker accepts them only when `coordinator.json` sets `"orders": true`.
-It then accepts an order for every repository. An explicit `repositories`
-entry keeps its own base, publication repository and checks; every other
-repository uses the worker's owner-level settings and pins the submitted base.
-An unreadable or unpublishable repository is not refused at submit time;
-acceptance ends `blocked` or `failed` with the GitHub reason.
+An explicit `repositories` entry keeps its own base, publication repository and
+checks; every other repository uses the worker's owner-level settings and pins
+the submitted base. A non-A38 worker that lists explicit `repositories` must
+also configure both `owner_check_argv` and `owner_readiness_argv` to accept an
+order outside those entries. Without them submission is refused before any
+task row or task text is written, and the message names the missing setting.
+An A38 worker and a non-A38 worker with both owner-level commands accept every
+repository. An unreadable or unpublishable repository is not refused at submit
+time; acceptance ends `blocked` or `failed` with the GitHub reason.
 
-With no explicit worker, submission selects the order-enabled worker with the
-fewest runnable tasks. An explicit repository requires the submitted base to
+With no explicit worker, submission selects the order-enabled worker that can
+check the repository and has the fewest runnable tasks. When no enabled worker
+can check it, submission says so, and that error differs from "orders are not
+enabled on this device". An explicit repository requires the submitted base to
 equal its configured base. For an owner-scoped repository the submitted base is
 the branch pinned at acceptance. A new order stays in `queued` while that worker
 has a runnable task. A tick with none promotes the oldest queued order to

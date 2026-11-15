@@ -1163,18 +1163,28 @@ def test_order_state(task: dict, expected: str) -> None:
 
 
 @pytest.mark.no_pg
-def test_serves_repo_accepts_every_repository(tmp_path: Path) -> None:
+def test_serves_repo_requires_a_worker_that_can_check_the_repository(
+    tmp_path: Path,
+) -> None:
     worker = make_order_worker(tmp_path)
+    # An explicit entry carries its own checks and needs no owner-level argv.
     assert serves_repo(worker, "example/project") is True
     assert serves_repo(worker, "Example/Project") is True
-    assert serves_repo(worker, "example/other") is True
-    owner_worker = replace(worker, repository_owners=("example",))
-    assert serves_repo(owner_worker, "example/other") is True
-    assert serves_repo(owner_worker, "other/thing") is True
-    assert serves_repo(replace(worker, repositories={}), "any/repository") is True
-    # A worker without orders keeps its explicit-entry scope for other callers.
+    # Every other repository needs both owner-level commands.
+    assert serves_repo(worker, "example/other") is False
+    assert serves_repo(worker, "other/thing") is False
+    check_only = replace(worker, owner_check_argv=("/operator/check",))
+    assert serves_repo(check_only, "example/other") is False
+    both = replace(
+        check_only, owner_readiness_argv=("/operator/ready",)
+    )
+    assert serves_repo(both, "example/other") is True
+    assert serves_repo(both, "other/thing") is True
+    # An A38 worker checks without the non-A38 owner-level argv.
+    assert serves_repo(replace(worker, a38=True), "other/thing") is True
+    # A worker without orders is never considered by an order path.
     closed = make_worker(tmp_path)
-    assert serves_repo(closed, "example/project") is True
+    assert serves_repo(closed, "example/project") is False
     assert serves_repo(closed, "other/thing") is False
 
 
@@ -1310,6 +1320,64 @@ def test_create_order_task_accepts_an_unlisted_repository(
     assert "base" not in source
     assert "publication_repo" not in source
     assert "execution_binding" not in coord(task)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "missing"),
+    (
+        ({}, "owner_check_argv and owner_readiness_argv"),
+        (
+            {
+                "owner_check_argv": ("/operator/check",),
+                "owner_readiness_argv": None,
+            },
+            "owner_readiness_argv",
+        ),
+        (
+            {
+                "owner_check_argv": (),
+                "owner_readiness_argv": ("/operator/ready",),
+            },
+            "owner_check_argv",
+        ),
+    ),
+)
+def test_create_order_task_refuses_an_unlisted_repository_it_cannot_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict,
+    missing: str,
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(
+        tmp_path, monkeypatch, **overrides
+    )
+    with pytest.raises(
+        CoordinatorError,
+        match="worker worker-session cannot check other/thing: "
+        f"configure {missing}$",
+    ):
+        submit_order(store, worker, repo="other/thing")
+    assert store.rows("task") == []
+    assert text_files(worker) == []
+    store.close()
+
+
+def test_create_order_task_accepts_an_unlisted_repository_from_an_a38_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    a38 = replace(
+        worker,
+        a38=True,
+        a38_second_review="model",
+        owner_check_argv=(),
+        owner_readiness_argv=None,
+    )
+    task = submit_order(store, a38, repo="other/thing")
+    source = coord(task)["source"]
+    assert task["repo"] == "other/thing"
+    assert source["owner_scoped"] is True
     store.close()
 
 
