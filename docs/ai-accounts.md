@@ -323,9 +323,13 @@ matching; a token split by that cut is redacted in full before the ordinary
 truncation marker is added.
 The known-secret pass builds a fixed set of views and searches each one with
 KMP, overlaps included. Percent-tolerant matching also searches a
-percent-decoded copy of each view: every valid `%HH` (either hex case) becomes
-that decoded character and maps back to its three-character raw span, and every
-other character is copied. The literal secret is matched on the undecoded view
+percent-decoded copy of each view. Consecutive `%HH` triplets (either hex case)
+are one UTF-8 byte stream, decoded in a single pass: a valid sequence becomes
+one character mapped to the raw span of all of its triplets, and an invalid or
+truncated sequence falls back to one character per byte so those bytes are not
+merged into a character they do not encode. An ASCII `%HH` stays one character
+spanning its three-character raw span, and every other character is copied.
+The literal secret is matched on the undecoded view
 and on that decoded view, and the union of the mapped spans is redacted. Raw,
 fully encoded (`%25` for `%`), and mixed per-character forms are covered, and
 every secret, including one that contains `%`, takes time linear in the view
@@ -333,7 +337,12 @@ length plus the secret length. The views
 are the raw text, text with every terminal control removed, text with only
 introducers, terminators, and C0/C1 bytes removed, and text with complete
 ESC/CSI sequences removed while string-control payloads stay. One further view
-keeps an ESC final that also introduces a string control. Both copies use KMP,
+keeps an ESC final that also introduces a string control and drops `ESC \`.
+Another keeps every escape final, including the `\` of `ESC \`, while dropping
+introducers, CSI parameters and intermediates, ESC intermediates, and C0/C1
+bytes, and it keeps string payloads. Another keeps only each control's
+introducer byte. Another keeps only each control's final or string terminator
+and drops string payloads. Both copies use KMP,
 so a repeated prefix does not rescan the text per candidate.
 String-control boundaries still come from the shared nesting-aware scanner.
 Seven-bit DCS, PM, APC, and SOS strings accept

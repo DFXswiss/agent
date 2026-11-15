@@ -110,10 +110,19 @@ subsequent notification that provides useful model work belong to the script.
    linear time. The views are the raw text, text with terminal controls removed,
    text with introducers, terminators, and C0/C1 bytes removed, and text with
    complete ESC/CSI sequences removed while string-control payloads stay, plus
-   one view that keeps an ESC final used as a string-control introducer.
-   Percent-tolerant matching also searches a percent-decoded copy of each view:
-   every valid `%HH` becomes its decoded character and maps back to that
-   three-character raw span, and every other character is copied. The literal
+   one view that keeps an ESC final used as a string-control introducer and
+   drops `ESC \`, one view that keeps every escape final including the `\` of
+   `ESC \` while dropping introducers, CSI parameters and intermediates, ESC
+   intermediates, and C0/C1 bytes and keeping string payloads, one view that
+   keeps only each control's introducer byte, and one view that keeps only each
+   control's final or string terminator and drops string payloads.
+   Percent-tolerant matching also searches a percent-decoded copy of each view.
+   Consecutive `%HH` triplets are decoded as UTF-8 in one pass: a valid
+   sequence becomes one character mapped to the raw span of its triplets, and
+   an invalid or truncated sequence falls back to one character per byte so
+   those bytes are not merged into a character they do not encode. An ASCII
+   `%HH` stays one character spanning its three-character raw span, and every
+   other character is copied. The literal
    secret is matched on both copies, so every secret, including one that
    contains `%`, stays linear in the text length plus the secret length. The script
    then fingerprints and inserts or enriches

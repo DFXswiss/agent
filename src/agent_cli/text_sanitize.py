@@ -160,6 +160,7 @@ def _terminal_string_control_parts(
 # Second bytes of 7-bit CSI/OSC/DCS/PM/APC/SOS introducers, plus the ST
 # backslash. View "markers" drops these. View "finals" keeps every one of them
 # except the ST backslash, so a secret can start on a string-control final.
+# View "every final" drops the introducer bytes and keeps the backslash.
 _INTRODUCER_OR_ST_SECOND = frozenset("[]P^_X\\")
 
 
@@ -215,6 +216,52 @@ def _complete_esc_end(text: str, index: int) -> int | None:
     if cursor < limit and "0" <= text[cursor] <= "~":
         return cursor + 1
     return None
+
+
+def _scan_csi(text: str, index: int) -> tuple[int, int | None] | None:
+    """Return ``(next_index, final_index)`` for a 7-bit or 8-bit CSI.
+
+    ``final_index`` is ``None`` when the sequence ends before its final byte.
+    ``next_index`` is past that final, or past the truncated tail.
+    """
+    limit = len(text)
+    if text.startswith("\x1b[", index):
+        cursor = index + 2
+    elif index < limit and text[index] == "\x9b":
+        cursor = index + 1
+    else:
+        return None
+    while cursor < limit and "0" <= text[cursor] <= "?":
+        cursor += 1
+    while cursor < limit and " " <= text[cursor] <= "/":
+        cursor += 1
+    if cursor < limit and "@" <= text[cursor] <= "~":
+        return cursor + 1, cursor
+    return cursor, None
+
+
+def _scan_plain_esc(text: str, index: int) -> tuple[int, int | None] | None:
+    """Return ``(next_index, final_index)`` for an ESC sequence.
+
+    CSI and string introducers are not recognized here; callers skip those
+    first. A truncated sequence has ``final_index is None``. The final byte
+    includes the backslash of ``ESC \\``.
+    """
+    limit = len(text)
+    if index >= limit or text[index] != "\x1b":
+        return None
+    cursor = index + 1
+    if cursor >= limit:
+        return index + 1, None
+    if " " <= text[cursor] <= "/":
+        while cursor < limit and " " <= text[cursor] <= "/":
+            cursor += 1
+        if cursor < limit and "0" <= text[cursor] <= "~":
+            return cursor + 1, cursor
+        return cursor, None
+    if "0" <= text[cursor] <= "~":
+        return cursor + 1, cursor
+    return index + 1, None
 
 
 def _keep_view_char(
@@ -345,8 +392,148 @@ def _view_keeping_escape_finals(text: str) -> _TextView:
     return _finish_view(chars, starts, ends)
 
 
+def _keep_escape_final(
+    text: str,
+    final_index: int | None,
+    chars: list[str],
+    starts: list[int],
+    ends: list[int],
+) -> None:
+    if final_index is not None:
+        _keep_view_char(text, final_index, chars, starts, ends)
+
+
+def _view_keeping_every_escape_final(text: str) -> _TextView:
+    r"""Drop introducers, CSI and ESC noise, and C0/C1. Keep every escape final.
+
+    String payloads stay. The backslash of ``ESC \`` stays, so ``a ESC \ b``
+    reads ``a\b``. CSI parameters and intermediates and ESC intermediates do
+    not sit in front of that final. The finals view still drops ``ESC \`` so
+    ``ESC P`` followed by ``ESC \`` can spell ``Private-key``.
+    """
+    chars: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    limit = len(text)
+    index = 0
+    while index < limit:
+        if _is_terminal_string_control(text, index):
+            index += 2 if text[index] == "\x1b" else 1
+            continue
+        csi = _scan_csi(text, index)
+        if csi is not None:
+            next_index, final_index = csi
+            _keep_escape_final(text, final_index, chars, starts, ends)
+            index = next_index
+            continue
+        if text[index] == "\x1b":
+            scanned = _scan_plain_esc(text, index)
+            if scanned is None:
+                raise AssertionError("ESC scan missed an ESC byte")
+            next_index, final_index = scanned
+            _keep_escape_final(text, final_index, chars, starts, ends)
+            index = next_index
+            continue
+        if _is_removed_control(text[index]):
+            index += 1
+            continue
+        _keep_view_char(text, index, chars, starts, ends)
+        index += 1
+    return _finish_view(chars, starts, ends)
+
+
+def _view_keeping_control_introducers(text: str) -> _TextView:
+    """Keep one introducer byte of each control and drop the rest of it.
+
+    Seven-bit CSI and string controls keep their second byte. Eight-bit
+    CSI/OSC/DCS/PM/APC/SOS keep that C1 byte. Parameters, intermediates,
+    finals, payloads, and terminators are dropped, so the introducer can be
+    the next secret character without the bytes that follow it.
+    """
+    chars: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    limit = len(text)
+    index = 0
+    while index < limit:
+        if _is_terminal_string_control(text, index):
+            introducer = index if text[index] != "\x1b" else index + 1
+            _keep_view_char(text, introducer, chars, starts, ends)
+            end, _terminated = _terminal_string_control_end(text, index)
+            index = max(end, index + 1)
+            continue
+        csi = _scan_csi(text, index)
+        if csi is not None:
+            next_index, _final_index = csi
+            introducer = index + 1 if text[index] == "\x1b" else index
+            _keep_view_char(text, introducer, chars, starts, ends)
+            index = next_index
+            continue
+        if text[index] == "\x1b":
+            scanned = _scan_plain_esc(text, index)
+            if scanned is None:
+                raise AssertionError("ESC scan missed an ESC byte")
+            index = scanned[0]
+            continue
+        if _is_removed_control(text[index]):
+            index += 1
+            continue
+        _keep_view_char(text, index, chars, starts, ends)
+        index += 1
+    return _finish_view(chars, starts, ends)
+
+
+def _view_keeping_control_finals(text: str) -> _TextView:
+    r"""Keep each control's final byte and drop string payloads.
+
+    CSI and other ESC sequences contribute only their final, including the
+    backslash of ``ESC \``. A terminated string contributes its terminator
+    byte (that backslash, BEL, or the 8-bit ST byte) and nothing from its
+    payload. An unterminated string contributes nothing.
+    """
+    chars: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    limit = len(text)
+    index = 0
+    while index < limit:
+        if _is_terminal_string_control(text, index):
+            end, terminated = _terminal_string_control_end(text, index)
+            if terminated and end > index:
+                _keep_view_char(text, end - 1, chars, starts, ends)
+            index = max(end, index + 1)
+            continue
+        csi = _scan_csi(text, index)
+        if csi is not None:
+            next_index, final_index = csi
+            _keep_escape_final(text, final_index, chars, starts, ends)
+            index = next_index
+            continue
+        if text[index] == "\x1b":
+            scanned = _scan_plain_esc(text, index)
+            if scanned is None:
+                raise AssertionError("ESC scan missed an ESC byte")
+            next_index, final_index = scanned
+            _keep_escape_final(text, final_index, chars, starts, ends)
+            index = next_index
+            continue
+        if _is_removed_control(text[index]):
+            index += 1
+            continue
+        _keep_view_char(text, index, chars, starts, ends)
+        index += 1
+    return _finish_view(chars, starts, ends)
+
+
 def _known_secret_views(text: str) -> tuple[_TextView, ...]:
-    """Return the fixed view set. Plain text is searched once, as raw text."""
+    """Return the fixed view set. Plain text is searched once, as raw text.
+
+    With a terminal control the set is raw text, controls removed, introducers
+    and terminators and C0/C1 removed, complete ESC/CSI removed with string
+    payloads kept, ESC finals kept except ``ESC \\``, every escape final kept
+    (including that backslash) with introducers and CSI/ESC noise removed,
+    introducer bytes only, and control finals or string terminators only.
+    """
     if _TERMINAL_CONTROL_RE.search(text) is None:
         return (_TextView(text, None, None),)
     return (
@@ -355,6 +542,9 @@ def _known_secret_views(text: str) -> tuple[_TextView, ...]:
         _view_without_control_markers(text),
         _view_without_sequences_keep_payloads(text),
         _view_keeping_escape_finals(text),
+        _view_keeping_every_escape_final(text),
+        _view_keeping_control_introducers(text),
+        _view_keeping_control_finals(text),
     )
 
 
@@ -414,12 +604,167 @@ def _view_char_raw_span(view: _TextView, index: int) -> tuple[int, int]:
     return view.raw_starts[index], view.raw_ends[index]
 
 
-def _percent_decoded_view(view: _TextView) -> _TextView:
-    """Decode each valid ``%HH``; copy every other character.
+def _percent_run_end(text: str, index: int) -> int:
+    """End of the consecutive ``%HH`` run starting at ``index``, or ``index``."""
+    limit = len(text)
+    cursor = index
+    while (
+        cursor + 2 < limit
+        and text[cursor] == "%"
+        and text[cursor + 1] in _HEX_DIGITS
+        and text[cursor + 2] in _HEX_DIGITS
+    ):
+        cursor += 3
+    return cursor
 
-    The decoded character's raw span is those three source characters. A
-    literal ``%`` that begins a valid pair is consumed by that pair, so this
-    one view does not also keep that ``%`` beside encoded neighbours.
+
+def _utf8_sequence_length(lead: int) -> int:
+    if lead < 0x80:
+        return 1
+    if 0xC2 <= lead <= 0xDF:
+        return 2
+    if 0xE0 <= lead <= 0xEF:
+        return 3
+    if 0xF0 <= lead <= 0xF4:
+        return 4
+    return 1
+
+
+def _utf8_continuation(value: int, low: int, high: int) -> bool:
+    return low <= value <= high
+
+
+def _utf8_sequence_valid(data: bytes, index: int, size: int) -> bool:
+    """Return whether ``data[index:index + size]`` is one strict UTF-8 scalar."""
+    lead = data[index]
+    if size == 2:
+        return _utf8_continuation(data[index + 1], 0x80, 0xBF)
+    if size == 3:
+        second = data[index + 1]
+        if lead == 0xE0:
+            second_ok = _utf8_continuation(second, 0xA0, 0xBF)
+        elif lead == 0xED:
+            second_ok = _utf8_continuation(second, 0x80, 0x9F)
+        else:
+            second_ok = _utf8_continuation(second, 0x80, 0xBF)
+        return second_ok and _utf8_continuation(data[index + 2], 0x80, 0xBF)
+    if size == 4:
+        second = data[index + 1]
+        if lead == 0xF0:
+            second_ok = _utf8_continuation(second, 0x90, 0xBF)
+        elif lead == 0xF4:
+            second_ok = _utf8_continuation(second, 0x80, 0x8F)
+        else:
+            second_ok = _utf8_continuation(second, 0x80, 0xBF)
+        return (
+            second_ok
+            and _utf8_continuation(data[index + 2], 0x80, 0xBF)
+            and _utf8_continuation(data[index + 3], 0x80, 0xBF)
+        )
+    return lead < 0x80
+
+
+def _utf8_codepoint(data: bytes, index: int, size: int) -> str:
+    if size == 2:
+        value = ((data[index] & 0x1F) << 6) | (data[index + 1] & 0x3F)
+    elif size == 3:
+        value = (
+            ((data[index] & 0x0F) << 12)
+            | ((data[index + 1] & 0x3F) << 6)
+            | (data[index + 2] & 0x3F)
+        )
+    elif size == 4:
+        value = (
+            ((data[index] & 0x07) << 18)
+            | ((data[index + 1] & 0x3F) << 12)
+            | ((data[index + 2] & 0x3F) << 6)
+            | (data[index + 3] & 0x3F)
+        )
+    else:
+        value = data[index]
+    return chr(value)
+
+
+def _utf8_units(data: bytes) -> list[tuple[str, int]]:
+    """One strict UTF-8 scalar, or one rejected byte, in a single left-to-right pass.
+
+    A truncated or ill-formed sequence is not merged into a character it does
+    not encode. The rejected lead is emitted alone and the scan resumes at the
+    next byte, so a later valid sequence stays intact.
+    """
+    units: list[tuple[str, int]] = []
+    index = 0
+    limit = len(data)
+    while index < limit:
+        size = _utf8_sequence_length(data[index])
+        if (
+            size > 1
+            and index + size <= limit
+            and _utf8_sequence_valid(data, index, size)
+        ):
+            units.append((_utf8_codepoint(data, index, size), size))
+            index += size
+            continue
+        units.append((chr(data[index]), 1))
+        index += 1
+    return units
+
+
+def _append_view_span(
+    view: _TextView,
+    view_index: int,
+    view_length: int,
+    char: str,
+    chars: list[str],
+    starts: list[int],
+    ends: list[int],
+) -> None:
+    raw_start = _view_char_raw_span(view, view_index)[0]
+    raw_end = _view_char_raw_span(view, view_index + view_length - 1)[1]
+    if raw_end <= raw_start:
+        raise AssertionError("percent-decoded span did not advance")
+    chars.append(char)
+    starts.append(raw_start)
+    ends.append(raw_end)
+
+
+def _append_percent_run(
+    view: _TextView,
+    run_start: int,
+    run_end: int,
+    chars: list[str],
+    starts: list[int],
+    ends: list[int],
+) -> None:
+    text = view.text
+    encoded = bytearray()
+    cursor = run_start
+    while cursor < run_end:
+        encoded.append(int(text[cursor + 1:cursor + 3], 16))
+        cursor += 3
+    byte_index = 0
+    for char, size in _utf8_units(bytes(encoded)):
+        _append_view_span(
+            view,
+            run_start + 3 * byte_index,
+            3 * size,
+            char,
+            chars,
+            starts,
+            ends,
+        )
+        byte_index += size
+
+
+def _percent_decoded_view(view: _TextView) -> _TextView:
+    """Decode consecutive ``%HH`` runs as UTF-8 and copy every other character.
+
+    A valid sequence, including a multi-byte scalar, becomes one character
+    whose raw span covers every triplet of that sequence. An ASCII ``%HH``
+    stays one character spanning its three source characters. An invalid or
+    truncated sequence becomes one character per byte and is not merged into
+    a character those bytes do not encode. A literal ``%`` that begins a
+    valid triplet is consumed by the run.
     """
     text = view.text
     limit = len(text)
@@ -428,25 +773,12 @@ def _percent_decoded_view(view: _TextView) -> _TextView:
     ends: list[int] = []
     index = 0
     while index < limit:
-        if (
-            index + 2 < limit
-            and text[index] == "%"
-            and text[index + 1] in _HEX_DIGITS
-            and text[index + 2] in _HEX_DIGITS
-        ):
-            chars.append(chr(int(text[index + 1:index + 3], 16)))
-            raw_start = _view_char_raw_span(view, index)[0]
-            raw_end = _view_char_raw_span(view, index + 2)[1]
-            if raw_end <= raw_start:
-                raise AssertionError("percent-decoded span did not advance")
-            starts.append(raw_start)
-            ends.append(raw_end)
-            index += 3
+        run_end = _percent_run_end(text, index)
+        if run_end != index:
+            _append_percent_run(view, index, run_end, chars, starts, ends)
+            index = run_end
             continue
-        chars.append(text[index])
-        raw_start, raw_end = _view_char_raw_span(view, index)
-        starts.append(raw_start)
-        ends.append(raw_end)
+        _append_view_span(view, index, 1, text[index], chars, starts, ends)
         index += 1
     return _finish_view(chars, starts, ends)
 
@@ -668,13 +1000,16 @@ def redact_terminal_interleaved_secret(
 def redact_terminal_interleaved_urlencoded_secret(
     text: str, secret: str, *, replacement: str = "[redacted]"
 ) -> str:
-    """Redact a secret written raw or with per-character ``%HH`` encoding.
+    """Redact a secret written raw or as percent-encoded UTF-8.
 
     Literal characters stay case-sensitive. Each fixed view is searched with
-    KMP, and so is its percent-decoded copy: every valid ``%HH`` (either hex
-    case) becomes that decoded character and maps back to its three-character
-    raw span. The union of those spans is redacted. A secret that contains
-    ``%`` uses the same linear scans.
+    KMP, and so is its percent-decoded copy. Consecutive ``%HH`` triplets
+    (either hex case) are one UTF-8 byte stream: a valid sequence becomes one
+    character mapped to the raw span of all of its triplets, and an invalid or
+    truncated sequence falls back to one character per byte. An ASCII ``%HH``
+    stays one character spanning its three-character raw span. The union of
+    the mapped spans is redacted. A secret that contains ``%`` uses the same
+    linear scans.
     """
     if not secret:
         return text

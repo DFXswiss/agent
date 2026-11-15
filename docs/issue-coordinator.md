@@ -1365,9 +1365,10 @@ bounded text may be printed or stored as `lane.run` evidence. Hub assignment
 failures first remove the raw or header device bearer with an escape- and
 control-tolerant matcher that accepts every bearer character literally or as a
 case-insensitive percent-encoded byte, including mixed representations. The
-matcher uses a percent-decoded copy of each fixed view, so every bearer,
-including one that contains `%`, stays linear in the text length plus the
-bearer length. They
+matcher uses a percent-decoded copy of each fixed view. Consecutive `%HH`
+triplets are decoded as UTF-8 in one pass, so every bearer,
+including one that contains `%` or a non-ASCII character, stays linear in the
+text length plus the bearer length. They
 then use that same generic pipeline; exact bearer removal is repeated after
 sanitization.
 Profile credentials, config directory paths, signing-key paths, and raw auth
@@ -1381,7 +1382,11 @@ replacement. A complete or unterminated OSC, DCS, PM, APC, or SOS span,
 including nested payload, is removed whole in the view that drops every
 terminal control. The views that drop introducers and terminators keep that
 payload. One further view keeps a printable ESC final that also introduces a
-string control.
+string control and drops `ESC \`. Another keeps every escape final, including
+the `\` of `ESC \`, while dropping introducers, CSI parameters and
+intermediates, ESC intermediates, and C0/C1 bytes, and it keeps string
+payloads. Another keeps only each control's introducer byte. Another keeps
+only each control's final or string terminator and drops string payloads.
 User-facing blockers and questions are
 published on the source issue, or on the pull request of an order, only when
 `execution_status=done` is verified;
@@ -1402,9 +1407,13 @@ matcher searches a fixed set of views with KMP, so a CSI/ESC final, a truncated
 prefix, or a string-control payload cannot hide a credential. Literal and
 percent-encoded representations are matched on each view, so a repeated
 prefix or many equal first characters do not rescan the text per candidate.
-Percent-tolerant matching also searches a percent-decoded copy of each view:
-every valid `%HH` (either hex case) becomes that decoded character and maps
-back to its three-character raw span, and every other character is copied.
+Percent-tolerant matching also searches a percent-decoded copy of each view.
+Consecutive `%HH` triplets (either hex case) are one UTF-8 byte stream,
+decoded in a single pass: a valid sequence becomes one character mapped to
+the raw span of all of its triplets, and an invalid or truncated sequence
+falls back to one character per byte so those bytes are not merged into a
+character they do not encode. An ASCII `%HH` stays one character spanning
+its three-character raw span, and every other character is copied.
 The literal secret is matched on both copies. Every secret, including one
 that contains `%`, takes time linear in the view length plus the secret
 length.

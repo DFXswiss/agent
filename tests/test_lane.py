@@ -1422,6 +1422,186 @@ def test_known_secret_scanner_is_linear_across_repeated_csi_landings() -> None:
     assert secret not in cleaned
 
 
+def test_known_secret_redacts_a_csi_final_that_continues_the_secret() -> None:
+    assert (
+        redact_terminal_interleaved_secret("se\x1b[31cret", "secret")
+        == "[redacted]"
+    )
+
+
+def test_known_secret_redacts_an_st_backslash_that_continues_the_secret() -> None:
+    assert redact_terminal_interleaved_secret("a\x1b\\b", "a\\b") == "[redacted]"
+
+
+def test_lane_config_dir_redacts_a_path_continued_by_a_csi_final() -> None:
+    cleaned = redact_lane_text(
+        "failed /opt/m\x1b[31y profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+
+    assert cleaned == "failed <config_dir>/key"
+    assert "profile/key" not in cleaned
+    assert "/opt/m" not in cleaned
+
+
+def _known_secret_control_placements() -> list[tuple[str, str, str, str]]:
+    """Control kind × position. ``before`` / ``between`` / ``c-*`` are (a)/(b)/(c).
+
+    Position (c) makes the control's final or introducer byte the next secret
+    character, with that control's parameters, intermediates, or payload still
+    present. At least one fixed view has to yield the secret.
+    """
+    rows: list[tuple[str, str, str, str]] = []
+    secret = "Qw"
+    for kind, control in (
+        ("lone-esc", "\x1b"),
+        ("esc-intermediate-final", "\x1b(/Z"),
+        ("csi-7", "\x1b[32!Z"),
+        ("csi-8", "\x9b32!Z"),
+        ("osc-7-bel", "\x1b]xx\x07"),
+        ("osc-8-bel", "\x9dxx\x07"),
+        ("osc-7-st", "\x1b]xx\x1b\\"),
+        ("osc-8-st", "\x9dxx\x9c"),
+        ("dcs-7", "\x1bPxx\x1b\\"),
+        ("dcs-8", "\x90xx\x9c"),
+        ("pm-7", "\x1b^xx\x1b\\"),
+        ("pm-8", "\x9exx\x9c"),
+        ("apc-7", "\x1b_xx\x1b\\"),
+        ("apc-8", "\x9fxx\x9c"),
+        ("sos-7", "\x1bXxx\x1b\\"),
+        ("sos-8", "\x98xx\x9c"),
+        ("bel", "\x07"),
+        ("st-7", "\x1b\\"),
+        ("st-8", "\x9c"),
+    ):
+        rows.append((kind, "before", control + secret, secret))
+        rows.append((kind, "between", "Q" + control + "w", secret))
+    rows.extend(
+        (
+            ("lone-esc", "c-introducer", "Q\x1bw", "Q\x1bw"),
+            ("esc-intermediate-final", "c-final", "Q\x1b(/Bw", "QBw"),
+            ("csi-7", "c-final", "Q\x1b[32!mw", "Qmw"),
+            ("csi-7", "c-introducer", "Q\x1b[32!Zw", "Q[w"),
+            ("csi-8", "c-final", "Q\x9b32!mw", "Qmw"),
+            ("csi-8", "c-introducer", "Q\x9b32!Zw", "Q\x9bw"),
+            ("osc-7-bel", "c-introducer", "Q\x1b]xx\x07w", "Q]w"),
+            ("osc-7-bel", "c-terminator", "Q\x1b]xx\x07w", "Q\x07w"),
+            ("osc-8-bel", "c-introducer", "Q\x9dxx\x07w", "Q\x9dw"),
+            ("osc-8-bel", "c-terminator", "Q\x9dxx\x07w", "Q\x07w"),
+            ("osc-7-st", "c-introducer", "Q\x1b]xx\x1b\\w", "Q]w"),
+            ("osc-7-st", "c-final", "Q\x1b]xx\x1b\\w", "Q\\w"),
+            ("osc-8-st", "c-introducer", "Q\x9dxx\x1b\\w", "Q\x9dw"),
+            ("osc-8-st", "c-final", "Q\x9dxx\x1b\\w", "Q\\w"),
+            ("osc-8-st-byte", "c-final", "Q\x9dxx\x9cw", "Q\x9cw"),
+            ("dcs-7", "c-introducer", "Q\x1bPxx\x1b\\w", "QPw"),
+            ("dcs-7", "c-final", "Q\x1bPxx\x1b\\w", "Q\\w"),
+            ("dcs-8", "c-introducer", "Q\x90xx\x9cw", "Q\x90w"),
+            ("dcs-8", "c-final", "Q\x90xx\x1b\\w", "Q\\w"),
+            ("dcs-8-st-byte", "c-final", "Q\x90xx\x9cw", "Q\x9cw"),
+            ("pm-7", "c-introducer", "Q\x1b^xx\x1b\\w", "Q^w"),
+            ("pm-7", "c-final", "Q\x1b^xx\x1b\\w", "Q\\w"),
+            ("pm-8", "c-introducer", "Q\x9exx\x9cw", "Q\x9ew"),
+            ("pm-8", "c-final", "Q\x9exx\x1b\\w", "Q\\w"),
+            ("pm-8-st-byte", "c-final", "Q\x9exx\x9cw", "Q\x9cw"),
+            ("apc-7", "c-introducer", "Q\x1b_xx\x1b\\w", "Q_w"),
+            ("apc-7", "c-final", "Q\x1b_xx\x1b\\w", "Q\\w"),
+            ("apc-8", "c-introducer", "Q\x9fxx\x9cw", "Q\x9fw"),
+            ("apc-8", "c-final", "Q\x9fxx\x1b\\w", "Q\\w"),
+            ("apc-8-st-byte", "c-final", "Q\x9fxx\x9cw", "Q\x9cw"),
+            ("sos-7", "c-introducer", "Q\x1bXxx\x1b\\w", "QXw"),
+            ("sos-7", "c-final", "Q\x1bXxx\x1b\\w", "Q\\w"),
+            ("sos-8", "c-introducer", "Q\x98xx\x9cw", "Q\x98w"),
+            ("sos-8", "c-final", "Q\x98xx\x1b\\w", "Q\\w"),
+            ("sos-8-st-byte", "c-final", "Q\x98xx\x9cw", "Q\x9cw"),
+            ("bel", "c-final", "Q\x07w", "Q\x07w"),
+            ("st-7", "c-final", "Q\x1b\\w", "Q\\w"),
+            ("st-8", "c-final", "Q\x9cw", "Q\x9cw"),
+        )
+    )
+    return rows
+
+
+_CONTROL_PLACEMENTS = _known_secret_control_placements()
+
+
+@pytest.mark.parametrize(
+    ("kind", "position", "text", "secret"),
+    _CONTROL_PLACEMENTS,
+    ids=[
+        f"{kind}-{position}"
+        for kind, position, _text, _secret in _CONTROL_PLACEMENTS
+    ],
+)
+def test_known_secret_views_yield_the_secret_for_every_control_placement(
+    kind: str, position: str, text: str, secret: str
+) -> None:
+    cleaned = redact_terminal_interleaved_secret(text, secret)
+
+    assert secret not in cleaned, f"{kind} {position}"
+    assert "[redacted]" in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_kept_csi_finals() -> None:
+    n = 20_000
+    raw = "\x1b[31a" * n
+    secret = "a" * (n - 1) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+@pytest.mark.parametrize(
+    "representation",
+    (
+        "%74%C3%B6%6B",
+        "%74%c3%b6%6b",
+        "%74%C3%b6%6B",
+        "t%C3%B6k",
+        "t%C3%B6%6B",
+        "%74%C3%B6k",
+        "tö%6B",
+    ),
+)
+def test_urlencoded_utf8_secret_is_redacted_in_any_hex_case(
+    representation: str,
+) -> None:
+    cleaned = redact_terminal_interleaved_urlencoded_secret(
+        f"xx{representation}yy", "tök"
+    )
+
+    assert cleaned == "xx[redacted]yy", representation
+
+
+def test_urlencoded_valid_utf8_is_not_also_matched_as_latin1_bytes() -> None:
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("%C3%B6", "\u00c3\u00b6")
+        == "%C3%B6"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "xx%FF%FEyy",
+        "xx%C3yy",
+        "xx%C3%28yy",
+        "xx%E2%82yy",
+        "xx%C0%80yy",
+        "xx%ED%A0%80yy",
+    ),
+)
+@pytest.mark.parametrize("secret", ("tök", "€", "\x00"))
+def test_urlencoded_invalid_utf8_percent_run_is_not_a_false_match(
+    raw: str, secret: str
+) -> None:
+    assert redact_terminal_interleaved_urlencoded_secret(raw, secret) == raw
+
+
 def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:
     config_dir = "/opt/provider-profile"
     runs = (
