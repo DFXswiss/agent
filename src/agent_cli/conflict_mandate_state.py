@@ -122,6 +122,7 @@ class Context:
     git_runner: Any = None
     foreign_state: bool = False
     mandated_head: str | None = None  # set for a request the script mandated itself: no comment exists, and the request holds for this head only
+    rebase_when_mergeable: bool = False  # script-mandated request: rebase even when GitHub reports the pull request mergeable
 
 
 class StateUnreadable(StoreError):

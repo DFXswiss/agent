@@ -1692,7 +1692,7 @@ def _run_request(
                 route=route,
                 mergeable=mergeable,
             )
-        if mergeable is True:
+        if mergeable is True and not ctx.rebase_when_mergeable:
             for key in (
                 "old_head",
                 "new_head",
@@ -2000,8 +2000,14 @@ def run_script_mandate(
     mandated_head: str,
     runner: Runner,
     lane_runner: LaneRunner | None = None,
+    rebase_when_mergeable: bool = False,
 ) -> MandateRun:
-    """Advance one request that the script mandated itself, without a comment."""
+    """Advance one request that the script mandated itself, without a comment.
+
+    ``rebase_when_mergeable`` rebases the mandated head onto the base even when
+    GitHub reports the pull request mergeable: a failing CI on a branch behind
+    its base must be reproduced on the current base tip.
+    """
     try:
         runtime = _preflight(store, worker, runner)
         ctx = context(worker, request, worker_login=runtime.account.login)
@@ -2014,6 +2020,7 @@ def run_script_mandate(
             "blocked", reason="request state belongs to another worker"
         )
     ctx.mandated_head = mandated_head
+    ctx.rebase_when_mergeable = rebase_when_mergeable
     reason = "request is not finished"
     if ctx.state.get("phase") not in TERMINAL_PHASES:
         observations: list[str] = []

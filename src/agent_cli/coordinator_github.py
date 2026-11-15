@@ -1393,6 +1393,44 @@ def _ci_failure_findings(head: str, failures: list[str], logs: str) -> str:
     return header + "\n" + redact_tail(logs, limit=OUTPUT_BOUND - len(header) - 1)
 
 
+def _compare_behind_by(
+    runner: Runner, repo: str, base: str, head: str
+) -> int | None:
+    """Commits the head is behind the base branch; None when the compare is unreadable.
+
+    GitHub runs ``pull_request`` CI on the merge of the head with the base, so a
+    branch cut before later base commits fails tests the head alone does not
+    contain. The caller treats None as transient and never as "not behind".
+    """
+    if not base or not is_sha(head):
+        return None
+    try:
+        data = gh_json(
+            runner,
+            ["gh", "api", f"repos/{repo}/compare/{base}...{head}"],
+        )
+    except CoordinatorError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    behind = data.get("behind_by")
+    if isinstance(behind, bool) or not isinstance(behind, int) or behind < 0:
+        return None
+    return behind
+
+
+def _ci_behind_reason(
+    head: str, failures: list[str], behind: int, base: str
+) -> str:
+    """The CI failure stated as the reason for rebasing a behind order branch."""
+    detail = ", ".join(failures[:5]) or "CI failed"
+    commits = "commit" if behind == 1 else "commits"
+    return (
+        f"CI failed on {head[:7]} ({detail}) while the branch is "
+        f"{behind} {commits} behind {base}"
+    )
+
+
 def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     """Exact-head PR check rollup AND head workflow inventory. Fail closed.
 
@@ -1494,7 +1532,61 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
                 kind="ci-logs",
                 reply_checkpoint=True,
             )
-        c["findings"] = _ci_failure_findings(head, failures, logs)
+        findings = _ci_failure_findings(head, failures, logs)
+        if is_order(task):
+            from .coordinator_conflicts import (
+                remedy_state,
+                run_ci_failure_remedy,
+            )
+
+            remedy = remedy_state(task)
+            if remedy.get("state") == "running" and remedy.get("head") == head:
+                lines = run_ci_failure_remedy(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    reason=(
+                        f"CI failed on {head[:7]} while the branch is behind "
+                        "its base"
+                    ),
+                )
+                return [
+                    f"CI failed on {head[:7]}; continuing conflict resolution",
+                    *lines,
+                ]
+            source = c.get("source") if isinstance(c.get("source"), dict) else {}
+            base = str(source.get("base") or "")
+            behind = (
+                _compare_behind_by(scoped_runner, target, base, head)
+                if base
+                else None
+            )
+            if behind is None:
+                # Unreadable compare: retry the same phase, never route on a guess.
+                return [
+                    f"CI failed on {head[:7]}; base comparison unavailable; "
+                    "retrying"
+                ]
+            if behind > 0:
+                reason = _ci_behind_reason(head, failures, behind, base)
+                # Record today's failure evidence, then replace the head by rebasing.
+                c["findings"] = findings
+                evidence = c.setdefault("evidence", {})
+                if isinstance(evidence, dict):
+                    evidence["ci_green"] = False
+                    evidence["ci_head"] = head
+                invalidate_head_evidence(c, "" if worker.a38 else head)
+                save_task(store, task)
+                lines = run_ci_failure_remedy(
+                    store, worker, task, runner, reason=reason
+                )
+                return [
+                    f"CI failed on {head[:7]}; branch is {behind} behind "
+                    f"{base}; starting conflict resolution",
+                    *lines,
+                ]
+        c["findings"] = findings
         c["phase"] = "implement"
         task["state"] = "implementing"
         evidence = c.setdefault("evidence", {})

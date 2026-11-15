@@ -353,6 +353,10 @@ class FakeGh:
         self.published_head: str | None = None
         self.extra_ancestors: set[str] = set()
         self.resets: list[str] = []
+        # ``gh api repos/OWNER/NAME/compare/BASE...HEAD`` responses.
+        self.compare_behind_by: int = 0
+        self.compare_rc: int = 0
+        self.compare_calls: list[str] = []
 
     def __call__(self, argv: list[str]) -> Completed:
         if argv and argv[0] == "env":
@@ -375,6 +379,24 @@ class FakeGh:
 
         if argv == ["gh", "api", "user", "--jq", ".login"]:
             return Completed(0, "worker-bot", "")
+
+        if argv[:2] == ["gh", "api"] and "/compare/" in argv[-1]:
+            self.compare_calls.append(argv[-1])
+            if self.compare_rc != 0:
+                return Completed(self.compare_rc, "", "compare unavailable")
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "status": "ahead" if self.compare_behind_by == 0 else "diverged",
+                        "ahead_by": 1,
+                        "behind_by": self.compare_behind_by,
+                        "total_commits": 1 + self.compare_behind_by,
+                        "commits": [],
+                    }
+                ),
+                "",
+            )
 
         if argv[:2] == ["gh", "api"] and "/pulls?state=open" in argv[-1]:
             if self.open_pulls_rc != 0:
