@@ -27,7 +27,12 @@ from agent_cli.coordinator_lanes import (
 from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
-from test_coordinator_support import make_session, make_worker, write_accounts
+from test_coordinator_support import (
+    grok_messages_stream,
+    make_session,
+    make_worker,
+    write_accounts,
+)
 
 
 TID = "aa000001-0000-4000-8000-000000000601"
@@ -251,7 +256,8 @@ def test_run_prepared_reports_and_forgets_a_real_process(tmp_path: Path) -> None
             "argv": [
                 sys.executable,
                 "-c",
-                "print('STATUS: complete'); print('RESULT: approved')",
+                "import sys; sys.stdout.write(sys.argv[1])",
+                grok_messages_stream("STATUS: complete\nRESULT: approved"),
             ],
             "stdin_text": None,
             "output_file": None,
@@ -354,10 +360,10 @@ while time.time() < deadline:
     if seen:
         break
     time.sleep(0.05)
-print("RECORD-SEEN" if seen else "RECORD-MISSING")
-print("STATUS: complete")
-print("RESULT: done")
+sys.stdout.write(sys.argv[2] if seen else sys.argv[3])
 """
+    seen_stream = grok_messages_stream("RECORD-SEEN\nSTATUS: complete\nRESULT: done")
+    missing_stream = grok_messages_stream("RECORD-MISSING\nSTATUS: partial")
 
     def provider(_vendor: str, **_kwargs) -> list[str]:
         return [
@@ -365,6 +371,8 @@ print("RESULT: done")
             "-c",
             script,
             str(control_dir(worker, TID) / "lanes"),
+            seen_stream,
+            missing_stream,
         ]
 
     monkeypatch.setattr(coordinator_lanes, "provider_argv", provider)
@@ -406,7 +414,7 @@ def test_injected_lane_runner_writes_no_record(
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=lambda argv, stdin: Completed(
-            0, "STATUS: complete\nRESULT: done\n", ""
+            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
         ),
     )
     assert result.status == "complete"

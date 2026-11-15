@@ -16,6 +16,30 @@ from agent_cli.store import Store, utcnow
 from agent_cli.github_act import scan_github as _REAL_SCAN
 
 
+def grok_messages_stream(text: str) -> str:
+    """Grok ``streaming-messages-json`` stream whose final answer is ``text``.
+
+    The lane finalizer reads the final assistant message only from the terminal
+    ``result`` event, so a fake provider must emit the Messages stream instead of
+    plain text. This one helper keeps every grok fake on that wire format.
+    """
+    events = [
+        {"type": "system", "subtype": "init", "model": "grok-model"},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": text}]},
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": text,
+            "usage": {},
+        },
+    ]
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
 def write_accounts(home: Path) -> None:
     (home / "github-accounts.json").write_text(
         json.dumps(
@@ -806,6 +830,8 @@ def lane_runner(fake: FakeGh):
             output = Path(argv[argv.index("--output-last-message") + 1])
             output.write_text(out, encoding="utf-8")
             return Completed(0, "", "")
+        if "grok" in argv:
+            return Completed(0, grok_messages_stream(out), "")
         return Completed(0, out, "")
 
     return run
@@ -853,6 +879,8 @@ def order_lane_runner(
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
+        if "grok" in argv:
+            return Completed(0, grok_messages_stream(output), "")
         return Completed(0, output, "")
 
     return run

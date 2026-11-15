@@ -28,6 +28,7 @@ from test_coordinator import (
 )
 from test_coordinator_support import (
     FakeGh,
+    grok_messages_stream,
     lane_runner,
     make_session,
     make_worker,
@@ -544,7 +545,7 @@ def test_incomplete_inner_reviewer_is_retried_then_blocks(
     def partial(*args: Any, **kwargs: Any) -> Completed:
         nonlocal calls
         calls += 1
-        return Completed(0, "STATUS: partial\n", "")
+        return Completed(0, grok_messages_stream("STATUS: partial\n"), "")
 
     lines = coordinator_runtime.phase_inner_review(
         store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""), partial
