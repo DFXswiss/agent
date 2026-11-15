@@ -82,6 +82,8 @@ def order_config(root: Path) -> dict:
                 "park_poll_seconds": 0,
                 "lane_retries": 0,
                 "orders": True,
+                "owner_check_argv": ["/operator/owner-checks"],
+                "owner_readiness_argv": ["/operator/owner-readiness"],
             }
         }
     }
@@ -528,6 +530,72 @@ def test_submit_accepts_an_unlisted_repository(device, capsys) -> None:
     source = task["payload"]["coordinator"]["source"]
     assert source["owner_scoped"] is True
     assert source["require_hub_assignment"] is False
+
+
+def test_submit_with_an_explicit_worker_names_the_missing_owner_setting(
+    device,
+) -> None:
+    path = device.home / "coordinator.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    config["workers"]["worker-session"].pop("owner_readiness_argv")
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(SystemExit, match="configure owner_readiness_argv"):
+        order(
+            "submit",
+            "--repo",
+            "other/thing",
+            "--title",
+            "t",
+            "--body-file",
+            body_file(device.home),
+            "--worker",
+            "worker-session",
+        )
+    assert device.store.rows("task") == []
+
+
+def test_submit_without_a_worker_ignores_workers_that_cannot_check_the_repo(
+    device,
+) -> None:
+    path = device.home / "coordinator.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    worker = config["workers"]["worker-session"]
+    worker.pop("owner_check_argv")
+    worker.pop("owner_readiness_argv")
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(
+        SystemExit, match="no order-enabled worker can check other/thing"
+    ):
+        order(
+            "submit",
+            "--repo",
+            "other/thing",
+            "--title",
+            "t",
+            "--body-file",
+            body_file(device.home),
+        )
+    assert device.store.rows("task") == []
+
+
+def test_submit_without_a_worker_still_reports_disabled_orders(device) -> None:
+    path = device.home / "coordinator.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    config["workers"]["worker-session"]["orders"] = False
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(
+        SystemExit, match="orders are not enabled on this device"
+    ):
+        order(
+            "submit",
+            "--repo",
+            "other/thing",
+            "--title",
+            "t",
+            "--body-file",
+            body_file(device.home),
+        )
+    assert device.store.rows("task") == []
 
 
 def test_submit_body_and_non_order_worker_errors(device) -> None:

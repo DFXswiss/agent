@@ -364,6 +364,17 @@ def test_order_worker_loads_without_repositories_or_owners(tmp_path):
     assert loaded.owner_readiness_argv == ('/operator/owner-readiness',)
 
 
+def test_order_worker_with_explicit_repositories_loads_without_owner_argv(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['orders'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.orders is True
+    assert loaded.repositories['example/project'].repo == 'example/project'
+    assert loaded.owner_check_argv == ()
+    assert loaded.owner_readiness_argv is None
+
+
 def test_orders_only_worker_requires_non_a38_owner_argv(tmp_path):
     data = config(tmp_path)
     worker = data['workers']['selected-session']
