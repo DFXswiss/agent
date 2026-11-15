@@ -315,26 +315,28 @@ or ESC sequence, or a key character in a string-control payload);
 such text costs time quadratic in the number of those controls. Fixed matching
 windows apply only to bounded regex consumers for control-tolerant URL schemes,
 e-mail address parts, private-key header words, and terminal escape parameters.
-Exact known-secret, path, and bearer matching uses the unbounded linear
-control-run index for removable terminal-control interleaves. For bounded lane
-fields, the
+Exact known-secret, path, and bearer matching searches a fixed set of views
+with a linear matcher. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
 matching; a token split by that cut is redacted in full before the ordinary
 truncation marker is added.
-The known-secret raw pass
-allows a CSI/ESC final byte, and every reachable end of a truncated CSI/ESC
-prefix inside the control run, to be a token character, so sanitization cannot
-assemble a credential that evades the matcher. Literal and percent-encoded
-representations share one left-to-right scan, so a repeated prefix or many
-equal first characters do not rescan the text per candidate. It uses the shared
-nesting-aware scanner
-before any span replacement;
-each complete or unterminated string-control span, including its payload, is a
-single removable interleave atom that is recognized before a generic ESC
-sequence. Consecutive removable C0 bytes, string-control spans, CSI, and other
-ESC sequences are consumed as one linear interleave run without a per-control
-count limit. Seven-bit DCS, PM, APC, and SOS strings accept
+The known-secret pass builds a fixed set of views and searches each one with
+KMP, overlaps included. Percent-tolerant matching also searches a
+percent-decoded copy of each view: every valid `%HH` (either hex case) becomes
+that decoded character and maps back to its three-character raw span, and every
+other character is copied. The literal secret is matched on the undecoded view
+and on that decoded view, and the union of the mapped spans is redacted. Raw,
+fully encoded (`%25` for `%`), and mixed per-character forms are covered, and
+every secret, including one that contains `%`, takes time linear in the view
+length plus the secret length. The views
+are the raw text, text with every terminal control removed, text with only
+introducers, terminators, and C0/C1 bytes removed, and text with complete
+ESC/CSI sequences removed while string-control payloads stay. One further view
+keeps an ESC final that also introduces a string control. Both copies use KMP,
+so a repeated prefix does not rescan the text per candidate.
+String-control boundaries still come from the shared nesting-aware scanner.
+Seven-bit DCS, PM, APC, and SOS strings accept
 both the 8-bit ST byte and `ESC \`; an unterminated string control is redacted
 through the end of the text. BEL terminates OSC only; DCS, PM, APC, and SOS
 continue through BEL until an ST spelling.

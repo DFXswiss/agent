@@ -1385,8 +1385,8 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
             in normalized
         )
         assert (
-            "Exact known-secret, path, and bearer matching uses the unbounded "
-            "linear control-run index"
+            "Exact known-secret, path, and bearer matching searches a fixed "
+            "set of views with a linear matcher"
             in normalized
         )
 
@@ -1586,7 +1586,7 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         "Fixed matching windows apply only to the bounded regex consumers" in flat
     )
     assert (
-        "Exact known-secret matching uses the unbounded linear control-run index"
+        "Exact known-secret matching searches a fixed set of views with a linear matcher"
         in flat
     )
     assert "Secret-key name affixes" not in documented

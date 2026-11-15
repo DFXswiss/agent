@@ -1333,9 +1333,9 @@ values of an unquoted key stop only at whitespace, and those of a quoted key
 also at a comma or semicolon. Fixed matching windows apply only to bounded
 regex consumers for control-tolerant URL schemes, e-mail address parts,
 private-key header words, and terminal escape parameters. Exact known-secret,
-path, and bearer matching uses the unbounded linear control-run index for
-removable terminal-control interleaves. Value runs that do not need delimiter
-backtracking are possessive. This keeps every redaction pass linear on long
+path, and bearer matching searches a fixed set of views with a linear matcher.
+Value runs that do not need delimiter backtracking are possessive. This keeps
+every redaction pass linear on long
 separatorless provider text. The initial ESC/C1 search and any controlled-line
 structural pass are linear over the raw input. After that structural rule, a
 sink with an existing length limit takes only that limit plus a small inspection
@@ -1364,7 +1364,10 @@ diagnostics likewise join soft-wrapped lines before redaction and before their
 bounded text may be printed or stored as `lane.run` evidence. Hub assignment
 failures first remove the raw or header device bearer with an escape- and
 control-tolerant matcher that accepts every bearer character literally or as a
-case-insensitive percent-encoded byte, including mixed representations. They
+case-insensitive percent-encoded byte, including mixed representations. The
+matcher uses a percent-decoded copy of each fixed view, so every bearer,
+including one that contains `%`, stays linear in the text length plus the
+bearer length. They
 then use that same generic pipeline; exact bearer removal is repeated after
 sanitization.
 Profile credentials, config directory paths, signing-key paths, and raw auth
@@ -1373,11 +1376,12 @@ in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
 sanitization, repeat that exact replacement after generic sanitization, and
 only then apply the replicated-row length bound. Exact path and bearer matching
-use the shared nesting-aware scanner before any string-control replacement: a
-complete or unterminated OSC, DCS, PM, APC, or SOS span, including nested
-payload, is one removable interleave atom and wins over the generic ESC
-alternative. Consecutive removable controls form one linear interleave run with
-no per-control count limit.
+searches the same fixed views with a linear matcher before any string-control
+replacement. A complete or unterminated OSC, DCS, PM, APC, or SOS span,
+including nested payload, is removed whole in the view that drops every
+terminal control. The views that drop introducers and terminators keep that
+payload. One further view keeps a printable ESC final that also introduces a
+string control.
 User-facing blockers and questions are
 published on the source issue, or on the pull request of an order, only when
 `execution_status=done` is verified;
@@ -1393,12 +1397,17 @@ All agent rows and reviewer replay checkpoints store that same bounded,
 config-path-hidden redacted model value; only provider argv retains the raw
 configured model.
 One shared redaction pipeline handles final text, models, diagnostics, agent
-notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
-a CSI/ESC final byte, and every reachable end of a truncated CSI/ESC prefix in
-the control run, as a possible token character, so the terminal sanitizer
-cannot assemble an unredacted token by deleting that byte. Literal and
-percent-encoded representations share one left-to-right scan, so a repeated
+notes, terminal output, hub/GitHub errors, and evidence. Its known-secret
+matcher searches a fixed set of views with KMP, so a CSI/ESC final, a truncated
+prefix, or a string-control payload cannot hide a credential. Literal and
+percent-encoded representations are matched on each view, so a repeated
 prefix or many equal first characters do not rescan the text per candidate.
+Percent-tolerant matching also searches a percent-decoded copy of each view:
+every valid `%HH` (either hex case) becomes that decoded character and maps
+back to its three-character raw span, and every other character is copied.
+The literal secret is matched on both copies. Every secret, including one
+that contains `%`, takes time linear in the view length plus the secret
+length.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
 `ESC \`; their eight-bit forms accept those same ST spellings. BEL terminates
 only OSC, so BEL inside DCS, PM, APC, or SOS remains payload until ST.

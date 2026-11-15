@@ -1266,6 +1266,64 @@ def test_known_secret_scanner_is_linear_across_many_percent_encoded_candidate_st
     assert cleaned == raw
 
 
+def test_urlencoded_matcher_is_linear_on_a_literal_percent_run() -> None:
+    n = 20_000
+    raw = "%" * n
+    secret = "%" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_urlencoded_matcher_is_linear_on_an_encoded_percent_run() -> None:
+    n = 20_000
+    raw = "%25" * n
+    secret = "%" * (n // 2) + "b"
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_urlencoded_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert cleaned == raw
+
+
+def test_urlencoded_secret_containing_percent_is_redacted_raw_encoded_and_mixed(
+) -> None:
+    secret = "j%41"
+    fully_encoded = "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+    representations = (
+        secret,
+        fully_encoded,
+        fully_encoded.lower(),
+        "j%2541",
+        "%6A%2541",
+        "%6a%25%341",
+        "%6a%25%34%31",
+    )
+
+    for representation in representations:
+        cleaned = redact_terminal_interleaved_urlencoded_secret(
+            f"xx{representation}yy", secret
+        )
+        assert cleaned == "xx[redacted]yy", representation
+
+    assert (
+        redact_terminal_interleaved_urlencoded_secret("xxj%2542yy", secret)
+        == "xxj%2542yy"
+    )
+    assert (
+        redact_terminal_interleaved_urlencoded_secret(
+            "xxj\x1b[31m%2541yy", secret
+        )
+        == "xx[redacted]yy"
+    )
+
+
 def test_known_secret_scanner_is_linear_across_a_repeated_visible_prefix() -> None:
     raw = "/opt/" * 20_000
     secret = "/opt/" * 5_000 + "X"
@@ -1298,6 +1356,70 @@ def test_known_secret_scanner_redacts_the_match_after_a_long_false_prefix() -> N
     cleaned = redact_terminal_interleaved_secret(raw, secret)
 
     assert cleaned == ("/opt/" * 2_000) + "[redacted]"
+
+
+def test_known_secret_redacts_a_path_that_starts_inside_an_osc_payload() -> None:
+    cleaned = redact_lane_text(
+        "failed \x1b]/opt/my\x07 profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+
+    assert "/opt/my profile" not in cleaned
+    assert "profile/key" not in cleaned
+
+
+def test_known_secret_redacts_a_secret_that_starts_on_a_dcs_introducer() -> None:
+    cleaned = redact_terminal_interleaved_secret(
+        "\x1bP\x1b\\rivate-key",
+        "Private-key",
+    )
+
+    assert "Private-key" not in cleaned
+    assert "rivate-key" not in cleaned
+
+
+def test_known_secret_redacts_8bit_osc_and_dcs_payloads() -> None:
+    osc = redact_lane_text(
+        "failed \x9d/opt/my\x07 profile/key",
+        config_dir="/opt/my profile",
+        limit=None,
+    )
+    assert "/opt/my profile" not in osc
+    assert "profile/key" not in osc
+
+    dcs = redact_terminal_interleaved_secret(
+        "\x90Private\x9c-key",
+        "Private-key",
+    )
+    assert "Private-key" not in dcs
+    assert "Private" not in dcs
+    assert "-key" not in dcs
+
+
+def test_known_secret_redacts_a_secret_split_across_two_string_payloads() -> None:
+    cleaned = redact_terminal_interleaved_secret(
+        "\x1b]/opt/my\x07\x1b] profile\x07",
+        "/opt/my profile",
+    )
+
+    assert "/opt/my profile" not in cleaned
+    assert "/opt/my" not in cleaned
+    assert " profile" not in cleaned
+
+
+def test_known_secret_scanner_is_linear_across_repeated_csi_landings() -> None:
+    n = 20_000
+    raw = "\x1b[aa" * n
+    secret = "a" * (n // 2)
+
+    started = time.monotonic()
+    cleaned = redact_terminal_interleaved_secret(raw, secret)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, f"known-secret redaction took {elapsed:.3f}s"
+    assert "[redacted]" in cleaned
+    assert secret not in cleaned
 
 
 def test_lane_config_dir_redaction_crosses_long_and_mixed_control_runs() -> None:

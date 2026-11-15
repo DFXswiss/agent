@@ -105,9 +105,17 @@ subsequent notification that provides useful model work belong to the script.
    APC, and SOS require `ESC \` or the eight-bit ST byte.
    Fixed matching windows apply only to the bounded regex consumers for
    control-tolerant URL schemes, e-mail address parts, private-key header words,
-   and terminal escape parameters. Exact known-secret matching uses the
-   unbounded linear control-run index for removable terminal-control
-   interleaves, so separatorless log text is handled in linear time. The script
+   and terminal escape parameters. Exact known-secret matching searches a fixed
+   set of views with a linear matcher, so separatorless log text is handled in
+   linear time. The views are the raw text, text with terminal controls removed,
+   text with introducers, terminators, and C0/C1 bytes removed, and text with
+   complete ESC/CSI sequences removed while string-control payloads stay, plus
+   one view that keeps an ESC final used as a string-control introducer.
+   Percent-tolerant matching also searches a percent-decoded copy of each view:
+   every valid `%HH` becomes its decoded character and maps back to that
+   three-character raw span, and every other character is copied. The literal
+   secret is matched on both copies, so every secret, including one that
+   contains `%`, stays linear in the text length plus the secret length. The script
    then fingerprints and inserts or enriches
    `activity.type=error.seen` on this session. Token separators, including tabs
    and newlines, remain in place. First insert knocks `da ist Post id <uuid>`.
