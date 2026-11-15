@@ -312,9 +312,12 @@ tokens, including quoted JSON keys. The scan is linear, except where whitespace
 follows terminal controls that hold key characters (a key character (a letter,
 a digit, `_` or `-`) among the parameter, intermediate or final bytes of a CSI
 or ESC sequence, or a key character in a string-control payload);
-such text costs time quadratic in the number of those controls. Control-tolerant URL schemes, terminal escape
-parameters, and removable-control interleaves have fixed matching windows so
-long separatorless text remains linear to process. For bounded lane fields, the
+such text costs time quadratic in the number of those controls. Fixed matching
+windows apply only to bounded regex consumers for control-tolerant URL schemes,
+e-mail address parts, private-key header words, and terminal escape parameters.
+Exact known-secret, path, and bearer matching uses the unbounded linear
+control-run index for removable terminal-control interleaves. For bounded lane
+fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
 matching; a token split by that cut is redacted in full before the ordinary
