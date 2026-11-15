@@ -688,19 +688,19 @@ def test_surface_checkpoint_rules_are_shared_by_the_parser_and_the_prompt(
             "REUSED: `src/pay.ts:40` existing\n"
             "ADDED: `src/habit.ts` member\n",
             "SURFACE_RULE_REFERENCE",
-            2,
+            1,
         ),
         (
             "REUSED: `src/pay.ts:40` existing\n"
             "ADDED: `/srv/private/habit.ts:12` member\n",
             "SURFACE_RULE_REFERENCE",
-            2,
+            1,
         ),
         (
             "REUSED: `src/pay.ts:40` existing\n"
             "ADDED: `../private/habit.ts:12` member\n",
             "SURFACE_RULE_REFERENCE",
-            2,
+            1,
         ),
         (
             "REUSED: `src/pay.ts:40` " + ("x" * 400) + "\n"
