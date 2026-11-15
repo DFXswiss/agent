@@ -1045,36 +1045,33 @@ def launch(
         if tmux:
             unique = "" if dry_run else uuid.uuid4().hex[:8]
             tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
-            if vendor == "claude":
-                # Claude's stream-json lines can exceed a tmux pane width and its
-                # history. Keep the stream in a file and use pane capture only as
-                # process diagnostics, never as the parser input.
+            if vendor in ("claude", "grok"):
+                # Claude's stream-json and Grok's streaming-messages-json lines can
+                # exceed a tmux pane width and its history. Keep the stream in a
+                # file and use pane capture only as process diagnostics, never as
+                # the parser input.
                 if output_file is None:
-                    raise SystemExit("claude tmux lane requires an output file")
-                argv = [
-                    "sh",
-                    "-c",
-                    'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
-                    "sh",
-                    spec_file,
-                    output_file,
-                    *argv,
-                ]
-                claude_redirect = True
-            elif vendor == "grok":
-                # Grok's streaming-messages-json lines can exceed a tmux pane width
-                # and its history. Keep the stream in a file and use pane capture
-                # only as process diagnostics, never as the parser input.
-                if output_file is None:
-                    raise SystemExit("grok tmux lane requires an output file")
-                argv = [
-                    "sh",
-                    "-c",
-                    'out=$1; shift; exec "$@" > "$out"',
-                    "sh",
-                    output_file,
-                    *argv,
-                ]
+                    raise SystemExit(f"{vendor} tmux lane requires an output file")
+                if vendor == "claude":
+                    argv = [
+                        "sh",
+                        "-c",
+                        'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+                        "sh",
+                        spec_file,
+                        output_file,
+                        *argv,
+                    ]
+                    claude_redirect = True
+                else:
+                    argv = [
+                        "sh",
+                        "-c",
+                        'out=$1; shift; exec "$@" > "$out"',
+                        "sh",
+                        output_file,
+                        *argv,
+                    ]
             elif vendor == "openrouter":
                 # Claude Code reads the prompt from stdin only when stdin is not a
                 # TTY; in a tmux pane it is. Redirect this adapter's spec file.

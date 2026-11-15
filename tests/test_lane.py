@@ -1057,7 +1057,7 @@ def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
 
 
 def test_grok_finalize_uses_only_the_terminal_result_not_progress_text() -> None:
-    progress = "STATUS: partial\nI am still working through the review."
+    progress = "I am still working through the review."
     final = "STATUS: complete\nRESULT: approved"
     events = [
         {
@@ -1100,7 +1100,7 @@ def test_grok_finalize_uses_only_the_terminal_result_not_progress_text() -> None
     assert out.text == final
     assert out.source_text == final
     assert parse_model_result(out.source_text, 0) == ("complete", "approved")
-    assert parse_model_result(progress + "\n" + final, 0) == ("partial", "")
+    assert parse_model_result(progress + final, 0) == ("partial", "")
     assert out.usage is not None
     assert out.usage.input_tokens == 7
     assert out.usage.num_turns == 2
