@@ -1412,6 +1412,35 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "`ready_head` is recorded only after the verification head matches"
         in normalized_documented
     )
+    assert (
+        "When the pre-Ready view's `state` is `MERGED` or `CLOSED`, compared "
+        "case-insensitively, a missing or non-40-hex `headRefOid` sets `phase` "
+        "to `await_merge` without calling `gh pr ready`"
+        in normalized_documented
+    )
+    assert (
+        "The Ready undo runs only for an `OPEN` pull request with an unreadable "
+        "head. The `leave_draft` retry remains for every unreadable head whose "
+        "`state` is not `MERGED` or `CLOSED`"
+        in normalized_documented
+    )
+    assert (
+        "When the verification view's `state` is `MERGED` or `CLOSED`, compared "
+        "case-insensitively, and the head is unreadable, `phase_leave_draft` "
+        "sets `phase` to `await_merge` without calling `gh pr ready --undo`"
+        in normalized_documented
+    )
+    assert (
+        "That `ready_head` bypass applies only when the model second-review "
+        "outcome is `passed`"
+        in normalized_documented
+    )
+    assert (
+        "A `missing` outcome is not ordered by `ready_head`: the deadline "
+        "continues, so the tick waits before the deadline and publishes "
+        "`merged-without-second-review` after it"
+        in normalized_documented
+    )
 
     assert (
         "then classifies secret assignments on the full raw text. During that scan, "

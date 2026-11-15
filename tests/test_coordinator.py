@@ -4435,6 +4435,140 @@ def test_leave_draft_retries_an_unreadable_verification_head_after_ready(
     assert fake.ready_calls == 2  # Ready mutation followed by its undo.
 
 
+@pytest.mark.parametrize("state", ("MERGED", "merged"))
+def test_leave_draft_moves_a_merged_pull_request_with_a_missing_head_to_await_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    _list_opener(fake)
+    tid = "aa000001-0000-4000-8000-000000000061"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    real_gh_json = coordinator_github.gh_json
+
+    def merged_without_head(runner, argv):  # noqa: ANN001
+        if argv[-1] == "headRefOid,baseRefName,author,isDraft,state,mergeable":
+            return {"headRefOid": None, "state": state}
+        return real_gh_json(runner, argv)
+
+    monkeypatch.setattr(coordinator_github, "gh_json", merged_without_head)
+
+    assert phase_leave_draft(store, worker, task, fake) == [
+        f"PR state MERGED on {fake.head[:7]}; continuing in await_merge"
+    ]
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "await_merge"
+    assert "ready_head" not in checkpoint["evidence"]
+    assert saved["state"] == "pr-review"
+    assert fake.ready_calls == 0
+
+
+@pytest.mark.parametrize("state", ("CLOSED", "closed"))
+def test_leave_draft_moves_a_closed_pull_request_with_a_non_hex_head_to_await_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    _list_opener(fake)
+    tid = "aa000001-0000-4000-8000-000000000062"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    real_gh_json = coordinator_github.gh_json
+
+    def closed_with_non_hex_head(runner, argv):  # noqa: ANN001
+        if argv[-1] == "headRefOid,baseRefName,author,isDraft,state,mergeable":
+            return {"headRefOid": "not-a-sha", "state": state}
+        return real_gh_json(runner, argv)
+
+    monkeypatch.setattr(coordinator_github, "gh_json", closed_with_non_hex_head)
+
+    assert phase_leave_draft(store, worker, task, fake) == [
+        f"PR state CLOSED on {fake.head[:7]}; continuing in await_merge"
+    ]
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "await_merge"
+    assert "ready_head" not in checkpoint["evidence"]
+    assert saved["state"] == "pr-review"
+    assert fake.ready_calls == 0
+
+
+@pytest.mark.parametrize("state", ("MERGED", "merged"))
+def test_leave_draft_moves_a_merged_verification_with_a_missing_head_to_await_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    from agent_cli import coordinator_github
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    _list_opener(fake)
+    tid = "aa000001-0000-4000-8000-000000000063"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    real_gh_json = coordinator_github.gh_json
+
+    def merged_verification(runner, argv):  # noqa: ANN001
+        if argv[-1] == "isDraft,headRefOid,state" and fake.ready_calls == 1:
+            return {"isDraft": False, "headRefOid": None, "state": state}
+        return real_gh_json(runner, argv)
+
+    monkeypatch.setattr(coordinator_github, "gh_json", merged_verification)
+
+    assert phase_leave_draft(store, worker, task, fake) == [
+        f"PR state MERGED on {fake.head[:7]}; continuing in await_merge"
+    ]
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "await_merge"
+    assert "ready_head" not in checkpoint["evidence"]
+    assert fake.ready_calls == 1
+
+
 def test_already_ready_pull_request_sets_ready_head_for_an_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

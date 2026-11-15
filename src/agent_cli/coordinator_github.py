@@ -2718,6 +2718,13 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         raise CoordinatorError("PR view failed")
     observed_head = normalized_sha(pr.get("headRefOid"))
     if observed_head is None:
+        # Merged or closed: do not retry leave-draft. await_merge retries an
+        # unreadable head and records the human merge or closed-unmerged.
+        terminal = str(pr.get("state") or "").upper()
+        if terminal in {"MERGED", "CLOSED"}:
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [f"PR state {terminal} on {head[:7]}; continuing in await_merge"]
         c["phase"] = "leave_draft"
         save_task(store, task)
         return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
@@ -2804,9 +2811,17 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         scoped_runner,
         ["gh", "pr", "view", str(number), "--repo", target, "--json", "isDraft,headRefOid,state"],
     )
+    verified_head = normalized_sha(verify.get("headRefOid"))
+    if verified_head is None:
+        # Merged or closed: do not undo Ready or retry leave-draft. await_merge
+        # retries an unreadable head and records the human merge or closed-unmerged.
+        terminal = str(verify.get("state") or "").upper()
+        if terminal in {"MERGED", "CLOSED"}:
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [f"PR state {terminal} on {head[:7]}; continuing in await_merge"]
     if verify.get("isDraft") is not False:
         raise CoordinatorError("leave-draft did not clear isDraft")
-    verified_head = normalized_sha(verify.get("headRefOid"))
     if verified_head is None:
         if verify.get("state") == "OPEN" and verify.get("isDraft") is False:
             undone = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target, "--undo"])
@@ -3521,14 +3536,16 @@ def _await_second_review_after_merge(
     evidence = c.get("evidence")
     if (
         model
+        and outcome == "passed"
         and isinstance(evidence, dict)
         and evidence.get("ready_head") == head
     ):
-        # The model comment is a prerequisite of the guard making this exact
-        # head Ready.  That observed ordering proves the comment preceded the
-        # human merge even when the local activity clock and GitHub's mergedAt
-        # clock are inconsistent.  Early merges have no ready_head and remain
-        # subject to the timestamp deadline above and below.
+        # A passing model comment is a prerequisite of Ready on this exact head.
+        # That observed ordering proves the comment preceded the human merge
+        # when its timestamp is unusable or the local activity clock and
+        # GitHub's mergedAt clock disagree.  A missing comment is not proved
+        # by ready_head and stays on the deadline below.  Early merges have no
+        # ready_head and remain subject to the timestamp deadline above.
         return None
     if satisfied_at is None and now < deadline:
         route = "model" if model else "external"

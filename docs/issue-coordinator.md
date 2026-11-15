@@ -755,11 +755,18 @@ A record of a check lane is closed the same way, but closing it does not retry t
    exists only on the pull request head does not count.
    `allow pr-ready`, then leave draft and verify `isDraft=false`. In
    `phase_leave_draft`, an unreadable head before Ready returns to `leave_draft`
-   and retries without calling `gh pr ready`. After the Ready mutation, an
-   unreadable verification head on an open Ready pull request calls
-   `gh pr ready --undo`, returns to `leave_draft`, and retries; failure to undo
-   is an error. `ready_head` is recorded only after the verification head
-   matches. **Never merge.**
+   and retries without calling `gh pr ready`. When the pre-Ready view's `state`
+   is `MERGED` or `CLOSED`, compared case-insensitively, a missing or non-40-hex
+   `headRefOid` sets `phase` to `await_merge` without calling `gh pr ready`.
+   After the Ready mutation, an unreadable verification head on an open Ready
+   pull request calls `gh pr ready --undo`, returns to `leave_draft`, and
+   retries; failure to undo is an error. The Ready undo runs only for an `OPEN`
+   pull request with an unreadable head. The `leave_draft` retry remains for
+   every unreadable head whose `state` is not `MERGED` or `CLOSED`. When the
+   verification view's `state` is `MERGED` or `CLOSED`, compared
+   case-insensitively, and the head is unreadable, `phase_leave_draft` sets
+   `phase` to `await_merge` without calling `gh pr ready --undo`. `ready_head`
+   is recorded only after the verification head matches. **Never merge.**
 10. **Complete** only after a verified **human** merge: the GitHub merge actor
     must be an object with a non-empty string login and a string type exactly
     `User` (missing, empty, or non-string type is not human; Bot is refused).
@@ -1930,8 +1937,12 @@ task uses the same merged second-review deadline for its second comment: a
 passing comment completed within the window is accepted, a later one publishes
 `merged-without-second-review`, and a missing comment waits only until that
 deadline. An already observed Ready state on that same head is stronger ordering
-evidence that the required model comment preceded the human merge, even when the
-local activity clock and GitHub's merge clock disagree. A new head invalidates
+evidence that a passing model comment preceded the human merge, even when the
+local activity clock and GitHub's merge clock disagree or the comment timestamp
+is unusable. That `ready_head` bypass applies only when the model second-review
+outcome is `passed`. A `missing` outcome is not ordered by `ready_head`: the
+deadline continues, so the tick waits before the deadline and publishes
+`merged-without-second-review` after it. A new head invalidates
 its report, both comment checkpoints, and
 external-review state. A blocking review that arrives after the guard set Ready
 is fixed on the same pull request: an A38 worker pushes the new head to the open
