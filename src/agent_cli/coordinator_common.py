@@ -8,7 +8,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .github_accounts import Account, AccountError, load_accounts
@@ -1584,6 +1584,62 @@ _SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
 _BACKTICK_FRAGMENT = re.compile(r"`([^`\n]+)`")
 _DRIVE_SURFACE_REF = re.compile(r"^[A-Za-z]:")
 
+# The one definition of the accepted surface checkpoint format. The implementer
+# prompt includes SURFACE_LIST_RULES verbatim and every violation below names
+# one of these rules, so the prompt and the parser cannot drift apart.
+SURFACE_RULE_START = (
+    "Every REUSED: and ADDED: line starts at the beginning of a line with "
+    "`REUSED: ` or `ADDED: `, with no list bullet or emphasis."
+)
+SURFACE_RULE_LENGTH = (
+    "Each surface line is non-empty and at most 400 characters long."
+)
+SURFACE_RULE_REFERENCE = (
+    "Backticks appear only around file references of the form path:line, with "
+    "a repository-relative path and one single line number, and no other "
+    "backticks appear on the line."
+)
+SURFACE_RULE_SECTION = (
+    "Each section is either one or more file-reference lines or exactly one "
+    "`none — reason` line (the dash may be `—` or `-`) with a non-empty "
+    "reason, and never both."
+)
+SURFACE_RULE_SECTIONS_PRESENT = (
+    "Both the REUSED: section and the ADDED: section are present."
+)
+SURFACE_LIST_RULES = " ".join(
+    (
+        SURFACE_RULE_START,
+        SURFACE_RULE_LENGTH,
+        SURFACE_RULE_REFERENCE,
+        SURFACE_RULE_SECTION,
+        SURFACE_RULE_SECTIONS_PRESENT,
+    )
+)
+
+
+class SurfaceListViolation(NamedTuple):
+    """The first rule a surface checkpoint breaks and where it breaks it."""
+
+    rule: str
+    line: int
+
+
+class MalformedSurfaceCheckpoint(CoordinatorError):
+    """An implementer surface checkpoint the parser rejects.
+
+    The message names the static rule and the 1-based line position inside its
+    section. It never includes the offending line or any lane text.
+    """
+
+    def __init__(self, violation: SurfaceListViolation) -> None:
+        self.rule = violation.rule
+        self.line = violation.line
+        super().__init__(
+            "implementer surface checkpoint is malformed: "
+            f"{violation.rule} (line {violation.line} within its section)"
+        )
+
 
 def _surface_ref_is_repository_relative(path: str) -> bool:
     """Accept only a traversal-free repository-relative surface path."""
@@ -1599,19 +1655,20 @@ def _surface_ref_is_repository_relative(path: str) -> bool:
     return all(part not in ("", ".", "..") for part in parts)
 
 
-def _surface_line_kind(value: str) -> str | None:
-    """``file``, ``none``, or None when the line is not one exclusive kind.
+def _surface_line_violation(value: str) -> tuple[str | None, str | None]:
+    """The line kind and, when rejected, the first rule it breaks.
 
-    A line that both names a file and claims the section is empty is neither.
+    ``file`` and ``none`` are the two exclusive kinds. A line that both names a
+    file and claims the section is empty is neither.
     """
     text = value.strip()
     if text == "" or len(text) > 400:
-        return None
+        return (None, SURFACE_RULE_LENGTH)
     refs = list(_SURFACE_REF.finditer(text))
     fragments = list(_BACKTICK_FRAGMENT.finditer(text))
     has_ref = bool(refs)
     if fragments and not has_ref:
-        return None
+        return (None, SURFACE_RULE_REFERENCE)
     if has_ref and (
         len(refs) != len(fragments)
         or text.count("`") != 2 * len(fragments)
@@ -1620,7 +1677,7 @@ def _surface_line_kind(value: str) -> str | None:
             for match in refs
         )
     ):
-        return None
+        return (None, SURFACE_RULE_REFERENCE)
     folded = text.casefold()
     empty_reason = False
     for prefix in ("none —", "none -"):
@@ -1628,24 +1685,66 @@ def _surface_line_kind(value: str) -> str | None:
             empty_reason = bool(folded[len(prefix):].strip())
             break
     if has_ref and empty_reason:
-        return None
+        return (None, SURFACE_RULE_SECTION)
     if has_ref:
-        return "file"
+        return ("file", None)
     if empty_reason:
-        return "none"
+        return ("none", None)
+    return (None, SURFACE_RULE_SECTION)
+
+
+def _surface_line_kind(value: str) -> str | None:
+    """``file``, ``none``, or None when the line is not one exclusive kind."""
+    return _surface_line_violation(value)[0]
+
+
+def _surface_section_violation(lines: list[str]) -> SurfaceListViolation | None:
+    """One reasoned ``none`` line, or only file references. Never both."""
+    if not lines:
+        return SurfaceListViolation(SURFACE_RULE_SECTIONS_PRESENT, 1)
+    kinds: list[str] = []
+    for position, value in enumerate(lines, 1):
+        kind, rule = _surface_line_violation(value)
+        if kind is None:
+            assert rule is not None
+            return SurfaceListViolation(rule, position)
+        kinds.append(kind)
+    none_positions = [
+        position for position, kind in enumerate(kinds, 1) if kind == "none"
+    ]
+    if len(none_positions) > 1:
+        return SurfaceListViolation(SURFACE_RULE_SECTION, none_positions[1])
+    if none_positions and len(kinds) > 1:
+        mixed = next(
+            position
+            for position, kind in enumerate(kinds, 1)
+            if kind != kinds[0]
+        )
+        return SurfaceListViolation(SURFACE_RULE_SECTION, mixed)
     return None
 
 
 def _surface_section_ok(lines: list[str]) -> bool:
     """One reasoned ``none`` line, or only file references. Never both."""
-    kinds = [_surface_line_kind(value) for value in lines]
-    if any(kind is None for kind in kinds):
-        return False
-    none_count = sum(kind == "none" for kind in kinds)
-    file_count = sum(kind == "file" for kind in kinds)
-    if none_count == 1 and file_count == 0:
-        return True
-    return none_count == 0 and file_count >= 1
+    return _surface_section_violation(lines) is None
+
+
+def surface_list_violation(stdout: str) -> SurfaceListViolation | None:
+    """The first rule a present surface checkpoint breaks, or None.
+
+    None means the checkpoint is either valid or absent. The returned position
+    is 1-based inside the section whose line broke the rule. Neither the line
+    nor any other lane text is returned.
+    """
+    reused = re.findall(r"(?m)^REUSED: ([^\r\n]+)$", stdout)
+    added = re.findall(r"(?m)^ADDED: ([^\r\n]+)$", stdout)
+    if not reused or not added:
+        if not reused and not added and not re.search(
+            r"(?m)^(?:REUSED|ADDED):", stdout
+        ):
+            return None
+        return SurfaceListViolation(SURFACE_RULE_SECTIONS_PRESENT, 1)
+    return _surface_section_violation(reused) or _surface_section_violation(added)
 
 
 def parse_change_summaries(stdout: str) -> tuple[str, str] | None:

@@ -637,6 +637,310 @@ def test_surface_list_without_a_draft_is_not_applied(
     assert saved["state"] != "reviewing"
 
 
+def test_surface_checkpoint_rules_are_shared_by_the_parser_and_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The implementer prompt includes the parser's own rule definition."""
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_common import (
+        SURFACE_LIST_RULES,
+        SURFACE_RULE_LENGTH,
+        SURFACE_RULE_REFERENCE,
+        SURFACE_RULE_SECTION,
+        SURFACE_RULE_SECTIONS_PRESENT,
+        SURFACE_RULE_START,
+    )
+
+    monkeypatch.setattr(
+        coordinator_runtime, "review_rules_bound", lambda *_args, **_kwargs: True
+    )
+    instruction = coordinator_runtime._implementer_instruction(
+        None, None, {"id": "t", "payload": {"coordinator": {}}}, None
+    )
+    assert SURFACE_LIST_RULES in instruction
+    for rule in (
+        SURFACE_RULE_START,
+        SURFACE_RULE_LENGTH,
+        SURFACE_RULE_REFERENCE,
+        SURFACE_RULE_SECTION,
+        SURFACE_RULE_SECTIONS_PRESENT,
+    ):
+        assert rule in SURFACE_LIST_RULES
+        assert rule in instruction
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rule_name", "line"),
+    (
+        (
+            "REUSED: `src/pay.ts:40` existing `gift`\n"
+            "ADDED: `src/habit.ts:12` member\n",
+            "SURFACE_RULE_REFERENCE",
+            1,
+        ),
+        (
+            "REUSED: `src/pay.ts:40-42` existing\n"
+            "ADDED: `src/habit.ts:12` member\n",
+            "SURFACE_RULE_REFERENCE",
+            1,
+        ),
+        (
+            "REUSED: `src/pay.ts:40` existing\n"
+            "ADDED: `src/habit.ts` member\n",
+            "SURFACE_RULE_REFERENCE",
+            1,
+        ),
+        (
+            "REUSED: `src/pay.ts:40` existing\n"
+            "ADDED: `/srv/private/habit.ts:12` member\n",
+            "SURFACE_RULE_REFERENCE",
+            1,
+        ),
+        (
+            "REUSED: `src/pay.ts:40` existing\n"
+            "ADDED: `../private/habit.ts:12` member\n",
+            "SURFACE_RULE_REFERENCE",
+            1,
+        ),
+        (
+            "REUSED: `src/pay.ts:40` " + ("x" * 400) + "\n"
+            "ADDED: `src/habit.ts:12` member\n",
+            "SURFACE_RULE_LENGTH",
+            1,
+        ),
+        (
+            "REUSED: none — nothing existing does this job\n"
+            "REUSED: `src/pay.ts:40` existing\n"
+            "ADDED: `src/habit.ts:12` member\n",
+            "SURFACE_RULE_SECTION",
+            2,
+        ),
+        (
+            "REUSED: none — first empty reason\n"
+            "REUSED: none - second empty reason\n"
+            "ADDED: none - no new surface\n",
+            "SURFACE_RULE_SECTION",
+            2,
+        ),
+        (
+            "REUSED: `src/pay.ts:40` existing\nADDED: bare line\n",
+            "SURFACE_RULE_SECTION",
+            1,
+        ),
+        (
+            "REUSED: none — nothing existing does this job\n",
+            "SURFACE_RULE_SECTIONS_PRESENT",
+            1,
+        ),
+    ),
+    ids=(
+        "stray-backticks",
+        "line-range",
+        "missing-line-number",
+        "absolute-path",
+        "traversing-path",
+        "overlong-line",
+        "mixed-none-and-file",
+        "two-none-lines",
+        "bare-line",
+        "missing-section",
+    ),
+)
+def test_surface_list_reports_the_first_violated_rule(
+    stdout: str, rule_name: str, line: int
+) -> None:
+    """Every rejection names its rule and the 1-based line inside its section."""
+    from agent_cli import coordinator_common
+    from agent_cli.coordinator_common import (
+        SurfaceListViolation,
+        parse_surface_list,
+        surface_list_violation,
+    )
+
+    assert parse_surface_list(stdout) is None
+    assert surface_list_violation(stdout) == SurfaceListViolation(
+        getattr(coordinator_common, rule_name), line
+    )
+    # The report carries no lane text, only the rule and position.
+    violation = surface_list_violation(stdout)
+    assert violation is not None
+    assert "src/" not in violation.rule
+
+
+def _surface_repair_fixture(tmp_path: Path, tid: str):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "repo": "example/project",
+        "ref": "42",
+        "title": "Fix",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "worktree": str(worktree),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7, "title": "Fix"},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        f"{tid}-round-1",
+        {
+            "id": f"{tid}-round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    return store, worker
+
+
+def _patch_surface_repair_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli import coordinator_lanes, coordinator_runtime
+
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "review_rules_bound", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "_implementer_instruction", lambda *_a, **_k: "Implement."
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "stage_sign_commit_if_changes",
+        lambda *_a, **_k: "b" * 40,
+    )
+    monkeypatch.setattr(coordinator_runtime, "ensure_draft", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        coordinator_runtime, "refresh_draft_body", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr(coordinator_runtime, "set_checklist", lambda *_a, **_k: None)
+
+
+MALFORMED_SURFACE_OUTPUT = (
+    "STATUS: complete\nRESULT: done\n"
+    "SUMMARY_EN: Add the file.\n"
+    "SUMMARY_DE: Füge die Datei hinzu.\n"
+    "REUSED: `src/pay.ts` existing\n"
+    "ADDED: `src/habit.ts:12` member\n"
+)
+VALID_SURFACE_OUTPUT = (
+    "STATUS: complete\nRESULT: done\n"
+    "SUMMARY_EN: Add the file.\n"
+    "SUMMARY_DE: Füge die Datei hinzu.\n"
+    "REUSED: `src/pay.ts:40` existing\n"
+    "ADDED: `src/habit.ts:12` member\n"
+)
+
+
+def test_malformed_surface_checkpoint_is_repaired_before_the_next_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One bounded repair rerun reaches the normal next phase on the same checkout."""
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store, worker = _surface_repair_fixture(
+        tmp_path, "aa000001-0000-4000-8000-0000000003a1"
+    )
+    tid = "aa000001-0000-4000-8000-0000000003a1"
+    _patch_surface_repair_flow(monkeypatch)
+    outputs = iter((MALFORMED_SURFACE_OUTPUT, VALID_SURFACE_OUTPUT))
+    calls: list[int] = []
+
+    def lane(_argv, _stdin):
+        calls.append(1)
+        return Completed(0, next(outputs), "")
+
+    lines = phase_implement(
+        store, worker, store.row("task", tid), lambda _argv: Completed(0, "", ""), lane
+    )
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    assert lines[0] == "implementer done round=2"
+    assert saved["payload"]["coordinator"]["phase"] == "inner_review"
+    assert saved["current_round"] == 2
+    assert sorted(row["round"] for row in store.rows("task_round")) == [1, 2]
+    assert len(calls) == 2
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 2
+    repair_prompts = [
+        str(agent.get("prompt") or "")
+        for agent in agents
+        if "Repair the surface checkpoint" in str(agent.get("prompt") or "")
+    ]
+    assert len(repair_prompts) == 1
+    assert "Offending line position within its section: 1" in repair_prompts[0]
+    assert "path:line" in repair_prompts[0]
+    # The repair prompt never echoes the rejected lane line.
+    assert "`src/pay.ts` existing" not in "".join(str(a.get("prompt")) for a in agents)
+
+
+def test_two_failed_surface_repairs_block_with_the_named_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound is two repairs, each a real round; then the malformed blocker returns."""
+    from agent_cli.coordinator_common import (
+        MalformedSurfaceCheckpoint,
+        SURFACE_RULE_REFERENCE,
+    )
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store, worker = _surface_repair_fixture(
+        tmp_path, "aa000001-0000-4000-8000-0000000003a2"
+    )
+    tid = "aa000001-0000-4000-8000-0000000003a2"
+    _patch_surface_repair_flow(monkeypatch)
+    calls: list[int] = []
+
+    def lane(_argv, _stdin):
+        calls.append(1)
+        return Completed(0, MALFORMED_SURFACE_OUTPUT, "")
+
+    with pytest.raises(MalformedSurfaceCheckpoint) as raised:
+        phase_implement(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda _argv: Completed(0, "", ""),
+            lane,
+        )
+
+    assert raised.value.rule == SURFACE_RULE_REFERENCE
+    assert raised.value.line == 1
+    assert SURFACE_RULE_REFERENCE in str(raised.value)
+    assert len(calls) == 3
+    saved = store.row("task", tid)
+    assert saved is not None
+    assert saved["current_round"] == 3
+    assert sorted(row["round"] for row in store.rows("task_round")) == [1, 2, 3]
+    marker = saved["payload"]["coordinator"]["surface_repair"]
+    assert marker["round"] == 3
+    assert marker["attempts"] == 2
+    assert marker["rule"] == SURFACE_RULE_REFERENCE
+    assert marker["line"] == 1
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 3
+
+
 def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
