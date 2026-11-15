@@ -11056,7 +11056,7 @@ def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
         if parts[0] == "rev-parse":
             return Completed(0, "b" * 40 + "\n", "")
         if parts[0] == "show":
-            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+            return Completed(0, _a38_policy_text(), "")
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
