@@ -866,7 +866,14 @@ absolute, drive, home, backslash, `.` or `..` form is malformed in both normal
 flow and replay. The sanitized
 checkpoint is parsed by the same summary and surface validators before it is
 committed. If that cannot produce a safe valid checkpoint, the lane is not
-checkpointed as finished and the implementation step remains retryable. Gate
+checkpointed as finished and the implementation step remains retryable. A
+malformed reused/added checkpoint is first repaired automatically: the
+implementer is rerun on the same checkout with a message naming the violated
+rule and the 1-based position of the offending line inside its section. At most
+two such repair reruns happen per malformed implementation round. Each rerun is
+recorded like any implementer run and consumes one round from the pinned round
+budget. When both repairs are used up, the malformed checkpoint blocks as
+before, and the blocker text adds the violated rule and line position. Gate
 transactions, lane checkpoints, and outcome replay transactions stage
 task, agent, and task-round mutations on copies and adopt them only after
 commit. A successful implementer replay writes its round verdict, the

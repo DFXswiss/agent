@@ -49,6 +49,7 @@ from .coordinator_common import (
     CoordinatorError,
     DraftHeadNotVerifiedError,
     LaneFailedError,
+    MalformedSurfaceCheckpoint,
     NonRecoverableCoordinatorError,
     LaneRunner,
     Runner,
@@ -67,6 +68,7 @@ from .coordinator_common import (
     parse_change_summaries,
     parse_model_result,
     parse_surface_list,
+    SURFACE_LIST_RULES,
     read_task_text,
     redact,
     redact_tail,
@@ -1094,8 +1096,90 @@ def _implementer_instruction(
         "existing element names that element and the different job it has, on "
         "the line itself. Any other ADDED: line needs no different job. "
         "When that section is empty, write REUSED: none — nothing existing does this job. "
-        "The script posts these lines into the pull request body. Do not call GitHub."
+        "The script posts these lines into the pull request body. Do not call GitHub. "
+        f"Rules the script enforces: {SURFACE_LIST_RULES}"
     )
+
+
+# Two repair reruns per malformed implementation round, each consuming one round
+# from the pinned round budget.
+SURFACE_REPAIR_LIMIT = 2
+
+
+def _surface_repair_attempts(c: dict[str, Any], round_num: int) -> int:
+    """Repairs already spent by the round whose malformed output is being repaired."""
+    state = c.get("surface_repair")
+    if not isinstance(state, dict) or int(state.get("round") or 0) != round_num:
+        return 0
+    attempts = state.get("attempts")
+    if isinstance(attempts, int) and not isinstance(attempts, bool):
+        return attempts
+    return 0
+
+
+def _surface_repair_within_budget(c: dict[str, Any], round_num: int) -> bool:
+    """The pinned round budget still admits the next repair round."""
+    pin = c.get("round_limit")
+    if not isinstance(pin, dict):
+        return True
+    limit = pin.get("limit")
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        return True
+    return round_num <= limit
+
+
+def _surface_repair_message(rule: str, line: int, attempt: int) -> str:
+    """A repair instruction naming the static rule and line position."""
+    return (
+        "\nRepair the surface checkpoint. The previous result was rejected "
+        "before review because its surface checkpoint is malformed. "
+        f"Violated rule: {rule} "
+        f"Offending line position within its section: {line}. "
+        "Rerun the same implementation on the same checkout and return the "
+        "complete result again, including a REUSED: section and an ADDED: "
+        f"section that follow every rule: {SURFACE_LIST_RULES} "
+        f"This is repair rerun {attempt} of {SURFACE_REPAIR_LIMIT}."
+    )
+
+
+def _open_surface_repair_round(
+    store: Store, task: dict[str, Any], next_round: int
+) -> None:
+    """Open a real implementation round for a repair rerun.
+
+    The malformed attempt's round row keeps its empty implementer verdict and
+    is closed, so the repair consumes budget like any other implementation
+    round and the next ``_ensure_round`` resumes the new round.
+    """
+    current = int(task.get("current_round") or 0)
+    for row in store.rows("task_round"):
+        if (
+            row.get("task_id") == task["id"]
+            and int(row.get("round") or 0) == current
+            and row.get("implementer_verdict") is None
+            and row.get("finished_at") is None
+        ):
+            closed = copy.deepcopy(row)
+            closed["finished_at"] = utcnow()
+            store.write("task_round", "update", str(closed["id"]), strip_row(closed))
+            break
+    rid = str(uuid.uuid4())
+    store.write(
+        "task_round",
+        "insert",
+        rid,
+        {
+            "id": rid,
+            "task_id": task["id"],
+            "round": next_round,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": utcnow(),
+            "finished_at": None,
+        },
+    )
+    task["current_round"] = next_round
+    task["state"] = "implementing"
 
 
 def _spec_context(
@@ -1764,26 +1848,73 @@ def phase_implement(
         )
 
     first_vendor = _first_slot_vendor(task)
-    instruction = _implementer_instruction(store, worker, task, runner)
+    base_instruction = _implementer_instruction(store, worker, task, runner)
+    instruction = base_instruction
     task_text = read_task_text(worker, task)
-    record_body = (
-        _spec_context(c, instruction, text=task_text_reference(task_text))
-        if len(task_text) > TASK_TEXT_RECORD_BOUND
-        else None
-    )
     record_round_findings(store, tr, c)
-    agent, result = launch_lane(
-        store,
-        worker,
-        task,
-        role="implementer",
-        vendor=first_vendor,
-        round_num=round_num,
-        spec_body=_spec_context(c, instruction, text=task_text),
-        record_spec_body=record_body,
-        runner=runner,
-        lane_runner=lane_runner,
-    )
+    while True:
+        c = coord(task)
+        repaired = c.get("surface_repair")
+        if (
+            isinstance(repaired, dict)
+            and int(repaired.get("round") or 0) == round_num
+            and _surface_repair_attempts(c, round_num) > 0
+        ):
+            # A crash after opening the repair round resumes with its message.
+            instruction = base_instruction + _surface_repair_message(
+                str(repaired.get("rule") or ""),
+                int(repaired.get("line") or 1),
+                _surface_repair_attempts(c, round_num),
+            )
+        record_body = (
+            _spec_context(c, instruction, text=task_text_reference(task_text))
+            if len(task_text) > TASK_TEXT_RECORD_BOUND
+            else None
+        )
+        try:
+            agent, result = launch_lane(
+                store,
+                worker,
+                task,
+                role="implementer",
+                vendor=first_vendor,
+                round_num=round_num,
+                spec_body=_spec_context(c, instruction, text=task_text),
+                record_spec_body=record_body,
+                runner=runner,
+                lane_runner=lane_runner,
+            )
+        except MalformedSurfaceCheckpoint as exc:
+            # Repair the checkpoint first; block only after the bounded reruns.
+            c = coord(task)
+            attempts = _surface_repair_attempts(c, round_num)
+            next_round = round_num + 1
+            if (
+                attempts >= SURFACE_REPAIR_LIMIT
+                or not _surface_repair_within_budget(c, next_round)
+            ):
+                raise
+            attempts += 1
+            _open_surface_repair_round(store, task, next_round)
+            round_num = next_round
+            tr = _find_round(store, task["id"], round_num)
+            c = coord(task)
+            c["surface_repair"] = {
+                "round": next_round,
+                "attempts": attempts,
+                "rule": exc.rule,
+                "line": exc.line,
+            }
+            save_task(store, task)
+            instruction = base_instruction + _surface_repair_message(
+                exc.rule, exc.line, attempts
+            )
+            record_round_findings(store, tr, c)
+            continue
+        c = coord(task)
+        if c.pop("surface_repair", None) is not None:
+            save_task(store, task)
+        break
     c = coord(task)
     status = result.status
     model_result = result.protocol_result

@@ -24,6 +24,7 @@ from .coordinator_common import (
     CoordinatorError,
     LaneFailedError,
     LaneRunner,
+    MalformedSurfaceCheckpoint,
     Runner,
     a38_model_second,
     checklist_key_for_stage,
@@ -44,6 +45,7 @@ from .coordinator_common import (
     save_task,
     seconds_since,
     source_kind,
+    surface_list_violation,
     _surface_ref_is_repository_relative,
     strip_row,
 )
@@ -365,8 +367,10 @@ def implementer_replay_fields(
     """Schema-preserving structured fields needed to replay an implementer."""
     summaries = parse_change_summaries(stdout)
     surfaces = parse_surface_list(stdout)
-    if surfaces is None and re.search(r"(?m)^(?:REUSED|ADDED):", stdout):
-        raise CoordinatorError("implementer surface checkpoint is malformed")
+    if surfaces is None:
+        violation = surface_list_violation(stdout)
+        if violation is not None:
+            raise MalformedSurfaceCheckpoint(violation)
     safe_summaries: tuple[str, str] | None = None
     if summaries is not None:
         candidate = (
