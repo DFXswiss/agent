@@ -43,7 +43,7 @@ from agent_cli.coordinator_runtime import (
     phase_handlers,
     preflight_worker,
 )
-from agent_cli.local_ci import BEGIN_MARK
+from agent_cli.local_ci import BEGIN_MARK, LocalCiReport, SCHEMA_ID, render_block
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_coordinator import (
@@ -194,6 +194,17 @@ def seed_model_task(
     worktree = worker.workspace_root / tid
     worktree.mkdir(parents=True, exist_ok=True)
     (worktree / ".git").mkdir(exist_ok=True)
+    report_body = render_block(
+        LocalCiReport(
+            schema=SCHEMA_ID,
+            repo="example/project",
+            head=fake.head,
+            private=False,
+            recorded_at="2026-01-01T00:00:00Z",
+            required=(),
+            runs=(),
+        )
+    )
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "pr-review", "title": "A38 model task", "repo": "example/project", "ref": "42",
@@ -211,7 +222,8 @@ def seed_model_task(
             "a38": {"enabled": True, "second_review_mode": "model", "base_sha": fake.base,
                     "policy_revision": fake.base,
                     "report": {"head": fake.head, "base_sha": fake.base,
-                               "policy_revision": fake.base, "activity_id": "report"},
+                               "policy_revision": fake.base, "activity_id": "report",
+                               "body": report_body},
                     "first_review_passes": 1, **a38_extra},
         }},
         "current_round": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
@@ -774,7 +786,7 @@ def test_model_task_merged_without_second_comment_blocks_at_once(
             published.append((kind, message)) or [f"blocker {kind}"]
         ),
     )
-    assert _await_second_review_after_merge(store, worker, first, fake, fake.head, blocking=False) == [
+    assert _await_second_review_after_merge(store, worker, first, fake, fake.head, outcome="missing") == [
         "blocker merged-without-second-review"
     ]
     assert published[-1] == (
@@ -785,7 +797,7 @@ def test_model_task_merged_without_second_comment_blocks_at_once(
     assert c["phase"] == "blocked" and "resume_phase" not in c and "merged_waiting_since" not in c["a38"]
     assert c["blocker"] == f"merged before the model second review was posted on {fake.head}"
     second = seed_model_task(store, worker, fake, "60000000-0000-4000-8000-000000000002", phase="await_merge")
-    assert _await_second_review_after_merge(store, worker, second, fake, fake.head, blocking=True) == [
+    assert _await_second_review_after_merge(store, worker, second, fake, fake.head, outcome="blocking") == [
         "blocker merged-with-blocking-second-review"
     ]
     assert published[-1] == (

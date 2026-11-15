@@ -45,8 +45,8 @@ subsequent notification that provides useful model work belong to the script.
    each controlled raw logical line gets a compiled case-insensitive candidate
    check
    over a control-byte-translated view. Only candidate lines build the three
-   views, one at a time: a control-stripped view (controls and their
-   payloads removed), a payload-kept view (only introducers, terminators, and
+   primary views, one at a time: a control-stripped view (controls and their
+   payloads removed), a payload-kept view (the outer introducer, terminator, and
    CSI parameter bytes removed), and a key-join view. The key-join view uses the
    assignment scanner's own classifier to retain only control-sequence bytes
    that the scanner may join into a key, including a key-character CSI/ESC
@@ -55,15 +55,26 @@ subsequent notification that provides useful model work belong to the script.
    case-insensitively, the raw logical line is redacted from the start of the
    mapped whitespace token through logical-line end. Standalone removable C0
    bytes are removed from every view but activate nothing without ESC/C1.
-   Removable control bytes inside retained string-control payloads are omitted
-   from every structural view, so they cannot split a keyword in the
-   payload-kept view.
+   Nested string controls keep their payload text at every nesting depth; their
+   introducers and terminators are omitted. Retained string-control payloads
+   are checked in both a payload-clean view and a payload-key-join view. The
+   payload-clean view omits complete nested CSI spans (parameters,
+   intermediates, and final), other ESC sequences, C0 bytes, and lone C1 bytes.
+   The payload-key-join view contributes exactly the key characters from nested
+   CSI/ESC sequences that the assignment scanner may join into a key and omits
+   all other control bytes. The second view is built lazily only for payloads
+   that contain nested controls, and a keyword in either view activates the
+   line rule. An unterminated nested string control fails closed and treats the
+   whole logical line as matched.
    Complete and unterminated OSC, DCS, PM, APC, and SOS spans are indexed on the
    complete raw input before logical lines are formed, so payload newlines are
    not boundaries. A mapped start inside such a span moves to its introducer;
    the introducer and payload are never replaced separately. An unterminated
    string control extends through the end of the text and swallows every
-   following physical line into its payload. Following normal lines outside the
+   following physical line into its payload. The same linear, nesting-aware
+   scanner supplies every string-control span boundary to redaction, terminal
+   sanitization, logical-line splitting, and all structural views, including
+   both payload views. Following normal lines outside the
    span remain independent; lines without ESC/C1 skip this rule, and controlled
    lines without a keyword retain the existing control handling. A whitespace
    token exactly `<config_dir>/` followed only by `[A-Za-z0-9._-]+` is the one
