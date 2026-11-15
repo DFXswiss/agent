@@ -1378,17 +1378,37 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert "introducer" in normalized
         assert "swallows every following physical line" in normalized
 
+    control_run_window = (
+        "The bounded control-run window of at most 64 runs in "
+        "`TERMINAL_INTERLEAVE_PATTERN` applies only to the raw regex consumers "
+        "`_RAW_AUTH_HEADER` (authorization, set-cookie, and cookie headers), "
+        "`_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN` "
+        "(`gh[pousr]_`, `github_pat_`, and `sk-` tokens), `_RAW_AKIA` "
+        "(`AKIA` plus 16 of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and "
+        "`/home/` paths), `_RAW_URL_AUTH` (control-tolerant URL schemes), and "
+        "`_RAW_PRIVATE_KEY` (private-key header words)"
+    )
+    escape_parameter_window = (
+        "CSI/ESC parameter and intermediate bytes are matched with a fixed "
+        "window of at most 64 bytes each (`_MAX_ESCAPE_PARAMETER_BYTES`)"
+    )
+    known_secret_views = (
+        "The linear view matcher has no control-run limit and covers only the "
+        "configured known secrets: the config directory, the gh config "
+        "directory, the signing key, and the device bearer"
+    )
     for text in (documented, ai_accounts, readme):
         normalized = " ".join(text.split())
+        assert control_run_window in normalized
+        assert known_secret_views in normalized
+    assert control_run_window in " ".join(documented.split())
+    assert control_run_window in " ".join(ai_accounts.split())
+    assert control_run_window in " ".join(readme.split())
+    assert control_run_window in " ".join(skill.split())
+    for text in (documented, ai_accounts, readme, skill):
         assert (
-            "Fixed matching windows apply only to bounded regex consumers"
-            in normalized
-        )
-        assert (
-            "Exact known-secret, path, and bearer matching searches a fixed "
-            "set of views with a linear matcher"
-            in normalized
-        )
+            control_run_window + ". " + escape_parameter_window
+        ) in " ".join(text.split())
 
     for text in (documented, ai_accounts, readme, skill):
         normalized = " ".join(text.split())
@@ -1670,10 +1690,26 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in documented
     )
     assert (
-        "Fixed matching windows apply only to the bounded regex consumers" in flat
+        "The bounded control-run window of at most 64 runs in "
+        "`TERMINAL_INTERLEAVE_PATTERN` applies only to the raw regex consumers "
+        "`_RAW_AUTH_HEADER` (authorization, set-cookie, and cookie headers), "
+        "`_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN` "
+        "(`gh[pousr]_`, `github_pat_`, and `sk-` tokens), `_RAW_AKIA` "
+        "(`AKIA` plus 16 of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and "
+        "`/home/` paths), `_RAW_URL_AUTH` (control-tolerant URL schemes), and "
+        "`_RAW_PRIVATE_KEY` (private-key header words)"
+        in flat
     )
     assert (
-        "Exact known-secret matching searches a fixed set of views with a linear matcher"
+        "`_RAW_PRIVATE_KEY` (private-key header words). "
+        "CSI/ESC parameter and intermediate bytes are matched with a fixed "
+        "window of at most 64 bytes each (`_MAX_ESCAPE_PARAMETER_BYTES`)"
+        in flat
+    )
+    assert (
+        "The linear view matcher has no control-run limit and covers only the "
+        "configured known secrets: the config directory, the gh config "
+        "directory, the signing key, and the device bearer"
         in flat
     )
     assert "Secret-key name affixes" not in documented

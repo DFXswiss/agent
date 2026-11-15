@@ -103,12 +103,21 @@ subsequent notification that provides useful model work belong to the script.
    is incomplete, the payload remains
    opaque so later key fragments still join. BEL terminates OSC only; DCS, PM,
    APC, and SOS require `ESC \` or the eight-bit ST byte.
-   Fixed matching windows apply only to the bounded regex consumers for
-   control-tolerant URL schemes, e-mail address parts, private-key header words,
-   and terminal escape parameters. Exact known-secret matching searches a fixed
-   set of views with a linear matcher, so separatorless log text is handled in
-   linear time. The views are the raw text, text that drops complete string
-   controls, complete ESC/CSI sequences, and C0/C1 bytes, text with
+   The bounded control-run window of at most 64 runs in
+   `TERMINAL_INTERLEAVE_PATTERN` applies only to the raw regex consumers
+   `_RAW_AUTH_HEADER` (authorization, set-cookie, and cookie headers),
+   `_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN` (`gh[pousr]_`,
+   `github_pat_`, and `sk-` tokens), `_RAW_AKIA` (`AKIA` plus 16 of
+   `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
+   `_RAW_URL_AUTH` (control-tolerant URL schemes), and `_RAW_PRIVATE_KEY`
+   (private-key header words). CSI/ESC parameter and intermediate bytes are
+   matched with a fixed window of at most 64 bytes each
+   (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
+   limit and covers only the configured known secrets: the config directory,
+   the gh config directory, the signing key, and the device bearer, so
+   separatorless log text is handled in linear time. The views are the raw
+   text, text that drops complete string controls, complete ESC/CSI
+   sequences, and C0/C1 bytes, text with
    introducers, terminators, and C0/C1 bytes removed, and text with
    complete ESC/CSI sequences removed while string-control payloads stay, plus
    one view that keeps an ESC final used as a string-control introducer and

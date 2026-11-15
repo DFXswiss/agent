@@ -418,6 +418,15 @@ def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> s
             configured_paths.append(
                 (account.git_identity["signing_key"], "<signing_key>")
             )
+    configured_paths = sorted(
+        (
+            (path, replacement)
+            for path, replacement in configured_paths
+            if path != ""
+        ),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
     for path, replacement in configured_paths:
         safe = redact_terminal_interleaved_secret(
             safe, path, replacement=replacement

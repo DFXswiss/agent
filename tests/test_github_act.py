@@ -714,12 +714,57 @@ def test_safe_execution_error_redacts_configured_paths_before_and_after_sanitizi
         (secret, replacement)
         for _control_run in runs
         for secret, replacement in (
-            (gh_config_dir, "<gh_config_dir>"),
             (signing_key, "<signing_key>"),
             (gh_config_dir, "<gh_config_dir>"),
             (signing_key, "<signing_key>"),
+            (gh_config_dir, "<gh_config_dir>"),
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("gh_config_dir", "signing_key"),
+    [
+        ("/opt/gh", "/opt/gh/id_ed25519"),
+        ("/opt/gh", "/opt/gh-backup/id_ed25519"),
+    ],
+    ids=("nested-prefix", "sibling-prefix"),
+)
+def test_safe_execution_error_replaces_configured_paths_longest_first(
+    tmp_path: Path, gh_config_dir: str, signing_key: str
+) -> None:
+    from agent_cli import github_act
+
+    store = Store(tmp_path)
+    _owned_session(store)
+    (tmp_path / "github-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "worker": {
+                        "login": "theo-vane",
+                        "gh_config_dir": gh_config_dir,
+                        "git": {
+                            "name": "Test Worker",
+                            "email": "test@example.com",
+                            "signing_format": "ssh",
+                            "signing_key": signing_key,
+                        },
+                    }
+                },
+                "sessions": {"s1": "worker"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleaned = github_act._safe_execution_error(
+        store,
+        {"session_id": "s1"},
+        f"profile {gh_config_dir} key {signing_key}",
+    )
+    assert cleaned == "profile <gh_config_dir> key <signing_key>"
+    assert "id_ed25519" not in cleaned
+    assert signing_key not in cleaned
 
 
 def test_pr_open_view_token_not_found_no_create(tmp_path: Path) -> None:

@@ -1353,11 +1353,18 @@ also at a comma or semicolon. The scan is linear, except where whitespace
 follows terminal controls that hold key characters (a key character (a letter,
 a digit, `_` or `-`) among the parameter, intermediate or final bytes of a CSI
 or ESC sequence, or a key character in a string-control payload);
-such text costs time quadratic in the number of those controls. Fixed matching
-windows apply only to bounded
-regex consumers for control-tolerant URL schemes, e-mail address parts,
-private-key header words, and terminal escape parameters. Exact known-secret,
-path, and bearer matching searches a fixed set of views with a linear matcher.
+such text costs time quadratic in the number of those controls. The bounded
+control-run window of at most 64 runs in `TERMINAL_INTERLEAVE_PATTERN` applies
+only to the raw regex consumers `_RAW_AUTH_HEADER` (authorization, set-cookie,
+and cookie headers), `_RAW_BEARER` (generic Bearer tokens), `_RAW_KNOWN_TOKEN`
+(`gh[pousr]_`, `github_pat_`, and `sk-` tokens), `_RAW_AKIA` (`AKIA` plus 16
+of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
+`_RAW_URL_AUTH` (control-tolerant URL schemes), and `_RAW_PRIVATE_KEY`
+(private-key header words). CSI/ESC parameter and intermediate bytes are
+matched with a fixed window of at most 64 bytes each
+(`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
+limit and covers only the configured known secrets: the config directory, the gh
+config directory, the signing key, and the device bearer.
 An occurrence that needs different treatment of two controls is not matched.
 Value runs that do not need delimiter backtracking are possessive. The fixed
 regex windows and the known-secret view matcher stay linear on long
@@ -1409,8 +1416,9 @@ errors must not appear
 in replicated rows or GitHub text. GitHub activity failures replace the exact
 configured profile and signing-key paths in raw text before terminal
 sanitization, repeat that exact replacement after generic sanitization, and
-only then apply the replicated-row length bound. Exact path and bearer matching
-searches the same fixed views with a linear matcher before any string-control
+only then apply the replicated-row length bound. Exact matching of those
+configured paths and of the device bearer searches the same fixed views with a
+linear matcher and has no control-run limit, before any string-control
 replacement. A complete or unterminated OSC, DCS, PM, APC, or SOS span,
 including nested payload, is removed whole in the view that drops every
 terminal control. The views that drop introducers and terminators keep that
