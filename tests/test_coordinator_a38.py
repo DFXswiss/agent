@@ -252,6 +252,110 @@ def test_a38_cli_uses_worker_check_timeout(
     assert captured["timeout"] == worker.check_timeout
 
 
+def test_a38_report_policy_is_normalized_with_readme_only_omit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from agent_cli import coordinator_a38
+    from agent_cli.a38 import _build_report_dict, _write_report
+
+    head = "a" * 40
+    base = "b" * 40
+    raw = json.dumps(
+        {
+            "schema": "a38/v1",
+            "standard": "A38",
+            "documentation": "docs/a38.md",
+            "mode": "enforce",
+            "jobs": [
+                {
+                    "id": "unit",
+                    "name": "Unit tests",
+                    "command": "pytest",
+                    "timeout_s": 60,
+                    "workflow": ".github/workflows/ci.yml",
+                    "job": "unit",
+                }
+            ],
+            "exclusions": [],
+            "readme_only": {"omit_jobs": ["unit"]},
+        }
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "git", lambda *_a, **_k: Completed(0, raw, "")
+    )
+    result, policy = coordinator_a38._load_report_policy(None, None, None, ".", base)  # type: ignore[arg-type]
+    assert result.stdout == raw
+    assert policy["readme_only_omit"] == ["unit"]
+    assert "readme_only" not in policy
+
+    payload = _build_report_dict(
+        repo="example/project",
+        head=head,
+        private=False,
+        recorded_at="2026-11-01T00:00:00Z",
+        required=["unit"],
+        runs=[
+            {
+                "id": "unit",
+                "name": "Unit tests",
+                "command": "pytest",
+                "result": "not_applicable",
+                "exit_code": 0,
+                "duration_s": 0,
+                "timeout_s": 60,
+            }
+        ],
+        base=base,
+        changed_paths=["README.md"],
+        omit_reason="README-only change set",
+        readme_only=True,
+    )
+    path = tmp_path / "report.md"
+    _write_report(
+        path,
+        payload,
+        base_sha=base,
+        changed_paths=["README.md"],
+        omit_reason="README-only change set",
+    )
+    body = path.read_text(encoding="utf-8")
+    coordinator_a38._validate_report_body(
+        body,
+        policy=policy,
+        repo="example/project",
+        head=head,
+        base_sha=base,
+        private=False,
+        changed_paths=["README.md"],
+    )
+    # The raw manifest still says readme_only, which verify_report does not read.
+    with pytest.raises(CoordinatorError, match="does not satisfy the current policy"):
+        coordinator_a38._validate_report_body(
+            body,
+            policy=json.loads(raw),
+            repo="example/project",
+            head=head,
+            base_sha=base,
+            private=False,
+            changed_paths=["README.md"],
+        )
+
+
+@pytest.mark.parametrize("manifest", ('{"jobs": []}', "not json"))
+def test_a38_invalid_base_policy_raises(
+    monkeypatch: pytest.MonkeyPatch, manifest: str
+) -> None:
+    from agent_cli import coordinator_a38
+
+    monkeypatch.setattr(
+        coordinator_a38, "git", lambda *_a, **_k: Completed(0, manifest, "")
+    )
+    with pytest.raises(CoordinatorError, match="A38 base policy is invalid"):
+        coordinator_a38._load_report_policy(None, None, None, ".", "b" * 40)  # type: ignore[arg-type]
+
+
 def test_second_review_request_note_is_bounded_for_long_repo_and_session() -> None:
     repo = "o/" + "r" * 98
     session_id = "s" * 64
