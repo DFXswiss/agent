@@ -663,6 +663,13 @@ A record of a check lane is closed the same way, but closing it does not retry t
    decisions. Starting or succeeding writes no order event. Without
    `conflict_remedy`, no resolution starts and the same question is published.
 
+   A Ready order waiting in `await_merge` for the human merge returns to
+   `readiness` when its open pull request reports `CONFLICTING`, for example
+   after a sibling pull request merged first. The readiness gate then measures
+   `pr_mergeable` and starts this same conflict remedy. `MERGEABLE`,
+   not-yet-computed (`UNKNOWN` or missing) mergeability, and a transient
+   mergeability read keep waiting in `await_merge`.
+
    For an order the second review is the check `review_2`. It means that review
    2 is free of findings on the current head or that a human used the declared
    one-review waiver. It is required by CI and readiness. For an issue task, the two

@@ -3178,6 +3178,25 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             "Pull request was closed without a verified human merge.",
             kind="closed-unmerged",
         )
+    if state == "OPEN" and is_order(task):
+        try:
+            view = _fetch_pr_json(scoped_runner, target, number, "mergeable,state")
+        except CiObservationTransportError:
+            # A transient read keeps waiting; it never blocks or fails the order.
+            view = None
+        if (
+            isinstance(view, dict)
+            and str(view.get("state") or "").upper() == "OPEN"
+            and str(view.get("mergeable") or "").upper() == "CONFLICTING"
+        ):
+            # The readiness gate rechecks pr_mergeable and starts the existing
+            # order conflict remedy; no second resolution path is added here.
+            c["phase"] = "readiness"
+            save_task(store, task)
+            return [
+                f"pull request {target}#{number} is CONFLICTING on "
+                f"{expected_head[:7]}; routing to readiness"
+            ]
     return [f"awaiting human merge of {target}#{number}"]
 
 
