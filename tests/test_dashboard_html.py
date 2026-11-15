@@ -9,15 +9,26 @@ from agent_cli.main import _usage_dashboard_rows
 
 pytestmark = pytest.mark.no_pg
 
+STATIC = (
+    Path(__file__).resolve().parents[1] / "src" / "agent_cli" / "static"
+)
+PAGE = STATIC / "index.html"
+SECTION_PAGE = STATIC / "section.html"
+MOVED_SECTIONS = (
+    ("usage", "Usage", "usage"),
+    ("sessions", "Sessions", "sessions"),
+    ("tasks", "Tasks", "tasks"),
+    ("rounds", "Rounds", "rounds"),
+    ("agents", "Agents", "agents"),
+    ("checks", "Local checks", "checks"),
+    ("gates", "Review gates", "gates"),
+    ("work", "Open work", "work"),
+    ("pings", "Pings", "pings"),
+)
+
 
 def test_dashboard_html_contains_usage_table() -> None:
-    html = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "agent_cli"
-        / "static"
-        / "index.html"
-    ).read_text(encoding="utf-8")
+    html = SECTION_PAGE.read_text(encoding="utf-8")
     assert 'id="usage"' in html
     assert 'typeof p.used_percent === "number"' in html
     assert 'document.querySelector("#usage tbody").innerHTML = (data.usage || []).map(ev => {' in html
@@ -72,13 +83,7 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
     }
     assert _usage_dashboard_rows([legacy]) == [legacy]
 
-    html = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "agent_cli"
-        / "static"
-        / "index.html"
-    ).read_text(encoding="utf-8")
+    html = SECTION_PAGE.read_text(encoding="utf-8")
     assert 'const openrouter = (p.provider || p.vendor) === "openrouter";' in html
     assert 'const account = openrouter ? p.account : p.account_email;' in html
     assert 'typeof p.usage_usd === "number"' in html
@@ -218,9 +223,11 @@ def test_orders_view_markup() -> None:
     device = html.index('<p>Device <code id="dev">')
     orders = html.index("<h2>Orders</h2>")
     events = html.index("<h2>Order events</h2>")
-    usage = html.index("<h2>Usage</h2>")
-    assert device < orders < events < usage
-    assert html.count("session-row") == 6
+    nav = html.index('id="section-nav"')
+    assert device < orders < events < nav
+    for _, title, _ in MOVED_SECTIONS:
+        assert f"<h2>{title}</h2>" not in html
+    assert "session-row" not in html
     assert "tr.order-row" in html
     assert "<script src" not in html
     assert "<link" not in html
@@ -275,6 +282,34 @@ def test_new_order_subpage_markup() -> None:
     assert "<link" not in html
     assert "http://" not in html
     assert "https://" not in html
+
+
+def test_main_page_omits_moved_sections_and_links_to_their_subpages() -> None:
+    html = PAGE.read_text(encoding="utf-8")
+    for name, title, table_id in MOVED_SECTIONS:
+        assert f"<h2>{title}</h2>" not in html
+        assert f'id="{table_id}"' not in html
+        assert f'href="/{name}"' in html
+        assert html.count(f'href="/{name}"') == 1
+    assert 'id="session-detail"' not in html
+    assert 'id="detail-controls"' not in html
+    assert html.count('id="section-nav"') == 1
+
+    events = html.index("<h2>Order events</h2>")
+    nav = html.index('id="section-nav"')
+    assert events < nav
+
+
+def test_each_subpage_carries_its_section_and_a_way_back() -> None:
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    for name, title, table_id in MOVED_SECTIONS:
+        assert f'data-section="{name}"' in html
+        assert f"<h2>{title}</h2>" in html
+        assert f'id="{table_id}"' in html
+        assert f'href="/{name}"' in html
+    assert '<a href="/">Back to dashboard</a>' in html
+    assert 'href="/usage"' in html
+    assert "setInterval(tick, 2000);" in html
 
 
 def test_orders_script_is_a_second_element() -> None:

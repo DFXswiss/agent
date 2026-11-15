@@ -242,6 +242,27 @@ N_A_ALLOWED = frozenset(
 )
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 STATIC_NEW_ORDER = Path(__file__).resolve().parent / "static" / "orders_new.html"
+SECTION_STATIC = Path(__file__).resolve().parent / "static" / "section.html"
+DASHBOARD_SECTIONS = (
+    "usage",
+    "sessions",
+    "tasks",
+    "rounds",
+    "agents",
+    "checks",
+    "gates",
+    "work",
+    "pings",
+)
+
+
+def _dashboard_page(path: str) -> Path | None:
+    """Map a dashboard URL path to the static page that serves it."""
+    if path in ("/", "/index.html"):
+        return STATIC
+    if path.startswith("/") and path[1:] in DASHBOARD_SECTIONS:
+        return SECTION_STATIC
+    return None
 
 
 def die(msg: str) -> None:
@@ -2295,11 +2316,19 @@ def cmd_dashboard(args: list[str]) -> None:
                 _canonicalize_snapshot_names(snap)
                 self._json(200, snap)
                 return
-            if path in ("/", "/index.html"):
-                self._html(STATIC, "dashboard missing")
-                return
             if path in ("/orders/new", "/orders/new.html"):
                 self._html(STATIC_NEW_ORDER, "new order page missing")
+                return
+            page = _dashboard_page(path)
+            if page is not None:
+                if not page.is_file():
+                    self.send_error(500, "dashboard missing")
+                    return
+                body = page.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
                 return
             self.send_error(404)
 
