@@ -17,12 +17,6 @@
     .done, .approved { color: #060; }
     .merged { color: #6f5b24; }
     code { font-size: 0.85em; }
-    tr.session-row { cursor: pointer; }
-    tr.session-row:hover { background: #faf7f0; }
-    tr.session-row.selected { background: #ebe4d4; }
-    #session-detail { background: #fff; border: 1px solid #e0d8c8; padding: 14px 16px; margin: 12px 0 8px; }
-    #session-detail[hidden] { display: none; }
-    #detail-pre { background: #1a1a1a; color: #d8d8d8; padding: 12px; overflow: auto; max-height: 240px; font-size: 0.85rem; }
     .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
     .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
     .control-form button { padding: 6px 12px; cursor: pointer; }
@@ -37,6 +31,7 @@
     a.button { display: inline-block; padding: 6px 12px; background: #efeae0; border: 1px solid #c9c0ad; color: #1a1a1a; text-decoration: none; }
     a.button:hover { background: #e6dfd0; }
     #orders td, #order-events td, #order-detail td { overflow-wrap: anywhere; }
+    nav { display: flex; flex-wrap: wrap; gap: 14px; margin: 22px 0 8px; }
   </style>
 </head>
 <body>
@@ -79,129 +74,22 @@
   </div>
   <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
 
-  <h2>Usage</h2>
-  <table id="usage"><thead><tr><th>Owner</th><th>Email</th><th>Provider</th><th>Tier</th><th>Used</th><th>Reset</th><th>Fetched</th></tr></thead><tbody></tbody></table>
-
-  <h2>Sessions</h2>
-  <table id="sessions"><thead><tr><th>Id</th><th>Kind</th><th>Status</th><th>Control</th><th>Last seen</th><th>Origin</th></tr></thead><tbody></tbody></table>
-
-  <div id="session-detail" hidden>
-    <h2>Session <code id="detail-id"></code></h2>
-    <pre id="detail-pre"></pre>
-    <div id="detail-controls"></div>
-  </div>
-
-  <h2>Tasks</h2>
-  <table id="tasks"><thead><tr><th>Id</th><th>Title</th><th>Workflow</th><th>State</th><th>Round</th><th>Origin</th></tr></thead><tbody></tbody></table>
-
-  <h2>Rounds</h2>
-  <table id="rounds"><thead><tr><th>Task</th><th>Round</th><th>Implementer</th><th>Reviewer</th><th>Started</th><th>Finished</th></tr></thead><tbody></tbody></table>
-
-  <h2>Agents</h2>
-  <table id="agents"><thead><tr><th>Id</th><th>Role</th><th>Vendor</th><th>Status</th><th>Task</th><th>Round</th></tr></thead><tbody></tbody></table>
-
-  <h2>Local checks</h2>
-  <table id="checks"><thead><tr><th>Task</th><th>Name</th><th>Result</th><th>Command</th><th>Ran at</th></tr></thead><tbody></tbody></table>
-
-  <h2>Review gates</h2>
-  <table id="gates"><thead><tr><th>Task</th><th>Stage</th><th>Dimension</th><th>Vendor</th><th>Verdict</th><th>Head</th></tr></thead><tbody></tbody></table>
-
-  <h2>Open work</h2>
-  <table id="work"><thead><tr><th>Session</th><th>Key</th><th>Status</th><th>Closable by</th><th>Note</th></tr></thead><tbody></tbody></table>
-
-  <h2>Pings</h2>
-  <table id="pings"><thead><tr><th>From</th><th>To</th><th>Kind</th><th>Acked</th></tr></thead><tbody></tbody></table>
+  <nav id="section-nav">
+    <a href="/usage">Usage</a>
+    <a href="/sessions">Sessions</a>
+    <a href="/tasks">Tasks</a>
+    <a href="/rounds">Rounds</a>
+    <a href="/agents">Agents</a>
+    <a href="/checks">Local checks</a>
+    <a href="/gates">Review gates</a>
+    <a href="/work">Open work</a>
+    <a href="/pings">Pings</a>
+  </nav>
 
   <p id="err" class="failed" hidden></p>
   <script>
-    let selectedSessionId = null;
-    let sessionsById = {};
-
     function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
     function empty(cols) { return `<tr><td colspan='${cols}'>—</td></tr>`; }
-
-    async function postControl(id, body) {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let msg = "HTTP " + res.status;
-        try {
-          const j = await res.json();
-          if (j && j.error) msg = j.error;
-        } catch (_) {}
-        throw new Error(msg);
-      }
-      await tick();
-    }
-
-    function fillDetailPre(s) {
-      const runtime = s.runtime || {};
-      document.getElementById("detail-pre").textContent = JSON.stringify({
-        id: s.id,
-        kind: s.kind,
-        status: s.status,
-        runtime,
-        can_control: s.can_control,
-        control_connected: s.control_connected,
-      }, null, 2);
-    }
-
-    function renderDetail(s) {
-      const box = document.getElementById("session-detail");
-      if (!s) {
-        box.hidden = true;
-        return;
-      }
-      box.hidden = false;
-      document.getElementById("detail-id").textContent = s.id;
-      fillDetailPre(s);
-      const controls = document.getElementById("detail-controls");
-      if (s.can_control) {
-        controls.innerHTML = `
-          <div class="control-form">
-            <button type="button" id="ctl-start">Start</button>
-            <button type="button" id="ctl-start-grok">Start Grok</button>
-            <button type="button" id="ctl-stop">Stop</button>
-            <input type="text" id="ctl-data" placeholder="input text" />
-            <button type="button" id="ctl-send">Send</button>
-            <button type="button" id="ctl-enter">Enter</button>
-            <button type="button" id="ctl-ctrlc">Ctrl-C</button>
-          </div>
-          <p id="ctl-err" class="failed" hidden></p>`;
-        const showErr = (e) => {
-          const el = document.getElementById("ctl-err");
-          el.hidden = false;
-          el.textContent = String(e);
-        };
-        document.getElementById("ctl-start").onclick = () =>
-          postControl(s.id, { action: "start", payload: {} }).catch(showErr);
-        document.getElementById("ctl-start-grok").onclick = () =>
-          postControl(s.id, { action: "start", payload: { provider: "grok" } }).catch(showErr);
-        document.getElementById("ctl-stop").onclick = () =>
-          postControl(s.id, { action: "stop", payload: {} }).catch(showErr);
-        document.getElementById("ctl-send").onclick = () => {
-          const data = document.getElementById("ctl-data").value;
-          postControl(s.id, { action: "input", payload: { data } }).catch(showErr);
-        };
-        document.getElementById("ctl-enter").onclick = () =>
-          postControl(s.id, { action: "input", payload: { key: "enter" } }).catch(showErr);
-        document.getElementById("ctl-ctrlc").onclick = () =>
-          postControl(s.id, { action: "input", payload: { key: "ctrl-c" } }).catch(showErr);
-      } else {
-        controls.innerHTML = `<p class="watch-note">Watching — this session is on another device.</p>`;
-      }
-    }
-
-    function selectSession(id) {
-      selectedSessionId = id;
-      document.querySelectorAll("tr.session-row").forEach(tr => {
-        tr.classList.toggle("selected", tr.dataset.id === id);
-      });
-      renderDetail(sessionsById[id] || null);
-    }
 
     async function tick() {
       const err = document.getElementById("err");
@@ -213,73 +101,6 @@
         document.getElementById("stamp").textContent = data.generated_at;
         document.getElementById("dev").textContent = data.device_id;
         document.getElementById("login").textContent = data.login || "not paired";
-
-        document.querySelector("#usage tbody").innerHTML = (data.usage || []).map(ev => {
-          const p = ev.payload || {};
-          const openrouter = (p.provider || p.vendor) === "openrouter";
-          const account = openrouter ? p.account : p.account_email;
-          const used = openrouter
-            ? (typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : "")
-            : (typeof p.used_percent === "number" ? p.used_percent + "%" : "");
-          const reset = openrouter ? p.limit_reset : p.period_end;
-          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(account)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(used)}</td><td>${esc(reset)}</td><td>${esc(p.fetched_at)}</td></tr>`;
-        }).join("") || empty(7);
-
-        sessionsById = {};
-        (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
-
-        document.querySelector("#sessions tbody").innerHTML = (data.sessions || []).map(s => {
-          const mode = s.can_control ? "control" : "watch";
-          return `<tr class="session-row${selectedSessionId === s.id ? " selected" : ""}" data-id="${esc(s.id)}">
-            <td>${esc(s.id)}</td><td>${esc(s.kind)}</td><td class="${esc(s.status)}">${esc(s.status)}</td>
-            <td>${esc(mode)}</td><td>${esc(s.last_seen_at)}</td><td>${esc(s._origin_device_id)}</td></tr>`;
-        }).join("") || empty(6);
-
-        document.querySelectorAll("tr.session-row").forEach(tr => {
-          tr.onclick = () => selectSession(tr.dataset.id);
-        });
-
-        if (selectedSessionId) {
-          const selected = sessionsById[selectedSessionId];
-          if (!selected) {
-            selectedSessionId = null;
-            renderDetail(null);
-          } else if (document.getElementById("session-detail").hidden) {
-            renderDetail(selected);
-          } else {
-            fillDetailPre(selected);
-            const hasForm = !!document.getElementById("ctl-start");
-            if (!!selected.can_control !== hasForm) renderDetail(selected);
-          }
-        }
-
-        document.querySelector("#tasks tbody").innerHTML = (data.tasks || []).map(t =>
-          `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${esc(t.workflow)}</td><td class="${esc(t.state)}">${esc(t.state)}</td><td>r${esc(t.current_round)}</td><td>${esc(t._origin_device_id)}</td></tr>`
-        ).join("") || empty(6);
-
-        document.querySelector("#rounds tbody").innerHTML = (data.rounds || []).map(r =>
-          `<tr><td>${esc(r.task_id)}</td><td>${esc(r.round)}</td><td>${esc(r.implementer_verdict)}</td><td>${esc(r.reviewer_verdict)}</td><td>${esc(r.started_at)}</td><td>${esc(r.finished_at)}</td></tr>`
-        ).join("") || empty(6);
-
-        document.querySelector("#agents tbody").innerHTML = (data.agents || []).map(a =>
-          `<tr><td>${esc(a.id)}</td><td>${esc(a.role)}</td><td>${esc(a.vendor)}</td><td class="${esc(a.status)}">${esc(a.status)}</td><td>${esc(a.task_id)}</td><td>${esc(a.round)}</td></tr>`
-        ).join("") || empty(6);
-
-        document.querySelector("#checks tbody").innerHTML = (data.checks || []).map(c =>
-          `<tr><td>${esc(c.task_id)}</td><td>${esc(c.name)}</td><td class="${esc(c.result)}">${esc(c.result)}</td><td><code>${esc(c.command)}</code></td><td>${esc(c.ran_at)}</td></tr>`
-        ).join("") || empty(5);
-
-        document.querySelector("#gates tbody").innerHTML = (data.gates || []).map(g =>
-          `<tr><td>${esc(g.task_id)}</td><td>${esc(g.stage)}</td><td>${esc(g.dimension)}</td><td>${esc(g.vendor)}</td><td class="${esc(g.verdict)}">${esc(g.verdict)}</td><td><code>${esc(g.head_sha)}</code></td></tr>`
-        ).join("") || empty(6);
-
-        document.querySelector("#work tbody").innerHTML = (data.work || []).map(w =>
-          `<tr><td>${esc(w.session_id)}</td><td>${esc(w.key)}</td><td class="${esc(w.status)}">${esc(w.status)}</td><td>${esc(w.closable_by)}</td><td>${esc(w.note)}</td></tr>`
-        ).join("") || empty(5);
-
-        document.querySelector("#pings tbody").innerHTML = (data.pings || []).map(p =>
-          `<tr><td>${esc(p.from_login)}</td><td>${esc(p.to_login)}</td><td>${esc(p.kind)}</td><td>${esc(p.acked_at)}</td></tr>`
-        ).join("") || empty(4);
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);
