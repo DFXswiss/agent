@@ -78,6 +78,7 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
+    grok_stream,
     insert_order_intent,
     lane_runner,
     make_order_worker,
@@ -533,7 +534,9 @@ def test_order_implement_prompt_and_commit_message(
         worker,
         task,
         fake,
-        lambda _argv, _stdin: Completed(0, fake.model_outputs["implementer"], ""),
+        lambda _argv, _stdin: Completed(
+            0, grok_stream(fake.model_outputs["implementer"]), ""
+        ),
     )
     assert messages == ["Implement the order."]
     prompt = control_dir(worker, OID) / "implementer-grok.md"
