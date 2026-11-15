@@ -1555,6 +1555,11 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
     assert "the tick time is never substituted" in " ".join(documented.split())
     assert "stored report body" in documented
     assert "live repository value" in documented
+    assert (
+        "a closed unmerged mismatch retires the checkpoint without promoting "
+        "the report and continues in `await_merge`"
+        in " ".join(documented.split())
+    )
     assert "same control lexer" in " ".join(documented.split())
     for text in (documented, ai_accounts, readme, skill):
         normalized = " ".join(text.split())

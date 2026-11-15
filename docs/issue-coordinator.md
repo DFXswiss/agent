@@ -1727,9 +1727,12 @@ the checkpoint without a live assignment. An unreadable state retries without
 changing the task or publishing. Repository visibility is read again before
 publication and immediately before finalisation through the worker account's
 scoped GitHub runner. The visibility parsed from the stored report body must equal the
-checkpoint and live repository values. A mismatch retires open evidence for
-remeasurement and refuses merged completion; an unreadable lookup retries
-without duplicating a completed report intent. Recovery requires full payload equality and revalidates the
+checkpoint and live repository values. An open mismatch retires open evidence
+for remeasurement and returns to `tests`; a merged mismatch refuses completion
+(`task-done refused`: a merged PR cannot be remeasured); a closed unmerged
+mismatch retires the checkpoint without promoting the report and continues in
+`await_merge`. An unreadable lookup retries without duplicating a completed
+report intent. Recovery requires full payload equality and revalidates the
 v2 schema, repository, head, live inventory facts, and trusted policy jobs; a row
 that merely occupies the deterministic id is measured again and is not test
 evidence. A validated legacy report intent that predates the post-suite
