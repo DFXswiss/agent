@@ -64,12 +64,15 @@ def _gate_task(
     logic: str,
     *,
     lane_results: dict[str, Completed] | None = None,
+    lane_stderr: dict[str, str] | None = None,
     passes: int = 1,
 ):
     """Run review-1 gate steps and return the last step's lines.
 
-    ``lane_results`` replaces a role's process result. ``passes`` repeats the
-    step, for example to recover a checkpoint that failed in the first one.
+    ``lane_results`` replaces a role's process result. ``lane_stderr`` keeps a
+    role's ordinary process result and replaces only its stderr. ``passes``
+    repeats the step, for example to recover a checkpoint that failed in the
+    first one.
     """
     from agent_cli.coordinator_git import _write_marker
     from agent_cli.coordinator_lanes import phase_pr_gates
@@ -175,6 +178,9 @@ def _gate_task(
         for role, replacement in (lane_results or {}).items():
             if role in material:
                 return replacement
+        for role, stderr in (lane_stderr or {}).items():
+            if role in material:
+                return replace(completed, stderr=stderr)
         return completed
 
     lines: list[str] = []
@@ -808,13 +814,14 @@ def _lane_result(
     stdout: str = "",
     stderr: str = "",
     protocol_result: str = "",
+    status: str = "unavailable",
     config_dir: str | None = None,
 ) -> LaneResult:
     return LaneResult(
         role="pr-reviewer-quality",
         vendor="grok",
         model="grok-model",
-        status="unavailable",
+        status=status,
         argv=[],
         returncode=1,
         stdout=stdout,
@@ -859,8 +866,25 @@ def test_incomplete_output_excerpt_takes_the_last_visible_stderr_line() -> None:
     stderr = f"starting review\n\x1b[31m{_PROVIDER_402}\x1b[0m\n\n   \n"
     outcome = _lane_result(stdout=stdout, stderr=stderr)
     assert _incomplete_output_excerpt(outcome) == _PROVIDER_402
-    valid = _lane_result(stdout=stdout, stderr=stderr, protocol_result="approved")
+    valid = _lane_result(
+        stdout=stdout, stderr=stderr, protocol_result="approved", status="complete"
+    )
     assert _incomplete_output_excerpt(valid) == "last stdout line"
+    # A complete lane without a valid result token reads stderr first.
+    no_token = _lane_result(
+        stdout=stdout, stderr=stderr, protocol_result="ask", status="complete"
+    )
+    assert _incomplete_output_excerpt(no_token) == _PROVIDER_402
+    # A lane that did not complete reads stderr first even with a valid token.
+    for status in ("unavailable", "timeout", "partial"):
+        for token in ("approved", "rejected"):
+            not_complete = _lane_result(
+                stdout=stdout, stderr=stderr, protocol_result=token, status=status
+            )
+            assert _incomplete_output_excerpt(not_complete) == _PROVIDER_402, (
+                status,
+                token,
+            )
     stdout_only = _lane_result(stdout=f"{_PROVIDER_402}\n", stderr=" \n")
     assert _incomplete_output_excerpt(stdout_only) == _PROVIDER_402
     assert _incomplete_output_excerpt(_lane_result()) == ""
@@ -1082,24 +1106,47 @@ def test_incomplete_review_blocker_keeps_the_error_after_long_output(
     assert _PROVIDER_402 not in note
 
 
-def test_incomplete_review_blocker_keeps_the_error_after_spool_recovery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _fail_first_reviewer_checkpoint(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Fail the first reviewer checkpoint once and return its call counter.
+
+    The quality checkpoint runs first, so both reviewer results are then
+    recovered from their spools in the next gate step.
+    """
     from agent_cli import coordinator_lanes
 
     real_checkpoint = coordinator_lanes._checkpoint_reviewer_outcome
-    calls = 0
+    calls = [0]
 
     def fail_once(*args: Any, **kwargs: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+        calls[0] += 1
+        if calls[0] == 1:
             raise StoreError("checkpoint unavailable")
         return real_checkpoint(*args, **kwargs)
 
     monkeypatch.setattr(
         coordinator_lanes, "_checkpoint_reviewer_outcome", fail_once
     )
+    return calls
+
+
+def _drop_checkpoint_excerpt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Write reviewer checkpoints as they were before the excerpt was stored."""
+    from agent_cli import coordinator_lanes
+
+    real_fields = coordinator_lanes._reviewer_replay_fields
+
+    def older_fields(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        entry = real_fields(*args, **kwargs)
+        del entry["output_excerpt"]
+        return entry
+
+    monkeypatch.setattr(coordinator_lanes, "_reviewer_replay_fields", older_fields)
+
+
+def test_incomplete_review_blocker_keeps_the_error_after_spool_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _fail_first_reviewer_checkpoint(monkeypatch)
     store, tid, _lines = _gate_task(
         tmp_path,
         monkeypatch,
@@ -1114,7 +1161,7 @@ def test_incomplete_review_blocker_keeps_the_error_after_spool_recovery(
         passes=2,
     )
     # One failed checkpoint, then both results recovered from their spools.
-    assert calls == 3
+    assert calls == [3]
     agents = _reviewer_agents(store, tid)
     assert sorted(agents) == ["logic", "quality"]
     c = store.row("task", tid)["payload"]["coordinator"]
@@ -1130,16 +1177,7 @@ def test_incomplete_review_blocker_keeps_the_error_after_spool_recovery(
 def test_incomplete_review_blocker_reads_a_checkpoint_without_excerpt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agent_cli import coordinator_lanes
-
-    real_fields = coordinator_lanes._reviewer_replay_fields
-
-    def older_fields(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        entry = real_fields(*args, **kwargs)
-        del entry["output_excerpt"]
-        return entry
-
-    monkeypatch.setattr(coordinator_lanes, "_reviewer_replay_fields", older_fields)
+    _drop_checkpoint_excerpt(monkeypatch)
     store, tid, _lines = _gate_task(
         tmp_path,
         monkeypatch,
@@ -1157,3 +1195,42 @@ def test_incomplete_review_blocker_reads_a_checkpoint_without_excerpt(
     assert c["blocker"] == (
         f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: quality: {_PROVIDER_402}"
     )
+
+
+@pytest.mark.parametrize(
+    "recovery", ["checkpoint", "spool", "checkpoint without excerpt"]
+)
+def test_incomplete_review_blocker_reads_stderr_of_a_lane_that_did_not_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovery: str
+) -> None:
+    passes = 1
+    if recovery == "spool":
+        _fail_first_reviewer_checkpoint(monkeypatch)
+        passes = 2
+    elif recovery == "checkpoint without excerpt":
+        _drop_checkpoint_excerpt(monkeypatch)
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        # A valid result token, but the lane did not complete.
+        "STATUS: unavailable\nRESULT: rejected\nQ-FINDING\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_stderr={
+            "pr-reviewer-quality": f"starting review\n{_PROVIDER_402}\n"
+        },
+        passes=passes,
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["blocker_publish_kind"] == "provider-incomplete"
+    blocker = c["blocker"]
+    assert (
+        " quality review unavailable/incomplete "
+        "(quality: status=unavailable, result=rejected). Not a code rejection."
+    ) in blocker
+    # The provider error on stderr, not the last stdout line.
+    assert blocker.endswith(f" Lane output: quality: {_PROVIDER_402}")
+    assert "Q-FINDING" not in blocker
+    comments = _incomplete_blocker_comments(store)
+    assert len(comments) == 1
+    assert f"Blocked: {blocker}" in comments[0]

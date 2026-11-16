@@ -515,11 +515,16 @@ A record of a check lane is closed the same way, but closing it does not retry t
    fix loop. The blocker names `status` and `result` of every affected
    dimension. After `Not a code rejection.` it adds `Lane output:` with one
    excerpt per affected dimension whose lane wrote output: the last non-empty
-   line, stderr first when the lane returned no valid result, redacted,
-   without terminal control sequences, and cut to at most 200 characters.
+   line, redacted, without terminal control sequences, and cut to at most 200
+   characters. Stderr is read first whenever the lane is not complete: its
+   status is not `complete` (for example `timeout`, `partial` or
+   `unavailable`, even with a valid result token) or it returned no valid
+   result. Only a complete lane with a valid result reads stdout first.
    The excerpt is taken from the complete lane output and saved with the
    reviewer outcome checkpoint, because the stored stdout and stderr keep
-   only the start of a long stream.
+   only the start of a long stream. The crash-recovery spool and the replay
+   of a checkpoint saved without an excerpt choose the stream by the same
+   rule.
    Every complete dimension is persisted before incomplete dimensions
    are handled; a complete rejection always routes back to implementation even
    when its parallel peer is unavailable. The next implementer receives every
