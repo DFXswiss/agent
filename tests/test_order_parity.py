@@ -451,9 +451,13 @@ def test_every_parameter_is_a_command_line_flag() -> None:
 def test_the_page_calls_every_operation() -> None:
     html = PAGE.read_text(encoding="utf-8")
     subpage = NEW_ORDER_PAGE.read_text(encoding="utf-8")
+    events_page = PAGE.with_name("section.html").read_text(encoding="utf-8")
     assert 'orderCall("submit"' not in html
+    assert 'orderCall("ack"' not in html
     assert 'fetch("/api/orders/submit"' in subpage
+    assert 'orderCall("ack"' in events_page
     called = set(re.findall(r'orderCall\("([a-z_]+)"', html))
+    called.update(re.findall(r'orderCall\("([a-z_]+)"', events_page))
     assert called | {"submit"} == set(page_view())
     assert called <= set(page_view())
 

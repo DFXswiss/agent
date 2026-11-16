@@ -19,6 +19,7 @@ MOVED_SECTIONS = (
     ("gates", "Review gates", "gates"),
     ("work", "Open work", "work"),
     ("pings", "Pings", "pings"),
+    ("events", "Order events", "order-events"),
 )
 
 

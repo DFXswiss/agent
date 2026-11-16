@@ -277,6 +277,7 @@ DASHBOARD_SECTIONS = (
     "gates",
     "work",
     "pings",
+    "events",
 )
 
 
