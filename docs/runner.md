@@ -102,10 +102,13 @@ notifications are counted on standard error.
 
 Starts queued jobs while capacity allows. For each job it ensures the bare
 clone exists, fetches, creates a detached worktree, records an output baseline,
-and starts a detached tmux session that runs the worker. Stale `.exit` and
-`.transcript` files of queued jobs are removed first: a queued job has no live
-worker, and a leftover exit code would otherwise be read as the new attempt's
-result.
+and starts a detached tmux session that runs the worker. The worktree holds the
+pull-request head, checked out detached, for a pull-request job, and the
+repository's default branch for an issue job; `ref` stays the number. A probe
+that cannot answer whether the number is a pull request leaves the job queued
+rather than choosing a commit. Stale `.exit` and `.transcript` files of queued
+jobs are removed first: a queued job has no live worker, and a leftover exit
+code would otherwise be read as the new attempt's result.
 
 Output: `job.started <job-id>` per job, or `job.started none`.
 

@@ -712,13 +712,15 @@ def _cmd_retry(args: list[str]) -> None:
                 die(
                     f"job {job_id} cannot be retried from state {row.get('state')}"
                 )
-            # finalize reads these artefacts by job id; a stale exit code would
-            # be recorded as the new attempt's result.
-            for suffix in (".exit", ".transcript", ".prompt"):
-                _remove_if_present(paths.logs / f"{job_id}{suffix}")
             problem = remove_job_worktree(paths, job_id, row, run_argv)
             if problem is not None:
                 die(problem)
+            # Only after a clean worktree removal: a refused retry leaves the
+            # row unchanged, and it must leave the previous attempt's evidence
+            # unchanged too. A stale exit code would otherwise be read as the
+            # next attempt's result.
+            for suffix in (".exit", ".transcript", ".prompt"):
+                _remove_if_present(paths.logs / f"{job_id}{suffix}")
             store.write("job", "update", job_id, payload)
         finally:
             store.close()

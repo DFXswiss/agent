@@ -378,7 +378,13 @@ _BASELINE = json.dumps(
 )
 
 
-def _dispatch_runner(calls: list[list[str]]) -> Callable[[list[str]], Completed]:
+def _dispatch_runner(
+    calls: list[list[str]],
+    *,
+    probe_stdout: str = "false",
+    default_stdout: str = "develop",
+    fetch_pull_rc: int = 0,
+) -> Callable[[list[str]], Completed]:
     def run(argv: list[str]) -> Completed:
         calls.append(list(argv))
         joined = " ".join(argv)
@@ -390,6 +396,12 @@ def _dispatch_runner(calls: list[list[str]]) -> Callable[[list[str]], Completed]
             return _completed()
         if "fetch --prune" in joined:
             return _completed()
+        if "refs/pull/" in joined:
+            return _completed(fetch_pull_rc)
+        if ".pull_request != null" in joined:
+            return _completed(0, probe_stdout)
+        if "--jq .default_branch" in joined:
+            return _completed(0, default_stdout)
         if "worktree add" in joined:
             return _completed()
         if "graphql" in joined:
@@ -442,6 +454,50 @@ def test_dispatch_removes_stale_logs_before_starting(
         assert saved["session"] == dispatch.session_name(row["id"])
     finally:
         store.close()
+    assert f"job.started {row['id']}" in capsys.readouterr().out
+
+
+def test_dispatch_checks_out_a_pull_requests_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A row as ingest writes it stores the pull-request number as `ref`. The
+    # worktree must hold the pull-request head, not `origin/7`.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    assert row["ref"] == "7"
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        _dispatch_runner(calls, probe_stdout="true"),
+    )
+
+    cmd_runner(["dispatch"])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+    finally:
+        store.close()
+    joined = [" ".join(argv) for argv in calls]
+    worktree = home / "runner" / "state" / "work" / row["id"]
+    assert any(
+        "+refs/pull/7/head:refs/remotes/origin/pull/7" in command for command in joined
+    )
+    assert any(
+        f"worktree add --detach {worktree} refs/remotes/origin/pull/7" in command
+        for command in joined
+    )
+    assert not any("refs/remotes/origin/7" in command for command in joined)
     assert f"job.started {row['id']}" in capsys.readouterr().out
 
 
@@ -965,6 +1021,8 @@ def test_retry_refuses_a_symlink_that_points_outside_the_work_root(
     runner_dir = home / "runner"
     work = runner_dir / "state" / "work"
     work.mkdir(parents=True)
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
     monkeypatch.setenv("AGENT_HOME", str(home))
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -978,7 +1036,9 @@ def test_retry_refuses_a_symlink_that_points_outside_the_work_root(
         store.write("job", "insert", row["id"], row)
     finally:
         store.close()
-    # The fake git leaves the path in place, so the fallback delete is reached.
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    # The fake git leaves the path in place, so the guards are reached.
     monkeypatch.setattr(
         "agent_cli.runner_cmd.run_argv", lambda _argv: _completed()
     )
@@ -996,6 +1056,9 @@ def test_retry_refuses_a_symlink_that_points_outside_the_work_root(
         store.close()
     assert link.is_symlink()
     assert (outside / "precious.txt").read_text(encoding="utf-8") == "keep me"
+    # A refused retry changes nothing, so the previous attempt's evidence stays.
+    for suffix in (".exit", ".transcript", ".prompt"):
+        assert (logs / f"{row['id']}{suffix}").exists()
 
 
 def test_retry_refuses_an_id_that_is_not_a_plain_name(

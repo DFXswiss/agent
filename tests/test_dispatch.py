@@ -20,6 +20,11 @@ def _runner(
     clone_rc: int = 0,
     refspec_rc: int = 0,
     fetch_rc: int = 0,
+    probe_rc: int = 0,
+    probe_stdout: str = "false",
+    default_rc: int = 0,
+    default_stdout: str = "develop",
+    fetch_pull_rc: int = 0,
     add_rc: int = 0,
     remove_rc: int = 0,
     prune_rc: int = 0,
@@ -40,6 +45,12 @@ def _runner(
             return Completed(refspec_rc, "", "")
         if "fetch --prune" in joined:
             return Completed(fetch_rc, "", "")
+        if "refs/pull/" in joined:
+            return Completed(fetch_pull_rc, "", "")
+        if ".pull_request != null" in joined:
+            return Completed(probe_rc, probe_stdout, "")
+        if "--jq .default_branch" in joined:
+            return Completed(default_rc, default_stdout, "")
         if "worktree add" in joined:
             return Completed(add_rc, "", "")
         if "worktree remove" in joined:
@@ -340,6 +351,119 @@ def test_a_fetch_failure_leaves_the_job_queued_and_counts_it_skipped(tmp_path: P
         assert skipped == 1
         assert store.row("job", row["id"])["state"] == "queued"
         assert not any("worktree add" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+# ------------------------------------------------- choosing the commit
+
+
+def test_a_pull_request_job_checks_out_the_pull_request_head(tmp_path: Path) -> None:
+    # `ref` is the number, never a branch: fetching `origin/7` would fail for
+    # every real pull request or check out unrelated code.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, probe_stdout="true")
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        joined = [" ".join(argv) for argv in calls]
+        assert any(
+            "+refs/pull/7/head:refs/remotes/origin/pull/7" in command
+            for command in joined
+        )
+        worktree = worktree_path("/tmp/work", row["id"])
+        assert any(
+            f"worktree add --detach {worktree} refs/remotes/origin/pull/7" in command
+            for command in joined
+        )
+        assert not any("refs/remotes/origin/7" in command for command in joined)
+    finally:
+        store.close()
+
+
+def test_an_issue_job_checks_out_the_default_branch(tmp_path: Path) -> None:
+    # An issue has no head commit to check out; the work starts from the
+    # repository's default branch.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, probe_stdout="false", default_stdout="develop")
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        joined = [" ".join(argv) for argv in calls]
+        assert any("--jq .default_branch" in command for command in joined)
+        worktree = worktree_path("/tmp/work", row["id"])
+        assert any(
+            f"worktree add --detach {worktree} refs/remotes/origin/develop" in command
+            for command in joined
+        )
+        assert not any("refs/pull/" in command for command in joined)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        # An unanswered probe is not "it is an issue": the row stays queued.
+        {"probe_rc": 1},
+        {"probe_stdout": "maybe"},
+        {"probe_stdout": "true", "fetch_pull_rc": 1},
+        {"probe_stdout": "false", "default_rc": 1},
+        {"probe_stdout": "false", "default_stdout": ""},
+        {"probe_stdout": "false", "default_stdout": "develop\ntrunk"},
+    ],
+)
+def test_an_unanswered_workspace_question_leaves_the_job_queued(
+    tmp_path: Path, options: dict[str, object]
+) -> None:
+    # Checking out the wrong commit is worse than waiting for the next pass.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        runner = _runner(calls=calls, **options)  # type: ignore[arg-type]
+
+        started, skipped = _dispatch(store, runner)
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        joined = [" ".join(argv) for argv in calls]
+        assert not any("worktree add" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
     finally:
         store.close()
 
