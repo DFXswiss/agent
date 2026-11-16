@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -5034,6 +5035,9 @@ def cmd_knock(args: list[str]) -> None:
         from .runtime import run_argv
 
         last_poll: float | None = None
+        # Not-before times per Claude account; the usage tick stays the only clock.
+        claude_pace: dict[str, float] = {}
+        scan_claude_paced = functools.partial(scan_claude_usage, pace=claude_pace)
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
                 try:
@@ -5053,7 +5057,7 @@ def cmd_knock(args: list[str]) -> None:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 if usage_accounts:
                     # One scanner per provider; each reads only its own accounts.
-                    for scan_accounts in (scan_openrouter_usage, scan_claude_usage):
+                    for scan_accounts in (scan_openrouter_usage, scan_claude_paced):
                         _print_account_usage(scan_accounts, store)
                 try:
                     created, skipped = scan_merged(store, run_argv)

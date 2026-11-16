@@ -459,8 +459,14 @@ The optional top-level `usage_accounts` is a list of explicitly named
 `openrouter` or `claude` accounts. Missing/null/`[]` disables account usage
 polling. Unknown names, accounts of another provider and duplicate names are
 rejected. The device daemon polls these accounts on the same 60-second usage
-interval as the Grok billing read; each provider's scanner reads only its own
-accounts.
+tick as the Grok billing read; each provider's scanner reads only its own
+accounts. On that tick it reads each `claude` account at most once every 15
+minutes, because the Claude usage endpoint answers per-minute polling with
+HTTP 429. A rate-limit answer is reported as
+`usage.snapshot error: <account>: Claude usage returned HTTP 429; retry after <N> s`
+and postpones the next read of that account by its `Retry-After` when that is
+longer than 15 minutes. `agent watch claude-usage` reads every Claude account
+immediately.
 
 Each `openrouter` account is read from `<config_dir>/openrouter-api-key`.
 `agent watch openrouter-usage`

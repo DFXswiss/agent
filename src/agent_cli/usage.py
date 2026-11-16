@@ -9,10 +9,12 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,9 @@ CLAUDE_VENDOR = "claude"
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 CLAUDE_KEYCHAIN_FALLBACK_USER = "claude-code-user"
 SECURITY_BIN = "/usr/bin/security"
+# The Claude usage endpoint answers per-minute polling with HTTP 429 and a
+# Retry-After header, so the poll reads each Claude account at most this often.
+CLAUDE_USAGE_POLL_SECONDS = 15 * 60
 # ``security`` exit status for an item that does not exist.
 _SECURITY_ITEM_NOT_FOUND = 44
 _KEYCHAIN_USER = re.compile(r"[a-zA-Z0-9._-]+")
@@ -64,6 +69,38 @@ class AccountUsageError(StoreError):
         super().__init__("; ".join(errors))
         self.errors = tuple(errors)
         self.activity_ids = tuple(activity_ids)
+
+
+class UsageRateLimited(StoreError):
+    """The provider answered HTTP 429; ``retry_after`` is its wait in seconds."""
+
+    def __init__(self, message: str, retry_after: float | None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Seconds from a ``Retry-After`` value (delay or HTTP date).
+
+    ``None`` when the value is missing or is not a finite number of seconds,
+    so an unusable header is treated like a missing one.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if text.isascii() and text.isdigit():
+        seconds = float(text)
+        return seconds if math.isfinite(seconds) else None
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 class OpenRouterUsageError(AccountUsageError):
@@ -432,6 +469,11 @@ def _get_bearer_json(
             response = client.get(url, headers=headers)
     except httpx.HTTPError:
         raise StoreError(f"{name} request failed") from None
+    if response.status_code == 429:
+        raise UsageRateLimited(
+            f"{name} returned HTTP 429",
+            _retry_after_seconds(response.headers.get("Retry-After")),
+        )
     if response.status_code != 200:
         raise StoreError(f"{name} returned HTTP {response.status_code}")
     try:
@@ -871,12 +913,20 @@ def scan_claude_usage(
     read_keychain: KeychainReader | None = None,
     now: Callable[[], str] | None = None,
     skipped: list[str] | None = None,
+    pace: dict[str, float] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> list[str]:
     """Record changed Claude subscription usage for configured ``usage_accounts``.
 
     An account without a usable login (missing or expired) is skipped quietly;
     its reason is appended to ``skipped`` when the caller passes a list.
+
+    ``pace`` maps an account name to the ``clock`` time before which it is not
+    read again. An attempted account waits ``CLAUDE_USAGE_POLL_SECONDS``, or the
+    server's ``Retry-After`` when that is longer. Without ``pace`` every account
+    is read on every call.
     """
+    tick = clock or time.monotonic
     from .ai_accounts import load_ai_accounts
 
     accounts = load_ai_accounts(store.home)
@@ -886,6 +936,11 @@ def scan_claude_usage(
         account = accounts.accounts[account_name]
         if account.provider != CLAUDE_VENDOR:
             continue
+        if pace is not None:
+            started = tick()
+            if started < pace.get(account_name, -math.inf):
+                continue
+            pace[account_name] = started + CLAUDE_USAGE_POLL_SECONDS
         try:
             try:
                 email = load_claude_account_email(account.config_dir)
@@ -917,6 +972,13 @@ def scan_claude_usage(
             )
             if activity_id is not None:
                 created.append(activity_id)
+        except UsageRateLimited as exc:
+            message = f"{account_name}: {exc}"
+            if exc.retry_after is not None:
+                message += f"; retry after {math.ceil(exc.retry_after)} s"
+                if pace is not None and exc.retry_after > CLAUDE_USAGE_POLL_SECONDS:
+                    pace[account_name] = tick() + exc.retry_after
+            errors.append(message)
         except StoreError as exc:
             errors.append(f"{account_name}: {exc}")
     if errors:

@@ -4,6 +4,8 @@ import hashlib
 import json
 import subprocess
 import unicodedata
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,11 @@ import pytest
 from agent_cli import usage
 from agent_cli.store import Store, StoreError
 from agent_cli.usage import (
+    CLAUDE_USAGE_POLL_SECONDS,
     CLAUDE_USAGE_URL,
+    UsageRateLimited,
+    _get_bearer_json,
+    _retry_after_seconds,
     AuthStale,
     ClaudeUsageError,
     _claude_reset,
@@ -691,5 +697,228 @@ def test_each_scanner_reads_only_its_own_provider(tmp_path: Path) -> None:
         scan_openrouter_usage(store, fetch=router_fetch)
         assert claude_tokens == [TOKEN]
         assert router_tokens == ["router-secret"]
+    finally:
+        store.close()
+
+
+# --- Rate limits -------------------------------------------------------------
+
+
+def _answer(response: httpx.Response, name: str = "Claude usage") -> dict[str, Any]:
+    with httpx.Client(transport=httpx.MockTransport(lambda _request: response)) as client:
+        return _get_bearer_json("https://usage.example.com/", {}, name, client)
+
+
+def _http_date(offset: timedelta) -> str:
+    return format_datetime(datetime.now(timezone.utc) + offset, usegmt=True)
+
+
+def test_rate_limit_carries_the_retry_after_seconds() -> None:
+    with pytest.raises(UsageRateLimited) as info:
+        _answer(httpx.Response(429, headers={"Retry-After": "166"}, json={"error": {}}))
+    assert str(info.value) == "Claude usage returned HTTP 429"
+    assert info.value.retry_after == 166.0
+
+    with pytest.raises(UsageRateLimited) as info:
+        _answer(httpx.Response(429, headers={"Retry-After": _http_date(timedelta(minutes=10))}))
+    assert info.value.retry_after is not None and 500 < info.value.retry_after <= 600
+
+    with pytest.raises(UsageRateLimited) as info:
+        _answer(httpx.Response(429, headers={"Retry-After": _http_date(-timedelta(minutes=10))}))
+    assert info.value.retry_after == 0.0
+
+    for headers in ({}, {"Retry-After": "soon"}, {"Retry-After": "-5"}, {"Retry-After": "1.5"}):
+        with pytest.raises(UsageRateLimited) as info:
+            _answer(httpx.Response(429, headers=headers))
+        assert info.value.retry_after is None
+
+
+def test_other_statuses_keep_the_plain_error_and_openrouter_text() -> None:
+    with pytest.raises(StoreError) as info:
+        _answer(httpx.Response(503, headers={"Retry-After": "166"}))
+    assert not isinstance(info.value, UsageRateLimited)
+    assert str(info.value) == "Claude usage returned HTTP 503"
+
+    with pytest.raises(UsageRateLimited) as info:
+        _answer(httpx.Response(429, headers={"Retry-After": "166"}), "OpenRouter usage")
+    assert str(info.value) == "OpenRouter usage returned HTTP 429"
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _Reads:
+    """Counts keychain reads and requests per account directory and token."""
+
+    def __init__(self) -> None:
+        self.keychain: list[str] = []
+        self.fetches: list[str] = []
+        self.fail: dict[str, Exception] = {}
+
+    def read_keychain(self, service: str, _user: str) -> str | None:
+        self.keychain.append(service)
+        return None
+
+    def fetch(self, token: str) -> dict[str, Any]:
+        self.fetches.append(token)
+        if token in self.fail:
+            raise self.fail[token]
+        return usage_body()
+
+
+def _paced_store(tmp_path: Path, names: list[str], *, stale: tuple[str, ...] = ()) -> Store:
+    store = Store(tmp_path)
+    _session(store, "s-claude", "claude")
+    accounts = {}
+    for name in names:
+        config_dir = tmp_path / name
+        expires = PAST_MS if name in stale else FUTURE_MS
+        write_login(
+            config_dir,
+            email=f"{name}@example.com",
+            creds=credentials(token=f"token-{name}", expires_at=expires),
+        )
+        accounts[name] = {"provider": "claude", "config_dir": str(config_dir)}
+    _config(store, accounts, names)
+    return store
+
+
+def _scan(store: Store, reads: _Reads, pace: dict[str, float] | None, clock: _Clock) -> list[str]:
+    try:
+        scan_claude_usage(
+            store, fetch=reads.fetch, read_keychain=reads.read_keychain, pace=pace, clock=clock
+        )
+    except ClaudeUsageError as exc:
+        return list(exc.errors)
+    return []
+
+
+def test_pace_reads_an_account_once_per_interval(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        assert _scan(store, reads, pace, clock) == []
+        assert reads.fetches == ["token-seat"]
+        assert pace == {"seat": 1000.0 + CLAUDE_USAGE_POLL_SECONDS}
+
+        clock.now += CLAUDE_USAGE_POLL_SECONDS - 1
+        assert _scan(store, reads, pace, clock) == []
+        assert len(reads.keychain) == 1 and len(reads.fetches) == 1
+
+        clock.now = 1000.0 + CLAUDE_USAGE_POLL_SECONDS
+        _scan(store, reads, pace, clock)
+        assert len(reads.keychain) == 2 and len(reads.fetches) == 2
+    finally:
+        store.close()
+
+
+def test_without_pace_every_call_reads(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock = _Reads(), _Clock()
+        _scan(store, reads, None, clock)
+        _scan(store, reads, None, clock)
+        assert reads.fetches == ["token-seat", "token-seat"]
+    finally:
+        store.close()
+
+
+def test_long_retry_after_postpones_the_next_read(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-seat"] = UsageRateLimited("Claude usage returned HTTP 429", 3600.0)
+        assert _scan(store, reads, pace, clock) == [
+            "seat: Claude usage returned HTTP 429; retry after 3600 s"
+        ]
+        assert pace["seat"] == 1000.0 + 3600.0
+        clock.now += 3599
+        assert _scan(store, reads, pace, clock) == []
+        assert len(reads.fetches) == 1
+        clock.now = 1000.0 + 3600.0
+        _scan(store, reads, pace, clock)
+        assert len(reads.fetches) == 2
+    finally:
+        store.close()
+
+
+def test_short_retry_after_keeps_the_interval(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-seat"] = UsageRateLimited("Claude usage returned HTTP 429", 165.2)
+        assert _scan(store, reads, pace, clock) == [
+            "seat: Claude usage returned HTTP 429; retry after 166 s"
+        ]
+        assert pace["seat"] == 1000.0 + CLAUDE_USAGE_POLL_SECONDS
+        clock.now += 166
+        assert _scan(store, reads, pace, clock) == []
+        assert len(reads.fetches) == 1
+    finally:
+        store.close()
+
+
+def test_rate_limit_without_header_value_is_still_an_error(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-seat"] = UsageRateLimited("Claude usage returned HTTP 429", None)
+        assert _scan(store, reads, pace, clock) == ["seat: Claude usage returned HTTP 429"]
+        assert pace["seat"] == 1000.0 + CLAUDE_USAGE_POLL_SECONDS
+    finally:
+        store.close()
+
+
+def test_stale_logins_and_errors_are_paced_by_the_interval(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["stale", "broken"], stale=("stale",))
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-broken"] = StoreError("Claude usage returned HTTP 500")
+        assert _scan(store, reads, pace, clock) == ["broken: Claude usage returned HTTP 500"]
+        assert pace == {
+            "stale": 1000.0 + CLAUDE_USAGE_POLL_SECONDS,
+            "broken": 1000.0 + CLAUDE_USAGE_POLL_SECONDS,
+        }
+        clock.now += 60
+        assert _scan(store, reads, pace, clock) == []
+        assert len(reads.keychain) == 2 and reads.fetches == ["token-broken"]
+    finally:
+        store.close()
+
+
+def test_accounts_are_paced_independently(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["limited", "other"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-limited"] = UsageRateLimited("Claude usage returned HTTP 429", 3600.0)
+        _scan(store, reads, pace, clock)
+        clock.now += CLAUDE_USAGE_POLL_SECONDS
+        assert _scan(store, reads, pace, clock) == []
+        assert reads.fetches == ["token-limited", "token-other", "token-other"]
+    finally:
+        store.close()
+
+
+def test_retry_after_that_is_not_a_finite_number_is_unusable() -> None:
+    assert _retry_after_seconds("9" * 400) is None
+    with pytest.raises(UsageRateLimited) as info:
+        _answer(httpx.Response(429, headers={"Retry-After": "9" * 400}))
+    assert info.value.retry_after is None
+
+
+def test_rate_limit_with_an_unusable_retry_after_keeps_the_interval(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        reads, clock, pace = _Reads(), _Clock(), {}
+        reads.fail["token-seat"] = UsageRateLimited(
+            "Claude usage returned HTTP 429", _retry_after_seconds("9" * 400)
+        )
+        assert _scan(store, reads, pace, clock) == ["seat: Claude usage returned HTTP 429"]
+        assert pace["seat"] == 1000.0 + CLAUDE_USAGE_POLL_SECONDS
     finally:
         store.close()

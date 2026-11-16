@@ -3314,15 +3314,21 @@ def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
         order.append("openrouter")
         raise OpenRouterUsageError(["router-a: unavailable"], [])
 
-    def fake_claude(_store: object) -> list[str]:
+    paces: list[object] = []
+    listens: list[int] = []
+
+    def fake_claude(_store: object, *, pace: dict[str, float]) -> list[str]:
         order.append("claude")
+        paces.append(pace)
         raise ClaudeUsageError(
             ["seat: Claude usage returned HTTP 500"],
             ["66666666-6666-6666-6666-666666666666"],
         )
 
     def stop_listen(*_args: object, **_kwargs: object) -> None:
-        raise SystemExit("stop")
+        listens.append(1)
+        if len(listens) == 2:
+            raise SystemExit("stop")
 
     def fake_poll_due(*args: object, **_kwargs: object) -> bool:
         due_calls.append(args)
@@ -3344,8 +3350,11 @@ def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
     with pytest.raises(SystemExit, match="stop"):
         run(tmp_path, ["knock"])
 
-    assert order == ["openrouter", "claude"]
-    assert len(due_calls) == 1
+    assert order == ["openrouter", "claude", "openrouter", "claude"]
+    assert len(due_calls) == 2
+    # One pacing map lives across ticks; the 60-second tick stays the only clock.
+    assert len(paces) == 2 and paces[0] is paces[1]
+    assert isinstance(paces[0], dict)
     captured = capsys.readouterr()
     assert "usage.snapshot 66666666-6666-6666-6666-666666666666" in captured.out
     assert "usage.snapshot error: router-a: unavailable" in captured.err
@@ -3487,7 +3496,7 @@ def test_knock_daemon_scans_configured_openrouter_usage(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store: [])
+    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store, **_kwargs: [])
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3509,7 +3518,7 @@ def test_knock_daemon_skips_openrouter_without_usage_accounts(
     class Accounts:
         usage_accounts: tuple[str, ...] = ()
 
-    def forbidden_scan(_store: object) -> list[str]:
+    def forbidden_scan(_store: object, **_kwargs: object) -> list[str]:
         raise AssertionError("OpenRouter scan must be skipped")
 
     def stop_listen(*_args: object, **_kwargs: object) -> None:
@@ -3550,7 +3559,7 @@ def test_knock_daemon_usage_precheck_ignores_missing_models(
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
     monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
 
-    def forbidden_scan(_store: object) -> list[str]:
+    def forbidden_scan(_store: object, **_kwargs: object) -> list[str]:
         raise AssertionError("OpenRouter scan must be skipped without usage_accounts")
 
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
@@ -3598,7 +3607,7 @@ def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store: [])
+    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store, **_kwargs: [])
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])

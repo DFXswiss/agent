@@ -199,7 +199,7 @@ agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HO
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each Claude usage account at most every 15 min
 ```
 
 `agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the Grok tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The TUI working probe (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
