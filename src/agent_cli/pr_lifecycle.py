@@ -11,7 +11,14 @@ import re
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
-from .a38_review import BLOCKING_REVIEW_REASON, LIFECYCLE_REASON, SECOND_REVIEW_MISSING
+from .a38_review import (
+    BLOCKING_REVIEW_REASON,
+    LIFECYCLE_REASON,
+    SECOND_REVIEW_MISSING,
+    _utc,
+    is_stale_review_reason,
+    stale_review_heads,
+)
 from .readme_only import pull_is_guard_docs_only
 from .workflow_approval import (
     _counts_for_ready_inventory,
@@ -37,6 +44,9 @@ _FINISHED_CONCLUSIONS = frozenset({
 
 _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MANUAL_EVENTS = frozenset({"pull_request", "workflow_dispatch", "repository_dispatch"})
+_DRAFT_HELD_PREFIX = "draft held by "
+_DRAFT_HOLD_UNAVAILABLE = "draft hold unavailable"
+_DRAFT_HOLD_PENDING = "draft hold pending"
 
 
 def _await_mergeable(
@@ -219,10 +229,64 @@ def _join_de_phrases(parts: list[str]) -> str:
     return ", ".join(parts[:-1]) + f" und {parts[-1]}"
 
 
+def is_draft_hold_reason(reason: object) -> bool:
+    """True for a reason that reports a human draft hold, not a CI failure."""
+    return isinstance(reason, str) and (
+        reason.startswith(_DRAFT_HELD_PREFIX)
+        or reason in {_DRAFT_HOLD_UNAVAILABLE, _DRAFT_HOLD_PENDING}
+    )
+
+
+def _draft_hold_state(
+    status: str,
+    hold: Any,
+    *,
+    first_head: str,
+    first_created_at: str,
+) -> tuple[str, str]:
+    """Classify a load_draft_hold result into a state and a visible reason.
+
+    A hold is released by a first-run review record for the current head
+    created strictly after it. ``unavailable`` fails closed while the pull
+    is draft and blocks a Ready mutation. ``pending`` means the timeline has
+    no draft event and the newest relevant event is Ready.
+    """
+    if status == "unavailable":
+        return "unavailable", _DRAFT_HOLD_UNAVAILABLE
+    if status == "pending":
+        return "pending", _DRAFT_HOLD_PENDING
+    if status != "ok" or hold is None:
+        return "none", ""
+    named_at = _utc(first_created_at) if first_created_at else None
+    held_at = _utc(hold.created_at)
+    released = (
+        bool(first_head)
+        and named_at is not None
+        and held_at is not None
+        and named_at > held_at
+    )
+    if released:
+        return "none", ""
+    return "active", f"{_DRAFT_HELD_PREFIX}{hold.login}"
+
+
+def _review_heads(assessment: Any) -> list[str]:
+    """Distinct heads named by the review runs the gate selected."""
+    heads: list[str] = []
+    for value in (
+        getattr(assessment, "review_first_head", "") or "",
+        getattr(assessment, "review_second_head", "") or "",
+    ):
+        if isinstance(value, str) and value and value not in heads:
+            heads.append(value)
+    return heads
+
+
 def _review_returns_ready_to_draft(reasons: Sequence[str]) -> bool:
-    """True when a review cause must return Ready to Draft, including a write hold."""
+    """True when a review or draft-hold cause must return Ready to Draft."""
     return any(
         reason in {LIFECYCLE_REASON, BLOCKING_REVIEW_REASON, SECOND_REVIEW_MISSING}
+        or is_draft_hold_reason(reason)
         for reason in reasons
     )
 
@@ -239,6 +303,9 @@ def _note_review(reasons: list[str], assessment: Any) -> None:
         return
     review_reasons = getattr(assessment, "review_reasons", None)
     listed = list(review_reasons) if isinstance(review_reasons, list) else []
+    for reason in listed:
+        if is_stale_review_reason(reason) and reason not in reasons:
+            reasons.insert(0, reason)
     if SECOND_REVIEW_MISSING in listed and SECOND_REVIEW_MISSING not in reasons:
         reasons.insert(0, SECOND_REVIEW_MISSING)
     if BLOCKING_REVIEW_REASON in listed and BLOCKING_REVIEW_REASON not in reasons:
@@ -278,6 +345,69 @@ _ONE_REVIEW_EXCEPTION_DE = (
 
 def _with_one_review_exception(en: str, de: str) -> tuple[str, str]:
     return f"{en} {_ONE_REVIEW_EXCEPTION_EN}", f"{de} {_ONE_REVIEW_EXCEPTION_DE}"
+
+
+def _review_head_sentences(record: Mapping) -> tuple[list[str], list[str]]:
+    """Name both heads for a stale record and for a markdown-only ancestor.
+
+    Stale reasons carry both short heads already, so one sentence per such
+    record head is enough. The markdown-only sentence is only for a Ready
+    record, where the relaxed rule is the reason the record still counts.
+    """
+    en: list[str] = []
+    de: list[str] = []
+    raw_reasons = record.get("reasons")
+    reasons = raw_reasons if isinstance(raw_reasons, list) else []
+    seen: set[str] = set()
+    for reason in reasons:
+        heads = stale_review_heads(reason)
+        if heads is None:
+            continue
+        record_head, current_head = heads
+        if record_head in seen:
+            continue
+        seen.add(record_head)
+        en.append(
+            f"The review record names `{record_head}`, but the current head "
+            f"`{current_head}` changes more than markdown files after it."
+        )
+        de.append(
+            f"Der Review-Nachweis nennt `{record_head}`, aber der aktuelle Head "
+            f"`{current_head}` ändert danach mehr als Markdown-Dateien."
+        )
+    if record.get("state") != "ready":
+        return en, de
+    current = record.get("head")
+    if not isinstance(current, str) or not current:
+        return en, de
+    raw_heads = record.get("review_heads")
+    heads = raw_heads if isinstance(raw_heads, list) else []
+    for head in heads:
+        if not isinstance(head, str) or not head or head == current or head in seen:
+            continue
+        seen.add(head)
+        en.append(
+            f"The review record names `{head[:12]}`; the current head "
+            f"`{current[:12]}` changes only markdown files after it, so the "
+            "record still counts."
+        )
+        de.append(
+            f"Der Review-Nachweis nennt `{head[:12]}`; der aktuelle Head "
+            f"`{current[:12]}` ändert danach nur Markdown-Dateien, daher zählt "
+            "der Nachweis weiter."
+        )
+    return en, de
+
+
+def _append_review_head_sentences(
+    en: str, de: str, record: Mapping
+) -> tuple[str, str]:
+    extra_en, extra_de = _review_head_sentences(record)
+    if extra_en:
+        en = f"{en} {' '.join(extra_en)}"
+    if extra_de:
+        de = f"{de} {' '.join(extra_de)}"
+    return en, de
 
 
 def visible_transition_sentences(
@@ -320,7 +450,8 @@ def visible_transition_sentences(
                 "und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit "
                 "zum Review. Zwei Review-Kommentare sind Pflicht."
             )
-        return _with_one_review_exception(en, de)
+        en, de = _with_one_review_exception(en, de)
+        return _append_review_head_sentences(en, de, record)
 
     conflicts = "Merge conflicts" in reasons
     review_missing = LIFECYCLE_REASON in reasons
@@ -335,6 +466,8 @@ def visible_transition_sentences(
             BLOCKING_REVIEW_REASON,
             SECOND_REVIEW_MISSING,
         }
+        and not is_draft_hold_reason(r)
+        and not is_stale_review_reason(r)
     ]
 
     missing = any(
@@ -368,6 +501,27 @@ def visible_transition_sentences(
     if blocking:
         en_parts.append("the second review found defects that must be fixed")
         de_parts.append("der zweite Review Mängel gefunden hat, die behoben werden müssen")
+    held_by = next(
+        (
+            r[len(_DRAFT_HELD_PREFIX):]
+            for r in reasons
+            if isinstance(r, str) and r.startswith(_DRAFT_HELD_PREFIX)
+        ),
+        None,
+    )
+    if held_by:
+        en_parts.append(f"{held_by} set this pull request to draft")
+        de_parts.append(f"{held_by} diesen Pull Request auf Entwurf gesetzt hat")
+    if _DRAFT_HOLD_UNAVAILABLE in reasons:
+        en_parts.append(
+            "the guard cannot read who set this pull request to draft"
+        )
+        de_parts.append(
+            "der Guard nicht lesen kann, wer diesen Pull Request auf Entwurf gesetzt hat"
+        )
+    if _DRAFT_HOLD_PENDING in reasons:
+        en_parts.append("the human draft hold is not yet settled")
+        de_parts.append("der menschliche Entwurf-Halt noch nicht geklärt ist")
 
     ci_en: list[str] = []
     ci_de: list[str] = []
@@ -425,8 +579,8 @@ def visible_transition_sentences(
             f"zum Review, auch wenn {de_clause}."
         )
     if second_missing:
-        return _with_one_review_exception(en, de)
-    return en, de
+        en, de = _with_one_review_exception(en, de)
+    return _append_review_head_sentences(en, de, record)
 
 
 def _complete_transition_comment(
@@ -1146,7 +1300,13 @@ def _has_merge_conflicts(api: Any, pull: Mapping) -> bool:
 
 
 def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> dict:
-    from .a38_guard import GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config
+    from .a38_guard import (
+        GuardError,
+        assess_pull,
+        fetch_pull,
+        load_draft_hold,
+        resolve_trusted_guard_config,
+    )
     from .pr_guard_config import one_review_for
     if assessment.closed or not assessment.lifecycle_enabled:
         return {}
@@ -1182,9 +1342,24 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         trusted.config if isinstance(trusted.config, Mapping) else None,
         snap.author_login,
     )
+    guard_user_id, _guard_login = api.resolve_own_user()
+    hold_status, draft_hold = load_draft_hold(
+        api, assessment.repo, assessment.pr, guard_user_id=guard_user_id
+    )
+    first_head = getattr(assessment, "review_first_head", "") or ""
+    first_created_at = getattr(assessment, "review_first_created_at", "") or ""
+    hold_state, hold_reason = _draft_hold_state(
+        hold_status,
+        draft_hold,
+        first_head=first_head if isinstance(first_head, str) else "",
+        first_created_at=first_created_at if isinstance(first_created_at, str) else "",
+    )
+    draft_held = hold_state in {"active", "unavailable"} or (
+        pull["draft"] and hold_state == "pending"
+    )
     # Recover the explanatory comment if an earlier process died after the
     # mutation. The durable intent precedes it and never claims success early.
-    _, previous = _own_record(api, assessment, STATE_MARKER)
+    previous_comment, previous = _own_record(api, assessment, STATE_MARKER)
     if (previous.get("phase") == "planned" and previous.get("head") == snap.head_sha
             and previous.get("base") == snap.base_sha
             and previous.get("state") == ("draft" if pull["draft"] else "ready") and not dry_run):
@@ -1202,6 +1377,66 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if _has_merge_conflicts(api, pull):
         reasons.insert(0, "Merge conflicts")
     _note_review(reasons, assessment)
+    if hold_state == "active" or (
+        pull["draft"] and hold_state in {"unavailable", "pending"}
+    ):
+        if hold_reason and hold_reason not in reasons:
+            reasons.insert(0, hold_reason)
+    # A person's draft hold keeps the pull in draft. A Ready transition that
+    # would undo it is reported, never performed. An unreadable hold stays in
+    # draft too. A pending state is ambiguous, so it stays in draft without
+    # rewriting the comment on every run.
+    if pull["draft"] and draft_held:
+        if not dry_run and hold_state != "pending":
+            held_record = {
+                "repo": assessment.repo,
+                "pr": assessment.pr,
+                "head": snap.head_sha,
+                "base": snap.base_sha,
+                "state": "draft",
+                "reasons": reasons,
+                "phase": "held",
+                "hold_reason": hold_reason,
+            }
+            if hold_state == "active":
+                en = (
+                    f"{draft_hold.login} set this pull request to draft; it stays "
+                    "in draft until a person marks it ready or a new review record "
+                    "for this head is posted."
+                )
+                de = (
+                    f"{draft_hold.login} hat diesen Pull Request auf Entwurf gesetzt; "
+                    "er bleibt im Entwurf, bis eine Person ihn auf bereit setzt oder "
+                    "ein neuer Review-Nachweis für diesen Head gepostet wird."
+                )
+            else:
+                en = (
+                    "The guard cannot read who set this pull request to draft; "
+                    "it stays in draft."
+                )
+                de = (
+                    "Der Guard kann nicht lesen, wer diesen Pull Request auf Entwurf "
+                    "gesetzt hat; er bleibt im Entwurf."
+                )
+            if (
+                previous.get("phase") != "held"
+                or previous.get("state") != "draft"
+                or previous.get("head") != snap.head_sha
+                or previous.get("base") != snap.base_sha
+                or previous.get("hold_reason") != hold_reason
+            ):
+                _save_record(
+                    api,
+                    assessment,
+                    STATE_MARKER,
+                    held_record,
+                    en,
+                    de,
+                    en_title="Draft held",
+                    de_title="Entwurf bleibt",
+                    existing=previous_comment,
+                )
+        return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     target = None
     we_drafted = (
         previous.get("state") == "draft"
@@ -1330,6 +1565,11 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
     _note_review(final_reasons, assessment)
+    if hold_state == "active" or (
+        target == "draft" and hold_state == "unavailable"
+    ):
+        if hold_reason and hold_reason not in final_reasons:
+            final_reasons.insert(0, hold_reason)
     if target == "ready" and (
         "Merge conflicts" in final_reasons or final_pull.get("mergeable") is not True
     ):
@@ -1375,7 +1615,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if target == "draft" and not final_reasons:
         return {"action": "unchanged", "reasons": [], "dry_run": False}
     record = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha,
-              "base": snap.base_sha, "state": target, "reasons": final_reasons, "phase": "planned"}
+              "base": snap.base_sha, "state": target, "reasons": final_reasons,
+              "phase": "planned", "review_heads": _review_heads(assessment)}
     _save_record(api, assessment, STATE_MARKER, record,
                  "I am checking the final conditions for the documented readiness change.",
                  "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.",
@@ -1394,6 +1635,34 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError("A38 evidence changed before Ready transition")
         if restore_write_ready and not fresh.write_ready:
             raise GuardError("write-ready waiver changed before Ready transition")
+        # Re-check the human hold immediately before Ready. A hold that
+        # appeared after the first read blocks the mutation; the guard does
+        # not mark Ready over a person's draft.
+        fresh_first_head = getattr(fresh, "review_first_head", "") or ""
+        fresh_first_created_at = getattr(fresh, "review_first_created_at", "") or ""
+        final_hold_status, final_hold = load_draft_hold(
+            api, assessment.repo, assessment.pr, guard_user_id=guard_user_id
+        )
+        final_hold_state, final_hold_reason = _draft_hold_state(
+            final_hold_status,
+            final_hold,
+            first_head=(
+                fresh_first_head
+                if isinstance(fresh_first_head, str) and fresh_first_head
+                else first_head
+            ),
+            first_created_at=(
+                fresh_first_created_at
+                if isinstance(fresh_first_created_at, str)
+                and fresh_first_created_at
+                else first_created_at
+            ),
+        )
+        if final_hold_state in {"active", "unavailable"}:
+            blocked = list(final_reasons)
+            if final_hold_reason and final_hold_reason not in blocked:
+                blocked.insert(0, final_hold_reason)
+            return {"action": "unchanged", "reasons": blocked, "dry_run": False}
     try:
         changed = _transition(api, pull["node_id"], target == "draft")
     except LifecycleDraftUnchanged:

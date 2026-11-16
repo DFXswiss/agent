@@ -1867,7 +1867,14 @@ def test_auto_draft_then_timeline_restores_write_ready():
             "id": 2,
             "created_at": "2026-09-05T12:00:00Z",
             "actor": {"id": 3003, "login": "maintainer", "type": "User"},
-        }
+        },
+        # The guard's own convert_to_draft must not read as a hold.
+        {
+            "event": "convert_to_draft",
+            "id": 3,
+            "created_at": "2026-09-05T12:05:00Z",
+            "actor": {"id": BOT_ID, "login": "github-actions[bot]", "type": "User"},
+        },
     ]
     fake.permissions["maintainer"] = {
         "permission": "admin",
