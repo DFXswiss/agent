@@ -29,6 +29,10 @@
     .watch-note { color: #555; margin-top: 10px; }
     nav { display: flex; flex-wrap: wrap; gap: 14px; margin: 22px 0 8px; }
     .dashboard-section[hidden] { display: none; }
+    button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+    button.copy-id.copied { color: #060; }
+    button.copy-id.copy-failed { color: #c00; }
+    .state-unknown { color: #777; }
   </style>
 </head>
 <body>
@@ -112,6 +116,140 @@
     function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
     function empty(cols) { return `<tr><td colspan='${cols}'>—</td></tr>`; }
 
+    /* DASHBOARD_COMMON_BEGIN */
+    // Shared by index.html, section.html and orders_new.html; a test keeps the copies identical.
+    const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const QUOTED_UUID_PATTERN = /&quot;([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})&quot;/gi;
+    const COPY_FEEDBACK_MS = 1500;
+    const copyFeedback = new Map();
+    const shownHtml = new WeakMap();
+    // One icon for every state or status value the code produces, one family per line:
+    // running or active, task in progress, open or waiting, blocked, ready, merged or done,
+    // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
+    // unavailable) and unknown.
+    const STATE_ICONS = {
+      "running": "▶", "active": "▶", "working": "▶",
+      "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
+      "open": "○", "queued": "⋯", "waiting": "⧖",
+      "gate-blocked": "⚠",
+      "ready": "⚑",
+      "merged": "✔", "done": "✔", "finished": "✔",
+      "closed": "■", "superseded": "↷",
+      "failed": "✖", "error": "✖",
+      "cancelled": "⊘",
+      "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
+      "unknown": "?"
+    };
+    const STATE_FALLBACK_ICON = "◌";
+
+    // A UUID shows as its first 8 characters on a button that copies the full value.
+    function idChip(value) {
+      const feedback = copyFeedback.get(value);
+      const className = feedback ? "copy-id " + feedback.className : "copy-id";
+      const text = feedback ? feedback.text : value.slice(0, 8);
+      return `<button type="button" class="${className}" data-copy="${esc(value)}" title="${esc(value)}">${esc(text)}</button>`;
+    }
+
+    function idOrText(value) {
+      return typeof value === "string" && UUID_PATTERN.test(value) ? idChip(value) : esc(value);
+    }
+
+    // JSON text in which every string that is a UUID is a copy button.
+    function jsonHtml(value, indent) {
+      return esc(JSON.stringify(value, null, indent)).replace(QUOTED_UUID_PATTERN, (_, id) => `&quot;${idChip(id)}&quot;`);
+    }
+
+    // The icon of a state or status word, labelled with the word; the cell that
+    // holds it carries stateCellAttributes of the same word.
+    function stateIcon(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      const word = String(value);
+      const known = Object.hasOwn(STATE_ICONS, word);
+      const icon = known ? STATE_ICONS[word] : STATE_FALLBACK_ICON;
+      return `<span class="${known ? "state-icon" : "state-icon state-unknown"}" role="img" aria-label="${esc(word)}">${icon}&#xFE0E;</span>`;
+    }
+
+    // The word behind a state icon as the title and the accessible name of the
+    // cell that shows the icon; nothing for a missing word.
+    function stateCellAttributes(value) {
+      if (value === null || value === undefined || value === "") return "";
+      return ` title="${esc(value)}" aria-label="${esc(value)}"`;
+    }
+
+    // The copy buttons that show one value, in document order.
+    function copyButtons(scope, value) {
+      return Array.from(scope.querySelectorAll("button.copy-id")).filter(button => button.dataset.copy === value);
+    }
+
+    function paintCopyButtons(value) {
+      const feedback = copyFeedback.get(value);
+      copyButtons(document, value).forEach(button => {
+        button.textContent = feedback ? feedback.text : value.slice(0, 8);
+        button.className = feedback ? "copy-id " + feedback.className : "copy-id";
+      });
+    }
+
+    function showCopyFeedback(value, text, className) {
+      const previous = copyFeedback.get(value);
+      if (previous) clearTimeout(previous.timer);
+      const timer = setTimeout(() => {
+        copyFeedback.delete(value);
+        paintCopyButtons(value);
+      }, COPY_FEEDBACK_MS);
+      copyFeedback.set(value, { text, className, timer });
+      paintCopyButtons(value);
+    }
+
+    // Writes the full value, never the shortened text, and always shows the outcome.
+    async function copyId(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (_) {
+        showCopyFeedback(value, "Copy failed", "copy-failed");
+        return;
+      }
+      showCopyFeedback(value, "Copied", "copied");
+    }
+
+    // Capture phase: the copy runs before any row handler and stops the click there,
+    // so copying an id never changes the row selection.
+    document.addEventListener("click", event => {
+      const button = event.target instanceof Element ? event.target.closest("button.copy-id") : null;
+      if (!button) return;
+      event.stopPropagation();
+      copyId(button.dataset.copy);
+    }, true);
+
+    // The focused copy button and which occurrence of its value it is, so that a
+    // re-render can focus the same occurrence again.
+    function copyFocus() {
+      const active = document.activeElement;
+      if (!(active instanceof Element) || !active.matches("button.copy-id")) return null;
+      const scope = active.closest("[id]");
+      if (!scope) return null;
+      const value = active.dataset.copy;
+      return { button: active, scope, value, index: copyButtons(scope, value).indexOf(active) };
+    }
+
+    // Focuses that occurrence, or the last one left, without scrolling the page.
+    function restoreCopyFocus(focus) {
+      if (!focus || focus.button.isConnected || !focus.scope.isConnected) return;
+      const buttons = copyButtons(focus.scope, focus.value);
+      const next = buttons[Math.min(focus.index, buttons.length - 1)];
+      if (next) next.focus({ preventScroll: true });
+    }
+
+    // Writes HTML only when it changed, so a refresh leaves unchanged content in
+    // place, and moves keyboard focus from a replaced copy button to its successor.
+    function setHtml(el, html) {
+      if (shownHtml.get(el) === html) return;
+      shownHtml.set(el, html);
+      const focus = copyFocus();
+      el.innerHTML = html;
+      restoreCopyFocus(focus);
+    }
+    /* DASHBOARD_COMMON_END */
+
     async function postControl(id, body) {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
         method: "POST",
@@ -131,14 +269,14 @@
 
     function fillDetailPre(s) {
       const runtime = s.runtime || {};
-      document.getElementById("detail-pre").textContent = JSON.stringify({
+      setHtml(document.getElementById("detail-pre"), jsonHtml({
         id: s.id,
         kind: s.kind,
         status: s.status,
         runtime,
         can_control: s.can_control,
         control_connected: s.control_connected,
-      }, null, 2);
+      }, 2));
     }
 
     function renderDetail(s) {
@@ -148,7 +286,7 @@
         return;
       }
       box.hidden = false;
-      document.getElementById("detail-id").textContent = s.id;
+      setHtml(document.getElementById("detail-id"), idOrText(s.id));
       fillDetailPre(s);
       const controls = document.getElementById("detail-controls");
       if (s.can_control) {
@@ -203,10 +341,10 @@
         const data = await res.json();
         err.hidden = true;
         document.getElementById("stamp").textContent = data.generated_at;
-        document.getElementById("dev").textContent = data.device_id;
+        setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
 
-        document.querySelector("#usage tbody").innerHTML = (data.usage || []).map(ev => {
+        setHtml(document.querySelector("#usage tbody"), (data.usage || []).map(ev => {
           const p = ev.payload || {};
           const openrouter = (p.provider || p.vendor) === "openrouter";
           const account = openrouter ? p.account : p.account_email;
@@ -214,18 +352,18 @@
             ? (typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : "")
             : (typeof p.used_percent === "number" ? p.used_percent + "%" : "");
           const reset = openrouter ? p.limit_reset : p.period_end;
-          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(account)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(used)}</td><td>${esc(reset)}</td><td>${esc(p.fetched_at)}</td></tr>`;
-        }).join("") || empty(7);
+          return `<tr><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(account)}</td><td>${idOrText(p.provider || p.vendor)}</td><td>${idOrText(p.tier)}</td><td>${idOrText(used)}</td><td>${idOrText(reset)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
+        }).join("") || empty(7));
 
         sessionsById = {};
         (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
 
-        document.querySelector("#sessions tbody").innerHTML = (data.sessions || []).map(s => {
+        setHtml(document.querySelector("#sessions tbody"), (data.sessions || []).map(s => {
           const mode = s.can_control ? "control" : "watch";
           return `<tr class="session-row${selectedSessionId === s.id ? " selected" : ""}" data-id="${esc(s.id)}">
-            <td>${esc(s.id)}</td><td>${esc(s.kind)}</td><td class="${esc(s.status)}">${esc(s.status)}</td>
-            <td>${esc(mode)}</td><td>${esc(s.last_seen_at)}</td><td>${esc(s._origin_device_id)}</td></tr>`;
-        }).join("") || empty(6);
+            <td>${idOrText(s.id)}</td><td>${idOrText(s.kind)}</td><td class="${esc(s.status)}"${stateCellAttributes(s.status)}>${stateIcon(s.status)}</td>
+            <td>${idOrText(mode)}</td><td>${idOrText(s.last_seen_at)}</td><td>${idOrText(s._origin_device_id)}</td></tr>`;
+        }).join("") || empty(6));
 
         document.querySelectorAll("tr.session-row").forEach(tr => {
           tr.onclick = () => selectSession(tr.dataset.id);
@@ -245,33 +383,33 @@
           }
         }
 
-        document.querySelector("#tasks tbody").innerHTML = (data.tasks || []).map(t =>
-          `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${esc(t.workflow)}</td><td class="${esc(t.state)}">${esc(t.state)}</td><td>r${esc(t.current_round)}</td><td>${esc(t._origin_device_id)}</td></tr>`
-        ).join("") || empty(6);
+        setHtml(document.querySelector("#tasks tbody"), (data.tasks || []).map(t =>
+          `<tr><td>${idOrText(t.id)}</td><td>${idOrText(t.title)}</td><td>${idOrText(t.workflow)}</td><td class="${esc(t.state)}"${stateCellAttributes(t.state)}>${stateIcon(t.state)}</td><td>r${esc(t.current_round)}</td><td>${idOrText(t._origin_device_id)}</td></tr>`
+        ).join("") || empty(6));
 
-        document.querySelector("#rounds tbody").innerHTML = (data.rounds || []).map(r =>
-          `<tr><td>${esc(r.task_id)}</td><td>${esc(r.round)}</td><td>${esc(r.implementer_verdict)}</td><td>${esc(r.reviewer_verdict)}</td><td>${esc(r.started_at)}</td><td>${esc(r.finished_at)}</td></tr>`
-        ).join("") || empty(6);
+        setHtml(document.querySelector("#rounds tbody"), (data.rounds || []).map(r =>
+          `<tr><td>${idOrText(r.task_id)}</td><td>${idOrText(r.round)}</td><td>${idOrText(r.implementer_verdict)}</td><td>${idOrText(r.reviewer_verdict)}</td><td>${idOrText(r.started_at)}</td><td>${idOrText(r.finished_at)}</td></tr>`
+        ).join("") || empty(6));
 
-        document.querySelector("#agents tbody").innerHTML = (data.agents || []).map(a =>
-          `<tr><td>${esc(a.id)}</td><td>${esc(a.role)}</td><td>${esc(a.vendor)}</td><td class="${esc(a.status)}">${esc(a.status)}</td><td>${esc(a.task_id)}</td><td>${esc(a.round)}</td></tr>`
-        ).join("") || empty(6);
+        setHtml(document.querySelector("#agents tbody"), (data.agents || []).map(a =>
+          `<tr><td>${idOrText(a.id)}</td><td>${idOrText(a.role)}</td><td>${idOrText(a.vendor)}</td><td class="${esc(a.status)}"${stateCellAttributes(a.status)}>${stateIcon(a.status)}</td><td>${idOrText(a.task_id)}</td><td>${idOrText(a.round)}</td></tr>`
+        ).join("") || empty(6));
 
-        document.querySelector("#checks tbody").innerHTML = (data.checks || []).map(c =>
-          `<tr><td>${esc(c.task_id)}</td><td>${esc(c.name)}</td><td class="${esc(c.result)}">${esc(c.result)}</td><td><code>${esc(c.command)}</code></td><td>${esc(c.ran_at)}</td></tr>`
-        ).join("") || empty(5);
+        setHtml(document.querySelector("#checks tbody"), (data.checks || []).map(c =>
+          `<tr><td>${idOrText(c.task_id)}</td><td>${idOrText(c.name)}</td><td class="${esc(c.result)}">${idOrText(c.result)}</td><td><code>${idOrText(c.command)}</code></td><td>${idOrText(c.ran_at)}</td></tr>`
+        ).join("") || empty(5));
 
-        document.querySelector("#gates tbody").innerHTML = (data.gates || []).map(g =>
-          `<tr><td>${esc(g.task_id)}</td><td>${esc(g.stage)}</td><td>${esc(g.dimension)}</td><td>${esc(g.vendor)}</td><td class="${esc(g.verdict)}">${esc(g.verdict)}</td><td><code>${esc(g.head_sha)}</code></td></tr>`
-        ).join("") || empty(6);
+        setHtml(document.querySelector("#gates tbody"), (data.gates || []).map(g =>
+          `<tr><td>${idOrText(g.task_id)}</td><td>${idOrText(g.stage)}</td><td>${idOrText(g.dimension)}</td><td>${idOrText(g.vendor)}</td><td class="${esc(g.verdict)}">${idOrText(g.verdict)}</td><td><code>${idOrText(g.head_sha)}</code></td></tr>`
+        ).join("") || empty(6));
 
-        document.querySelector("#work tbody").innerHTML = (data.work || []).map(w =>
-          `<tr><td>${esc(w.session_id)}</td><td>${esc(w.key)}</td><td class="${esc(w.status)}">${esc(w.status)}</td><td>${esc(w.closable_by)}</td><td>${esc(w.note)}</td></tr>`
-        ).join("") || empty(5);
+        setHtml(document.querySelector("#work tbody"), (data.work || []).map(w =>
+          `<tr><td>${idOrText(w.session_id)}</td><td>${idOrText(w.key)}</td><td class="${esc(w.status)}"${stateCellAttributes(w.status)}>${stateIcon(w.status)}</td><td>${idOrText(w.closable_by)}</td><td>${idOrText(w.note)}</td></tr>`
+        ).join("") || empty(5));
 
-        document.querySelector("#pings tbody").innerHTML = (data.pings || []).map(p =>
-          `<tr><td>${esc(p.from_login)}</td><td>${esc(p.to_login)}</td><td>${esc(p.kind)}</td><td>${esc(p.acked_at)}</td></tr>`
-        ).join("") || empty(4);
+        setHtml(document.querySelector("#pings tbody"), (data.pings || []).map(p =>
+          `<tr><td>${idOrText(p.from_login)}</td><td>${idOrText(p.to_login)}</td><td>${idOrText(p.kind)}</td><td>${idOrText(p.acked_at)}</td></tr>`
+        ).join("") || empty(4));
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);

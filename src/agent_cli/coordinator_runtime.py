@@ -3318,7 +3318,7 @@ def advance_one(
                     )
                 )
                 if any(
-                    intent["payload"].get("kind") == "cancel"
+                    intent["payload"].get("kind") in ("cancel", "done")
                     for intent in task_intents
                 ):
                     touched.add(tid)

@@ -279,6 +279,20 @@ class Store:
                 self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
     @contextmanager
+    def try_exclusive(self, key: str) -> Iterator[bool]:
+        """The lock of :meth:`exclusive` without waiting; yields whether it is held."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s)) AS held", (key,)
+            ).fetchone()
+            held = bool(row["held"])
+            try:
+                yield held
+            finally:
+                if held:
+                    self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
+
+    @contextmanager
     def advisory_transaction(self, key: str) -> Iterator[None]:
         """Hold one transaction-scoped logical lock across related writes."""
         with self._lock, self.conn.transaction():

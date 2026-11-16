@@ -12,21 +12,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_cli import order_ops, orders
-from agent_cli.coordinator import tick
+from agent_cli import coordinator_orders, coordinator_runtime, order_ops, orders
+from agent_cli.coordinator import LOCK_PREFIX, tick
 from agent_cli.coordinator_checks import CheckValue, record_check, registry_row_id
 from agent_cli.coordinator_common import coord, redact, save_task
 from agent_cli.coordinator_config import load_coordinator_config
 from agent_cli.coordinator_orders import (
+    order_state,
     own_order_events,
     post_order_event,
     record_submitted_skips,
     reconcile_order_events,
+    sweep_terminal_orders,
 )
 from agent_cli.main import main
 from agent_cli.preconditions import CHECKS
 from agent_cli.store import Store
 from test_coordinator_support import (
+    OPEN_ORDER_SEEDS,
     FakeGh,
     insert_order_intent,
     make_session,
@@ -159,7 +162,7 @@ def duplicate_order(device, order_id: str) -> tuple[dict, str]:
 @pytest.mark.no_pg
 def test_group_usage() -> None:
     assert orders.USAGE == (
-        "Usage: agent order submit|list|show|events|wait|ack|reply|override|cancel|report"
+        "Usage: agent order submit|list|show|events|wait|ack|reply|override|cancel|done|report"
     )
     for argv in (("order",), ("order", "nope")):
         with pytest.raises(SystemExit) as exc:
@@ -177,6 +180,7 @@ USAGE_LINES = {
     "reply": "Usage: agent order reply --id UUID --body-file PATH",
     "override": "Usage: agent order override --id UUID --check KEY --reason TEXT",
     "cancel": "Usage: agent order cancel --id UUID --reason TEXT",
+    "done": "Usage: agent order done --id UUID --reason TEXT",
     "report": "Usage: agent order report --id UUID [--json]",
 }
 
@@ -226,6 +230,7 @@ def test_operations_table_is_consistent() -> None:
         "reply",
         "override",
         "cancel",
+        "done",
         "report",
     ]
     assert len(names) == len(set(names))
@@ -1656,6 +1661,366 @@ def test_cancel_refuses_a_terminal_order(device) -> None:
     assert not any(row.get("type") == "order.reply" for row in device.store.rows("activity"))
 
 
+def ended_order(device, order_id: str, failed_kind: str) -> dict:
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="blocked",
+        failed_kind=failed_kind,
+        blocker="ended earlier",
+        pr_number=42,
+    )
+    task["state"] = "failed"
+    save_task(device.store, task)
+    sweep_terminal_orders(device.store, device.worker)
+    return device.store.row("task", order_id)
+
+
+def order_reply_rows(device) -> list[dict]:
+    return [
+        row for row in device.store.rows("activity") if row.get("type") == "order.reply"
+    ]
+
+
+@pytest.mark.parametrize("state", ("queued", "running", "waiting", "ready"))
+def test_done_inserts_an_intent_for_an_open_order(device, capsys, state: str) -> None:
+    order_id = str(uuid.uuid4())
+    event_id = None
+    if state == "waiting":
+        _, event_id = blocked_order(device, order_id)
+    else:
+        seed_order_task(
+            device.store, device.worker, order_id, **OPEN_ORDER_SEEDS[state]
+        )
+    unchanged = device.store.row("task", order_id)
+    assert order_state(unchanged) == state
+    order("done", "--id", order_id, "--reason", "Delivered elsewhere")
+    output = capsys.readouterr().out
+    intent_id = output.split()[1]
+    assert output == f"done {intent_id} order {order_id} state {state}\n"
+    intent = device.store.row("activity", intent_id)
+    assert intent["session_id"] == "worker-session"
+    assert intent["execution_status"] == "pending"
+    assert intent["payload"] | {"created_at": "ignored"} == {
+        "order_id": order_id,
+        "kind": "done",
+        "reason": "Delivered elsewhere",
+        "by": "human-owner",
+        "answers": event_id,
+        "created_at": "ignored",
+    }
+    assert [row["id"] for row in order_reply_rows(device)] == [intent_id]
+    assert device.store.row("task", order_id) == unchanged
+    if event_id is not None:
+        ack = device.store.row("activity", event_id)["payload"]["ack"]
+        assert ack["via"] == "done"
+        assert ack["by"] == "human-owner"
+
+
+@pytest.mark.parametrize(
+    ("failed_kind", "state"),
+    (("no-change", "failed"), ("cancelled", "cancelled")),
+)
+def test_done_marks_an_ended_order_at_once(
+    device, capsys, failed_kind: str, state: str
+) -> None:
+    order_id = str(uuid.uuid4())
+    task = ended_order(device, order_id, failed_kind)
+    assert order_state(task) == state
+    assert coord(task)["order"]["closed"] is True
+    order("done", "--id", order_id, "--reason", "Merged by hand elsewhere")
+    output = capsys.readouterr().out
+    intent_id = output.split()[1]
+    assert output == f"done {intent_id} order {order_id} state done\n"
+    saved = device.store.row("task", order_id)
+    c = coord(saved)
+    assert saved["state"] == "failed"
+    assert c["failed_kind"] == failed_kind
+    assert c["blocker"] == "ended earlier"
+    assert c["marked_done"] | {"at": "ignored"} == {
+        "by": "human-owner",
+        "reason": "Merged by hand elsewhere",
+        "at": "ignored",
+        "intent_id": intent_id,
+    }
+    assert "closed" not in c["order"]
+    intent = device.store.row("activity", intent_id)
+    assert intent["execution_status"] == "done"
+    assert intent["result"]["effect"] == "done"
+    assert intent["payload"]["kind"] == "done"
+    events = [
+        row["payload"]
+        for row in own_order_events(device.store)
+        if row["payload"]["order_id"] == order_id
+    ]
+    assert events[-1]["kind"] == "done"
+    assert events[-1]["wake"] is False
+    assert events[-1]["answers"] == []
+    assert events[-1]["digest"] == (
+        "Order marked done by human-owner: Merged by hand elsewhere"
+    )
+
+    order("list")
+    assert f"{order_id}  done  blocked  r0" in capsys.readouterr().out
+    order("list", "--open")
+    assert order_id not in capsys.readouterr().out
+    order("show", "--id", order_id)
+    assert "state done phase blocked round 0" in capsys.readouterr().out.splitlines()
+    order("report", "--id", order_id)
+    assert "state done phase blocked" in capsys.readouterr().out.splitlines()
+    order("events")
+    assert any(
+        line.startswith("event ") and " done order " in line and "wake=false" in line
+        for line in capsys.readouterr().out.splitlines()
+    )
+
+
+def test_done_ends_a_failed_order_that_no_reply_can_resume_at_once(
+    device, capsys
+) -> None:
+    order_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="blocked",
+        blocker="Ready PR closed without merge",
+        pr_number=42,
+    )
+    reconcile_order_events(device.store, device.worker, task)
+    task = device.store.row("task", order_id)
+    event_id = coord(task)["order"]["checkpoint"]["event_id"]
+    assert task["state"] == "open"
+    assert "resume_phase" not in coord(task)
+    assert order_state(task) == "failed"
+    activities = {row["id"] for row in device.store.rows("activity")}
+
+    order("done", "--id", order_id, "--reason", "Merged by hand elsewhere")
+    output = capsys.readouterr().out
+    intent_id = output.split()[1]
+    assert output == f"done {intent_id} order {order_id} state done\n"
+    saved = device.store.row("task", order_id)
+    assert order_state(saved) == "done"
+    c = coord(saved)
+    assert saved["state"] == "failed"
+    assert c["phase"] == "blocked"
+    assert c["failed_kind"] == "done"
+    assert c["blocker"] == "Merged by hand elsewhere"
+    assert c["marked_done"] | {"at": "ignored"} == {
+        "by": "human-owner",
+        "reason": "Merged by hand elsewhere",
+        "at": "ignored",
+        "intent_id": intent_id,
+    }
+    intent = device.store.row("activity", intent_id)
+    assert intent["execution_status"] == "done"
+    assert intent["result"]["effect"] == "done"
+    ack = device.store.row("activity", event_id)["payload"]["ack"]
+    assert ack["via"] == "done"
+    assert ack["by"] == "human-owner"
+    events = [
+        row
+        for row in own_order_events(device.store)
+        if row["payload"]["order_id"] == order_id
+    ]
+    assert [row["payload"]["kind"] for row in events] == [
+        "draft-opened",
+        "failed",
+        "done",
+    ]
+    done = events[-1]["payload"]
+    assert done["wake"] is False
+    assert done["digest"] == (
+        "Order marked done by human-owner: Merged by hand elsewhere"
+    )
+    added = {row["id"] for row in device.store.rows("activity")} - activities
+    assert added == {intent_id, events[-1]["id"]}
+
+    assert sweep_terminal_orders(device.store, device.worker) == []
+    assert coord(device.store.row("task", order_id))["order"]["closed"] is True
+    assert [
+        row["id"]
+        for row in own_order_events(device.store)
+        if row["payload"]["order_id"] == order_id
+    ] == [row["id"] for row in events]
+    order("list", "--open")
+    assert order_id not in capsys.readouterr().out
+
+
+WORKER_LOCK = f"{LOCK_PREFIX}worker-session"
+
+
+def test_done_rewrites_an_ended_order_only_under_the_worker_lock(
+    device, capsys, monkeypatch
+) -> None:
+    order_id = str(uuid.uuid4())
+    ended_order(device, order_id, "cancelled")
+    held: list[bool] = []
+    original = order_ops.mark_order_done
+
+    def mark_order_done(store, task, intent):
+        # The command runs on its own connection; this one stands for a tick.
+        with device.store.try_exclusive(WORKER_LOCK) as free:
+            held.append(not free)
+        return original(store, task, intent)
+
+    monkeypatch.setattr(order_ops, "mark_order_done", mark_order_done)
+    order("done", "--id", order_id, "--reason", "Shipped by hand")
+    assert capsys.readouterr().out.endswith(f" order {order_id} state done\n")
+    assert held == [True]
+    with device.store.try_exclusive(WORKER_LOCK) as free:
+        assert free
+
+
+def test_done_during_a_tick_leaves_an_ended_order_to_the_next_tick(
+    device, capsys, monkeypatch
+) -> None:
+    order_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="blocked",
+        failed_kind="cancelled",
+        blocker="not needed",
+        pr_number=42,
+    )
+    task["state"] = "failed"
+    save_task(device.store, task)
+    original = coordinator_orders.reconcile_order_events
+    outputs: list[str] = []
+
+    def reconcile_order_events(store, worker, stale):
+        # The sweep holds its copy of the order; the human marks it done now.
+        if not outputs:
+            order("done", "--id", order_id, "--reason", "Shipped by hand")
+            outputs.append(capsys.readouterr().out)
+        return original(store, worker, stale)
+
+    monkeypatch.setattr(
+        coordinator_orders, "reconcile_order_events", reconcile_order_events
+    )
+    with device.store.exclusive(WORKER_LOCK):
+        assert sweep_terminal_orders(device.store, device.worker) == []
+    monkeypatch.setattr(coordinator_orders, "reconcile_order_events", original)
+
+    intent_id = outputs[0].split()[1]
+    assert outputs == [f"done {intent_id} order {order_id} state cancelled\n"]
+    saved = device.store.row("task", order_id)
+    assert order_state(saved) == "cancelled"
+    assert "marked_done" not in coord(saved)
+    assert coord(saved)["order"]["closed"] is True
+    assert device.store.row("activity", intent_id)["execution_status"] == "pending"
+
+    def no_command(argv):
+        raise AssertionError(f"marking an order done ran {argv!r}")
+
+    def no_lane(argv, stdin=None):
+        raise AssertionError("marking an order done started a lane")
+
+    assert coordinator_runtime.advance_one(
+        device.store, device.worker, runner=no_command, lane_runner=no_lane
+    ) == [f"order done {order_id}"]
+    for _ in range(2):
+        saved = device.store.row("task", order_id)
+        c = coord(saved)
+        assert order_state(saved) == "done"
+        assert c["failed_kind"] == "cancelled"
+        assert c["marked_done"]["intent_id"] == intent_id
+        assert c["marked_done"]["reason"] == "Shipped by hand"
+        assert device.store.row("activity", intent_id)["result"]["effect"] == "done"
+        assert [
+            row["payload"]["kind"]
+            for row in own_order_events(device.store)
+            if row["payload"]["order_id"] == order_id
+        ] == ["draft-opened", "cancelled", "done"]
+        assert sweep_terminal_orders(device.store, device.worker) == []
+    assert coord(device.store.row("task", order_id))["order"]["closed"] is True
+
+
+def test_done_is_refused_on_a_merged_or_done_order(device, capsys) -> None:
+    merged = str(uuid.uuid4())
+    task = seed_order_task(device.store, device.worker, merged, phase="done")
+    task["state"] = "done"
+    save_task(device.store, task)
+    done = str(uuid.uuid4())
+    ended_order(device, done, "cancelled")
+    order("done", "--id", done, "--reason", "First")
+    capsys.readouterr()
+    replies = order_reply_rows(device)
+    events = own_order_events(device.store)
+    for order_id, state in ((merged, "merged"), (done, "done")):
+        before = device.store.row("task", order_id)
+        with pytest.raises(
+            SystemExit, match=f"order {order_id} is already {state}"
+        ):
+            order("done", "--id", order_id, "--reason", "Again")
+        assert device.store.row("task", order_id) == before
+    assert order_reply_rows(device) == replies
+    assert own_order_events(device.store) == events
+
+
+def test_answers_on_a_done_order_are_refused(device, capsys) -> None:
+    order_id = str(uuid.uuid4())
+    task, _ = duplicate_order(device, order_id)
+    task["state"] = "failed"
+    coord(task)["failed_kind"] = "no-change"
+    save_task(device.store, task)
+    order("done", "--id", order_id, "--reason", "Handled by hand")
+    capsys.readouterr()
+    before = device.store.row("task", order_id)
+    replies = order_reply_rows(device)
+    message = f"order {order_id} is already done"
+    for argv in (
+        ("reply", "--id", order_id, "--body-file", body_file(device.home)),
+        (
+            "override",
+            "--id",
+            order_id,
+            "--check",
+            "duplicates_checked",
+            "--reason",
+            "Not a duplicate",
+        ),
+        ("cancel", "--id", order_id, "--reason", "Stop"),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            order(*argv)
+        assert str(exc.value) == f"agent: {message}"
+    assert device.store.row("task", order_id) == before
+    assert order_reply_rows(device) == replies
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    (
+        ("two\nlines", "reason must be one line of 1..500 characters"),
+        ("x" * 501, "reason must be one line of 1..500 characters"),
+        ("", "--reason is required"),
+    ),
+)
+def test_done_follows_the_reason_rule_of_cancel(
+    device, reason: str, message: str
+) -> None:
+    order_id = str(uuid.uuid4())
+    seed_order_task(device.store, device.worker, order_id, phase="queued")
+    for name in ("cancel", "done"):
+        with pytest.raises(SystemExit) as exc:
+            order(name, "--id", order_id, "--reason", reason)
+        assert str(exc.value) == f"agent: {message}"
+    assert order_reply_rows(device) == []
+
+
+def test_done_requires_a_paired_device(device) -> None:
+    order_id = str(uuid.uuid4())
+    seed_order_task(device.store, device.worker, order_id, phase="queued")
+    device.store.set_meta("github_login", "")
+    with pytest.raises(SystemExit, match="device is not paired"):
+        order("done", "--id", order_id, "--reason", "Delivered")
+    assert order_reply_rows(device) == []
+
+
 def test_results_carry_exactly_the_declared_fields(device) -> None:
     submitted = order_ops.run(
         "submit",
@@ -1716,6 +2081,14 @@ def test_results_carry_exactly_the_declared_fields(device) -> None:
         device.home,
         {"order_id": cancel_id, "reason": "No longer needed"},
     )
+    done_id = str(uuid.uuid4())
+    seed_order_task(device.store, device.worker, done_id, phase="queued")
+    results["done"] = order_ops.run(
+        "done",
+        device.store,
+        device.home,
+        {"order_id": done_id, "reason": "Delivered elsewhere"},
+    )
     report_id = str(uuid.uuid4())
     seed_order_task(
         device.store,
@@ -1736,6 +2109,7 @@ def test_results_carry_exactly_the_declared_fields(device) -> None:
         "reply",
         "override",
         "cancel",
+        "done",
         "report",
     }
     for name, result in results.items():
@@ -1760,6 +2134,12 @@ def test_commands_start_no_process(device, capsys, monkeypatch) -> None:
     _, event_id = blocked_order(device, blocked)
     duplicate = str(uuid.uuid4())
     duplicate_order(device, duplicate)
+    ended = str(uuid.uuid4())
+    ended_task = seed_order_task(
+        device.store, device.worker, ended, phase="blocked", failed_kind="cancelled"
+    )
+    ended_task["state"] = "failed"
+    save_task(device.store, ended_task)
     with monkeypatch.context() as patch:
         patch.setattr(
             subprocess,
@@ -1790,6 +2170,8 @@ def test_commands_start_no_process(device, capsys, monkeypatch) -> None:
             "Not a duplicate",
         )
         order("cancel", "--id", queued, "--reason", "Stop")
+        order("done", "--id", blocked, "--reason", "Delivered")
+        order("done", "--id", ended, "--reason", "Delivered")
         order("ack", "--event", event_id)
     capsys.readouterr()
 

@@ -718,6 +718,32 @@ def test_reconnect_opens_a_fresh_connection(tmp_path: Path) -> None:
     assert store.meta("device_id") == store.device_id()
 
 
+def test_try_exclusive_takes_the_lock_of_exclusive_without_waiting(
+    tmp_path: Path,
+) -> None:
+    first = Store(tmp_path)
+    second = Store(tmp_path)
+    try:
+        with first.exclusive("worker"):
+            with second.try_exclusive("worker") as held:
+                assert held is False
+            with first.try_exclusive("worker") as held:
+                assert held is True
+            with second.try_exclusive("worker") as held:
+                assert held is False
+            with second.try_exclusive("another") as held:
+                assert held is True
+        with second.try_exclusive("worker") as held:
+            assert held is True
+            with first.try_exclusive("worker") as other:
+                assert other is False
+        with first.try_exclusive("worker") as held:
+            assert held is True
+    finally:
+        first.close()
+        second.close()
+
+
 def test_activity_of_types_returns_own_rows_of_the_given_types(tmp_path: Path) -> None:
     store = Store(tmp_path)
     try:

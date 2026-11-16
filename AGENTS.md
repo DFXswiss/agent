@@ -39,8 +39,8 @@ pull-request comment from `reply_logins`. Models never write `order.event` or
 never close a precondition check; an override names its check. A model that
 hands orders to the script is a concierge, not an orchestrator: it submits,
 reads status and the acceptance report, relays questions, and passes on the
-human's reply, override or cancel. It starts no lane, runs no review loop and
-does not wait with model turns.
+human's reply, override, cancel or done mark. It starts no lane, runs no
+review loop and does not wait with model turns.
 
 Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed

@@ -512,7 +512,15 @@ A record of a check lane is closed the same way, but closing it does not retry t
    `close_allowed` permits it, then publishes a GitHub-visible blocker with
    `resume_phase` of `pr_gates_grok` / `pr_gates_codex` and a pinned
    `question_activity_id` — not a rejected complete gate and not an implementer
-   fix loop. Every complete dimension is persisted before incomplete dimensions
+   fix loop. The blocker names `status` and `result` of every affected
+   dimension. After `Not a code rejection.` it adds `Lane output:` with one
+   excerpt per affected dimension whose lane wrote output: the last non-empty
+   line, stderr first when the lane returned no valid result, redacted,
+   without terminal control sequences, and cut to at most 200 characters.
+   The excerpt is taken from the complete lane output and saved with the
+   reviewer outcome checkpoint, because the stored stdout and stderr keep
+   only the start of a long stream.
+   Every complete dimension is persisted before incomplete dimensions
    are handled; a complete rejection always routes back to implementation even
    when its parallel peer is unavailable. The next implementer receives every
    rejecting dimension under `Quality review findings:` or `Logic review
@@ -884,7 +892,9 @@ and collections are bounded and redacted through the same serializer as
 `lane.run`, and the complete JSON file has a hard size limit. After tool entries
 are removed to meet that limit,
 stdout and stderr are shortened against their JSON-escaped size while the
-already parsed protocol result remains intact. Each parallel worker writes its
+already parsed protocol result remains intact. The output excerpt for the
+incomplete-review blocker is taken from the complete output before that
+shortening and is kept whole. Each parallel worker writes its
 checkpoint atomically as soon as its lane returns, before publishing the result to shared memory or
 waiting for its sibling. If serialization raises, including a coordinator
 validation error, that worker removes its owned raw output plus any temporary or
@@ -954,7 +964,8 @@ deletions.
 
 ## Orders
 
-A reply, override or cancel acknowledges the question or blocker it answers.
+A reply, override, cancel or done acknowledges the question or blocker it
+answers.
 
 `agent order submit --repo OWNER/NAME --title TEXT --body-file PATH` submits a
 local order. Optional arguments are `--base BRANCH`, `--worker SESSION`,
@@ -1009,6 +1020,7 @@ agent order ack --event ID
 agent order reply --id UUID --body-file PATH
 agent order override --id UUID --check KEY --reason TEXT
 agent order cancel --id UUID --reason TEXT
+agent order done --id UUID --reason TEXT
 agent order report --id UUID [--json]
 ```
 
@@ -1019,21 +1031,23 @@ output. `wait` polls the local store at `poll_seconds`; it exits 0 with events
 and 3 on timeout.
 
 Order states are derived: `queued`, `running`, `waiting`, `ready`, `merged`,
-`failed`, and `cancelled`. Order `merged` derives from task `done`. It is not
-the spine task state `merged`, which only `agent task close-from-pr` writes;
-that command refuses coordinator tasks.
+`done`, `failed`, and `cancelled`. `merged`, `done`, `failed`, and `cancelled`
+are ended; `list --open` omits them. Order `merged` derives from task `done`.
+It is not the spine task state `merged`, which only `agent task close-from-pr`
+writes; that command refuses coordinator tasks.
 
 The coordinator writes one `order.event` for `accepted`, `draft-opened`,
-`question`, `blocked`, `resumed`, `ready`, `merged`, `failed`, and `cancelled`.
+`question`, `blocked`, `resumed`, `ready`, `merged`, `done`, `failed`, and
+`cancelled`.
 The event includes order id, kind, wake, per-device `seq`, a redacted digest of
 at most 1,500 characters, pull-request URL, phase, round, failed check,
 `answers`, `opinion`, notification session, time and acknowledgement.
 
 Wake is true for `question`, `blocked`, `ready`, `failed`, and `cancelled`.
-`merged` never wakes. A merge observed before Ready writes `ready` together
-with `merged`. Events persist until acknowledged. Notification session is only
-a filter. Any later concierge or the dashboard can list unacknowledged wake
-events and acknowledge one.
+`merged` and `done` never wake. A merge observed before Ready writes `ready`
+together with `merged`. Events persist until acknowledged. Notification session
+is only a filter. Any later concierge or the dashboard can list unacknowledged
+wake events and acknowledge one.
 
 Reply, override and cancel insert `order.reply`; the next tick consumes it. A
 reply resumes the exact `resume_phase`, like an authorized GitHub reply. A
@@ -1044,6 +1058,25 @@ the order the same way without a comment; a cancel is refused when the pull
 request is already merged. These writes and
 `order.event` are script-only; `agent activity add` refuses them with `<type>
 is written by a script, not agent activity add`. Models never write them.
+
+`done` marks an order completed on a human's explicit decision; a concierge
+calls it only on the human's request. Its reason follows the cancel rule. It
+accepts every state except `done` and `merged`, which fail with `order UUID
+is already STATE`. For an open order it inserts `order.reply`, and the next
+tick ends the order like a cancel, without closing the pull request: no
+further round, lane start or GitHub write follows, and the state becomes
+`done`. An order in state `failed` or `cancelled` becomes `done` in the
+operation itself, without a coordinator pass; a `failed` order whose blocker
+no reply can resume ends there the same way as an open order. The operation
+rewrites the order only while it holds the worker lock
+`coordinator-worker:<session_id>` that a tick holds throughout, and never waits
+for it: while a tick of that worker runs, the `order.reply` row stays, and the
+next tick marks the order done the same way. Done never merges, closes,
+reopens, comments on or edits the pull request and never pushes or deletes a
+branch. The order records who marked it done and the reason; the `done`
+event's digest is `Order marked done by <who>: <reason>`.
+Reply, override and cancel on a done order fail with `order UUID is already
+done`.
 
 Wherever this document says a blocker or question is published on the issue,
 an order publishes it on its pull request. Before the draft exists it is only
@@ -1180,10 +1213,11 @@ it passes that list, title and order text to the lane. The only results are
 `REASON:` sentence. A duplicate number must be in the supplied list.
 
 A duplicate records no, creates no start commit or pull request, and raises a
-question naming the suspected pull request and check. Only an override or
-cancel resolves it, unless skipped at submit. Invalid answers retry with
-backoff under `lane_retries`. More than 200 open pull requests, or exhausted
-lane retries, records `unavailable`; a plain reply runs it again.
+question naming the suspected pull request and check. Only an override,
+cancellation or done mark resolves it, unless skipped at submit. Invalid
+answers retry with backoff under `lane_retries`. More than 200 open pull
+requests, or exhausted lane retries, records `unavailable`; a plain reply runs
+it again.
 
 The round assessment is another check lane. Before the next round would exceed
 the pinned limit, its input is only the task text and bounded findings from each

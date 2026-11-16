@@ -325,11 +325,13 @@ def phase_accept_order(
 
 
 def order_state(task: dict[str, Any]) -> str:
-    """merged | cancelled | failed | queued | waiting | ready | running; derived, never stored."""
+    """merged | done | cancelled | failed | queued | waiting | ready | running; derived, never stored."""
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     if task.get("state") == "done":
         return "merged"
+    if task.get("state") == "failed" and isinstance(c.get("marked_done"), dict):
+        return "done"
     if task.get("state") == "failed" and c.get("failed_kind") == "cancelled":
         return "cancelled"
     if task.get("state") == "failed" or (
@@ -435,7 +437,31 @@ def post_order_event(
     check: str | None = None,
     opinion: dict[str, Any] | None = None,
 ) -> str:
-    """Insert one deterministic, sequenced event for an order."""
+    """Insert one deterministic, sequenced event for an order of this worker."""
+    return insert_order_event(
+        store,
+        worker.session_id,
+        task,
+        kind=kind,
+        occurrence=occurrence,
+        digest=digest,
+        check=check,
+        opinion=opinion,
+    )
+
+
+def insert_order_event(
+    store: Store,
+    session_id: str,
+    task: dict[str, Any],
+    *,
+    kind: str,
+    occurrence: str,
+    digest: str,
+    check: str | None = None,
+    opinion: dict[str, Any] | None = None,
+) -> str:
+    """Insert one deterministic, sequenced event for an order of ``session_id``."""
     event_id = order_event_id(order_id(task), kind, occurrence)
 
     def existing_result() -> bool:
@@ -481,7 +507,7 @@ def post_order_event(
             answers = ["cancel"]
         row = {
             "id": event_id,
-            "session_id": worker.session_id,
+            "session_id": session_id,
             "type": ORDER_EVENT,
             "execution_status": "done",
             "payload": {
@@ -608,7 +634,7 @@ def reconcile_order_events(
                 occurrence="",
                 digest=f"Order cancelled: {c.get('blocker') or ''}",
             )
-        else:
+        elif c.get("failed_kind") != "done":
             kind_text = str(c.get("failed_kind") or "failed")
             post(
                 kind="failed",
@@ -616,6 +642,9 @@ def reconcile_order_events(
                 digest=f"Order failed ({kind_text}): {c.get('blocker') or ''}",
                 check=c.get("failed_check"),
             )
+        marked = c.get("marked_done")
+        if task.get("state") == "failed" and isinstance(marked, dict):
+            post(kind="done", occurrence="", digest=done_digest(marked))
     elif phase in ("ask", "blocked") or c.get("binding_blocker"):
         if order_state(task) == "failed":
             kind = "failed"
@@ -810,6 +839,74 @@ def _finish_intent(
     store.write("activity", "update", intent_id, strip_row(row))
 
 
+def done_digest(marked: dict[str, Any]) -> str:
+    return f"Order marked done by {marked.get('by') or ''}: {marked.get('reason') or ''}"
+
+
+def _marked_done(intent: dict[str, Any]) -> dict[str, Any]:
+    """Who marked the order done, why, and the answer that carried it."""
+    payload = intent.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    return {
+        "by": str(payload.get("by") or ""),
+        "reason": redact(str(payload.get("reason") or ""), limit=500),
+        "at": utcnow(),
+        "intent_id": str(intent.get("id") or ""),
+    }
+
+
+def _end_order(changed: dict[str, Any], *, failed_kind: str, reason: str) -> None:
+    """End an open order: no further round, lane start or GitHub write follows."""
+    changed["state"] = "failed"
+    changed_c = coord(changed)
+    changed_c["phase"] = "blocked"
+    clear_reply_recovery(changed_c)
+    changed_c["failed_kind"] = failed_kind
+    changed_c["blocker"] = redact(reason, limit=500)
+    changed_c.pop("closing_draft", None)
+    changed_c.pop("retry", None)
+
+
+def mark_order_done(
+    store: Store, task: dict[str, Any], intent: dict[str, Any]
+) -> None:
+    """Mark an order done on the human's explicit decision.
+
+    It touches no pull request, branch or lane. A task that has not ended yet
+    ends like a cancel, without the pull-request closure. A task the
+    coordinator already ended keeps its failed kind, and the mark is recorded
+    beside it. The answer is consumed in the same transaction and the ``done``
+    event is posted. Event reconciliation of the order is reopened so the
+    sweep posts that event if this process stops first. The caller holds the
+    lock of the order's worker, so no tick saves an older copy over the mark.
+    """
+    record = _marked_done(intent)
+
+    def mark(changed: dict[str, Any]) -> None:
+        if changed.get("state") != "failed":
+            _end_order(changed, failed_kind="done", reason=record["reason"])
+        changed_c = coord(changed)
+        changed_c["marked_done"] = record
+        order_data = changed_c.get("order")
+        if isinstance(order_data, dict):
+            order_data.pop("closed", None)
+
+    _commit_order(
+        store,
+        task,
+        mark,
+        lambda: _finish_intent(store, intent, effect="done"),
+    )
+    insert_order_event(
+        store,
+        str(task["session_id"]),
+        task,
+        kind="done",
+        occurrence="",
+        digest=done_digest(record),
+    )
+
+
 def consume_order_intents(
     store: Store,
     worker: WorkerConfig,
@@ -817,7 +914,7 @@ def consume_order_intents(
     runner: Runner,
     intents: list[dict[str, Any]],
 ) -> list[str] | None:
-    """Consume ordered local replies, overrides, and cancellations for one order."""
+    """Consume ordered local replies, overrides, cancellations and done marks for one order."""
     lines: list[str] = []
     oid = order_id(task)
 
@@ -863,6 +960,11 @@ def consume_order_intents(
         payload = payload if isinstance(payload, dict) else {}
         by = str(payload.get("by") or "")
         c = coord(task)
+        kind = payload.get("kind")
+        if kind == "done" and order_state(task) not in ("done", "merged"):
+            mark_order_done(store, task, intent)
+            lines.append(f"order done {oid}")
+            continue
         if task.get("state") in ("done", "failed"):
             _finish_intent(
                 store,
@@ -870,7 +972,6 @@ def consume_order_intents(
                 error=f"order is already {order_state(task)}",
             )
             continue
-        kind = payload.get("kind")
         if kind not in ("reply", "override", "cancel"):
             refuse(intent, "unknown intent kind")
             continue
@@ -895,16 +996,11 @@ def consume_order_intents(
                     continue
 
             def cancel(changed: dict[str, Any]) -> None:
-                changed["state"] = "failed"
-                changed_c = coord(changed)
-                changed_c["phase"] = "blocked"
-                clear_reply_recovery(changed_c)
-                changed_c["failed_kind"] = "cancelled"
-                changed_c["blocker"] = redact(
-                    str(payload.get("reason") or ""), limit=500
+                _end_order(
+                    changed,
+                    failed_kind="cancelled",
+                    reason=str(payload.get("reason") or ""),
                 )
-                changed_c.pop("closing_draft", None)
-                changed_c.pop("retry", None)
 
             _commit_order(
                 store,

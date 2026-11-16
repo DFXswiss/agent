@@ -6,10 +6,12 @@ import hashlib
 import stat
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_cli.coordinator import tick
+from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_flow import seed_task
@@ -60,7 +62,15 @@ def _gate_task(
     monkeypatch: pytest.MonkeyPatch,
     quality: str,
     logic: str,
+    *,
+    lane_results: dict[str, Completed] | None = None,
+    passes: int = 1,
 ):
+    """Run review-1 gate steps and return the last step's lines.
+
+    ``lane_results`` replaces a role's process result. ``passes`` repeats the
+    step, for example to recover a checkpoint that failed in the first one.
+    """
     from agent_cli.coordinator_git import _write_marker
     from agent_cli.coordinator_lanes import phase_pr_gates
 
@@ -155,15 +165,29 @@ def _gate_task(
     monkeypatch.setattr(
         "agent_cli.coordinator_lanes.execute_github", complete_saved_intents
     )
-    lines = phase_pr_gates(
-        store,
-        worker,
-        store.row("task", tid),
-        fake,
-        lane_runner(fake),
-        vendor="grok",
-        stage="review-1",
-    )
+    ordinary = lane_runner(fake)
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        # The fake runner still runs for every role so both parallel
+        # reviewers meet at its barrier.
+        completed = ordinary(argv, stdin)
+        material = " ".join(argv) + "\n" + (stdin or "")
+        for role, replacement in (lane_results or {}).items():
+            if role in material:
+                return replacement
+        return completed
+
+    lines: list[str] = []
+    for _ in range(passes):
+        lines = phase_pr_gates(
+            store,
+            worker,
+            store.row("task", tid),
+            fake,
+            lane,
+            vendor="grok",
+            stage="review-1",
+        )
     return store, tid, lines
 
 
@@ -766,3 +790,370 @@ def test_approved_dimension_is_recorded_next_to_a_rejected_one(
     assert c["findings"].startswith("Quality review findings:")
     assert "Logic review findings:" not in c["findings"]
     assert c["phase"] == "implement"
+
+
+_PROVIDER_402 = (
+    "API error (status 402 Payment Required): "
+    "Grok Build usage balance exhausted"
+)
+_TODAY_INCOMPLETE_BLOCKER = (
+    "grok quality, logic review unavailable/incomplete "
+    "(quality: status=unavailable, result=empty; "
+    "logic: status=unavailable, result=empty). Not a code rejection."
+)
+
+
+def _lane_result(
+    *,
+    stdout: str = "",
+    stderr: str = "",
+    protocol_result: str = "",
+    config_dir: str | None = None,
+) -> LaneResult:
+    return LaneResult(
+        role="pr-reviewer-quality",
+        vendor="grok",
+        model="grok-model",
+        status="unavailable",
+        argv=[],
+        returncode=1,
+        stdout=stdout,
+        stderr=stderr,
+        config_dir=config_dir,
+        protocol_result=protocol_result,
+    )
+
+
+def _progress_lines() -> str:
+    """Progress output longer than the 4000 characters a stored stream keeps."""
+    progress = "".join(
+        f"progress {index:03d}: reading repository files\n" for index in range(150)
+    )
+    assert len(progress) > 4000
+    return progress
+
+
+def _incomplete_blocker_comments(store: Store) -> list[str]:
+    return [
+        str((row.get("payload") or {}).get("body") or "")
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and "Blocked:" in str((row.get("payload") or {}).get("body") or "")
+    ]
+
+
+def _reviewer_agents(store: Store, tid: str) -> dict[str, dict[str, Any]]:
+    return {
+        str(row.get("dimension")): row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+        and str(row.get("role") or "").startswith("pr-reviewer-")
+    }
+
+
+@pytest.mark.no_pg
+def test_incomplete_output_excerpt_takes_the_last_visible_stderr_line() -> None:
+    from agent_cli.coordinator_lanes import _incomplete_output_excerpt
+
+    stdout = "model text\nlast stdout line\n"
+    stderr = f"starting review\n\x1b[31m{_PROVIDER_402}\x1b[0m\n\n   \n"
+    outcome = _lane_result(stdout=stdout, stderr=stderr)
+    assert _incomplete_output_excerpt(outcome) == _PROVIDER_402
+    valid = _lane_result(stdout=stdout, stderr=stderr, protocol_result="approved")
+    assert _incomplete_output_excerpt(valid) == "last stdout line"
+    stdout_only = _lane_result(stdout=f"{_PROVIDER_402}\n", stderr=" \n")
+    assert _incomplete_output_excerpt(stdout_only) == _PROVIDER_402
+    assert _incomplete_output_excerpt(_lane_result()) == ""
+    assert (
+        _incomplete_output_excerpt(_lane_result(stdout="\n \n", stderr="\t\n"))
+        == ""
+    )
+    long_output = _lane_result(stderr=f"{_progress_lines()}{_PROVIDER_402}\n")
+    assert _incomplete_output_excerpt(long_output) == _PROVIDER_402
+
+
+@pytest.mark.no_pg
+def test_incomplete_output_excerpt_is_redacted_and_bounded() -> None:
+    from agent_cli.coordinator_lanes import (
+        INCOMPLETE_OUTPUT_EXCERPT_LIMIT,
+        _incomplete_output_excerpt,
+    )
+
+    token = "ghp_" + "a" * 40
+    secret = _incomplete_output_excerpt(
+        _lane_result(stderr=f"request failed for credential {token}\n")
+    )
+    assert secret == "request failed for credential [redacted]"
+    key_body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
+    pem = _incomplete_output_excerpt(
+        _lane_result(stderr=f"boom\n-----BEGIN PRIVATE KEY-----\n{key_body}\n")
+    )
+    assert key_body not in pem
+    assert "[redacted]" in pem
+    config = _incomplete_output_excerpt(
+        _lane_result(
+            stderr="cannot read /test/account/settings.json\n",
+            config_dir="/test/account",
+        )
+    )
+    assert config == "cannot read <config_dir>/settings.json"
+    long_line = "E" * 500
+    cut = _incomplete_output_excerpt(_lane_result(stderr=f"first\n{long_line}\n"))
+    assert INCOMPLETE_OUTPUT_EXCERPT_LIMIT == 200
+    assert len(cut) <= INCOMPLETE_OUTPUT_EXCERPT_LIMIT
+    assert cut.startswith("E" * 150)
+
+
+def test_reviewer_spool_keeps_the_excerpt_of_the_complete_output(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    task = {"id": "aa000001-0000-4000-8000-000000000301"}
+    agent = {
+        "id": "aa000001-0000-4000-8000-000000000302",
+        "role": "pr-reviewer-quality",
+        "vendor": "codex",
+    }
+    identity = {
+        "round_num": None,
+        "head": "a" * 40,
+        "dimension": "quality",
+        "stage": "review-1",
+    }
+    path = coordinator_lanes._write_reviewer_spool(
+        store,
+        worker,
+        task,
+        agent,
+        replace(
+            _lane_result(stderr=f"{_progress_lines()}{_PROVIDER_402}\n"),
+            vendor="codex",
+        ),
+        output_file=None,
+        **identity,
+    )
+
+    def read() -> Any:
+        return coordinator_lanes._read_reviewer_spool(
+            store, worker, task, agent, **identity
+        )
+
+    recovered = read()
+    assert recovered is not None
+    saved, _output_file, excerpt = recovered
+    assert excerpt == _PROVIDER_402
+    # The spooled stderr keeps only the start of the stream.
+    assert _PROVIDER_402 not in saved.stderr
+    assert saved.stderr.endswith("[truncated]")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["result"]["output_excerpt"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    older = read()
+    assert older is not None
+    assert older[2] is None
+    payload["result"]["output_excerpt"] = 402
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert read() is None
+
+
+def test_incomplete_review_blocker_names_the_provider_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, tid, lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(
+                1, "", f"starting review\n{_PROVIDER_402}\n"
+            ),
+            "pr-reviewer-logic": Completed(1, "", ""),
+        },
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["resume_phase"] == "pr_gates_grok"
+    assert c["blocker_publish_kind"] == "provider-incomplete"
+    # The logic lane produced no output, so its details keep today's text.
+    assert c["blocker"] == (
+        f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: quality: {_PROVIDER_402}"
+    )
+    comments = _incomplete_blocker_comments(store)
+    assert len(comments) == 1
+    assert f"Blocked: {c['blocker']}" in comments[0]
+    assert "review-1/quality unavailable; blocked" in lines
+    assert "review-1/logic unavailable; blocked" in lines
+
+
+def test_incomplete_review_blocker_without_output_keeps_todays_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(1, "", ""),
+            "pr-reviewer-logic": Completed(1, "", " \n"),
+        },
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["blocker"] == _TODAY_INCOMPLETE_BLOCKER
+    comments = _incomplete_blocker_comments(store)
+    assert len(comments) == 1
+    assert f"Blocked: {_TODAY_INCOMPLETE_BLOCKER}" in comments[0]
+
+
+def test_incomplete_review_blocker_redacts_and_cuts_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import INCOMPLETE_OUTPUT_EXCERPT_LIMIT
+
+    token = "ghp_" + "b" * 40
+    long_error = "API error (status 500): " + "detail " * 80
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(
+                1, "", f"API error (status 401): bad credential {token}\n"
+            ),
+            "pr-reviewer-logic": Completed(1, "", f"{long_error}\n"),
+        },
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    blocker = c["blocker"]
+    assert blocker.startswith(f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: ")
+    assert token not in blocker
+    assert "ghp_" not in blocker
+    output = blocker.split(" Lane output: ", 1)[1]
+    quality_part, logic_excerpt = output.split("; logic: ")
+    assert quality_part == "quality: API error (status 401): bad credential [redacted]"
+    assert len(long_error.strip()) > INCOMPLETE_OUTPUT_EXCERPT_LIMIT
+    assert logic_excerpt.startswith("API error (status 500): detail detail")
+    assert logic_excerpt.endswith(" …")
+    assert len(logic_excerpt) <= INCOMPLETE_OUTPUT_EXCERPT_LIMIT
+    for body in _incomplete_blocker_comments(store):
+        assert "ghp_" not in body
+
+
+def test_incomplete_review_blocker_keeps_the_error_after_long_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(
+                1, "", f"{_progress_lines()}{_PROVIDER_402}\n"
+            ),
+            "pr-reviewer-logic": Completed(1, "", ""),
+        },
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["blocker"] == (
+        f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: quality: {_PROVIDER_402}"
+    )
+    assert "[truncated]" not in c["blocker"]
+    comments = _incomplete_blocker_comments(store)
+    assert len(comments) == 1
+    assert f"Blocked: {c['blocker']}" in comments[0]
+    assert "[truncated]" not in comments[0]
+    # The stored stderr keeps only the start of the stream, so the excerpt
+    # must come from the complete output.
+    note = str(_reviewer_agents(store, tid)["quality"].get("note") or "")
+    assert note.endswith("[truncated]")
+    assert _PROVIDER_402 not in note
+
+
+def test_incomplete_review_blocker_keeps_the_error_after_spool_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    real_checkpoint = coordinator_lanes._checkpoint_reviewer_outcome
+    calls = 0
+
+    def fail_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise StoreError("checkpoint unavailable")
+        return real_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(
+        coordinator_lanes, "_checkpoint_reviewer_outcome", fail_once
+    )
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(
+                1, "", f"{_progress_lines()}{_PROVIDER_402}\n"
+            ),
+            "pr-reviewer-logic": Completed(1, "", ""),
+        },
+        passes=2,
+    )
+    # One failed checkpoint, then both results recovered from their spools.
+    assert calls == 3
+    agents = _reviewer_agents(store, tid)
+    assert sorted(agents) == ["logic", "quality"]
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["blocker"] == (
+        f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: quality: {_PROVIDER_402}"
+    )
+    note = str(agents["quality"].get("note") or "")
+    assert note.endswith("[truncated]")
+    assert _PROVIDER_402 not in note
+
+
+def test_incomplete_review_blocker_reads_a_checkpoint_without_excerpt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    real_fields = coordinator_lanes._reviewer_replay_fields
+
+    def older_fields(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        entry = real_fields(*args, **kwargs)
+        del entry["output_excerpt"]
+        return entry
+
+    monkeypatch.setattr(coordinator_lanes, "_reviewer_replay_fields", older_fields)
+    store, tid, _lines = _gate_task(
+        tmp_path,
+        monkeypatch,
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: approved\n",
+        lane_results={
+            "pr-reviewer-quality": Completed(
+                1, "", f"starting review\n{_PROVIDER_402}\n"
+            ),
+            "pr-reviewer-logic": Completed(1, "", ""),
+        },
+    )
+    c = store.row("task", tid)["payload"]["coordinator"]
+    assert c["phase"] == "blocked"
+    assert c["blocker"] == (
+        f"{_TODAY_INCOMPLETE_BLOCKER} Lane output: quality: {_PROVIDER_402}"
+    )

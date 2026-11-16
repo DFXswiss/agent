@@ -15,6 +15,9 @@
     .control-form button { padding: 6px 12px; cursor: pointer; }
     #os-body { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
     .failed { color: #c00; }
+    button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+    button.copy-id.copied { color: #060; }
+    button.copy-id.copy-failed { color: #c00; }
   </style>
 </head>
 <body>
@@ -45,6 +48,140 @@
     let skippable = [];
 
     function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+
+    /* DASHBOARD_COMMON_BEGIN */
+    // Shared by index.html, section.html and orders_new.html; a test keeps the copies identical.
+    const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const QUOTED_UUID_PATTERN = /&quot;([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})&quot;/gi;
+    const COPY_FEEDBACK_MS = 1500;
+    const copyFeedback = new Map();
+    const shownHtml = new WeakMap();
+    // One icon for every state or status value the code produces, one family per line:
+    // running or active, task in progress, open or waiting, blocked, ready, merged or done,
+    // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
+    // unavailable) and unknown.
+    const STATE_ICONS = {
+      "running": "▶", "active": "▶", "working": "▶",
+      "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
+      "open": "○", "queued": "⋯", "waiting": "⧖",
+      "gate-blocked": "⚠",
+      "ready": "⚑",
+      "merged": "✔", "done": "✔", "finished": "✔",
+      "closed": "■", "superseded": "↷",
+      "failed": "✖", "error": "✖",
+      "cancelled": "⊘",
+      "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
+      "unknown": "?"
+    };
+    const STATE_FALLBACK_ICON = "◌";
+
+    // A UUID shows as its first 8 characters on a button that copies the full value.
+    function idChip(value) {
+      const feedback = copyFeedback.get(value);
+      const className = feedback ? "copy-id " + feedback.className : "copy-id";
+      const text = feedback ? feedback.text : value.slice(0, 8);
+      return `<button type="button" class="${className}" data-copy="${esc(value)}" title="${esc(value)}">${esc(text)}</button>`;
+    }
+
+    function idOrText(value) {
+      return typeof value === "string" && UUID_PATTERN.test(value) ? idChip(value) : esc(value);
+    }
+
+    // JSON text in which every string that is a UUID is a copy button.
+    function jsonHtml(value, indent) {
+      return esc(JSON.stringify(value, null, indent)).replace(QUOTED_UUID_PATTERN, (_, id) => `&quot;${idChip(id)}&quot;`);
+    }
+
+    // The icon of a state or status word, labelled with the word; the cell that
+    // holds it carries stateCellAttributes of the same word.
+    function stateIcon(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      const word = String(value);
+      const known = Object.hasOwn(STATE_ICONS, word);
+      const icon = known ? STATE_ICONS[word] : STATE_FALLBACK_ICON;
+      return `<span class="${known ? "state-icon" : "state-icon state-unknown"}" role="img" aria-label="${esc(word)}">${icon}&#xFE0E;</span>`;
+    }
+
+    // The word behind a state icon as the title and the accessible name of the
+    // cell that shows the icon; nothing for a missing word.
+    function stateCellAttributes(value) {
+      if (value === null || value === undefined || value === "") return "";
+      return ` title="${esc(value)}" aria-label="${esc(value)}"`;
+    }
+
+    // The copy buttons that show one value, in document order.
+    function copyButtons(scope, value) {
+      return Array.from(scope.querySelectorAll("button.copy-id")).filter(button => button.dataset.copy === value);
+    }
+
+    function paintCopyButtons(value) {
+      const feedback = copyFeedback.get(value);
+      copyButtons(document, value).forEach(button => {
+        button.textContent = feedback ? feedback.text : value.slice(0, 8);
+        button.className = feedback ? "copy-id " + feedback.className : "copy-id";
+      });
+    }
+
+    function showCopyFeedback(value, text, className) {
+      const previous = copyFeedback.get(value);
+      if (previous) clearTimeout(previous.timer);
+      const timer = setTimeout(() => {
+        copyFeedback.delete(value);
+        paintCopyButtons(value);
+      }, COPY_FEEDBACK_MS);
+      copyFeedback.set(value, { text, className, timer });
+      paintCopyButtons(value);
+    }
+
+    // Writes the full value, never the shortened text, and always shows the outcome.
+    async function copyId(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (_) {
+        showCopyFeedback(value, "Copy failed", "copy-failed");
+        return;
+      }
+      showCopyFeedback(value, "Copied", "copied");
+    }
+
+    // Capture phase: the copy runs before any row handler and stops the click there,
+    // so copying an id never changes the row selection.
+    document.addEventListener("click", event => {
+      const button = event.target instanceof Element ? event.target.closest("button.copy-id") : null;
+      if (!button) return;
+      event.stopPropagation();
+      copyId(button.dataset.copy);
+    }, true);
+
+    // The focused copy button and which occurrence of its value it is, so that a
+    // re-render can focus the same occurrence again.
+    function copyFocus() {
+      const active = document.activeElement;
+      if (!(active instanceof Element) || !active.matches("button.copy-id")) return null;
+      const scope = active.closest("[id]");
+      if (!scope) return null;
+      const value = active.dataset.copy;
+      return { button: active, scope, value, index: copyButtons(scope, value).indexOf(active) };
+    }
+
+    // Focuses that occurrence, or the last one left, without scrolling the page.
+    function restoreCopyFocus(focus) {
+      if (!focus || focus.button.isConnected || !focus.scope.isConnected) return;
+      const buttons = copyButtons(focus.scope, focus.value);
+      const next = buttons[Math.min(focus.index, buttons.length - 1)];
+      if (next) next.focus({ preventScroll: true });
+    }
+
+    // Writes HTML only when it changed, so a refresh leaves unchanged content in
+    // place, and moves keyboard focus from a replaced copy button to its successor.
+    function setHtml(el, html) {
+      if (shownHtml.get(el) === html) return;
+      shownHtml.set(el, html);
+      const focus = copyFocus();
+      el.innerHTML = html;
+      restoreCopyFocus(focus);
+    }
+    /* DASHBOARD_COMMON_END */
 
     async function submitOrder(params) {
       const res = await fetch("/api/orders/submit", {
@@ -118,7 +255,7 @@
       try {
         const result = await submitOrder(params);
         resultLine.className = "";
-        resultLine.textContent = "order " + result.order_id + " — ";
+        resultLine.innerHTML = "order " + idOrText(result.order_id) + " — ";
         const back = document.createElement("a");
         back.href = "/";
         back.textContent = "Back to dashboard";

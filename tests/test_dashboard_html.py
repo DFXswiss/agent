@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from agent_cli.main import _usage_dashboard_rows
+from agent_cli.main import TASK_STATES, _usage_dashboard_rows
+from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
+from agent_cli.preconditions import CHECK_STATUSES
 
 pytestmark = pytest.mark.no_pg
 
@@ -31,7 +36,7 @@ def test_dashboard_html_contains_usage_table() -> None:
     html = SECTION_PAGE.read_text(encoding="utf-8")
     assert 'id="usage"' in html
     assert 'typeof p.used_percent === "number"' in html
-    assert 'document.querySelector("#usage tbody").innerHTML = (data.usage || []).map(ev => {' in html
+    assert 'setHtml(document.querySelector("#usage tbody"), (data.usage || []).map(ev => {' in html
     assert ".reverse(" not in html
 
 
@@ -164,6 +169,8 @@ def test_orders_view_markup() -> None:
         "od-override",
         "od-cancel-reason",
         "od-cancel",
+        "od-done-reason",
+        "od-done",
         "order-report",
         "od-report",
         "od-report-body",
@@ -200,6 +207,7 @@ def test_orders_view_markup() -> None:
         "Reply",
         "Override",
         "Cancel order",
+        "Mark done",
         "Load report",
         "wake only",
         "unacknowledged",
@@ -275,7 +283,7 @@ def test_new_order_subpage_markup() -> None:
     ):
         assert f'placeholder="{placeholder}"' in html
     assert 'fetch("/api/orders/submit"' in html
-    assert '"order " + result.order_id' in html
+    assert '"order " + idOrText(result.order_id)' in html
     assert "resultLine.textContent = e.message;" in html
     assert "<form" not in html
     assert "<script src" not in html
@@ -363,7 +371,7 @@ def test_order_actions_drop_answers_for_another_order() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     code = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[1]
-    for element_id in ("od-reply", "od-override", "od-cancel", "od-report"):
+    for element_id in ("od-reply", "od-override", "od-cancel", "od-done", "od-report"):
         start = code.index(
             f'document.getElementById("{element_id}").addEventListener("click"'
         )
@@ -372,3 +380,571 @@ def test_order_actions_drop_answers_for_another_order() -> None:
         assert "order_id: id" in handler
         assert "order_id: selectedOrderId" not in handler
         assert handler.count("if (selectedOrderId === id)") == 2
+
+
+PAGES = ("index.html", "section.html", "orders_new.html")
+COMMON_BEGIN, COMMON_END = "/* DASHBOARD_COMMON_BEGIN */", "/* DASHBOARD_COMMON_END */"
+UUID = "d98c4782-f505-442f-bae7-54a2937f5578"
+# Status values written outside a shared constant: session register / close,
+# lane and agent rows, `agent work set`, intent execution and the report's CI view.
+SESSION_STATUSES = ("active", "closed")
+AGENT_STATUSES = ("working", "done", "finished")
+WORK_STATUSES = ("open", "done", "cancelled")
+INTENT_STATUSES = ("pending", "done", "error")
+CI_STATES = ("green", "failed", "pending", "unknown")
+# Order states, including the ended state "done" next to "merged".
+ORDER_STATES = OPEN_STATES + ENDED_STATES
+
+
+def common_block(html: str) -> str:
+    assert html.count(COMMON_BEGIN) == 1
+    assert html.count(COMMON_END) == 1
+    return html.split(COMMON_BEGIN, 1)[1].split(COMMON_END, 1)[0]
+
+
+def orders_script() -> str:
+    return re.findall(r"<script>(.*?)</script>", static_page("index.html"), flags=re.S)[1]
+
+
+def top_level_function(code: str, name: str) -> str:
+    start = code.index(f"\nfunction {name}(") + 1
+    return code[start : code.index("\n}\n", start) + 3]
+
+
+def state_icons(html: str) -> dict[str, str]:
+    literal = common_block(html).split("const STATE_ICONS = ", 1)[1].split(";", 1)[0]
+    return json.loads(literal)
+
+
+def test_every_page_carries_the_same_shared_block() -> None:
+    blocks = {name: common_block(static_page(name)) for name in PAGES}
+    assert len(set(blocks.values())) == 1
+    scripts = re.findall(r"<script>(.*?)</script>", static_page("index.html"), flags=re.S)
+    assert COMMON_BEGIN in scripts[0]
+    for name in PAGES:
+        html = static_page(name)
+        style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        assert "button.copy-id { " in style
+        assert "cursor: pointer;" in style.split("button.copy-id { ", 1)[1].split("}", 1)[0]
+        assert "button.copy-id.copied {" in style
+        assert "button.copy-id.copy-failed {" in style
+        assert "<script src" not in html
+        assert "<img" not in html
+        assert "url(" not in style
+
+
+def test_uuid_pattern_matches_only_whole_uuids() -> None:
+    block = common_block(static_page("index.html"))
+    whole = re.compile(re.search(r"const UUID_PATTERN = /(.+?)/i;", block).group(1), re.I)
+    assert whole.search(UUID)
+    assert whole.search(UUID.upper())
+    for value in (
+        UUID[:8],
+        UUID + "0",
+        "x" + UUID,
+        UUID[:-1] + "g",
+        UUID.replace("-", ""),
+        "a" * 40,
+        "owner/name",
+        "",
+    ):
+        assert not whole.search(value), value
+
+    quoted = re.search(r"const QUOTED_UUID_PATTERN = /(.+?)/gi;", block).group(1)
+    escaped = (
+        f"{{&quot;id&quot;: &quot;{UUID}&quot;, "
+        f"&quot;note&quot;: &quot;see {UUID}&quot;}}"
+    )
+    assert re.findall(quoted, escaped, flags=re.I) == [UUID]
+
+
+def test_uuid_shows_its_first_8_characters_on_a_copy_button() -> None:
+    block = common_block(static_page("index.html"))
+    chip = block.split("function idChip(", 1)[1].split("\n    }\n", 1)[0]
+    assert "value.slice(0, 8)" in chip
+    assert (
+        '<button type="button" class="${className}" '
+        'data-copy="${esc(value)}" title="${esc(value)}">${esc(text)}</button>'
+    ) in chip
+    assert (
+        'typeof value === "string" && UUID_PATTERN.test(value) '
+        "? idChip(value) : esc(value)"
+    ) in block
+    assert "function jsonHtml(value, indent) {" in block
+
+    section = static_page("section.html")
+    for expr in (
+        "s.id",
+        "s._origin_device_id",
+        "t.id",
+        "t._origin_device_id",
+        "a.id",
+        "a.task_id",
+        "r.task_id",
+        "c.task_id",
+        "g.task_id",
+        "w.session_id",
+        "ev._origin_device_id",
+    ):
+        assert f"<td>${{idOrText({expr})}}</td>" in section, expr
+        assert f"<td>${{esc({expr})}}</td>" not in section, expr
+    assert 'setHtml(document.getElementById("detail-id"), idOrText(s.id));' in section
+    assert 'setHtml(document.getElementById("detail-pre"), jsonHtml({' in section
+    for name in ("index.html", "section.html"):
+        assert (
+            'setHtml(document.getElementById("dev"), idOrText(data.device_id));'
+            in static_page(name)
+        )
+
+    code = orders_script()
+    cell = top_level_function(code, "orderCell")
+    assert "return idOrText(value);" in cell
+    assert 'if (typeof value === "object") return jsonHtml(value);' in cell
+    assert 'setHtml(document.getElementById("od-id"), idOrText(id));' in code
+    assert '"order " + idOrText(result.order_id)' in static_page("orders_new.html")
+
+
+def test_the_full_value_stays_the_key_for_lookups_and_calls() -> None:
+    section = static_page("section.html")
+    assert 'data-id="${esc(s.id)}"' in section
+    assert "tr.onclick = () => selectSession(tr.dataset.id);" in section
+    assert "postControl(s.id, " in section
+    code = orders_script()
+    assert "rows[i].dataset.id = listed.orders[i].order_id;" in code
+    assert 'data-event="${esc(row.id)}"' in code
+    assert "selectOrder(row.dataset.id)" in code
+    assert "order_id: id" in code
+
+
+def test_copy_writes_the_full_value_and_shows_success_or_failure() -> None:
+    block = common_block(static_page("index.html"))
+    copy = block.split("async function copyId(value) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "await navigator.clipboard.writeText(value);" in copy
+    assert 'showCopyFeedback(value, "Copy failed", "copy-failed");' in copy
+    assert 'showCopyFeedback(value, "Copied", "copied");' in copy
+    assert copy.index("writeText") < copy.index('"Copy failed"') < copy.index('"Copied"')
+    assert "const COPY_FEEDBACK_MS = 1500;" in block
+    feedback = block.split("function showCopyFeedback(", 1)[1].split("\n    }\n", 1)[0]
+    assert "}, COPY_FEEDBACK_MS);" in feedback
+    assert "copyFeedback.delete(value);" in feedback
+    paint = block.split("function paintCopyButtons(", 1)[1].split("\n    }\n", 1)[0]
+    assert "feedback ? feedback.text : value.slice(0, 8)" in paint
+
+
+def test_copy_click_does_not_reach_the_row() -> None:
+    block = common_block(static_page("index.html"))
+    start = block.index('document.addEventListener("click", event => {')
+    listener = block[start : block.index("}, true);", start) + len("}, true);")]
+    assert 'event.target.closest("button.copy-id")' in listener
+    assert "event.stopPropagation();" in listener
+    assert "copyId(button.dataset.copy);" in listener
+    # Rows select through bubbling handlers, which the capturing listener stops first.
+    assert "tr.onclick = () => selectSession(tr.dataset.id);" in static_page("section.html")
+    assert (
+        'document.getElementById("orders").addEventListener("click", event => {'
+        in orders_script()
+    )
+
+
+def test_refresh_writes_only_changes_and_keeps_focus_without_scrolling() -> None:
+    block = common_block(static_page("index.html"))
+    write = block.split("function setHtml(el, html) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "if (shownHtml.get(el) === html) return;" in write
+    assert write.index("copyFocus()") < write.index("el.innerHTML = html;")
+    assert write.index("el.innerHTML = html;") < write.index("restoreCopyFocus(focus);")
+    focus = block.split("function copyFocus() {", 1)[1].split("\n    }\n", 1)[0]
+    assert "index: copyButtons(scope, value).indexOf(active)" in focus
+    restore = block.split("function restoreCopyFocus(focus) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "buttons[Math.min(focus.index, buttons.length - 1)]" in restore
+    assert "next.focus({ preventScroll: true });" in restore
+    assert ".focus()" not in block
+
+    # Every element a refresh fills with copy buttons goes through setHtml.
+    section = static_page("section.html")
+    for _name, _title, table_id in MOVED_SECTIONS:
+        assert f'setHtml(document.querySelector("#{table_id} tbody"), ' in section
+    pages = (static_page("index.html"), section)
+    for html in pages:
+        script = html.split(COMMON_END, 1)[1]
+        assert ".innerHTML = " not in script.replace("controls.innerHTML = ", "")
+        assert "copyFocus()" not in script
+    assert "orderHtml" not in orders_script()
+
+
+def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
+    icons = state_icons(static_page("index.html"))
+    produced = (
+        set(TASK_STATES)
+        | set(ORDER_STATES)
+        | set(CHECK_STATUSES)
+        | set(SESSION_STATUSES)
+        | set(AGENT_STATUSES)
+        | set(WORK_STATUSES)
+        | set(INTENT_STATUSES)
+        | set(CI_STATES)
+    )
+    assert produced - set(icons) == set()
+    for word, icon in icons.items():
+        assert 1 <= len(icon) <= 2, word
+        assert not icon.isalnum(), word
+
+    families = (
+        ("running", "active", "working"),
+        ("waiting",),
+        ("gate-blocked",),
+        ("ready",),
+        ("merged", "done"),
+        ("failed",),
+        ("cancelled",),
+        ("ja",),
+        ("nein",),
+        ("pending",),
+    )
+    family_icons = []
+    for family in families:
+        assert len({icons[word] for word in family}) == 1, family
+        family_icons.append(icons[family[0]])
+    assert len(set(family_icons)) == len(families)
+
+    block = common_block(static_page("index.html"))
+    fallback = re.search(r'const STATE_FALLBACK_ICON = "(.+?)";', block).group(1)
+    assert fallback not in icons.values()
+    state = block.split("function stateIcon(value) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "const known = Object.hasOwn(STATE_ICONS, word);" in state
+    assert "known ? STATE_ICONS[word] : STATE_FALLBACK_ICON" in state
+    assert 'role="img" aria-label="${esc(word)}"' in state
+    # The word is the title of the whole cell, not of the glyph.
+    assert "title=" not in state
+    assert 'return "—";' in state
+    attributes = block.split("function stateCellAttributes(value) {", 1)[1].split("\n    }\n", 1)[0]
+    assert 'if (value === null || value === undefined || value === "") return "";' in attributes
+    assert 'return ` title="${esc(value)}" aria-label="${esc(value)}"`;' in attributes
+
+
+def test_state_and_status_cells_show_icons_and_keep_their_classes() -> None:
+    section = static_page("section.html")
+    for expr in ("s.status", "t.state", "a.status", "w.status"):
+        assert (
+            f'<td class="${{esc({expr})}}"${{stateCellAttributes({expr})}}>${{stateIcon({expr})}}</td>'
+            in section
+        )
+        assert f"${{esc({expr})}}</td>" not in section
+        assert f'title="${{esc({expr})}}"' not in section
+    for rule in (".failed {", ".implementing, .working, .open {", ".done, .approved {", ".merged {"):
+        assert rule in section
+    code = orders_script()
+    columns = top_level_function(code, "orderColumns")
+    assert (
+        'if (field === "state" || field === "status") '
+        "return [{ field, label: field, cell: stateIcon, attributes: stateCellAttributes }];"
+    ) in columns
+    td = top_level_function(code, "orderTd")
+    assert 'const attributes = column.attributes ? column.attributes(value) : "";' in td
+    assert "return `<td${attributes}>${column.cell(value)}</td>`;" in td
+    for function in ("orderTableHtml", "orderRowsHtml"):
+        body = top_level_function(code, function)
+        assert "orderTd(column, " in body
+        assert "<td>${column.cell(" not in body
+
+
+def test_repository_shows_as_organization_and_repo() -> None:
+    code = orders_script()
+    columns = top_level_function(code, "orderColumns")
+    assert 'if (field === "repo") {' in columns
+    assert '{ field, label: "Organization", cell: value => orderCell(repoPart(value, 0)) }' in columns
+    assert '{ field, label: "Repo", cell: value => orderCell(repoPart(value, 1)) }' in columns
+    assert "function repoPart(value, index) {" in code
+    for function in ("orderTableHtml", "orderRowsHtml"):
+        assert "orderColumns" in top_level_function(code, function)
+    render = top_level_function(code, "renderOrderObject")
+    assert "orderRowsHtml(field, value)" in render
+    assert "orderRowsHtml(key, value[key])" in render
+
+
+def test_pull_request_url_shows_as_its_number() -> None:
+    code = orders_script()
+    cell = top_level_function(code, "orderCell")
+    source = re.search(r"const pull = /(.+?)/\.exec\(value\.slice\(GITHUB\.length\)\);", cell).group(1)
+    pull = re.compile(source.replace("\\/", "/"))
+    assert pull.search("OWNER/NAME/pull/3").group(1) == "3"
+    for rest in (
+        "OWNER/NAME/pull/3#issuecomment-1",
+        "OWNER/NAME/pull/3/files",
+        "OWNER/NAME/issues/3",
+        "OWNER/NAME",
+    ):
+        assert not pull.search(rest), rest
+    assert 'const GITHUB = "https://github.com/";' in code
+    assert (
+        '<a href="${esc(value)}" target="_blank" rel="noopener" '
+        'title="${esc(value)}">#${esc(pull[1])}</a>'
+    ) in cell
+    assert '<a href="${esc(value)}" target="_blank" rel="noopener">${esc(value)}</a>' in cell
+
+
+def test_orders_list_has_no_head_column_and_the_detail_keeps_it() -> None:
+    code = orders_script()
+    assert (
+        "renderOrderTable(table, listed.orders, "
+        'ORDER_VIEW.list.nested.orders.filter(field => field !== "head"));'
+    ) in code
+    view = json.loads(
+        code.split("const ORDER_VIEW = ", 1)[1].split("/* ORDER_VIEW_END */", 1)[0].strip()[:-1]
+    )
+    assert "head" in view["list"]["nested"]["orders"]
+    assert "head" in view["show"]["fields"]
+    assert "head" in view["report"]["fields"]
+    assert 'renderOrderObject(document.getElementById("od-body"), shown, "show");' in code
+    assert 'renderOrderObject(document.getElementById("od-report-body"), result, "report");' in code
+
+
+def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> None:
+    code = orders_script()
+    assert 'const ELAPSED_LABELS = new Map([["updated_at", "updated_before"]]);' in code
+    columns = top_level_function(code, "orderColumns")
+    assert (
+        "return [{ field, label: ELAPSED_LABELS.get(field), cell: elapsedCell, "
+        'attributes: value => (isTimestamp(value) ? ` title="${esc(value)}"` : "") }];'
+    ) in columns
+    cell = top_level_function(code, "elapsedCell")
+    assert "isTimestamp(value) ? esc(elapsedText(value, Date.now())) : orderCell(value)" in cell
+    elapsed = top_level_function(code, "elapsedText")
+    for unit in ('" s"', '" min"', '" h"', '" d"'):
+        assert unit in elapsed
+    assert "setInterval(ordersTick, 2000);" in code
+
+
+NODE = shutil.which("node")
+
+
+def page_behaviour() -> dict:
+    """Run the shared block and the order cell functions in Node with a stub DOM."""
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    index = static_page("index.html")
+    first = re.findall(r"<script>(.*?)</script>", index, flags=re.S)[0]
+    helpers = "\n".join(
+        line for line in first.splitlines()
+        if line.startswith(("    function esc(", "    function empty("))
+    )
+    code = orders_script()
+    constants = "\n".join(
+        re.search(rf"^const {name} = .*;$", code, flags=re.M).group(0)
+        for name in ("GITHUB", "ELAPSED_LABELS")
+    )
+    functions = "\n".join(
+        top_level_function(code, name)
+        for name in (
+            "orderCell",
+            "elapsedText",
+            "isTimestamp",
+            "elapsedCell",
+            "repoPart",
+            "orderColumns",
+            "orderTd",
+            "orderRowsHtml",
+            "orderTableHtml",
+        )
+    )
+    harness = """
+class Element {
+  constructor(fields) { Object.assign(this, fields); }
+}
+const listeners = [];
+let buttons = [];
+const document = {
+  activeElement: null,
+  addEventListener(type, handler, capture) { listeners.push({ type, handler, capture }); },
+  querySelectorAll() { return buttons; },
+};
+const writes = [];
+let clipboardFails = false;
+const navigator = { clipboard: { writeText: async value => {
+  writes.push(value);
+  if (clipboardFails) throw new Error("denied");
+} } };
+const timers = [];
+function setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; }
+function clearTimeout() {}
+const settle = () => new Promise(resolve => setImmediate(resolve));
+""" + helpers + "\n" + common_block(index) + "\n" + constants + "\n" + functions + """
+(async () => {
+  const UUID = "__UUID__";
+  const out = {};
+  out.chip = idOrText(UUID);
+  out.plain = idOrText("d98c4782");
+  out.number = idOrText(7);
+  out.json = jsonHtml({ id: UUID, note: "see " + UUID });
+  out.known = stateIcon("merged");
+  out.unknown = stateIcon("mystery");
+  out.none = stateIcon(null);
+  out.cellAttributes = stateCellAttributes("merged");
+  out.noCellAttributes = [null, undefined, ""].map(stateCellAttributes);
+
+  const click = listeners.find(item => item.type === "click");
+  out.capture = click.capture === true;
+  const button = new Element({
+    dataset: { copy: UUID }, textContent: UUID.slice(0, 8), className: "copy-id",
+    closest(selector) { return selector === "button.copy-id" ? this : null; },
+  });
+  buttons = [button];
+  let stopped = false;
+  click.handler({ target: button, stopPropagation() { stopped = true; } });
+  await settle();
+  out.stopped = stopped;
+  out.writes = writes.slice();
+  out.success = { text: button.textContent, className: button.className, rerender: idChip(UUID) };
+  out.delay = timers[0].delay;
+  timers[0].callback();
+  out.reset = { text: button.textContent, className: button.className, rerender: idChip(UUID) };
+  clipboardFails = true;
+  click.handler({ target: button, stopPropagation() {} });
+  await settle();
+  out.failure = { text: button.textContent, className: button.className };
+  timers[timers.length - 1].callback();
+  navigator.clipboard = undefined;
+  click.handler({ target: button, stopPropagation() {} });
+  await settle();
+  out.missing = button.textContent;
+  timers[timers.length - 1].callback();
+  let otherStopped = false;
+  click.handler({ target: new Element({ closest() { return null; } }), stopPropagation() { otherStopped = true; } });
+  out.otherStopped = otherStopped;
+
+  // A scope whose buttons a write replaces with the next rendered set.
+  const shown = [];
+  let rendered = [];
+  const scope = { isConnected: true, querySelectorAll() { return shown; } };
+  const host = { writes: 0, set innerHTML(html) {
+    this.writes += 1;
+    shown.forEach(item => { item.isConnected = false; });
+    shown.splice(0, shown.length, ...rendered);
+  } };
+  const focused = [];
+  const copyButton = (copy, name) => new Element({
+    dataset: { copy }, isConnected: true,
+    matches(selector) { return selector === "button.copy-id"; },
+    closest(selector) { return selector === "[id]" ? scope : this; },
+    focus(options) { focused.push({ name, options }); },
+  });
+  shown.push(copyButton(UUID, "old first"), copyButton("other", "old other"), copyButton(UUID, "old second"));
+  document.activeElement = shown[2];
+  rendered = [copyButton(UUID, "first"), copyButton("other", "other"), copyButton(UUID, "second")];
+  setHtml(host, "one");
+  setHtml(host, "one");
+  out.htmlWrites = host.writes;
+  out.sameOccurrence = focused.splice(0);
+  document.activeElement = shown[2];
+  rendered = [copyButton(UUID, "only"), copyButton("other", "other")];
+  setHtml(host, "two");
+  out.lastLeft = focused.splice(0);
+  document.activeElement = shown[0];
+  rendered = [copyButton("other", "other")];
+  setHtml(host, "three");
+  out.noneLeft = focused.splice(0);
+
+  out.pr = orderCell("https://github.com/OWNER/NAME/pull/3");
+  out.comment = orderCell("https://github.com/OWNER/NAME/pull/3#issuecomment-1");
+  out.repo = orderRowsHtml("repo", "OWNER/NAME");
+  out.noSlash = orderRowsHtml("repo", "plain");
+  out.stateRow = orderRowsHtml("state", "mystery");
+  out.noStateRow = orderRowsHtml("status", null);
+  out.badTimeRow = orderRowsHtml("updated_at", "not a time");
+  const at = Date.parse("2026-11-14T00:00:00Z");
+  out.elapsed = [45, 300, 7200, 259200, -5].map(seconds => elapsedText("2026-11-14T00:00:00Z", at + seconds * 1000));
+  out.badTime = elapsedCell("not a time");
+  const updated = new Date(Date.now() - 300000).toISOString();
+  out.updated = updated;
+  out.table = orderTableHtml(
+    [{ order_id: UUID, state: "running", repo: "OWNER/NAME", pr_url: "https://github.com/OWNER/NAME/pull/3", updated_at: updated }],
+    ["order_id", "state", "repo", "pr_url", "updated_at"],
+  );
+  console.log(JSON.stringify(out));
+})().catch(error => { console.error(error); process.exit(1); });
+""".replace("__UUID__", UUID)
+    completed = subprocess.run(
+        [NODE, "-"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def test_page_behaviour_in_node() -> None:
+    out = page_behaviour()
+    chip = (
+        f'<button type="button" class="copy-id" data-copy="{UUID}" '
+        f'title="{UUID}">{UUID[:8]}</button>'
+    )
+    assert out["chip"] == chip
+    assert out["plain"] == "d98c4782"
+    assert out["number"] == "7"
+    assert out["json"] == f"{{&quot;id&quot;:&quot;{chip}&quot;,&quot;note&quot;:&quot;see {UUID}&quot;}}"
+    assert out["known"] == (
+        '<span class="state-icon" role="img" aria-label="merged">✔&#xFE0E;</span>'
+    )
+    unknown = '<span class="state-icon state-unknown" role="img" aria-label="mystery">◌&#xFE0E;</span>'
+    assert out["unknown"] == unknown
+    assert out["none"] == "—"
+    assert out["cellAttributes"] == ' title="merged" aria-label="merged"'
+    assert out["noCellAttributes"] == ["", "", ""]
+
+    assert out["capture"] is True
+    assert out["stopped"] is True
+    assert out["writes"] == [UUID]
+    assert out["success"]["text"] == "Copied"
+    assert out["success"]["className"] == "copy-id copied"
+    assert ">Copied</button>" in out["success"]["rerender"]
+    assert out["delay"] == 1500
+    assert out["reset"]["text"] == UUID[:8]
+    assert out["reset"]["className"] == "copy-id"
+    assert out["reset"]["rerender"] == chip
+    assert out["failure"] == {"text": "Copy failed", "className": "copy-id copy-failed"}
+    assert out["missing"] == "Copy failed"
+    assert out["otherStopped"] is False
+    # A refresh writes only changed HTML and refocuses the same occurrence of the
+    # value (or the last one left) without scrolling the page.
+    assert out["htmlWrites"] == 1
+    assert out["sameOccurrence"] == [{"name": "second", "options": {"preventScroll": True}}]
+    assert out["lastLeft"] == [{"name": "only", "options": {"preventScroll": True}}]
+    assert out["noneLeft"] == []
+
+    assert out["pr"] == (
+        '<a href="https://github.com/OWNER/NAME/pull/3" target="_blank" rel="noopener" '
+        'title="https://github.com/OWNER/NAME/pull/3">#3</a>'
+    )
+    assert out["comment"] == (
+        '<a href="https://github.com/OWNER/NAME/pull/3#issuecomment-1" target="_blank" '
+        'rel="noopener">https://github.com/OWNER/NAME/pull/3#issuecomment-1</a>'
+    )
+    assert out["repo"] == (
+        "<tr><th>Organization</th><td>OWNER</td></tr><tr><th>Repo</th><td>NAME</td></tr>"
+    )
+    assert out["noSlash"] == (
+        "<tr><th>Organization</th><td>—</td></tr><tr><th>Repo</th><td>plain</td></tr>"
+    )
+    assert out["stateRow"] == (
+        f'<tr><th>state</th><td title="mystery" aria-label="mystery">{unknown}</td></tr>'
+    )
+    assert out["noStateRow"] == "<tr><th>status</th><td>—</td></tr>"
+    assert out["elapsed"] == ["45 s", "5 min", "2 h", "3 d", "0 s"]
+    assert out["badTime"] == "not a time"
+    assert out["badTimeRow"] == "<tr><th>updated_before</th><td>not a time</td></tr>"
+
+    table = out["table"]
+    head = re.findall(r"<th>(.*?)</th>", table)
+    assert head == ["order_id", "state", "Organization", "Repo", "pr_url", "updated_before"]
+    assert chip in table
+    # The word is the title and accessible name of the whole cell; the exact
+    # timestamp is the title of its cell and never its accessible name.
+    assert (
+        '<td title="running" aria-label="running"><span class="state-icon" role="img" '
+        'aria-label="running">▶&#xFE0E;</span></td>'
+    ) in table
+    assert "<td>OWNER</td><td>NAME</td>" in table
+    assert ">#3</a>" in table
+    assert f'<td title="{out["updated"]}">5 min</td>' in table

@@ -77,6 +77,7 @@ from agent_cli.preconditions import CHECKS
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
+    OPEN_ORDER_SEEDS,
     FakeGh,
     grok_messages_stream,
     insert_order_intent,
@@ -1059,6 +1060,49 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
     ("task", "expected"),
     [
         ({"state": "done", "payload": {"coordinator": {}}}, "merged"),
+        (
+            {
+                "state": "done",
+                "payload": {"coordinator": {"marked_done": {"by": "h"}}},
+            },
+            "merged",
+        ),
+        (
+            {
+                "state": "failed",
+                "payload": {
+                    "coordinator": {
+                        "failed_kind": "cancelled",
+                        "marked_done": {"by": "h"},
+                    }
+                },
+            },
+            "done",
+        ),
+        (
+            {
+                "state": "failed",
+                "payload": {
+                    "coordinator": {
+                        "failed_kind": "done",
+                        "marked_done": {"by": "h"},
+                    }
+                },
+            },
+            "done",
+        ),
+        (
+            {
+                "state": "open",
+                "payload": {
+                    "coordinator": {
+                        "phase": "implement",
+                        "marked_done": {"by": "h"},
+                    }
+                },
+            },
+            "running",
+        ),
         (
             {
                 "state": "failed",
@@ -3303,4 +3347,199 @@ def test_answer_to_an_ended_order_is_finished_as_an_error(
     row = store.row("activity", intent_id)
     assert row["execution_status"] == "error"
     assert row["execution_error"] == "order is already cancelled"
+    store.close()
+
+
+def _no_command(argv):
+    raise AssertionError(f"marking an order done ran {argv!r}")
+
+
+def _no_lane(argv, stdin=None):
+    raise AssertionError("marking an order done started a lane")
+
+
+def _open_order(store, worker, state: str) -> str | None:
+    """Seed an open order in ``state`` with its events; return its checkpoint event."""
+    if state == "waiting":
+        return _waiting_order(store, worker)[1]
+    task = seed_order_task(store, worker, OID, **OPEN_ORDER_SEEDS[state])
+    reconcile_order_events(store, worker, task)
+    return None
+
+
+@pytest.mark.parametrize(
+    ("state", "events"),
+    (
+        ("queued", []),
+        ("running", ["draft-opened"]),
+        ("waiting", ["draft-opened", "blocked"]),
+        ("ready", ["draft-opened", "ready"]),
+    ),
+)
+def test_done_ends_an_open_order_without_any_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str, events: list[str]
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    event_id = _open_order(store, worker, state)
+    assert order_state(store.row("task", OID)) == state
+    assert [row["payload"]["kind"] for row in _events_for(store, OID)] == events
+    intent_id = insert_order_intent(
+        store, worker, OID, "done", reason="Delivered by hand", answers=event_id
+    )
+    activities = {row["id"] for row in store.rows("activity")}
+    agents = len(store.rows("agent"))
+    lines = coordinator_runtime.advance_one(
+        store, worker, runner=_no_command, lane_runner=_no_lane
+    )
+    assert lines == [f"order done {OID}"]
+    task = store.row("task", OID)
+    c = coord(task)
+    assert order_state(task) == "done"
+    assert task["state"] == "failed"
+    assert task["current_round"] == 0
+    assert c["phase"] == "blocked"
+    assert c["failed_kind"] == "done"
+    assert c["blocker"] == "Delivered by hand"
+    assert "resume_phase" not in c
+    assert c["marked_done"] | {"at": "ignored"} == {
+        "by": "human-owner",
+        "reason": "Delivered by hand",
+        "at": "ignored",
+        "intent_id": intent_id,
+    }
+    intent = store.row("activity", intent_id)
+    assert intent["execution_status"] == "done"
+    assert intent["result"]["effect"] == "done"
+    after = _events_for(store, OID)
+    assert [row["payload"]["kind"] for row in after] == [*events, "done"]
+    done = after[-1]["payload"]
+    assert done["wake"] is False
+    assert done["answers"] == []
+    assert done["digest"] == "Order marked done by human-owner: Delivered by hand"
+    if event_id is not None:
+        assert store.row("activity", event_id)["payload"]["ack"] is not None
+    added = {row["id"] for row in store.rows("activity")} - activities
+    assert added == {after[-1]["id"]}
+    assert len(store.rows("agent")) == agents
+    assert fake.close_calls == 0
+    assert fake.launched == []
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=_no_command, lane_runner=_no_lane
+    ) == []
+    assert checkpoint(store, OID)["order"]["closed"] is True
+    assert [row["id"] for row in _events_for(store, OID)] == [
+        row["id"] for row in after
+    ]
+    store.close()
+
+
+def test_done_answer_of_an_ended_order_marks_it_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store, worker, OID, phase="blocked", failed_kind="cancelled", blocker="not needed"
+    )
+    task["state"] = "failed"
+    save_task(store, task)
+    assert sweep_terminal_orders(store, worker) == []
+    assert checkpoint(store, OID)["order"]["closed"] is True
+    intent_id = insert_order_intent(store, worker, OID, "done", reason="Shipped")
+    assert coordinator_runtime.advance_one(
+        store, worker, runner=_no_command, lane_runner=_no_lane
+    ) == [f"order done {OID}"]
+    task = store.row("task", OID)
+    assert order_state(task) == "done"
+    assert coord(task)["failed_kind"] == "cancelled"
+    assert coord(task)["blocker"] == "not needed"
+    assert coord(task)["marked_done"]["intent_id"] == intent_id
+    assert store.row("activity", intent_id)["result"]["effect"] == "done"
+    assert [row["payload"]["kind"] for row in _events_for(store, OID)] == [
+        "cancelled",
+        "done",
+    ]
+    assert sweep_terminal_orders(store, worker) == []
+    assert checkpoint(store, OID)["order"]["closed"] is True
+    assert [row["payload"]["kind"] for row in _events_for(store, OID)] == [
+        "cancelled",
+        "done",
+    ]
+    store.close()
+
+
+def test_done_answer_of_a_merged_or_done_order_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    merged = seed_order_task(store, worker, OID, phase="done")
+    merged["state"] = "done"
+    save_task(store, merged)
+    done = seed_order_task(
+        store,
+        worker,
+        OID2,
+        phase="blocked",
+        failed_kind="done",
+        marked_done={"by": "human-owner", "reason": "x", "at": "t", "intent_id": "i"},
+    )
+    done["state"] = "failed"
+    save_task(store, done)
+    for oid, state in ((OID, "merged"), (OID2, "done")):
+        before = store.row("task", oid)
+        intent_id = insert_order_intent(store, worker, oid, "done", reason="again")
+        coordinator_runtime.advance_one(
+            store, worker, runner=_no_command, lane_runner=_no_lane
+        )
+        row = store.row("activity", intent_id)
+        assert row["execution_status"] == "error"
+        assert row["execution_error"] == f"order is already {state}"
+        after = store.row("task", oid)
+        assert coord(after).get("marked_done") == coord(before).get("marked_done")
+        assert after["state"] == before["state"]
+    store.close()
+
+
+def test_intents_after_done_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task, event_id = _waiting_order(store, worker)
+    done_id = insert_order_intent(
+        store,
+        worker,
+        OID,
+        "done",
+        reason="finished",
+        created_at="2026-01-01T00:00:01Z",
+    )
+    later = [
+        insert_order_intent(
+            store,
+            worker,
+            OID,
+            kind,
+            created_at=f"2026-01-01T00:00:0{index + 2}Z",
+            **fields,
+        )
+        for index, (kind, fields) in enumerate(
+            (
+                ("reply", {"body": "continue", "answers": event_id}),
+                ("override", {"check": "review_2", "reason": "waive"}),
+                ("cancel", {"reason": "stop"}),
+            )
+        )
+    ]
+    consume_order_intents(
+        store,
+        worker,
+        task,
+        fake,
+        [store.row("activity", item) for item in (done_id, *later)],
+    )
+    assert store.row("activity", done_id)["result"]["effect"] == "done"
+    for intent_id in later:
+        assert store.row("activity", intent_id)["execution_error"] == (
+            "order is already done"
+        )
+    assert fake.close_calls == 0
     store.close()
