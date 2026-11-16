@@ -271,6 +271,19 @@ def _draft_hold_state(
     return "active", f"{_DRAFT_HELD_PREFIX}{hold.login}"
 
 
+def _guard_drafted(record: Mapping, *, head: str, base: str) -> bool:
+    """True when this record says the guard drafted this head and base.
+
+    An applied draft is the direct evidence. A held record carries that
+    evidence forward when the timeline became unreadable before a later run.
+    """
+    if record.get("head") != head or record.get("base") != base:
+        return False
+    if record.get("phase") == "applied" and record.get("state") == "draft":
+        return True
+    return record.get("phase") == "held" and record.get("guard_drafted") is True
+
+
 def _review_heads(assessment: Any) -> list[str]:
     """Distinct heads named by the review runs the gate selected."""
     heads: list[str] = []
@@ -1389,6 +1402,9 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     # rewriting the comment on every run.
     if pull["draft"] and draft_held:
         if not dry_run and hold_state != "pending":
+            guard_drafted = _guard_drafted(
+                previous, head=snap.head_sha, base=snap.base_sha
+            )
             held_record = {
                 "repo": assessment.repo,
                 "pr": assessment.pr,
@@ -1398,6 +1414,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 "reasons": reasons,
                 "phase": "held",
                 "hold_reason": hold_reason,
+                "guard_drafted": guard_drafted,
             }
             if hold_state == "active":
                 en = (
@@ -1425,6 +1442,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 or previous.get("head") != snap.head_sha
                 or previous.get("base") != snap.base_sha
                 or previous.get("hold_reason") != hold_reason
+                or previous.get("guard_drafted") != guard_drafted
             ):
                 _save_record(
                     api,
@@ -1439,12 +1457,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 )
         return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     target = None
-    we_drafted = (
-        previous.get("state") == "draft"
-        and previous.get("head") == snap.head_sha
-        and previous.get("base") == snap.base_sha
-        and previous.get("phase") == "applied"
-    )
+    we_drafted = _guard_drafted(previous, head=snap.head_sha, base=snap.base_sha)
     write_hold = getattr(assessment, "write_ready_reason", "") in {
         "author has write",
         "ready by write collaborator",
@@ -1618,10 +1631,11 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     record = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha,
               "base": snap.base_sha, "state": target, "reasons": final_reasons,
               "phase": "planned", "review_heads": _review_heads(assessment)}
-    _save_record(api, assessment, STATE_MARKER, record,
-                 "I am checking the final conditions for the documented readiness change.",
-                 "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.",
-                 en_title="Checking readiness", de_title="Status wird geprüft", create=True)
+    planned_comment = _save_record(
+        api, assessment, STATE_MARKER, record,
+        "I am checking the final conditions for the documented readiness change.",
+        "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.",
+        en_title="Checking readiness", de_title="Status wird geprüft", create=True)
     if fetch_pull(api, assessment.repo, assessment.pr) != snap:
         raise GuardError("pull changed after lifecycle intent; no readiness change")
     if target == "ready":
@@ -1636,6 +1650,19 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError("A38 evidence changed before Ready transition")
         if restore_write_ready and not fresh.write_ready:
             raise GuardError("write-ready waiver changed before Ready transition")
+        # The final assessment may select different review comments. The
+        # Ready comment and crash recovery must name the evidence actually
+        # used, so persist the planned record again only when it changed.
+        final_heads = _review_heads(fresh)
+        if record.get("review_heads") != final_heads:
+            record["review_heads"] = final_heads
+            _save_record(
+                api, assessment, STATE_MARKER, record,
+                "I am checking the final conditions for the documented readiness change.",
+                "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.",
+                en_title="Checking readiness", de_title="Status wird geprüft",
+                existing=planned_comment,
+            )
         # Re-check the human hold immediately before Ready. A hold that
         # appeared after the first read blocks the mutation; the guard does
         # not mark Ready over a person's draft.

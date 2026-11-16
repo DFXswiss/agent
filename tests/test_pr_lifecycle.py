@@ -1945,6 +1945,42 @@ def test_human_draft_with_ready_timeline_does_not_restore():
     assert fake.pull["draft"]
 
 
+def test_final_assessment_review_heads_name_the_evidence_used(monkeypatch):
+    from agent_cli import a38_guard
+
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    ancestor = BASE2
+    real_assess = a38_guard.assess_pull
+    calls = []
+
+    def staged_assess(api, repo, number, **kwargs):
+        assessed = real_assess(api, repo, number, **kwargs)
+        calls.append(assessed)
+        # After the planned record exists, this is the final assessment.
+        if any(
+            '"phase": "planned"' in (comment.get("body") or "")
+            for comment in fake.comments
+        ):
+            assessed.review_first_head = ancestor
+            assessed.review_second_head = ""
+        return assessed
+
+    monkeypatch.setattr(a38_guard, "assess_pull", staged_assess)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert calls[0].review_first_head == HEAD
+    assert calls[-1].review_first_head == ancestor
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    body = states[-1]["body"]
+    payload = json.loads(body.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert payload["phase"] == "applied"
+    assert payload["state"] == "ready"
+    assert payload["review_heads"] == [ancestor]
+    assert f"`{ancestor[:12]}`" in body
+    assert f"`{HEAD[:12]}`" in body
+
+
 def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():
     fake = LifecycleAPI()
     fake.comments.clear()

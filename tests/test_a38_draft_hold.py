@@ -426,6 +426,81 @@ def test_a_review_record_before_the_hold_does_not_release_it() -> None:
     assert fake.pull["draft"]
 
 
+def test_guard_draft_survives_an_unreadable_hold_and_restores() -> None:
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    assert fake.transitions == [True]
+
+    fake.timeline_404 = True
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]
+    bodies = [c["body"] for c in fake.comments if "PR-GUARD:LIFECYCLE:v1" in c.get("body", "")]
+    assert len(bodies) == 1
+    assert '"phase": "held"' in bodies[0]
+    assert '"guard_drafted": true' in bodies[0]
+
+    fake.timeline_404 = False
+    fake.timeline = [
+        _ready(created_at="2101-01-01T00:00:00Z", eid=2),
+        _draft(
+            uid=BOT_ID,
+            login="github-actions[bot]",
+            created_at="2102-01-01T00:00:00Z",
+            eid=3,
+        ),
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+    }
+    third = reconcile_pull(fake.api(), REPO, 1)
+    assert third.lifecycle["action"] == "ready"
+    assert fake.transitions[-1] is False
+    assert not fake.pull["draft"]
+
+
+def test_a_person_draft_held_record_does_not_carry_guard_provenance() -> None:
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.pull["draft"] = True
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    fake.timeline = [_draft(created_at="2100-01-01T00:00:00Z")]
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]
+    bodies = [c["body"] for c in fake.comments if "PR-GUARD:LIFECYCLE:v1" in c.get("body", "")]
+    assert len(bodies) == 1
+    assert '"phase": "held"' in bodies[0]
+    assert '"guard_drafted": false' in bodies[0]
+
+    # The person's ready releases the hold; the previous held record still
+    # must not read as a guard draft, so Ready is not restored.
+    fake.timeline = [
+        _draft(created_at="2100-01-01T00:00:00Z", eid=1),
+        _ready(created_at="2101-01-01T00:00:00Z", eid=2),
+        _draft(
+            uid=BOT_ID,
+            login="github-actions[bot]",
+            created_at="2102-01-01T00:00:00Z",
+            eid=3,
+        ),
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+    }
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.write_ready
+    assert second.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]
+    assert fake.transitions == []
+
+
 def test_dry_run_reports_the_hold_without_writing() -> None:
     fake = LifecycleAPI()
     fake.pull["draft"] = True
