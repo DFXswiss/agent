@@ -494,8 +494,6 @@
       "ack": {"mode":"write","method":"POST","path":"/api/orders/ack","params":[{"name":"event_id","flag":"--event","kind":"line","required":true}],"fields":["event","acked"],"nested":{}}
     };
     const GITHUB = "https://github.com/";
-    // The one timestamp shown as elapsed time, under its own label.
-    const ELAPSED_LABELS = new Map([["updated_at", "updated_before"]]);
 
     async function orderCall(name, params) {
       const op = ORDER_VIEW[name];
@@ -531,62 +529,14 @@
       return idOrText(value);
     }
 
-    // Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
-    // date-time without a zone designator, which the browser would read as local
-    // time, is read as UTC.
-    function timestampMs(value) {
-      const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
-      return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
-    }
-
-    // Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
-    function elapsedText(timestamp, now) {
-      const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
-      if (seconds < 60) return seconds + " s";
-      if (seconds < 3600) return Math.floor(seconds / 60) + " min";
-      if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
-      return Math.floor(seconds / 86400) + " d";
-    }
-
-    function isTimestamp(value) {
-      return typeof value === "string" && !Number.isNaN(timestampMs(value));
-    }
-
-    // The elapsed time of a timestamp. Any other value shows as orderCell shows it,
-    // and an empty string as a missing value ("—"), so the cell is never empty.
-    function elapsedCell(value) {
-      if (isTimestamp(value)) return esc(elapsedText(value, Date.now()));
-      return orderCell(value === "" ? null : value);
-    }
-
-    // OWNER (index 0) or NAME (index 1) of a repository value OWNER/NAME.
-    function repoPart(value, index) {
-      if (typeof value !== "string" || !value.includes("/")) return index === 1 ? value : null;
-      const slash = value.indexOf("/");
-      return index === 0 ? value.slice(0, slash) : value.slice(slash + 1);
-    }
-
-    // The columns (or rows) one field of an order operation shows as. The value
-    // stays the full field value; only its display changes. A column with attributes
-    // puts the word behind an icon (as title and accessible name), or the exact
-    // timestamp behind an elapsed time (as title), on the cell itself.
+    // Event columns are id, seq, kind, digest, pr_url and the rest of the events
+    // field list. None of them is a repository, a state or updated_at.
     function orderColumns(field) {
-      if (field === "repo") {
-        return [
-          { field, label: "Organization", cell: value => orderCell(repoPart(value, 0)) },
-          { field, label: "Repo", cell: value => orderCell(repoPart(value, 1)) },
-        ];
-      }
-      if (field === "state" || field === "status") return [{ field, label: field, cell: stateIcon, attributes: stateCellAttributes }];
-      if (ELAPSED_LABELS.has(field)) {
-        return [{ field, label: ELAPSED_LABELS.get(field), cell: elapsedCell, attributes: value => (isTimestamp(value) ? ` title="${esc(value)}"` : "") }];
-      }
       return [{ field, label: field, cell: orderCell }];
     }
 
     function orderTd(column, value) {
-      const attributes = column.attributes ? column.attributes(value) : "";
-      return `<td${attributes}>${column.cell(value)}</td>`;
+      return `<td>${column.cell(value)}</td>`;
     }
 
     function orderTableHtml(rows, fields, actions) {

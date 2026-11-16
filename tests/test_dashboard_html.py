@@ -519,6 +519,10 @@ def test_order_events_have_their_own_page() -> None:
     assert "unacknowledged" not in main
     assert "Acknowledge" not in main
     assert 'orderCall("ack"' not in main
+    assert 'orderCall("events"' not in main
+    assert "cp.digest" in main
+    assert "cp.opinion" in main
+    assert 'key === "digest" || key === "opinion"' in main
     assert 'getElementById("order-events")' not in main
     assert 'getElementById("ev-wake")' not in main
     assert 'getElementById("ev-unacked")' not in main
