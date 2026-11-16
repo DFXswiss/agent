@@ -464,7 +464,6 @@ def test_rendering_is_generic_over_the_table() -> None:
     outside = html.split(BEGIN, 1)[0] + html.split(END, 1)[1]
     names = (
         "pr_url",
-        "updated_at",
         "last_event",
         "last_intent",
         "failed_kind",
@@ -488,6 +487,10 @@ def test_rendering_is_generic_over_the_table() -> None:
     for name in names:
         assert name in declared
         assert name not in outside
+    # The one display rule that names a field: updated_at shows as elapsed time.
+    assert "updated_at" in declared
+    assert outside.count("updated_at") == 1
+    assert 'const ELAPSED_LABELS = new Map([["updated_at", "updated_before"]]);' in outside
 
 
 def test_every_page_operation_is_served(device) -> None:
