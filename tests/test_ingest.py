@@ -121,6 +121,12 @@ def test_a_thread_id_is_only_a_non_empty_string_of_digits(
     assert notification_thread_id(item) == expected
 
 
+def test_a_thread_id_with_a_trailing_newline_is_not_usable() -> None:
+    # `$` also matches before a trailing newline, so a `match`-based check would
+    # accept "1001\n" and put the newline into the request path.
+    assert notification_thread_id({"id": "1001\n"}) is None
+
+
 def test_mark_read_argv_uses_the_thread_id() -> None:
     assert mark_read_argv("12") == [
         "gh",
@@ -136,6 +142,12 @@ def test_mark_read_argv_refuses_anything_but_digits() -> None:
     # a different endpoint.
     with pytest.raises(ValueError):
         mark_read_argv("12a")
+
+
+def test_mark_read_argv_refuses_a_trailing_newline() -> None:
+    # `$` matches before a trailing newline; only a full match is a thread id.
+    with pytest.raises(ValueError):
+        mark_read_argv("1001\n")
 
 
 # ------------------------------------------------------------ scanning
@@ -369,6 +381,32 @@ def test_a_notification_without_a_usable_thread_id_still_creates_the_job(
             store,
             _runner(
                 notifications=[item],
+                comments=[_comment("@theo-vane please review")],
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert len(created) == 1
+        assert len(_jobs(store)) == 1
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_thread_id_with_a_trailing_newline_creates_the_job_without_marking_read(
+    tmp_path: Path,
+) -> None:
+    # An id that is not digits all the way through must not reach the request
+    # path; the request is still handled.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification(thread_id="1001\n")],
                 comments=[_comment("@theo-vane please review")],
                 calls=calls,
             ),

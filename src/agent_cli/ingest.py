@@ -122,7 +122,7 @@ def notification_thread_id(item: Any) -> str | None:
     if not isinstance(item, dict):
         return None
     value = item.get("id")
-    if isinstance(value, str) and _DIGITS.match(value) is not None:
+    if isinstance(value, str) and _DIGITS.fullmatch(value) is not None:
         return value
     return None
 
@@ -134,7 +134,7 @@ def mark_read_argv(thread_id: str) -> list[str]:
     the request path, so a value with a slash in it would address a different
     endpoint.
     """
-    if not isinstance(thread_id, str) or _DIGITS.match(thread_id) is None:
+    if not isinstance(thread_id, str) or _DIGITS.fullmatch(thread_id) is None:
         raise ValueError(f"notification thread id must be digits: {thread_id!r}")
     return ["gh", "api", "-X", "PATCH", f"notifications/threads/{thread_id}"]
 
