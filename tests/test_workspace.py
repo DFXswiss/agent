@@ -5,13 +5,17 @@ import pytest
 from agent_cli.workspace import (
     bare_path,
     clone_argv,
+    default_branch_argv,
     fetch_argv,
+    fetch_pull_argv,
     fetch_refspec_argv,
     has_session_argv,
     kill_session_argv,
     new_session_argv,
+    pull_request_probe_argv,
     repo_slug,
     worktree_add_argv,
+    worktree_add_ref_argv,
     worktree_prune_argv,
     worktree_remove_argv,
 )
@@ -105,6 +109,89 @@ def test_worktree_add_argv_creates_detached_worktree() -> None:
         "--detach",
         "/tmp/wt",
         "refs/remotes/origin/main",
+    ]
+
+
+def test_worktree_add_ref_argv_takes_a_full_ref() -> None:
+    # A pull-request head is not a branch under refs/remotes/origin/<name>, so
+    # the builder that takes the full ref keeps the branch mapping out of it.
+    assert worktree_add_ref_argv(
+        "/tmp/bare.git", "/tmp/wt", "refs/remotes/origin/pull/7"
+    ) == [
+        "git",
+        "--git-dir=/tmp/bare.git",
+        "worktree",
+        "add",
+        "--detach",
+        "/tmp/wt",
+        "refs/remotes/origin/pull/7",
+    ]
+
+
+# ------------------------------------------------------ pull_request_probe_argv
+
+
+def test_pull_request_probe_argv_asks_the_issue_endpoint() -> None:
+    # The issue endpoint serves both kinds; `pull_request` is present only for
+    # a pull request, so `true`/`false` is a complete answer.
+    assert pull_request_probe_argv("owner/name", "7") == [
+        "gh",
+        "api",
+        "repos/owner/name/issues/7",
+        "--jq",
+        ".pull_request != null",
+    ]
+
+
+def test_pull_request_probe_argv_accepts_a_hash_prefixed_number() -> None:
+    # Issue and pull-request refs are written `#7` as often as `7`.
+    assert pull_request_probe_argv("owner/name", "#7")[2] == "repos/owner/name/issues/7"
+
+
+@pytest.mark.parametrize("number", ["", "7a", "../7", "refs/heads/x", "٧"])
+def test_pull_request_probe_argv_rejects_anything_but_ascii_digits(number: str) -> None:
+    # The number becomes a URL path; anything else would address a different
+    # resource, and a non-ASCII digit does not match the API's integer path.
+    with pytest.raises(ValueError, match="pull_request_probe_argv requires"):
+        pull_request_probe_argv("owner/name", number)
+
+
+# --------------------------------------------------------- fetch_pull_argv
+
+
+def test_fetch_pull_argv_fetches_the_pull_request_head() -> None:
+    # `refs/pull/<n>/head` exists for pull requests from forks too.
+    assert fetch_pull_argv("/tmp/bare.git", "7") == [
+        "git",
+        "--git-dir=/tmp/bare.git",
+        "fetch",
+        "origin",
+        "+refs/pull/7/head:refs/remotes/origin/pull/7",
+    ]
+
+
+def test_fetch_pull_argv_accepts_a_hash_prefixed_number() -> None:
+    assert fetch_pull_argv("/tmp/bare.git", "#7")[4] == (
+        "+refs/pull/7/head:refs/remotes/origin/pull/7"
+    )
+
+
+@pytest.mark.parametrize("number", ["", "7a", "../7", "refs/heads/x", "٧"])
+def test_fetch_pull_argv_rejects_anything_but_ascii_digits(number: str) -> None:
+    with pytest.raises(ValueError, match="fetch_pull_argv requires"):
+        fetch_pull_argv("/tmp/bare.git", number)
+
+
+# ------------------------------------------------------- default_branch_argv
+
+
+def test_default_branch_argv_asks_the_repository_endpoint() -> None:
+    assert default_branch_argv("owner/name") == [
+        "gh",
+        "api",
+        "repos/owner/name",
+        "--jq",
+        ".default_branch",
     ]
 
 

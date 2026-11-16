@@ -7,16 +7,25 @@ worker start. The output baseline is captured here; the announcement remains
 for a later phase and must precede it. A baseline taken after the announcement
 would count the bot's own comment as new output and make the later
 silent-failure check pass every job.
+
+The worktree holds the code the job is about: the pull-request head, checked
+out detached, for a pull-request job, and the default branch for an issue job.
+The stored `ref` stays the issue/PR number — the output queries need it — so it
+is never a branch name. Whether the number names a pull request is asked from
+GitHub first; an unanswered question leaves the job queued rather than
+guessing, because checking out the default branch for a pull request would
+review the wrong code. Pushing back to a pull-request branch is not part of
+this change.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
 from . import outputs
-from . import runtime
 from . import workspace
 from .runtime import Completed
 from .store import Store, utcnow
@@ -31,9 +40,18 @@ def worktree_path(work_root: str, job_id: str) -> str:
     return f"{work_root}/{job_id}"
 
 
+SESSION_PREFIX = "job-"
+
+
 def session_name(job_id: str) -> str:
-    """tmux session name for the given job."""
-    return runtime.tmux_name(job_id)
+    """tmux session name for the given job: the whole id, never truncated.
+
+    `reap_orphans` rebuilds the name from the row id and compares it against a
+    listing of live sessions, so the mapping must be injective. Replacing
+    unsafe characters keeps it so; truncating (as a generic name helper does)
+    would make two long ids share a session name and let a live job be reaped.
+    """
+    return SESSION_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "-", job_id)
 
 
 def running_slots(store: Store, runner: Callable[[list[str]], Completed], *, socket: str) -> int:
@@ -123,7 +141,42 @@ def dispatch_queued(
             continue
 
         worktree = worktree_path(work_root, job_id)
-        add = runner(workspace.worktree_add_argv(bare, worktree, ref))
+
+        # `ref` is the issue or pull-request number, never a branch. Ask what
+        # it names before choosing a commit: an unanswered probe is not "it is
+        # an issue", because checking out the default branch for a pull request
+        # would hand the worker unrelated code. The row stays queued either way.
+        try:
+            probe = runner(workspace.pull_request_probe_argv(repo, ref))
+        except ValueError:
+            # A malformed `ref` cannot be looked up; the row is skipped like
+            # the other unusable rows above.
+            skipped += 1
+            continue
+        answer = (probe.stdout or "").strip()
+        if probe.returncode != 0 or answer not in ("true", "false"):
+            skipped += 1
+            continue
+
+        if answer == "true":
+            number = ref[1:] if ref.startswith("#") else ref
+            pull = runner(workspace.fetch_pull_argv(bare, ref))
+            if pull.returncode != 0:
+                skipped += 1
+                continue
+            add = runner(
+                workspace.worktree_add_ref_argv(
+                    bare, worktree, f"refs/remotes/origin/pull/{number}"
+                )
+            )
+        else:
+            default = runner(workspace.default_branch_argv(repo))
+            branch = (default.stdout or "").strip()
+            if default.returncode != 0 or not branch or "\n" in branch:
+                skipped += 1
+                continue
+            add = runner(workspace.worktree_add_argv(bare, worktree, branch))
+
         if add.returncode != 0:
             updated = _strip(row)
             updated.update({"state": "failed", "outcome": "workspace_failed", "finished": utcnow()})
