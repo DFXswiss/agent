@@ -1,4 +1,4 @@
-"""Operate the runner: ingest mentions, dispatch, supervise, prune, run workers.
+"""Operate the runner: ingest mentions, dispatch, supervise, prune and retry.
 
 The pure modules (`jobs`, `ingest`, `dispatch`, `finalize`, `reap`, `queue`,
 `health`) decide what should happen. This module is the command layer: it reads
@@ -24,9 +24,7 @@ import fcntl
 import json
 import os
 import re
-import shlex
 import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -41,7 +39,7 @@ from .store import Store
 
 USAGE = (
     "Usage: agent runner ingest --session ID|dispatch|supervise|prune|"
-    "retry JOB_ID|status|doctor|work"
+    "retry JOB_ID|status|doctor"
 )
 
 _EXIT_CODE_RE = re.compile(r"^-?[0-9]+$")
@@ -284,9 +282,9 @@ def _max_concurrent(runner_config: dict[str, Any]) -> int:
 def _agent_home() -> Path:
     """`home()` made absolute, without resolving symlinks.
 
-    Every path the runner hands to git, tmux or the worker derives from this.
-    The worker runs in another directory than the command that dispatched it,
-    so a relative `AGENT_HOME` would name two different places.
+    Every path the runner hands to git or tmux derives from this. A job's
+    worktree is another directory than the command that dispatched it, so a
+    relative `AGENT_HOME` would name two different places.
     """
     from .main import home
 
@@ -296,34 +294,6 @@ def _agent_home() -> Path:
 def _runner_base() -> RunnerPaths:
     """The runner layout under the absolute agent home."""
     return runner_paths(_agent_home() / "runner")
-
-
-def worker_wrapper() -> str:
-    """The one wrapper string every dispatched worker runs inside tmux.
-
-    The worker derives its job from its working directory (`tmux -c
-    <worktree>`), so no job id is embedded here and one string serves every
-    job, which is the shape `dispatch_queued` takes.
-
-    The interpreter that runs this installation is used rather than looking up
-    `agent` on `PATH`: another program may ship a binary of that name, and it
-    would then be started for every job. Running `main.py` with `-m` starts the
-    same code that dispatched the job, whatever its installation is called.
-
-    `AGENT_HOME` is passed absolute: the worker starts in the job's worktree, so
-    a relative home would resolve somewhere else there.
-    """
-    return shlex.join(
-        [
-            "env",
-            f"AGENT_HOME={_agent_home()}",
-            sys.executable,
-            "-m",
-            "agent_cli.main",
-            "runner",
-            "work",
-        ]
-    )
 
 
 def exit_code_of(paths: RunnerPaths, job_id: str) -> int | None:
@@ -390,27 +360,6 @@ def work_dirs(paths: RunnerPaths | Path) -> list[str]:
         return []
 
 
-def _agent_settings(runner_config: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    """The `agent` block and every reason it is unusable.
-
-    The worker refuses a job when any of these rules fails, so it reports the
-    reason into the job's transcript instead of starting an agent with a
-    command line built from a broken setting.
-    """
-    agent = runner_config.get("agent")
-    if not isinstance(agent, dict):
-        return None, ["runner config agent is not an object"]
-    problems: list[str] = []
-    if not isinstance(agent.get("command"), str) or not agent["command"].strip():
-        problems.append("agent.command is not a non-empty string")
-    args = agent.get("args")
-    if not isinstance(args, list) or any(not isinstance(item, str) for item in args):
-        problems.append("agent.args is not a list of strings")
-    if not isinstance(agent.get("prompt_flag"), str) or not agent["prompt_flag"].strip():
-        problems.append("agent.prompt_flag is not a non-empty string")
-    return agent, problems
-
-
 # --------------------------------------------------------------------- ingest
 
 
@@ -453,9 +402,18 @@ def _cmd_ingest(args: list[str]) -> None:
 # ------------------------------------------------------------------- dispatch
 
 
-def _cmd_dispatch(args: list[str]) -> None:
-    from .main import open_store
+def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
+    """Start queued jobs, once a worker exists to start them.
 
+    `wrapper` is the command string tmux runs inside each job's worktree and
+    the seam for the worker pull request. Until that worker exists it is None,
+    and the command refuses before taking the lock, reading configuration or
+    opening the store, so a run can never half-create a job.
+    """
+    from .main import die, open_store
+
+    if wrapper is None:
+        die("dispatch needs a worker, and none exists yet (see docs/runner.md)")
     paths = _runner_base()
     with runner_lock(paths) as acquired:
         if not acquired:
@@ -464,7 +422,6 @@ def _cmd_dispatch(args: list[str]) -> None:
         runner_config = load_json(paths.runner_config, "runner config")
         max_concurrent = _max_concurrent(runner_config)
         _ensure_state_dirs(paths)
-        wrapper = worker_wrapper()
         store = open_store()
         try:
             own = OwnJobs(store, work_root=paths.work)
@@ -776,8 +733,6 @@ def _cmd_doctor(args: list[str]) -> None:
 
     # All three health checks run whenever their inputs loaded. An empty answer
     # from one does not make another unnecessary.
-    agent: dict[str, Any] | None = None
-    agent_problems: list[str] = []
     if runner_config is not None:
         problems.extend(health.runner_config_problems(runner_config))
         max_concurrent = runner_config.get("max_concurrent")
@@ -787,8 +742,6 @@ def _cmd_doctor(args: list[str]) -> None:
             or max_concurrent < 1
         ):
             problems.append("max_concurrent is not a positive integer")
-        agent, agent_problems = _agent_settings(runner_config)
-        problems.extend(agent_problems)
     if catalog is not None and runner_config is not None:
         problems.extend(health.unresolved_skills(catalog, runner_config))
     if agent_config is not None:
@@ -801,30 +754,10 @@ def _cmd_doctor(args: list[str]) -> None:
             expected = raw_login.strip()
         else:
             problems.append("policy expected_gh_user is missing")
-        # The worker renders `prompts/<job_type>.md`, and the job types are the
-        # lowercased entries of `job_types_allow` that ingest matched. The
-        # catalogue's skill ids are a different namespace: a skill id and the
-        # job type it maps to can differ, so checking catalogue ids would miss
-        # the template the worker actually loads. A job type without its
-        # template would only fail when its first job runs; report it here.
-        job_types = policy.get("job_types_allow")
-        if isinstance(job_types, list):
-            for job_type in job_types:
-                if not isinstance(job_type, str) or not job_type.strip():
-                    continue
-                template = paths.prompts / f"{job_type.lower()}.md"
-                if not template.is_file():
-                    problems.append(f"prompt template {template} is missing")
 
     for binary in ("gh", "git", "tmux", "ps"):
         if shutil.which(binary) is None:
             problems.append(f"{binary} is not on PATH")
-    # Only a usable agent block names a command worth looking for; a broken
-    # one has already been reported above.
-    if agent is not None and not agent_problems:
-        command = agent["command"]
-        if shutil.which(command) is None:
-            problems.append(f"{command} is not on PATH")
     if not os.access(paths.base, os.W_OK):
         problems.append(f"runner directory {paths.base} is not writable")
     if paths.state.exists() and not os.access(paths.state, os.W_OK):
@@ -854,221 +787,12 @@ def _cmd_doctor(args: list[str]) -> None:
     print("doctor ok")
 
 
-# ----------------------------------------------------------------------- work
-
-
-def _write_exit(paths: RunnerPaths, job_id: str, code: int) -> None:
-    """Write the exit code atomically: finalize must never read half a number."""
-    paths.logs.mkdir(parents=True, exist_ok=True)
-    tmp = paths.logs / f"{job_id}.exit.tmp"
-    tmp.write_text(f"{code}\n", encoding="utf-8")
-    os.replace(tmp, paths.logs / f"{job_id}.exit")
-
-
-def _worker_fail(
-    paths: RunnerPaths, job_id: str, message: str, *, code: int = 2
-) -> int:
-    """Record a worker failure and return its exit code.
-
-    The exit file is written even when the transcript cannot be appended to:
-    `finalize` must always learn that the worker ended.
-    """
-    print(f"agent: {message}", file=sys.stderr)
-    try:
-        with (paths.logs / f"{job_id}.transcript").open("ab") as transcript:
-            transcript.write((message + "\n").encode("utf-8", "replace"))
-    except OSError:
-        pass
-    try:
-        _write_exit(paths, job_id, code)
-    except OSError:
-        pass
-    return code
-
-
-def _worker_job_id(paths: RunnerPaths, cwd: str) -> str | None:
-    """The job whose worktree `cwd` is, or None when it is not one.
-
-    The job id is the directory name, and the directory must be a direct child
-    of the work root after resolving both. Without that rule any directory
-    could name a job, and `work` would act on a row unrelated to where it runs.
-    The name must also be a plain job id: it becomes file names under `logs`,
-    and a directory called `..` or containing a separator must be refused even
-    if someone created it under the work root.
-    """
-    work = os.path.realpath(str(paths.work))
-    resolved = os.path.realpath(cwd)
-    if not reap.within_root(work, resolved) or os.path.dirname(resolved) != work:
-        print(f"agent: not a job worktree: {resolved}", file=sys.stderr)
-        return None
-    job_id = os.path.basename(resolved)
-    if not safe_job_id(job_id):
-        print(f"agent: not a job worktree: {resolved}", file=sys.stderr)
-        return None
-    return job_id
-
-
-def run_worker(
-    paths: RunnerPaths,
-    store: Store,
-    cwd: str,
-    *,
-    popen: Callable[..., Any] = subprocess.Popen,
-    out: Any = None,
-) -> int:
-    """Run one job's agent in its worktree, always leaving an exit file once identified.
-
-    The job id is the working directory: dispatch starts the session with `-c
-    <worktree>` and one wrapper string serves every job. A failure before the
-    job can be identified writes nothing, because there is no job id to write
-    for. Every later failure writes exit code 2 so `finalize` never waits on a
-    worker that died early.
-    """
-    if out is None:
-        out = sys.stdout.buffer
-    job_id = _worker_job_id(paths, cwd)
-    if job_id is None:
-        return 2
-    try:
-        paths.logs.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        print(f"agent: cannot create {paths.logs}: {exc}", file=sys.stderr)
-        return 2
-
-    # No state check: this process was started for this job and has to record
-    # an outcome even if the row moved on while the session was being set up.
-    row = store.row("job", job_id)
-    if row is None:
-        return _worker_fail(paths, job_id, f"job {job_id} is not in the store")
-    if row.get("_origin_device_id") != store.device_id():
-        return _worker_fail(
-            paths, job_id, f"job {job_id} belongs to another device"
-        )
-    repo = row.get("repo")
-    ref = row.get("ref")
-    job_type = row.get("job_type")
-    if (
-        not isinstance(repo, str)
-        or not repo.strip()
-        or not isinstance(ref, str)
-        or not ref.strip()
-        or not isinstance(job_type, str)
-        or not job_type.strip()
-    ):
-        return _worker_fail(
-            paths, job_id, f"job {job_id} is missing repo, ref or job_type"
-        )
-
-    runner_config, problem = _read_json(paths.runner_config, "runner config")
-    if problem is not None or runner_config is None:
-        return _worker_fail(paths, job_id, problem or "runner config is not an object")
-    agent, agent_problems = _agent_settings(runner_config)
-    if agent is None or agent_problems:
-        return _worker_fail(
-            paths, job_id, "; ".join(agent_problems) or "agent settings are missing"
-        )
-
-    skills = runner_config.get("skills")
-    skill_cfg = skills.get(job_type) if isinstance(skills, dict) else None
-    deny = skill_cfg.get("deny") if isinstance(skill_cfg, dict) else None
-    if deny is None:
-        defaults = runner_config.get("defaults")
-        deny = defaults.get("deny") if isinstance(defaults, dict) else None
-    if not isinstance(deny, list) or any(not isinstance(item, str) for item in deny):
-        return _worker_fail(
-            paths, job_id, f"job type {job_type} has no usable deny list"
-        )
-
-    prompt_template = paths.prompts / f"{job_type}.md"
-    try:
-        template = prompt_template.read_text(encoding="utf-8")
-    except (OSError, ValueError) as exc:
-        # ValueError covers UnicodeDecodeError: a template that is not UTF-8
-        # cannot be rendered, and rendering nothing would start an agent with
-        # an empty prompt. Every failure after identification still records an
-        # exit code.
-        return _worker_fail(
-            paths, job_id, f"prompt template {prompt_template}: {exc}"
-        )
-    prompt_text = (
-        template.replace("{{REPO}}", repo)
-        .replace("{{REF}}", ref)
-        .replace("{{JOB_ID}}", job_id)
-    )
-    prompt_path = paths.logs / f"{job_id}.prompt"
-    try:
-        prompt_path.write_text(prompt_text, encoding="utf-8")
-    except OSError as exc:
-        return _worker_fail(paths, job_id, f"cannot write {prompt_path}: {exc}")
-
-    argv = [agent["command"], *agent["args"]]
-    for item in deny:
-        argv.extend(["--deny", item])
-    argv.extend([agent["prompt_flag"], str(prompt_path)])
-
-    transcript_path = paths.logs / f"{job_id}.transcript"
-    try:
-        process = popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    except OSError:
-        # Anything the operating system refuses before the agent runs (missing
-        # executable, no permission) is the conventional 127.
-        return _worker_fail(
-            paths, job_id, f"cannot start {agent['command']}", code=127
-        )
-
-    try:
-        # "wb" is deliberate: a new attempt starts a fresh transcript.
-        with transcript_path.open("wb") as transcript:
-            stream = process.stdout
-            if stream is not None:
-                while True:
-                    # `read1`, not `read`: a buffered reader's `read(65536)`
-                    # waits for the full size or EOF, so a quiet agent's
-                    # progress would sit in the buffer, the transcript would
-                    # not grow, and the stall watchdog could kill live work.
-                    chunk = stream.read1(65536)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    out.flush()
-                    transcript.write(chunk)
-                    # The stall watchdog reads this size; flush every chunk so
-                    # a live worker is never mistaken for a quiet one.
-                    transcript.flush()
-    except BaseException as exc:
-        # A started agent must never be left running when the worker gives up:
-        # supervise will remove the worktree it is running in. Terminate and
-        # reap it before the failure is recorded, so the exit file cannot
-        # appear while the process is still alive.
-        try:
-            process.kill()
-        except (ProcessLookupError, OSError):
-            # Already gone: nothing left to terminate.
-            pass
-        try:
-            process.wait()
-        except OSError:
-            pass
-        code = _worker_fail(paths, job_id, f"worker output failed: {exc}")
-        if isinstance(exc, OSError):
-            return code
-        # Any other exception is not ours to swallow; the failure is recorded
-        # so finalize can end the attempt, and the error still propagates.
-        raise
-
-    code = process.wait()
-    if not isinstance(code, int) or isinstance(code, bool):
-        code = 2
-    _write_exit(paths, job_id, code)
-    return code
-
-
 # ------------------------------------------------------------------ entry
 
 
 def cmd_runner(args: list[str]) -> None:
     """Dispatch one `agent runner` subcommand."""
-    from .main import die, open_store
+    from .main import die
 
     if not args:
         die(USAGE)
@@ -1094,29 +818,4 @@ def cmd_runner(args: list[str]) -> None:
     if sub == "doctor":
         _cmd_doctor(rest)
         return
-    if sub == "work":
-        paths = _runner_base()
-        cwd = os.getcwd()
-        # Validate before touching the store: outside a job worktree this
-        # command must leave no trace at all, and opening the store writes.
-        # The id is computed once and reused below; calling the resolver twice
-        # would only repeat the same check.
-        job_id = _worker_job_id(paths, cwd)
-        if job_id is None:
-            raise SystemExit(2)
-        try:
-            store = open_store()
-            try:
-                code = run_worker(paths, store, cwd)
-            finally:
-                store.close()
-        finally:
-            # Failures outside run_worker's own checks (a store that will not
-            # open, an unexpected exception) must still let finalize end the
-            # attempt. Dispatch removes a queued job's stale exit file first,
-            # so a missing file here really means this attempt wrote none.
-            # The exception, if any, still propagates.
-            if not (paths.logs / f"{job_id}.exit").exists():
-                _worker_fail(paths, job_id, "worker ended without recording a result")
-        raise SystemExit(code)
     die(USAGE)

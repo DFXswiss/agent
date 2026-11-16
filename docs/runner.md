@@ -1,11 +1,11 @@
 # The runner
 
 `agent runner` runs detached agent jobs on this device. It reads GitHub
-notifications, queues the mentions it is admitted for, starts a worker in a
-private worktree for each queued job, supervises the workers, and prunes
-finished queue rows. The command group owns the external effects; the rules it
-applies live in the tested modules `jobs`, `ingest`, `dispatch`, `finalize`,
-`reap`, `queue` and `health`.
+notifications, queues the mentions it is admitted for, dispatches queued jobs
+into a private worktree, supervises them, and prunes finished queue rows. The
+command group owns the external effects; the rules it applies live in the
+tested modules `jobs`, `ingest`, `dispatch`, `finalize`, `reap`, `queue` and
+`health`.
 
 The runner lives under `$AGENT_HOME/runner` and uses no other directory. Every
 subcommand resolves its paths from that base, so moving `$AGENT_HOME` moves the
@@ -16,16 +16,14 @@ whole runner.
 | Path | Purpose |
 | --- | --- |
 | `policy.json` | Admission policy: who may ask, which repositories and job types, and the GitHub login this runner must act as. |
-| `runner.json` | Runtime settings: capacity, budgets, agent command, deny-lists, retention. |
+| `runner.json` | Runtime settings: capacity, budgets, deny-lists, retention. |
 | `skills-catalog.json` | The skills this installation publishes. |
 | `agent.json` | The agent pinning checked by `doctor`. |
-| `prompts/<job_type>.md` | Prompt template for one job type. |
-| `state/tmux.sock` | The private tmux socket every worker session uses. |
+| `state/tmux.sock` | The private tmux socket every job session uses. |
 | `state/repos/` | Bare clones, one per repository. |
 | `state/work/` | One worktree per job, named by job id. |
-| `state/logs/<id>.transcript` | Everything the worker wrote. |
-| `state/logs/<id>.exit` | The worker's exit code, written atomically. |
-| `state/logs/<id>.prompt` | The rendered prompt for the current attempt. |
+| `state/logs/<id>.transcript` | Everything the job wrote. |
+| `state/logs/<id>.exit` | The job's exit code, written atomically. |
 | `state/runner.lock` | The one lock the mutating commands share. |
 
 Configuration files are never created by these commands. A missing or
@@ -53,10 +51,10 @@ reads, apart from the login check:
 case-insensitively. A runner authenticated as another account would attribute
 every action to that account, so the check is fail-closed rather than a warning.
 
-`runner.json` answers *how this device runs work*. `dispatch`, `supervise`,
-`prune` and the worker read this file; they do not read the policy, with the
-one exception that `supervise` reads `expected_gh_user`. `retry` needs no
-setting and reads neither file.
+`runner.json` answers *how this device runs work*. `dispatch`, `supervise` and
+`prune` read this file; they do not read the policy, with the one exception
+that `supervise` reads `expected_gh_user`. `retry` needs no setting and reads
+neither file.
 
 ```json
 {
@@ -70,20 +68,13 @@ setting and reads neither file.
   "skills": {
     "pr-review": {"done_kind": "pr-reviewed", "deny": ["Bash", "Edit"]}
   },
-  "retention_days": {"done": 7, "failed": 30},
-  "agent": {
-    "command": "agent-cli",
-    "args": ["run"],
-    "prompt_flag": "--prompt"
-  }
+  "retention_days": {"done": 7, "failed": 30}
 }
 ```
 
 `max_concurrent` must be an integer of at least 1. `retention_days` is read per
 state; an absent state is reported as *not configured* and nothing in it is
-pruned. A worker's deny-list is the job type's own list when it has one and
-`defaults.deny` otherwise. A skill entry without a deny-list falls back to the
-defaults rather than running unrestricted.
+pruned.
 
 ## Subcommands
 
@@ -100,15 +91,17 @@ notifications are counted on standard error.
 
 ### `agent runner dispatch`
 
-Starts queued jobs while capacity allows. For each job it ensures the bare
-clone exists, fetches, creates a detached worktree, records an output baseline,
-and starts a detached tmux session that runs the worker. The worktree holds the
-pull-request head, checked out detached, for a pull-request job, and the
-repository's default branch for an issue job; `ref` stays the number. A probe
-that cannot answer whether the number is a pull request leaves the job queued
-rather than choosing a commit. Stale `.exit` and `.transcript` files of queued
-jobs are removed first: a queued job has no live worker, and a leftover exit
-code would otherwise be read as the new attempt's result.
+Refuses until the worker exists, because a job started with nothing to run it
+would never finish. Once the worker lands, it will start queued jobs while
+capacity allows. For each job it ensures the bare clone exists, fetches,
+creates a detached worktree, records an output baseline, and starts a detached
+tmux session that runs the worker. The worktree holds the pull-request head,
+checked out detached, for a pull-request job, and the repository's default
+branch for an issue job; `ref` stays the number. A probe that cannot answer
+whether the number is a pull request leaves the job queued rather than choosing
+a commit. Stale `.exit` and `.transcript` files of queued jobs are removed
+first: a queued job has no live worker, and a leftover exit code would
+otherwise be read as the new attempt's result.
 
 Output: `job.started <job-id>` per job, or `job.started none`.
 
@@ -162,36 +155,12 @@ job.running <job-id> 2026-11-13T10:00:00Z
 
 Reads all four configuration files and the environment, and reports every
 problem it can find rather than stopping at the first. It runs the three
-health checks, verifies `max_concurrent`, and validates the `agent` block
-(`command`, `args` and `prompt_flag`). It requires the binaries `gh`, `git`,
-`tmux` and `ps` on `PATH`, and the agent command too when the block is usable.
-For every job type in `job_types_allow` it checks that `prompts/<type>.md`
-exists — that is the template the worker renders, and the catalogue's skill ids
-are a different namespace. It checks that the runner directories are writable,
-and that the authenticated GitHub login matches the policy.
+health checks and verifies `max_concurrent`. It requires the binaries `gh`,
+`git`, `tmux` and `ps` on `PATH`. It checks that the runner directories are
+writable, and that the authenticated GitHub login matches the policy.
 
 Output: one `doctor problem: <text>` line per problem followed by
 `doctor <n> problems`, exiting 1; or `doctor ok`.
-
-### `agent runner work`
-
-The worker entry point. It runs inside a job's tmux session, with the worktree
-as its working directory, and is not meant to be started by hand. The job id is
-the worktree directory name. A directory that is not a direct child of
-`state/work` is rejected with status 2 before anything is written.
-
-After identifying the job it reads `runner.json`, renders
-`prompts/<job_type>.md` into `state/logs/<id>.prompt`, and runs the configured
-agent with the resolved deny-list. The agent's output is copied to standard
-output and to `state/logs/<id>.transcript` as it arrives. Every failure after
-job identification appends a line to the transcript and writes exit status 2
-(127 when the command cannot start), so supervision never waits forever on a
-worker that died early. The worker returns the agent's own exit status.
-
-The worker session inherits the environment of the runner's tmux server, so
-settings such as `AGENT_PG_DSN` must be present in the environment that runs
-`dispatch`. The wrapper passes `AGENT_HOME` explicitly and puts nothing else
-on the command line, because a command line is visible to every local user.
 
 ## The runner lock
 
@@ -207,9 +176,7 @@ mid-construction. Serialising the mutating commands makes that impossible,
 which is also why no separate "preparing" marker is written: there is no
 concurrent reaper to protect the worktree from.
 
-`status` and `doctor` are read-only and take no lock. `work` takes no lock: it
-runs inside the worker session and must remain runnable while a supervising
-command holds the lock.
+`status` and `doctor` are read-only and take no lock.
 
 ## Only this device's jobs
 
@@ -226,8 +193,11 @@ mention already queued by another device must not be inserted again.
 
 ## Not yet
 
+- The worker that runs a job: a static script that launches lanes through the
+  AI configuration (`ai-accounts.json`) as DESIGN.md §19.1 and §19.8 require,
+  together with the prompt templates it renders. Until it lands,
+  `agent runner dispatch` refuses to start jobs.
 - GitHub announce and outcome comments for a job.
-- Prompt templates shipped with the package.
 - A schedule or service unit for the subcommands.
 - Container packaging.
 - Owner wildcards (`owner/*`) in `repos_allow` and job-type detection from the

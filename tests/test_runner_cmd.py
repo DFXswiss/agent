@@ -1,18 +1,14 @@
 """Tests for the `agent runner` command layer.
 
 Every external effect is faked: `run_argv` is replaced so no `gh`, `git`, `ps`
-or `tmux` runs, and the worker receives an injected `popen`. The store is the
-real PostgreSQL store the rest of the suite uses.
+or `tmux` runs. The store is the real PostgreSQL store the rest of the suite
+uses.
 """
 
 from __future__ import annotations
 
 import fcntl
-import io
 import json
-import shlex
-import subprocess
-import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +16,7 @@ from typing import Any
 
 import pytest
 
+import agent_cli.runner_cmd as runner_cmd
 from agent_cli import dispatch
 from agent_cli.ingest import job_id, job_row
 from agent_cli.runtime import Completed
@@ -32,12 +29,10 @@ from agent_cli.runner_cmd import (
     load_json,
     remove_job_worktree,
     runner_paths,
-    run_worker,
     safe_job_id,
     transcript_of,
     transcript_size_of,
     work_dirs,
-    worker_wrapper,
 )
 from agent_cli.store import Store
 
@@ -438,11 +433,8 @@ def test_dispatch_removes_stale_logs_before_starting(
 
     calls: list[list[str]] = []
     monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
-    monkeypatch.setattr(
-        "agent_cli.runner_cmd.shutil.which", lambda _name: "/usr/bin/agent"
-    )
 
-    cmd_runner(["dispatch"])
+    runner_cmd._cmd_dispatch([], wrapper="/bin/worker-under-test")
 
     assert not stale_exit.exists()
     assert not stale_transcript.exists()
@@ -479,7 +471,7 @@ def test_dispatch_checks_out_a_pull_requests_head(
         _dispatch_runner(calls, probe_stdout="true"),
     )
 
-    cmd_runner(["dispatch"])
+    runner_cmd._cmd_dispatch([], wrapper="/bin/worker-under-test")
 
     store = Store(home)
     try:
@@ -501,34 +493,43 @@ def test_dispatch_checks_out_a_pull_requests_head(
     assert f"job.started {row['id']}" in capsys.readouterr().out
 
 
-def test_the_worker_wrapper_runs_this_installation(
+def test_the_runner_base_is_absolute_when_the_home_is_relative(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Another program named `agent` may be earlier on PATH, so the worker must
-    # start the interpreter that dispatched it, not a looked-up binary.
-    home = tmp_path / "home"
-    monkeypatch.setenv("AGENT_HOME", str(home))
-
-    assert shlex.split(worker_wrapper()) == [
-        "env",
-        f"AGENT_HOME={home}",
-        sys.executable,
-        "-m",
-        "agent_cli.main",
-        "runner",
-        "work",
-    ]
-
-
-def test_the_worker_wrapper_passes_an_absolute_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The worker starts in the job's worktree; a relative home would name
-    # another directory there.
+    # A command may act on a directory other than the one it was invoked from;
+    # a relative AGENT_HOME would name two different places.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AGENT_HOME", "home")
 
-    assert shlex.split(worker_wrapper())[1] == f"AGENT_HOME={tmp_path / 'home'}"
+    assert runner_cmd._runner_base().base == tmp_path / "home" / "runner"
+
+
+def test_dispatch_refuses_until_a_worker_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker is a separate change. Until it lands, dispatch must not take
+    # the lock, read configuration or touch the store: a run that half-started
+    # a job would be worse than a refusal.
+    home = tmp_path / "home"
+    (home / "runner").mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="dispatch needs a worker"):
+        cmd_runner(["dispatch"])
+
+    assert calls == []
+    # No lock is taken, so not even the state directory is created.
+    assert not (home / "runner" / "state").exists()
+    store = Store(home)
+    try:
+        assert store.rows("job") == []
+    finally:
+        store.close()
 
 
 def test_dispatch_only_starts_this_devices_jobs(
@@ -553,7 +554,7 @@ def test_dispatch_only_starts_this_devices_jobs(
     calls: list[list[str]] = []
     monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
 
-    cmd_runner(["dispatch"])
+    runner_cmd._cmd_dispatch([], wrapper="/bin/worker-under-test")
 
     store = Store(home)
     try:
@@ -589,7 +590,7 @@ def test_dispatch_ignores_a_queued_row_with_an_unsafe_id(
     calls: list[list[str]] = []
     monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
 
-    cmd_runner(["dispatch"])
+    runner_cmd._cmd_dispatch([], wrapper="/bin/worker-under-test")
 
     assert calls == []
     store = Store(home)
@@ -1171,370 +1172,6 @@ def test_work_dirs_does_not_list_a_symlinked_directory(tmp_path: Path) -> None:
     assert work_dirs(paths) == ["real"]
 
 
-# --------------------------------------------------------------------- worker
-
-
-class _FakeStore:
-    """The two reads the worker makes, without a database."""
-
-    def __init__(
-        self,
-        row: dict[str, Any] | None,
-        device: str = "this-device",
-        origin: str | None = None,
-    ) -> None:
-        self._row = row
-        self._device = device
-        # By default the row belongs to this device; a test can claim it for
-        # another one to exercise the ownership check.
-        self._origin = device if origin is None else origin
-
-    def row(self, table: str, row_id: str) -> dict[str, Any] | None:
-        if table == "job" and self._row is not None and row_id == self._row["id"]:
-            return {**self._row, "_origin_device_id": self._origin}
-        return None
-
-    def device_id(self) -> str:
-        return self._device
-
-
-class _Stream:
-    def __init__(self, chunks: list[bytes]) -> None:
-        self._chunks = list(chunks)
-
-    def read(self, _size: int) -> bytes:
-        raise AssertionError("read() buffers; the worker must use read1()")
-
-    def read1(self, _size: int) -> bytes:
-        return self._chunks.pop(0) if self._chunks else b""
-
-
-class _Process:
-    def __init__(self, code: int, chunks: list[bytes]) -> None:
-        self.stdout = _Stream(chunks)
-        self._code = code
-
-    def wait(self) -> int:
-        return self._code
-
-
-def _worker_home(tmp_path: Path, *, deny: Any = None) -> tuple[RunnerPaths, str]:
-    paths = runner_paths(tmp_path / "home" / "runner")
-    paths.prompts.mkdir(parents=True)
-    (paths.prompts / "pr-review.md").write_text(
-        "repo {{REPO}} ref {{REF}} job {{JOB_ID}}", encoding="utf-8"
-    )
-    skills: dict[str, Any] = {}
-    if deny is not None:
-        skills["pr-review"] = {"deny": deny}
-    config = {
-        "agent": {"command": "agent-cli", "args": ["run"], "prompt_flag": "--prompt"},
-        "defaults": {"deny": ["Bash"]},
-        "skills": skills,
-    }
-    paths.runner_config.write_text(json.dumps(config), encoding="utf-8")
-    job_id_value = job_id("owner/name", "7", "pr-review")
-    (paths.work / job_id_value).mkdir(parents=True)
-    return paths, job_id_value
-
-
-def _worker_store(job_id_value: str) -> _FakeStore:
-    row = {
-        "id": job_id_value,
-        "repo": "owner/name",
-        "ref": "7",
-        "job_type": "pr-review",
-    }
-    return _FakeStore(row)
-
-
-def test_worker_runs_the_agent_and_records_its_output(tmp_path: Path) -> None:
-    paths, job_id_value = _worker_home(tmp_path, deny=["Bash", "Edit"])
-    out = io.BytesIO()
-    calls: list[tuple[list[str], dict[str, Any]]] = []
-    chunks = [b"hello ", b"world\n"]
-
-    def popen(argv: list[str], **kwargs: Any) -> _Process:
-        calls.append((argv, kwargs))
-        return _Process(0, chunks)
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=popen,
-        out=out,
-    )
-
-    assert code == 0
-    prompt = paths.logs / f"{job_id_value}.prompt"
-    assert calls[0][0] == [
-        "agent-cli",
-        "run",
-        "--deny",
-        "Bash",
-        "--deny",
-        "Edit",
-        "--prompt",
-        str(prompt),
-    ]
-    # The agent's streams are merged so one transcript holds everything.
-    assert calls[0][1] == {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
-    # The substituted prompt must name this job, its repository and its ref.
-    assert prompt.read_text(encoding="utf-8") == (
-        f"repo owner/name ref 7 job {job_id_value}"
-    )
-    assert out.getvalue() == b"hello world\n"
-    assert (paths.logs / f"{job_id_value}.transcript").read_bytes() == b"hello world\n"
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "0\n"
-
-
-def test_worker_inherits_the_default_deny_list(tmp_path: Path) -> None:
-    # A job type without its own deny list uses the runner's defaults.
-    paths, job_id_value = _worker_home(tmp_path, deny=None)
-    calls: list[list[str]] = []
-
-    def popen(argv: list[str], **_kwargs: Any) -> _Process:
-        calls.append(argv)
-        return _Process(0, [])
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=popen,
-    )
-
-    assert code == 0
-    assert calls[0][:4] == ["agent-cli", "run", "--deny", "Bash"]
-
-
-def test_worker_uses_read1_to_stream_output(tmp_path: Path) -> None:
-    # `read(65536)` would block until the buffer fills or EOF, so a quiet
-    # agent's progress would not reach the transcript and the stall watchdog
-    # could kill live work. Only `read1` returns what is available.
-    paths, job_id_value = _worker_home(tmp_path)
-    seen: list[str] = []
-
-    class Stream:
-        def __init__(self) -> None:
-            self._chunks = [b"live\n"]
-
-        def read(self, _size: int) -> bytes:
-            raise AssertionError("read() must not be called")
-
-        def read1(self, _size: int) -> bytes:
-            seen.append("read1")
-            return self._chunks.pop(0) if self._chunks else b""
-
-    class Process:
-        stdout = Stream()
-
-        def wait(self) -> int:
-            return 0
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: Process(),
-    )
-
-    assert code == 0
-    assert seen
-    assert (paths.logs / f"{job_id_value}.transcript").read_bytes() == b"live\n"
-
-
-def test_worker_preserves_a_nonzero_agent_result(tmp_path: Path) -> None:
-    paths, job_id_value = _worker_home(tmp_path)
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: _Process(3, [b"partial\n"]),
-    )
-
-    assert code == 3
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "3\n"
-
-
-def test_worker_kills_a_started_agent_when_copying_the_output_fails(
-    tmp_path: Path,
-) -> None:
-    # Giving up on the copy must not leave the agent running in a worktree that
-    # supervise is about to remove. The child is killed and reaped before the
-    # failure is recorded.
-    paths, job_id_value = _worker_home(tmp_path)
-    exit_path = paths.logs / f"{job_id_value}.exit"
-    events: list[str] = []
-
-    class FailingStream:
-        def read1(self, _size: int) -> bytes:
-            events.append("read1")
-            raise OSError("transcript filesystem is full")
-
-    class Process:
-        stdout = FailingStream()
-
-        def kill(self) -> None:
-            events.append("kill")
-            assert not exit_path.exists()
-
-        def wait(self) -> int:
-            events.append("wait")
-            assert not exit_path.exists()
-            return -9
-
-    def popen(*_args: Any, **_kwargs: Any) -> Process:
-        events.append("popen")
-        return Process()
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=popen,
-    )
-
-    assert code == 2
-    assert events == ["popen", "read1", "kill", "wait"]
-    assert exit_path.read_text(encoding="utf-8") == "2\n"
-
-
-def test_worker_writes_exit_two_when_the_job_cannot_be_identified(
-    tmp_path: Path,
-) -> None:
-    paths, job_id_value = _worker_home(tmp_path)
-
-    code = run_worker(
-        paths,
-        _FakeStore(None),
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
-    )
-
-    assert code == 2
-    assert "not in the store" in (
-        paths.logs / f"{job_id_value}.transcript"
-    ).read_text(encoding="utf-8")
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
-
-
-def test_worker_writes_exit_127_when_the_command_cannot_start(
-    tmp_path: Path,
-) -> None:
-    paths, job_id_value = _worker_home(tmp_path)
-
-    def popen(_argv: list[str], **_kwargs: Any) -> Any:
-        raise FileNotFoundError("agent-cli")
-
-    code = run_worker(
-        paths, _worker_store(job_id_value), str(paths.work / job_id_value), popen=popen
-    )
-
-    assert code == 127
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "127\n"
-
-
-def test_worker_refuses_a_directory_that_is_not_directly_under_the_work_root(
-    tmp_path: Path,
-) -> None:
-    paths, job_id_value = _worker_home(tmp_path)
-    nested = paths.work / job_id_value / "nested"
-    nested.mkdir()
-
-    for cwd in (str(paths.work), str(nested), str(tmp_path / "elsewhere")):
-        code = run_worker(paths, _worker_store(job_id_value), cwd)
-        assert code == 2
-
-    # Nothing may be written when the worker cannot name its job.
-    assert not paths.logs.exists()
-
-
-def test_worker_writes_exit_two_when_the_prompt_template_is_missing(
-    tmp_path: Path,
-) -> None:
-    paths, job_id_value = _worker_home(tmp_path)
-    (paths.prompts / "pr-review.md").unlink()
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
-    )
-
-    assert code == 2
-    assert "prompt template" in (
-        paths.logs / f"{job_id_value}.transcript"
-    ).read_text(encoding="utf-8")
-
-
-def test_worker_writes_exit_two_when_the_prompt_template_is_not_utf8(
-    tmp_path: Path,
-) -> None:
-    # A template that cannot be decoded must not start an agent with no prompt.
-    paths, job_id_value = _worker_home(tmp_path)
-    (paths.prompts / "pr-review.md").write_bytes(b"\xff\xfe\x00")
-
-    code = run_worker(
-        paths,
-        _worker_store(job_id_value),
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
-    )
-
-    assert code == 2
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
-
-
-def test_work_records_a_failure_when_the_store_cannot_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A failure outside run_worker's own checks still has to end the attempt,
-    # and the exception itself must keep propagating.
-    paths, job_id_value = _worker_home(tmp_path)
-    monkeypatch.setenv("AGENT_HOME", str(tmp_path / "home"))
-    monkeypatch.chdir(paths.work / job_id_value)
-
-    def failing_open_store(**_kwargs: Any) -> Any:
-        raise SystemExit("database unavailable")
-
-    monkeypatch.setattr("agent_cli.main.open_store", failing_open_store)
-
-    with pytest.raises(SystemExit, match="database unavailable"):
-        cmd_runner(["work"])
-
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
-
-
-def test_worker_refuses_a_row_owned_by_another_device(tmp_path: Path) -> None:
-    # Another device's row is not this worker's job; starting the agent would
-    # run work the store cannot attribute to this instance.
-    paths, job_id_value = _worker_home(tmp_path)
-    row = {
-        "id": job_id_value,
-        "repo": "owner/name",
-        "ref": "7",
-        "job_type": "pr-review",
-    }
-    store = _FakeStore(row, origin="other-device")
-
-    code = run_worker(
-        paths,
-        store,
-        str(paths.work / job_id_value),
-        popen=lambda *_args, **_kwargs: pytest.fail("must not start the agent"),
-    )
-
-    assert code == 2
-    assert "belongs to another device" in (
-        paths.logs / f"{job_id_value}.transcript"
-    ).read_text(encoding="utf-8")
-    assert (paths.logs / f"{job_id_value}.exit").read_text(encoding="utf-8") == "2\n"
-
-
 # ---------------------------------------------------------------- supervise
 
 
@@ -1748,8 +1385,7 @@ def test_supervise_uses_the_login_spelling_gh_reports(
 
 def _healthy_runner_files(home: Path) -> RunnerPaths:
     paths = runner_paths(home / "runner")
-    paths.prompts.mkdir(parents=True)
-    (paths.prompts / "pr-review.md").write_text("prompt", encoding="utf-8")
+    paths.base.mkdir(parents=True, exist_ok=True)
     paths.policy.write_text(
         json.dumps(
             {
@@ -1766,11 +1402,6 @@ def _healthy_runner_files(home: Path) -> RunnerPaths:
                 "clone_stall_minutes": 5,
                 "defaults": {"timeout_minutes": 30, "stall_minutes": 5, "deny": ["Bash"]},
                 "skills": {"pr-review": {"done_kind": "pr-reviewed"}},
-                "agent": {
-                    "command": "agent-cli",
-                    "args": ["run"],
-                    "prompt_flag": "--prompt",
-                },
             }
         ),
         encoding="utf-8",
@@ -1839,36 +1470,6 @@ def test_doctor_reports_every_problem_and_exits_one(
     assert "doctor problem:" in out
     assert "max_concurrent is not a positive integer" in out
     assert "cli is not 'agent'" in out
-    assert "doctor 2 problems" in out
-
-
-def test_doctor_reports_a_missing_prompt_template_and_a_broken_agent_block(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # The three health functions are clean here; these two rules are what the
-    # doctor has to catch on its own.
-    home = tmp_path / "home"
-    paths = _healthy_runner_files(home)
-    monkeypatch.setenv("AGENT_HOME", str(home))
-    monkeypatch.setattr(
-        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
-    )
-    monkeypatch.setattr(
-        "agent_cli.runner_cmd.run_argv",
-        lambda _argv: _completed(0, "example-bot\n"),
-    )
-    (paths.prompts / "pr-review.md").unlink()
-    config = json.loads(paths.runner_config.read_text(encoding="utf-8"))
-    config["agent"]["args"] = "not a list"
-    paths.runner_config.write_text(json.dumps(config), encoding="utf-8")
-
-    with pytest.raises(SystemExit) as raised:
-        cmd_runner(["doctor"])
-
-    assert raised.value.code == 1
-    out = capsys.readouterr().out
-    assert "agent.args is not a list of strings" in out
-    assert f"prompt template {paths.prompts / 'pr-review.md'} is missing" in out
     assert "doctor 2 problems" in out
 
 
