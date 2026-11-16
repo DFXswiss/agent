@@ -760,8 +760,20 @@ def _cmd_doctor(args: list[str]) -> None:
             problems.append(f"{binary} is not on PATH")
     if not os.access(paths.base, os.W_OK):
         problems.append(f"runner directory {paths.base} is not writable")
-    if paths.state.exists() and not os.access(paths.state, os.W_OK):
-        problems.append(f"runner state directory {paths.state} is not writable")
+    # Every runtime directory a command writes into, not only the top one: a
+    # read-only `state/logs` would let doctor say ok while prune and retry fail.
+    # A missing directory is fine, it is created on first use under a parent
+    # whose own check is in this list.
+    for label, directory in (
+        ("state", paths.state),
+        ("repos", paths.repos),
+        ("work", paths.work),
+        ("logs", paths.logs),
+    ):
+        if not directory.exists() and not directory.is_symlink():
+            continue
+        if not directory.is_dir() or not os.access(directory, os.W_OK | os.X_OK):
+            problems.append(f"runner {label} directory {directory} is not writable")
 
     if expected is not None:
         try:

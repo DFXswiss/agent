@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1551,6 +1552,67 @@ def test_doctor_reports_every_problem_and_exits_one(
     assert "max_concurrent is not a positive integer" in out
     assert "cli is not 'agent'" in out
     assert "doctor 2 problems" in out
+
+
+def test_doctor_reports_a_runtime_directory_that_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Checking only the top directories would call this installation healthy
+    # while prune and retry fail on `state/logs`.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.repos.mkdir(parents=True)
+    paths.logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+    real_access = os.access
+    # Denied through the check itself rather than chmod, so the test also holds
+    # for a user whom the file system would let write anyway.
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.os.access",
+        lambda path, mode: False if Path(path) == paths.logs else real_access(path, mode),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert f"doctor problem: runner logs directory {paths.logs} is not writable" in out
+    assert "repos directory" not in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_runtime_path_that_is_not_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.state.mkdir(parents=True, exist_ok=True)
+    paths.work.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    assert (
+        f"doctor problem: runner work directory {paths.work} is not writable"
+        in capsys.readouterr().out
+    )
 
 
 def test_doctor_reports_missing_configuration_files(

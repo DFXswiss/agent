@@ -162,8 +162,10 @@ job.running <job-id> 2026-11-13T10:00:00Z
 Reads all four configuration files and the environment, and reports every
 problem it can find rather than stopping at the first. It runs the three
 health checks and verifies `max_concurrent`. It requires the binaries `gh`,
-`git`, `tmux` and `ps` on `PATH`. It checks that the runner directories are
-writable, and that the authenticated GitHub login matches the policy.
+`git`, `tmux` and `ps` on `PATH`. It checks that the runner directory and each
+existing directory under `state/` (`state`, `repos`, `work`, `logs`) is a
+writable directory; a missing one is created on first use. It also checks that
+the authenticated GitHub login matches the policy.
 
 Output: one `doctor problem: <text>` line per problem followed by
 `doctor <n> problems`, exiting 1; or `doctor ok`.
