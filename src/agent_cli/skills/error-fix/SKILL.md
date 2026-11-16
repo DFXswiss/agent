@@ -113,11 +113,14 @@ subsequent notification that provides useful model work belong to the script.
    (private-key header words). CSI/ESC parameter and intermediate bytes are
    matched with a fixed window of at most 64 bytes each
    (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-   limit and covers the configured paths from accounts (the config directory,
-   the gh config directory, and the signing key), the coordinator path roots
-   (the control dir, the worktree, the workspace, the agent home, and the user
-   home), and the device bearer, so separatorless log text is handled in linear
-   time. Only the device bearer additionally gets the percent-decoded views.
+   limit. Lane diagnostics (`lane.redact_lane_text` / `hide_config_dir`) cover
+   the configured config directory. The gh config directory and signing key are
+   covered in GitHub activity execution errors
+   (`github_act._safe_execution_error`). Coordinator path roots (the control
+   dir, the worktree, the workspace, the agent home, and the user home) are
+   covered via `replace_path_roots`. The device bearer is covered in hub
+   assignment text. Separatorless log text is handled in linear time. Only
+   the device bearer additionally gets the percent-decoded views.
    The views are the raw
    text, text that drops complete string controls, complete ESC/CSI
    sequences, and C0/C1 bytes, text with
@@ -146,8 +149,9 @@ subsequent notification that provides useful model work belong to the script.
    neighbours in the same run is read decoded, so `a%41` in `%61%41` is not
    matched. The bearer, including one that contains `%`, stays linear in the
    text length plus the bearer length.
-   A control's introducer, final, or terminator counts as a secret character
-   only as far as a single view yields it. An occurrence that needs different
+   A control's introducer, parameter, intermediate, final, or terminator byte
+   counts as a secret character only as far as a single view yields it. An
+   occurrence that needs different
    treatment of two controls is not matched, for example one control's final
    byte used as a secret character while another complete control between
    later secret characters is skipped (`/opt/\x1b[31m\x1b[0my profile` for

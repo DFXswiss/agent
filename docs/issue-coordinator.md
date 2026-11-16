@@ -1397,10 +1397,13 @@ of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
 (private-key header words). CSI/ESC parameter and intermediate bytes are
 matched with a fixed window of at most 64 bytes each
 (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-limit and covers the configured paths from accounts (the config directory, the
-gh config directory, and the signing key), the coordinator path roots (the
-control dir, the worktree, the workspace, the agent home, and the user home),
-and the device bearer. Only the device bearer additionally gets the
+limit. Lane diagnostics (`lane.redact_lane_text` / `hide_config_dir`) cover
+the configured config directory. The gh config directory and signing key are
+covered in GitHub activity execution errors
+(`github_act._safe_execution_error`). Coordinator path roots (the control dir,
+the worktree, the workspace, the agent home, and the user home) are covered
+via `replace_path_roots`. The device bearer is covered in hub assignment text.
+Only the device bearer additionally gets the
 percent-decoded views.
 An occurrence that needs different treatment of two controls is not matched.
 Value runs that do not need delimiter backtracking are possessive. The fixed
@@ -1466,8 +1469,9 @@ the `\` of `ESC \`, while dropping introducers, CSI parameters and
 intermediates, ESC intermediates, and C0/C1 bytes, and it keeps string
 payloads. Another keeps only each control's introducer byte. Another keeps
 only each control's final or string terminator and drops string payloads.
-A control's introducer, final, or terminator counts as a secret character only
-as far as a single view yields it. An occurrence that needs different treatment
+A control's introducer, parameter, intermediate, final, or terminator byte
+counts as a secret character only as far as a single view yields it. An
+occurrence that needs different treatment
 of two controls is not matched, for example one control's final byte used as a
 secret character while another complete control between later secret characters
 is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one
@@ -1493,8 +1497,9 @@ One shared redaction pipeline handles final text, models, diagnostics, agent
 notes, terminal output, hub/GitHub errors, and evidence. Its known-secret
 matcher searches a fixed set of views with KMP. One view yields a CSI/ESC
 final that is the next secret character, a truncated prefix, or a
-string-control payload. A control's introducer, final, or terminator counts
-as a secret character only as far as a single view yields it. An occurrence
+string-control payload. A control's introducer, parameter, intermediate,
+final, or terminator byte counts as a secret character only as far as a
+single view yields it. An occurrence
 that needs different treatment of two controls is not matched, for example
 one control's final byte used as a secret character while another complete
 control between later secret characters is skipped
@@ -1968,7 +1973,21 @@ The timeout is anchored at GitHub's valid `mergedAt` timestamp and falls back to
 the first merged observation only when that timestamp is unavailable or
 invalid, so an observation outage cannot extend the review window. This
 matching-head second-review evaluation and timeout persistence happen before
-merged-report visibility and cumulative-CI lookups. A later valid merge
+merged-report visibility and cumulative-CI lookups. `phase_await_merge`
+(`coordinator_github.py`) calls `merged_report_visibility_satisfied`
+(`coordinator_a38.py`) through the configured scoped GitHub account. It
+revalidates the finalized report body, or the matching owned report activity
+body, against live repository visibility. A transient lookup error returns to
+`await_merge` (`merge observed but repository visibility is temporarily
+unavailable; retrying await_merge`). Differing stored report bodies refuse
+completion non-recoverably (`task-done refused: stored A38 report bodies
+differ`); an unavailable stored report body does the same (`task-done refused:
+stored A38 report body is unavailable`). An invalid stored report body also
+refuses completion non-recoverably (`stored A38 report body is invalid`). A
+live visibility mismatch also refuses completion (`task-done refused: merged
+PR visibility differs from the stored A38 report; a merged PR cannot be
+remeasured`). An inventory waiver without a report body has nothing to
+revalidate. A later valid merge
 timestamp always replaces a fallback anchor. Merge commit ids must be
 40-character hexadecimal SHAs and merge times must be parseable timezone-aware
 timestamps. Invalid values are missing. For A38, merged-head/base validation and

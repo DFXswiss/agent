@@ -322,10 +322,13 @@ of `0-9A-Z`), `_RAW_PRIVATE_PATH` (`/Users/` and `/home/` paths),
 (private-key header words). CSI/ESC parameter and intermediate bytes are
 matched with a fixed window of at most 64 bytes each
 (`_MAX_ESCAPE_PARAMETER_BYTES`). The linear view matcher has no control-run
-limit and covers the configured paths from accounts (the config directory, the
-gh config directory, and the signing key), the coordinator path roots (the
-control dir, the worktree, the workspace, the agent home, and the user home),
-and the device bearer. Only the device bearer additionally gets the
+limit. Lane diagnostics (`lane.redact_lane_text` / `hide_config_dir`) cover
+the configured config directory. The gh config directory and signing key are
+covered in GitHub activity execution errors
+(`github_act._safe_execution_error`). Coordinator path roots (the control dir,
+the worktree, the workspace, the agent home, and the user home) are covered
+via `replace_path_roots`. The device bearer is covered in hub assignment text.
+Only the device bearer additionally gets the
 percent-decoded views. For bounded lane fields, the
 controlled-line structural rule first sees the complete raw source. Its result
 is then cut to the limit plus a small inspection margin before the remaining
@@ -364,8 +367,9 @@ introducer byte. Another keeps only each control's final or string terminator
 and drops string payloads. Each view is searched with KMP, and so is the
 device bearer's percent-decoded copy, so a repeated prefix does not rescan
 the text per candidate.
-A control's introducer, final, or terminator counts as a secret character only
-as far as a single view yields it. An occurrence that needs different treatment
+A control's introducer, parameter, intermediate, final, or terminator byte
+counts as a secret character only as far as a single view yields it. An
+occurrence that needs different treatment
 of two controls is not matched, for example one control's final byte used as a
 secret character while another complete control between later secret characters
 is skipped (`/opt/\x1b[31m\x1b[0my profile` for `/opt/my profile`), or one
