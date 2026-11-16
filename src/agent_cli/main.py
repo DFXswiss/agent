@@ -3706,6 +3706,26 @@ def _live_merge_base(runner: Any, repo: str, base_sha: str, head_sha: str) -> st
     return _full_sha(commit.get("sha") if isinstance(commit, dict) else None)
 
 
+def _merge_commit_first_parent(runner: Any, repo: str, merge_sha: str) -> str | None:
+    """First parent of a merge commit, the base tip before it; None when unreadable."""
+    from .github_accounts import AccountError
+
+    try:
+        response = runner(["gh", "api", f"repos/{repo}/commits/{merge_sha}"])
+    except AccountError:
+        return None
+    if response.returncode != 0:
+        return None
+    try:
+        body = json.loads(response.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    parents = body.get("parents") if isinstance(body, dict) else None
+    if not isinstance(parents, list) or not parents or not isinstance(parents[0], dict):
+        return None
+    return _full_sha(parents[0].get("sha"))
+
+
 def _close_task_from_pr(store: Store, task: dict) -> None:
     """Close one spine task from fail-closed live pull-request merge evidence."""
     from .github_accounts import AccountError
@@ -3801,17 +3821,17 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                     "run agent small-change again"
                 )
             # The verdict measured merge_base..head. A rewritten base branch moves the
-            # merge base and with it the merged diff; a fast-forward keeps it.
-            live_base_sha = _full_sha(
-                base.get("sha") if isinstance(base, dict) else None
-            )
+            # merge base and with it the merged diff; a fast-forward keeps it. After the
+            # merge, base.sha may already contain the head, so the base tip is read as
+            # the first parent of the merge commit (merge, squash and rebase merges).
+            pre_merge_tip = _merge_commit_first_parent(runner, repo, merge_commit_sha)
             measured_merge_base = _full_sha(small.get("merge_base"))
-            if live_base_sha is None or measured_merge_base is None:
+            if pre_merge_tip is None or measured_merge_base is None:
                 die(
                     "small change base could not be verified; "
                     "run agent small-change again"
                 )
-            live_merge_base = _live_merge_base(runner, repo, live_base_sha, head_sha)
+            live_merge_base = _live_merge_base(runner, repo, pre_merge_tip, head_sha)
             if live_merge_base != measured_merge_base:
                 die(
                     "the merge base changed since the small change was measured; "

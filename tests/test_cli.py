@@ -6777,7 +6777,7 @@ def test_close_from_pr_rejects_an_unstripped_merged_base_ref(
 
 
 _SMALL_MERGE_BASE = "d" * 40
-_SMALL_LIVE_BASE = "e" * 40
+_SMALL_PRE_MERGE_TIP = "e" * 40
 
 
 def _small_route(tmp_path: Path, tid: str) -> None:
@@ -6800,11 +6800,22 @@ def _small_route(tmp_path: Path, tid: str) -> None:
         store.close()
 
 
-def _merge_base_reply(sha: str) -> dict:
+def _small_replies(merge_base: object = _SMALL_MERGE_BASE, *, parents: object = None) -> dict:
+    """GitHub replies for the merge commit's first parent and the live merge base."""
     from agent_cli.runtime import Completed
 
-    url = f"repos/DFXswiss/agent/compare/{_SMALL_LIVE_BASE}...{_CLOSE_HEAD}"
-    return {url: Completed(0, json.dumps({"merge_base_commit": {"sha": sha}}), "")}
+    if parents is None:
+        parents = [{"sha": _SMALL_PRE_MERGE_TIP}]
+    commit = f"repos/DFXswiss/agent/commits/{_CLOSE_MERGE}"
+    compare = f"repos/DFXswiss/agent/compare/{_SMALL_PRE_MERGE_TIP}...{_CLOSE_HEAD}"
+    replies = {commit: Completed(0, json.dumps({"parents": parents}), "")}
+    if isinstance(merge_base, Completed):
+        replies[compare] = merge_base
+    else:
+        replies[compare] = Completed(
+            0, json.dumps({"merge_base_commit": {"sha": merge_base}}), ""
+        )
+    return replies
 
 
 def test_close_from_pr_closes_a_small_route_task_when_the_merge_base_is_unchanged(
@@ -6812,13 +6823,12 @@ def test_close_from_pr_closes_a_small_route_task_when_the_merge_base_is_unchange
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # After the merge, base.sha may already be the post-merge tip that contains the
+    # head; the check reads the base tip before the merge from the merge commit.
     tid = _close_from_pr_fixture(tmp_path, capsys)
     _small_route(tmp_path, tid)
-    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
-    _run_close(
-        monkeypatch, tmp_path, tid, pull,
-        comparisons=_merge_base_reply(_SMALL_MERGE_BASE),
-    )
+    pull = _close_pull(base={"ref": "develop", "sha": _CLOSE_MERGE})
+    _run_close(monkeypatch, tmp_path, tid, pull, comparisons=_small_replies())
     task, _, _ = _close_rows(tmp_path, tid)
     assert task["state"] == "done"
 
@@ -6832,8 +6842,8 @@ def test_close_from_pr_rejects_a_small_verdict_when_the_merge_base_moved(
     # measured one, although head and base branch name are unchanged.
     tid = _close_from_pr_fixture(tmp_path, capsys)
     _small_route(tmp_path, tid)
-    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
-    replies = _merge_base_reply("f" * 40)
+    pull = _close_pull(base={"ref": "develop", "sha": _CLOSE_MERGE})
+    replies = _small_replies("f" * 40)
     with pytest.raises(SystemExit) as exc:
         _run_close(monkeypatch, tmp_path, tid, pull, comparisons=replies)
     assert exc.value.code == 1
@@ -6856,19 +6866,24 @@ def test_close_from_pr_rejects_a_small_verdict_without_a_readable_merge_base(
 
     tid = _close_from_pr_fixture(tmp_path, capsys)
     _small_route(tmp_path, tid)
-    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
-    url = f"repos/DFXswiss/agent/compare/{_SMALL_LIVE_BASE}...{_CLOSE_HEAD}"
+    pull = _close_pull(base={"ref": "develop", "sha": _CLOSE_MERGE})
     for reply in (Completed(1, "", "boom"), Completed(0, "{", "")):
         with pytest.raises(SystemExit) as exc:
-            _run_close(monkeypatch, tmp_path, tid, pull, comparisons={url: reply})
+            _run_close(
+                monkeypatch, tmp_path, tid, pull, comparisons=_small_replies(reply)
+            )
         assert exc.value.code == 1
         out = capsys.readouterr().out
         assert "the merge base changed since the small change was measured" in out
-    with pytest.raises(SystemExit) as exc:
-        _run_close(monkeypatch, tmp_path, tid, _close_pull())
-    assert exc.value.code == 1
-    out = capsys.readouterr().out
-    assert (
-        f"task {tid} not closed: small change base could not be verified; "
-        "run agent small-change again" in out
-    )
+    for parents in ([], [{"sha": "not-a-sha"}]):
+        with pytest.raises(SystemExit) as exc:
+            _run_close(
+                monkeypatch, tmp_path, tid, pull,
+                comparisons=_small_replies(parents=parents),
+            )
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert (
+            f"task {tid} not closed: small change base could not be verified; "
+            "run agent small-change again" in out
+        )
