@@ -663,6 +663,12 @@ class FakeGh:
                 return Completed(1, "", "HTTP 404: Not Found")
             return Completed(0, self.pr_guard_body, "")
 
+        if (
+            argv[:4] == ["gh", "api", "--paginate", "--slurp"]
+            and str(argv[-1]).endswith("/forks?per_page=100")
+        ):
+            return Completed(0, "[]", "")
+
         return Completed(1, "", f"unhandled: {argv}")
 
     def _git(self, argv: list[str]) -> Completed:
