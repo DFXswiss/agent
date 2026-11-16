@@ -1393,11 +1393,17 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "window of at most 64 bytes each (`_MAX_ESCAPE_PARAMETER_BYTES`)"
     )
     known_secret_views = (
-        "The linear view matcher has no control-run limit and covers the "
-        "configured paths from accounts (the config directory, the gh config "
-        "directory, and the signing key), the coordinator path roots (the "
-        "control dir, the worktree, the workspace, the agent home, and the "
-        "user home), and the device bearer"
+        "The linear view matcher has no control-run limit. Lane diagnostics "
+        "(`lane.redact_lane_text` / `hide_config_dir`) cover the configured "
+        "config directory. The gh config directory and signing key are covered "
+        "in GitHub activity execution errors (`github_act._safe_execution_error`). "
+        "Coordinator path roots (the control dir, the worktree, the workspace, "
+        "the agent home, and the user home) are covered via `replace_path_roots`. "
+        "The device bearer is covered in hub assignment text"
+    )
+    single_view_control_byte = (
+        "A control's introducer, parameter, intermediate, final, or terminator "
+        "byte counts as a secret character only as far as a single view yields it"
     )
     bearer_percent_views = (
         "Only the device bearer additionally gets the percent-decoded views"
@@ -1407,6 +1413,7 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         assert control_run_window in normalized
         assert known_secret_views in normalized
         assert bearer_percent_views in normalized
+        assert single_view_control_byte in normalized
     assert control_run_window in " ".join(documented.split())
     assert control_run_window in " ".join(ai_accounts.split())
     assert control_run_window in " ".join(readme.split())
@@ -1529,6 +1536,22 @@ def test_issue_coordinator_documents_terminal_redaction_order() -> None:
         "back to the first merged observation only when that timestamp is unavailable "
         "or invalid",
         "happen before merged-report visibility and cumulative-CI lookups",
+        "`phase_await_merge` (`coordinator_github.py`) calls "
+        "`merged_report_visibility_satisfied` (`coordinator_a38.py`) through "
+        "the configured scoped GitHub account. It revalidates the finalized "
+        "report body, or the matching owned report activity body, against "
+        "live repository visibility. A transient lookup error returns to "
+        "`await_merge` (`merge observed but repository visibility is "
+        "temporarily unavailable; retrying await_merge`). Differing stored "
+        "report bodies refuse completion non-recoverably (`task-done refused: "
+        "stored A38 report bodies differ`); an unavailable stored report body "
+        "does the same (`task-done refused: stored A38 report body is "
+        "unavailable`). An invalid stored report body also refuses completion "
+        "non-recoverably (`stored A38 report body is invalid`). A live "
+        "visibility mismatch also refuses completion (`task-done refused: "
+        "merged PR visibility differs from the stored A38 report; a merged PR "
+        "cannot be remeasured`). An inventory waiver without a report body has "
+        "nothing to revalidate",
         "including a 40-digit number, is that transient transport",
         "does not invalidate evidence or the base",
         "Exact-head CI observation treats a missing or non-40-hex "
@@ -1713,11 +1736,18 @@ def test_error_fix_skill_documents_unbounded_secret_key_scanner() -> None:
         in flat
     )
     assert (
-        "The linear view matcher has no control-run limit and covers the "
-        "configured paths from accounts (the config directory, the gh config "
-        "directory, and the signing key), the coordinator path roots (the "
-        "control dir, the worktree, the workspace, the agent home, and the "
-        "user home), and the device bearer"
+        "The linear view matcher has no control-run limit. Lane diagnostics "
+        "(`lane.redact_lane_text` / `hide_config_dir`) cover the configured "
+        "config directory. The gh config directory and signing key are covered "
+        "in GitHub activity execution errors (`github_act._safe_execution_error`). "
+        "Coordinator path roots (the control dir, the worktree, the workspace, "
+        "the agent home, and the user home) are covered via `replace_path_roots`. "
+        "The device bearer is covered in hub assignment text"
+        in flat
+    )
+    assert (
+        "A control's introducer, parameter, intermediate, final, or terminator "
+        "byte counts as a secret character only as far as a single view yields it"
         in flat
     )
     assert (

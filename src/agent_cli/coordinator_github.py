@@ -2661,6 +2661,29 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         raise CoordinatorError("readiness evidence not on current head before leave-draft")
     retry = _fresh_ci_still_green(store, worker, task, runner, head)
     if retry is not None:
+        # The CI view returns before the full view when headRefOid is unreadable.
+        # Read state once on this retry. Advance only for MERGED or CLOSED with
+        # that head still unreadable; every other result keeps this retry.
+        try:
+            state_view = _fetch_pr_json(
+                scoped(store, worker.session_id, runner),
+                target,
+                number,
+                "headRefOid,state",
+            )
+        except CiObservationTransportError:
+            state_view = None
+        if isinstance(state_view, dict):
+            terminal = str(state_view.get("state") or "").upper()
+            if (
+                terminal in {"MERGED", "CLOSED"}
+                and normalized_sha(state_view.get("headRefOid")) is None
+            ):
+                c["phase"] = "await_merge"
+                save_task(store, task)
+                return [
+                    f"PR state {terminal} on {head[:7]}; continuing in await_merge"
+                ]
         c["phase"] = "leave_draft"
         save_task(store, task)
         return [retry]
