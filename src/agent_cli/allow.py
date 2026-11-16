@@ -360,6 +360,10 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
                     blocking.append(f"{tid}:small_change=gate_head_not_full_sha")
                 elif small.get("head") != gate_head:
                     blocking.append(f"{tid}:small_change=head_mismatch")
+            # The measured base is proven only against the merged pull request, so the
+            # small route reaches done through close-from-pr alone.
+            if task.get("small_change_base_verified") is not True:
+                blocking.append(f"{tid}:small_change=base_unverified")
 
     return blocking
 

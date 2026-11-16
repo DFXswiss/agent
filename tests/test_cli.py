@@ -6774,3 +6774,101 @@ def test_close_from_pr_rejects_an_unstripped_merged_base_ref(
         f"task {tid} not closed: small change was measured against another "
         "base branch; run agent small-change again" in out
     )
+
+
+_SMALL_MERGE_BASE = "d" * 40
+_SMALL_LIVE_BASE = "e" * 40
+
+
+def _small_route(tmp_path: Path, tid: str) -> None:
+    store = Store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "implementer_done":
+                row["evidence"] = f"small change at {_CLOSE_HEAD}"
+                store.write("checklist_item", "update", row["id"], row)
+        task = store.row("task", tid)
+        assert task is not None
+        task["small_change"] = {
+            "verdict": "small",
+            "head": _CLOSE_HEAD,
+            "base_ref": "develop",
+            "merge_base": _SMALL_MERGE_BASE,
+        }
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+
+def _merge_base_reply(sha: str) -> dict:
+    from agent_cli.runtime import Completed
+
+    url = f"repos/DFXswiss/agent/compare/{_SMALL_LIVE_BASE}...{_CLOSE_HEAD}"
+    return {url: Completed(0, json.dumps({"merge_base_commit": {"sha": sha}}), "")}
+
+
+def test_close_from_pr_closes_a_small_route_task_when_the_merge_base_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _small_route(tmp_path, tid)
+    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
+    _run_close(
+        monkeypatch, tmp_path, tid, pull,
+        comparisons=_merge_base_reply(_SMALL_MERGE_BASE),
+    )
+    task, _, _ = _close_rows(tmp_path, tid)
+    assert task["state"] == "done"
+
+
+def test_close_from_pr_rejects_a_small_verdict_when_the_merge_base_moved(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A rewritten base branch moves the merge base: the merged diff is not the
+    # measured one, although head and base branch name are unchanged.
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _small_route(tmp_path, tid)
+    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
+    replies = _merge_base_reply("f" * 40)
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, pull, comparisons=replies)
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: the merge base changed since the small change "
+        "was measured; run agent small-change again" in out
+    )
+    _assert_close_no_write(
+        monkeypatch, tmp_path, capsys, tid, pull, comparisons=replies
+    )
+
+
+def test_close_from_pr_rejects_a_small_verdict_without_a_readable_merge_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_cli.runtime import Completed
+
+    tid = _close_from_pr_fixture(tmp_path, capsys)
+    _small_route(tmp_path, tid)
+    pull = _close_pull(base={"ref": "develop", "sha": _SMALL_LIVE_BASE})
+    url = f"repos/DFXswiss/agent/compare/{_SMALL_LIVE_BASE}...{_CLOSE_HEAD}"
+    for reply in (Completed(1, "", "boom"), Completed(0, "{", "")):
+        with pytest.raises(SystemExit) as exc:
+            _run_close(monkeypatch, tmp_path, tid, pull, comparisons={url: reply})
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "the merge base changed since the small change was measured" in out
+    with pytest.raises(SystemExit) as exc:
+        _run_close(monkeypatch, tmp_path, tid, _close_pull())
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"task {tid} not closed: small change base could not be verified; "
+        "run agent small-change again" in out
+    )

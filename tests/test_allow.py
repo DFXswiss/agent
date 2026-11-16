@@ -328,6 +328,7 @@ class TestSmallChangeGate(unittest.TestCase):
         gate_head: str | None = None,
         evidence: bool = True,
         workflow: str = "implement",
+        base_verified: bool = True,
     ) -> dict:
         task = _ready_task(workflow=workflow)
         task["gates"] = _approved_gates(gate_head or self.HEAD)
@@ -339,10 +340,18 @@ class TestSmallChangeGate(unittest.TestCase):
                 "verdict": verdict,
                 "head": small_head or self.HEAD,
             }
+        if base_verified:
+            task["small_change_base_verified"] = True
         return task
 
     def test_matching_verdict_does_not_block(self) -> None:
         self.assertEqual(ready_for_done_blocking(self._task()), [])
+
+    def test_unverified_base_blocks(self) -> None:
+        # Outside close-from-pr nothing proves the measured base: agent task state
+        # done, allow task-done and claim-done stay blocked on the small route.
+        blocking = ready_for_done_blocking(self._task(base_verified=False))
+        self.assertEqual(blocking, ["1:small_change=base_unverified"])
 
     def test_not_small_blocks(self) -> None:
         blocking = ready_for_done_blocking(self._task(verdict="not-small"))

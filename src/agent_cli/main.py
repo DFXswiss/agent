@@ -3686,6 +3686,26 @@ def _live_one_review(store: Store, task: dict) -> tuple[str, dict | None]:
     return login, config
 
 
+def _live_merge_base(runner: Any, repo: str, base_sha: str, head_sha: str) -> str | None:
+    """Merge base of two commits from the GitHub compare API; None when unreadable."""
+    from .github_accounts import AccountError
+
+    try:
+        response = runner(
+            ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}"]
+        )
+    except AccountError:
+        return None
+    if response.returncode != 0:
+        return None
+    try:
+        compare = json.loads(response.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    commit = compare.get("merge_base_commit") if isinstance(compare, dict) else None
+    return _full_sha(commit.get("sha") if isinstance(commit, dict) else None)
+
+
 def _close_task_from_pr(store: Store, task: dict) -> None:
     """Close one spine task from fail-closed live pull-request merge evidence."""
     from .github_accounts import AccountError
@@ -3746,6 +3766,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     if not merged_login or not merged_at or not merge_commit_sha or not head_sha:
         die("pull request merge evidence is incomplete")
 
+    small_base_verified = False
     if str(task.get("workflow") or "") == "implement":
         evidence = {
             canonical_key(str(row.get("key") or "")): row.get("evidence")
@@ -3779,6 +3800,24 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                     "small change was measured against another base branch; "
                     "run agent small-change again"
                 )
+            # The verdict measured merge_base..head. A rewritten base branch moves the
+            # merge base and with it the merged diff; a fast-forward keeps it.
+            live_base_sha = _full_sha(
+                base.get("sha") if isinstance(base, dict) else None
+            )
+            measured_merge_base = _full_sha(small.get("merge_base"))
+            if live_base_sha is None or measured_merge_base is None:
+                die(
+                    "small change base could not be verified; "
+                    "run agent small-change again"
+                )
+            live_merge_base = _live_merge_base(runner, repo, live_base_sha, head_sha)
+            if live_merge_base != measured_merge_base:
+                die(
+                    "the merge base changed since the small change was measured; "
+                    "run agent small-change again"
+                )
+            small_base_verified = True
 
     latest = _latest_gates(store, tid)
     try:
@@ -3938,6 +3977,9 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                 proposed_snap["pull_opener"] = snap["pull_opener"]
                 proposed_snap["trusted_pr_guard"] = snap["trusted_pr_guard"]
         snap = proposed_snap
+        if small_base_verified:
+            # Only this live check proves the measured diff is the merged diff.
+            snap["small_change_base_verified"] = True
         result = evaluate_allow(
             "task-done",
             session_id=str(current.get("session_id") or ""),
