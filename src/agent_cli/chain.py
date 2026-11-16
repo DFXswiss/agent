@@ -32,6 +32,7 @@ from .model_slots import (
 )
 from .pr_guard_config import one_review_for
 from .preconditions import ACTIONS, CHECKS, CHECK_STATUSES
+from .small_change import VERDICT_SMALL, evidence_head, is_small_change_evidence
 
 KINDS = ("script", "agent", "human")
 # Who may set ja on these keys (source).
@@ -385,6 +386,27 @@ def close_allowed(
                 step,
             )
         return CloseVerdict(True, "allow", step)
+    # Small-change evidence stands on its own: it must name a measured head in
+    # every state, never fall back to the finished agent artefact.
+    if (
+        workflow == "implement"
+        and key in ("implementer_done", "reviewer_approved")
+        and status == "ja"
+        and is_small_change_evidence(evidence)
+    ):
+        sha = evidence_head(evidence)
+        recorded = snap.get("small_change")
+        if not (
+            sha is not None
+            and isinstance(recorded, Mapping)
+            and recorded.get("verdict") == VERDICT_SMALL
+            and recorded.get("head") == sha
+        ):
+            return CloseVerdict(
+                False,
+                f"small change not measured at {sha}: run agent small-change",
+                step,
+            )
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)
     elif _late_inner_skip(key, status, evidence, snap):
@@ -471,7 +493,22 @@ def _late_inner_skip(
         return False
     if not evidence or not str(evidence).strip():
         return False
-    return str(snapshot.get("state") or "") in LATE_INNER_STATES
+    if str(snapshot.get("state") or "") not in LATE_INNER_STATES:
+        return False
+    if (
+        str(snapshot.get("workflow") or "") == "implement"
+        and key in ("implementer_done", "reviewer_approved")
+        and is_small_change_evidence(evidence)
+    ):
+        head = evidence_head(evidence)
+        recorded = snapshot.get("small_change")
+        return (
+            head is not None
+            and isinstance(recorded, Mapping)
+            and recorded.get("verdict") == VERDICT_SMALL
+            and recorded.get("head") == head
+        )
+    return True
 
 
 def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:

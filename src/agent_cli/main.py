@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 import webbrowser
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -103,6 +104,14 @@ from .runtime import (
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
+from .small_change import (
+    EVIDENCE_PREFIX,
+    MAX_CHANGED_LINES,
+    MAX_FILES,
+    VERDICT_SMALL,
+    check_repo,
+    is_small_change_evidence,
+)
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import (
     AuthStale,
@@ -1569,6 +1578,101 @@ def cmd_check(args: list[str]) -> None:
         print(f"check {name}={result}")
     finally:
         store.close()
+
+
+def _full_sha(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", text) is None:
+        return None
+    return text.lower()
+
+
+def cmd_small_change(args: list[str]) -> None:
+    """Measure the committed HEAD; exit 0 small, 2 not-small, 1 usage."""
+    tid = require_flag(args, "--task")
+    repo_path = Path(flag(args, "--repo") or os.getcwd())
+    as_json = "--json" in args
+    store = open_store()
+    try:
+        task = _need(store, "task", tid)
+        original = _strip(task)
+        session = _need(store, "session", str(task.get("session_id") or ""))
+        if session.get("status") != "active":
+            die(f"session {session.get('id')} is not active")
+        _require_owned(store, task, "task")
+        _require_skill(session, "spine")
+        if task.get("workflow") != "implement":
+            die("small-change requires workflow implement")
+        if str(task.get("state") or "") in TERMINAL_STATES:
+            die("cannot record a small-change verdict on a terminal task")
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        if payload.get("coordinator") or payload.get("error_id"):
+            die("small-change is for spine tasks only")
+        repo, number = _task_repo_and_pr(task)
+        if not repo or not number:
+            die(
+                "attach the pull request first: agent task pr --id <task> "
+                "--repo <owner/name> --pr <number>"
+            )
+        from .github_accounts import AccountError
+
+        runner = _bound_review_runner(store, task)
+        try:
+            response = runner(["gh", "api", f"repos/{repo}/pulls/{number}"])
+        except AccountError as exc:
+            die(str(exc))
+        if response.returncode != 0:
+            die("pull request could not be read")
+        try:
+            pull = json.loads(response.stdout or "{}")
+        except json.JSONDecodeError:
+            die("pull request could not be read")
+        base = pull.get("base") if isinstance(pull, dict) else None
+        head = pull.get("head") if isinstance(pull, dict) else None
+        base_sha = _full_sha(base.get("sha") if isinstance(base, dict) else None)
+        head_sha = _full_sha(head.get("sha") if isinstance(head, dict) else None)
+        raw_base_ref = base.get("ref") if isinstance(base, dict) else None
+        if not isinstance(raw_base_ref, str) or not raw_base_ref:
+            die("pull request could not be read")
+        base_ref = raw_base_ref
+        if base_sha is None or head_sha is None:
+            die("pull request could not be read")
+        verdict = check_repo(repo_path, base_sha, head_sha)
+        verdict = replace(verdict, base_ref=base_ref)
+        record = verdict.to_json()
+        record["recorded_at"] = utcnow()
+        written = dict(original)
+        written["small_change"] = record
+        written["updated_at"] = utcnow()
+
+        def check() -> None:
+            row = store.row("task", tid)
+            if row is None or _strip(row) != original:
+                die("task changed during small-change; retry")
+            if str(row.get("state") or "") in TERMINAL_STATES:
+                die("cannot record a small-change verdict on a terminal task")
+
+        store.write_many([("task", "update", tid, written)], check=check)
+    finally:
+        store.close()
+
+    if as_json:
+        print(json.dumps(verdict.to_json(), ensure_ascii=False))
+    else:
+        head_label = verdict.head or "-"
+        print(
+            f"small-change {verdict.verdict} at {head_label}: "
+            f"{verdict.lines} lines in {len(verdict.files)} files "
+            f"(limit {MAX_CHANGED_LINES} lines, {MAX_FILES} files)"
+        )
+        for reason in verdict.reasons:
+            print(f"- {reason}")
+        if verdict.verdict == VERDICT_SMALL:
+            print(f"evidence: {EVIDENCE_PREFIX}{verdict.head}")
+    if verdict.verdict != VERDICT_SMALL:
+        raise SystemExit(2)
 
 
 def _read_text_arg(args: list[str]) -> str:
@@ -3090,6 +3194,11 @@ def load_task_dict(store: Store, tid: str) -> dict:
         # Recorded-state read: task display keeps legacy gate rows readable.
         "models": models_from_snapshot(task).as_dict(),
         "implementer": implementer_from_snapshot(task),
+        "small_change": (
+            task.get("small_change")
+            if isinstance(task.get("small_change"), dict)
+            else None
+        ),
     }
 
 
@@ -3142,6 +3251,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "state": task.get("state"),
         "checklist": task.get("checklist") or {},
         "session_id": sid,
+        "small_change": task.get("small_change"),
     }
 
 
@@ -3577,6 +3687,46 @@ def _live_one_review(store: Store, task: dict) -> tuple[str, dict | None]:
     return login, config
 
 
+def _live_merge_base(runner: Any, repo: str, base_sha: str, head_sha: str) -> str | None:
+    """Merge base of two commits from the GitHub compare API; None when unreadable."""
+    from .github_accounts import AccountError
+
+    try:
+        response = runner(
+            ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}"]
+        )
+    except AccountError:
+        return None
+    if response.returncode != 0:
+        return None
+    try:
+        compare = json.loads(response.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    commit = compare.get("merge_base_commit") if isinstance(compare, dict) else None
+    return _full_sha(commit.get("sha") if isinstance(commit, dict) else None)
+
+
+def _merge_commit_first_parent(runner: Any, repo: str, merge_sha: str) -> str | None:
+    """First parent of a merge commit, the base tip before it; None when unreadable."""
+    from .github_accounts import AccountError
+
+    try:
+        response = runner(["gh", "api", f"repos/{repo}/commits/{merge_sha}"])
+    except AccountError:
+        return None
+    if response.returncode != 0:
+        return None
+    try:
+        body = json.loads(response.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    parents = body.get("parents") if isinstance(body, dict) else None
+    if not isinstance(parents, list) or not parents or not isinstance(parents[0], dict):
+        return None
+    return _full_sha(parents[0].get("sha"))
+
+
 def _close_task_from_pr(store: Store, task: dict) -> None:
     """Close one spine task from fail-closed live pull-request merge evidence."""
     from .github_accounts import AccountError
@@ -3632,8 +3782,63 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     merge_commit_sha = str(pull.get("merge_commit_sha") or "").strip()
     head = pull.get("head")
     head_sha = str(head.get("sha") or "").strip() if isinstance(head, dict) else ""
+    base = pull.get("base")
+    base_ref = base.get("ref") if isinstance(base, dict) else None
     if not merged_login or not merged_at or not merge_commit_sha or not head_sha:
         die("pull request merge evidence is incomplete")
+
+    small_base_verified = False
+    if str(task.get("workflow") or "") == "implement":
+        evidence = {
+            canonical_key(str(row.get("key") or "")): row.get("evidence")
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid
+        }
+        if any(
+            is_small_change_evidence(evidence.get(key))
+            for key in ("implementer_done", "reviewer_approved")
+        ):
+            small = task.get("small_change")
+            if not (
+                isinstance(small, dict)
+                and small.get("verdict") == VERDICT_SMALL
+                and small.get("head") == head_sha
+            ):
+                die(
+                    "small change was not measured at the merged head; "
+                    "run agent small-change at that head"
+                )
+            measured_base_ref = (
+                small.get("base_ref") if isinstance(small, dict) else None
+            )
+            if not (
+                isinstance(measured_base_ref, str)
+                and measured_base_ref
+                and base_ref
+                and measured_base_ref == base_ref
+            ):
+                die(
+                    "small change was measured against another base branch; "
+                    "run agent small-change again"
+                )
+            # The verdict measured merge_base..head. A rewritten base branch moves the
+            # merge base and with it the merged diff; a fast-forward keeps it. After the
+            # merge, base.sha may already contain the head, so the base tip is read as
+            # the first parent of the merge commit (merge, squash and rebase merges).
+            pre_merge_tip = _merge_commit_first_parent(runner, repo, merge_commit_sha)
+            measured_merge_base = _full_sha(small.get("merge_base"))
+            if pre_merge_tip is None or measured_merge_base is None:
+                die(
+                    "small change base could not be verified; "
+                    "run agent small-change again"
+                )
+            live_merge_base = _live_merge_base(runner, repo, pre_merge_tip, head_sha)
+            if live_merge_base != measured_merge_base:
+                die(
+                    "the merge base changed since the small change was measured; "
+                    "run agent small-change again"
+                )
+            small_base_verified = True
 
     latest = _latest_gates(store, tid)
     try:
@@ -3793,6 +3998,9 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
                 proposed_snap["pull_opener"] = snap["pull_opener"]
                 proposed_snap["trusted_pr_guard"] = snap["trusted_pr_guard"]
         snap = proposed_snap
+        if small_base_verified:
+            # Only this live check proves the measured diff is the merged diff.
+            snap["small_change_base_verified"] = True
         result = evaluate_allow(
             "task-done",
             session_id=str(current.get("session_id") or ""),
@@ -5266,6 +5474,7 @@ COMMANDS = {
     "round": cmd_round,
     "agent": cmd_agent,
     "check": cmd_check,
+    "small-change": cmd_small_change,
     "local-ci": cmd_local_ci,
     "a38": cmd_a38,
     "pr-guard": cmd_pr_guard,
@@ -5305,7 +5514,7 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         die(
-            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
+            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|small-change|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
             "github|query|assign|subscribe|mail|supervise|coordinate|conflicts|order|runner> …"
         )
