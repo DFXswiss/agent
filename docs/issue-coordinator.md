@@ -285,6 +285,19 @@ for worker in workers.values():
   coordinator does not SSH, mirror, or copy a lane from a work device.
 - Successful GitHub login verification is cached within one tick, for at most
   `poll_seconds` per account.
+- A GitHub response that exhausts the account's rate limit (a primary limit,
+  HTTP 403 or 429 with a rate-limit response, or a secondary limit with
+  `retry-after`) is not an authentication failure. The login check and every
+  later `gh` or `git` call raise a rate-limit error that names the account and
+  the reset time taken from the response headers or from `gh api rate_limit`
+  (that query does not count against the limit). The coordinator remembers that
+  reset time and does not call GitHub again before it. The task keeps its phase
+  and its round. The coordinator does not publish a blocker and does not emit a
+  `blocked` wake event. It tries the same phase again at or after the reset
+  time. A real authentication failure, including HTTP 401, still raises
+  `Authentication failed for account <name>; no fallback` and keeps the existing
+  blocker. Response bodies and credentials stay out of the store; detection
+  reads them only in memory.
 - Waiting phases are `queued`, `ask`, `blocked`, `await_merge`, `await_ready`,
   and `await_second_review`; `ci` waits while its last observation is pending.
   A task also waits while its execution binding is blocked, an earlier lane

@@ -11,12 +11,15 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .a38_errors import RateLimitError
 from .runtime import Completed
 from .store import StoreError
 
@@ -51,6 +54,17 @@ _TRANSFER_VALUE_FLAGS = {
     "pull": frozenset({"--depth"}),
     "clone": frozenset({"--depth", "--branch", "-b", "--filter", "--separate-git-dir"}),
 }
+_RATE_HEADER_NAMES = frozenset({
+    "retry-after",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+    "x-ratelimit-limit",
+    "x-ratelimit-used",
+    "x-ratelimit-resource",
+})
+_HTTP_PAREN = re.compile(r"\(HTTP (\d{3})\)")
+_HTTP_STATUS = re.compile(r"HTTP/\d+(?:\.\d+)?\s+(\d{3})\b")
+_HEADER_LINE = re.compile(r"^([A-Za-z0-9-]+):\s*(\S.*?)\s*$")
 
 
 class AccountError(StoreError):
@@ -378,6 +392,145 @@ def _map_worktree_path(path: Path, mappings: tuple[tuple[str, str], ...]) -> str
     return mapped
 
 
+def _utc_stamp(when: datetime) -> str:
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rate_limit_fields(completed: Completed) -> tuple[dict[str, str], list[int], str | None]:
+    """Read status, rate-limit headers, and a message flag. Nothing is stored."""
+    stderr = completed.stderr
+    stdout = completed.stdout
+    if not isinstance(stderr, str) or not isinstance(stdout, str):
+        raise AccountError("gh result text is not a string")
+    text = "\n".join(chunk for chunk in (stderr, stdout) if chunk)
+    headers: dict[str, str] = {}
+    for line in text.splitlines():
+        header = _HEADER_LINE.match(line.strip())
+        if header is None:
+            continue
+        name = header.group(1).lower()
+        if name in _RATE_HEADER_NAMES:
+            headers[name] = header.group(2).strip()
+    statuses = [int(match.group(1)) for match in _HTTP_PAREN.finditer(text)]
+    statuses.extend(int(match.group(1)) for match in _HTTP_STATUS.finditer(text))
+    message: str | None = None
+    stripped = stdout.strip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+            message = payload["message"]
+    if (message is None or "rate limit" not in message.lower()) and "rate limit" in text.lower():
+        message = "rate limit"
+    return headers, statuses, message
+
+
+def _rate_limit_clock(completed: Completed) -> tuple[bool, datetime | None]:
+    """Tell a rate-limit response from any other non-zero gh or git result.
+
+    HTTP 401 is authentication even when the remaining-budget header is 0.
+    """
+    if completed.returncode == 0:
+        return False, None
+    headers, statuses, message = _rate_limit_fields(completed)
+    if 401 in statuses:
+        return False, None
+    status = statuses[-1] if statuses else None
+    indicated = (
+        "retry-after" in headers
+        or headers.get("x-ratelimit-remaining", "").strip() == "0"
+        or (message is not None and "rate limit" in message.lower())
+    )
+    if status is None:
+        if not indicated:
+            return False, None
+        status = 429 if "retry-after" in headers else 403
+    from .a38_guard import _is_rate_limit_response, _rate_limit_deadline
+
+    data = {"message": message} if message is not None else {}
+    if not _is_rate_limit_response(status, data, headers):
+        return False, None
+    retry_at, _epoch = _rate_limit_deadline(headers, now=time.time())
+    if retry_at is not None and retry_at.tzinfo is None:
+        return True, None
+    return True, retry_at
+
+
+def _reset_from_rate_limit_body(stdout: str) -> datetime | None:
+    """Earliest reset among exhausted pools in a ``gh api rate_limit`` body."""
+    if not isinstance(stdout, str):
+        return None
+    try:
+        payload = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    buckets: list[Any] = []
+    resources = payload.get("resources")
+    if isinstance(resources, dict):
+        buckets.extend(resources.values())
+    rate = payload.get("rate")
+    if isinstance(rate, dict):
+        buckets.append(rate)
+    earliest: int | None = None
+    for bucket in buckets:
+        if not isinstance(bucket, dict):
+            continue
+        remaining = bucket.get("remaining")
+        reset = bucket.get("reset")
+        if type(remaining) is not int or remaining != 0:
+            continue
+        if type(reset) is not int or reset < 0:
+            continue
+        if earliest is None or reset < earliest:
+            earliest = reset
+    if earliest is None:
+        return None
+    from .a38_guard import _rate_limit_deadline
+
+    retry_at, _epoch = _rate_limit_deadline(
+        {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(earliest)},
+        now=time.time(),
+    )
+    if retry_at is not None and retry_at.tzinfo is None:
+        return None
+    return retry_at
+
+
+def _raise_if_rate_limited(
+    account: Account,
+    command: list[str],
+    result: Completed,
+    base: Runner,
+    prefix: list[str],
+) -> None:
+    limited, reset_at = _rate_limit_clock(result)
+    if not limited:
+        return
+    if reset_at is None and list(command[:3]) != ["gh", "api", "rate_limit"]:
+        try:
+            probe = base([*account.command_prefix, *prefix, "gh", "api", "rate_limit"])
+        except OSError:
+            probe = None
+        if probe is not None and probe.returncode == 0:
+            reset_at = _reset_from_rate_limit_body(probe.stdout)
+    if reset_at is None:
+        raise RateLimitError(
+            f"GitHub rate limit exhausted for account {account.name}; reset time unavailable",
+            retry_at=None,
+            account=account.name,
+        )
+    raise RateLimitError(
+        f"GitHub rate limit exhausted for account {account.name}; resets at {_utc_stamp(reset_at)}",
+        retry_at=reset_at,
+        retry_epoch=int(reset_at.timestamp()),
+        account=account.name,
+    )
+
+
 @dataclass(frozen=True)
 class Account:
     name: str
@@ -452,7 +605,11 @@ class Account:
                     "-c", f"user.signingkey={identity['signing_key']}",
                     *network_config, *header_config, *git_args,
                 ]
-            return base([*self.command_prefix, *prefix, *command])
+            result = base([*self.command_prefix, *prefix, *command])
+            # Rate-limit text stays in this process. The raised error names only
+            # the account and the reset time.
+            _raise_if_rate_limited(self, command, result, base, prefix)
+            return result
 
         try:
             result = scoped(["gh", "api", "user", "--jq", ".login"])

@@ -58,7 +58,11 @@ requires the returned login to match (case-insensitive). It clears inherited
 GitHub token variables for the child process, does not change the process-wide
 environment, and does not switch the active account in another configuration
 directory. Authentication failure or a mismatch blocks the action; there is no
-fallback. Git operations use the selected account's credential helper and
+fallback. A rate-limited `gh api user` check is not an authentication failure.
+The runner raises a distinct rate-limit error that names the account and the
+reset time, and a coordinating caller waits for that reset instead of switching
+accounts or reporting `Authentication failed`.
+Git operations use the selected account's credential helper and
 signing configuration. Before supported `fetch` / `push` / `pull` / `clone`
 forms, the runner asks Git for the effective remote URL via
 `git remote get-url [--push] --all` (which already applies a distinct `pushurl`

@@ -15,9 +15,11 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .a38_errors import RateLimitError
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
@@ -174,6 +176,68 @@ __all__ = [
     "review_is_approved",
     "verify_issue_assigned",
 ]
+
+
+GITHUB_RATE_LIMIT_PREFIX = "coordinator-github-rate-limit:"
+
+
+def remember_github_rate_limit(store: Store, exc: BaseException) -> str:
+    """Remember an account reset time and return the safe error text.
+
+    A limit with no reset time is not stored. The next tick classifies the
+    call again instead of inventing a timestamp. This does not read stderr.
+    """
+    account = getattr(exc, "account", None)
+    retry_at = getattr(exc, "retry_at", None)
+    if (
+        isinstance(account, str)
+        and account != ""
+        and isinstance(retry_at, datetime)
+        and retry_at.tzinfo is not None
+    ):
+        store.sync_set(
+            GITHUB_RATE_LIMIT_PREFIX + account,
+            retry_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+    return str(exc)
+
+
+def active_github_rate_limit(store: Store, worker: WorkerConfig) -> str | None:
+    """Return the wait line while a configured account reset is still ahead.
+
+    The worker account is checked before the review account, matching
+    preflight. An unreadable stored stamp is not a reset time. A missing
+    account configuration returns None so preflight can report that failure.
+    """
+    try:
+        accounts = load_accounts(store.home)
+        names = [accounts.for_session(worker.session_id).name]
+        if not worker.a38 and worker.review_session is not None:
+            names.append(accounts.for_session(worker.review_session).name)
+    except AccountError:
+        return None
+    now = parse_utc_timestamp(utcnow())
+    if now is None:
+        raise RuntimeError("clock did not return a UTC timestamp")
+    for name in names:
+        stored = store.sync_get(GITHUB_RATE_LIMIT_PREFIX + name)
+        if not isinstance(stored, str) or stored == "":
+            continue
+        reset = parse_utc_timestamp(stored)
+        if reset is None:
+            continue
+        if now < reset:
+            return f"GitHub rate limit exhausted for account {name}; resets at {stored}"
+    return None
+
+
+def restore_saved_task(store: Store, task: dict[str, Any]) -> None:
+    """Drop unsaved task mutations so a rate-limit wait cannot publish a blocker."""
+    saved = store.row("task", str(task["id"]))
+    if saved is None:
+        return
+    task.clear()
+    task.update(saved)
 
 
 def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None:
@@ -3176,6 +3240,9 @@ def _advance_task(
             *(str(item) for item in lane_observations),
             *blocker_lines,
         ]
+    except RateLimitError as exc:
+        restore_saved_task(store, task)
+        return [remember_github_rate_limit(store, exc)]
     except Exception as exc:  # noqa: BLE001 — never escape as silent tick failure
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
@@ -3276,6 +3343,9 @@ def _advance_guarded(
         lines = [f"blocked: {redact(str(exc))}"]
     except StoreError as exc:
         lines = [f"store error: {redact(str(exc))}"]
+    except RateLimitError as exc:
+        restore_saved_task(store, task)
+        lines = [remember_github_rate_limit(store, exc)]
     except Exception as exc:  # noqa: BLE001 — one task must not stop the tick
         lines = [f"error: {redact(str(exc))}"]
     try:

@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .a38_errors import is_rate_limit_error
 from .ai_accounts import load_ai_accounts
 from .allow import GATE_PAIRS, both_second_reviews_na, evaluate_allow
 from .model_slots import (
@@ -330,6 +331,8 @@ def publish_blocker(
         # These subclass SystemExit — must not be treated as successful publication.
         lines.append(f"blocker publish failed locally visible: {redact(str(exc))}")
     except Exception as exc:  # noqa: BLE001
+        if is_rate_limit_error(exc):
+            raise
         lines.append(f"blocker publish failed locally visible: {redact(str(exc))}")
     return lines
 

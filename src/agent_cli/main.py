@@ -4677,6 +4677,7 @@ def cmd_run(args: list[str]) -> None:
 def cmd_github(args: list[str]) -> None:
     if not args or args[0] != "pending":
         die("Usage: agent github pending")
+    from .a38_errors import RateLimitError
     from .github_act import scan_github
 
     store = open_store()
@@ -4687,6 +4688,8 @@ def cmd_github(args: list[str]) -> None:
             return
         for line in lines:
             print(line)
+    except RateLimitError as exc:
+        print(f"github pending error: {exc}", file=sys.stderr)
     finally:
         store.close()
 
@@ -5078,13 +5081,14 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"pending error: {exc}", file=sys.stderr)
                     finally:
                         hub.close()
+                from .a38_errors import RateLimitError
                 from .github_act import scan_github
                 from .mail_act import scan_mail
 
                 try:
                     for line in scan_github(store, run_argv):
                         print(line)
-                except StoreError as exc:
+                except (StoreError, RateLimitError) as exc:
                     print(f"github pending error: {exc}", file=sys.stderr)
                 try:
                     for line in scan_mail(store, run_argv):

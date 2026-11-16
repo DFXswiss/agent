@@ -11,13 +11,16 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .a38_errors import RateLimitError
 from .coordinator_config import WorkerConfig
 from .coordinator_runtime import (
     CoordinatorError,
+    active_github_rate_limit,
     advance_one,
     discover_assignments,
     preflight_worker,
     redact,
+    remember_github_rate_limit,
 )
 from .runtime import Completed, run_argv
 from .coordinator_exec import process_scope, run_bounded
@@ -72,8 +75,13 @@ def tick(
     runner = login_cached(runner, max_age_seconds=worker.poll_seconds)
     try:
         with process_scope(), store.exclusive(lock_key):
+            waiting = active_github_rate_limit(store, worker)
+            if waiting is not None:
+                return [waiting]
             try:
                 preflight_worker(store, worker, runner)
+            except RateLimitError as exc:
+                return [remember_github_rate_limit(store, exc)]
             except CoordinatorError as exc:
                 return [f"preflight blocked: {redact(str(exc))}"]
             try:
@@ -86,6 +94,8 @@ def tick(
                     lane_runner=lane_runner,
                 )
                 observations.extend(lines)
+            except RateLimitError as exc:
+                observations.append(remember_github_rate_limit(store, exc))
             except CoordinatorError as exc:
                 observations.append(f"blocked: {redact(str(exc))}")
             except StoreError as exc:

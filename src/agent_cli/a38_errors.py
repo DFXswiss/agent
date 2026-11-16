@@ -17,7 +17,8 @@ class GuardError(RuntimeError):
 class RateLimitError(GuardError):
     """GitHub REST rate limit. Not an authorisation 401 or 403.
 
-    ``retry_at`` is when the limit lifts. ``results`` is set when a sweep stops
+    ``retry_at`` is when the limit lifts. ``account`` names the GitHub account
+    when a coordinator call hit the limit. ``results`` is set when a sweep stops
     after some pull requests have already been reconciled. ``completed`` records
     legitimate writes and later steps that finished before the limit was hit.
     """
@@ -28,10 +29,12 @@ class RateLimitError(GuardError):
         *,
         retry_at: datetime | None,
         retry_epoch: int | None = None,
+        account: str | None = None,
     ) -> None:
         super().__init__(message)
         self.retry_at = retry_at
         self.retry_epoch = retry_epoch
+        self.account = account
         self.results: list[dict[str, Any]] | None = None
         self.completed: dict[str, Any] | None = None
         # Set when the run had already failed before the limit stopped it: an

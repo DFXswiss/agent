@@ -31,7 +31,11 @@ Accounts and roles must start unconfigured (`NULL`); see
 execution accounts and session bindings explicitly in
 [`github-accounts.json`](docs/github-accounts.md) for the executors that load
 it. There is no default GitHub account or fallback to the host login on those
-paths. A38 visibility lookup likewise requires an explicitly configured
+paths. When GitHub exhausts that account's rate limit, the coordinator waits
+until the reset time and continues the same task phase by itself. It does not
+report the limit as an authentication failure and it does not ask a person to
+unblock it. A real authentication failure still stops with no fallback.
+A38 visibility lookup likewise requires an explicitly configured
 `--github-session`, unless `--private` or `--public` supplies the report visibility.
 [AI accounts and roles](docs/ai-accounts.md) configure provider profiles, models,
 access and session bindings without built-in selections. `agent lane run` needs

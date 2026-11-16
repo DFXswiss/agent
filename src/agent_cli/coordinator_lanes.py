@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .a38_errors import is_rate_limit_error
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
@@ -3460,6 +3461,8 @@ def phase_pr_gates(
                     )
                 )
         except (StoreError, Exception) as exc:
+            if is_rate_limit_error(exc):
+                raise
             _abort_prepared_pr_reviews(
                 store, task, prepared_list, PR_REVIEW_PREPARATION_ERROR
             )
@@ -3535,6 +3538,8 @@ def phase_pr_gates(
         for thread in started_threads:
             thread.join()
     except (StoreError, Exception) as exc:
+        if is_rate_limit_error(exc):
+            raise
         _abort_prepared_pr_reviews(
             store, task, prepared_list, PR_REVIEW_PREPARATION_ERROR
         )
