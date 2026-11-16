@@ -235,8 +235,10 @@ def test_subscriptions_section_markup() -> None:
         assert f"<th>{column}</th>" in header
     assert "const SUBSCRIPTION_COLUMNS = 11;" in html
     # A file error reuses the page's error line, only on this section.
-    assert 'if (section === "usage" && subscriptions.error) {' in html
-    assert 'err.textContent = "ai-subscriptions.json: " + subscriptions.error;' in html
+    assert "const inventoryError = subscriptionsErrorText(subscriptions);" in html
+    assert 'if (section === "usage" && inventoryError) {' in html
+    assert "err.textContent = inventoryError;" in html
+    assert "|| subscriptionsEmptyHtml(subscriptions));" in html
 
 
 def section_function(html: str, name: str) -> str:
@@ -251,11 +253,20 @@ def test_subscription_rows_render_in_node() -> None:
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
     helpers = "\n".join(
         line for line in script.splitlines()
-        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const UUID_PATTERN", "    const copyFeedback"))
+        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const NO_INVENTORY", "    const UUID_PATTERN", "    const copyFeedback"))
     )
     functions = "\n".join(
         section_function(html, name)
-        for name in ("idChip", "idOrText", "percentText", "claudeWindows", "usageCells", "subscriptionRowHtml")
+        for name in (
+            "idChip",
+            "idOrText",
+            "percentText",
+            "claudeWindows",
+            "usageCells",
+            "subscriptionRowHtml",
+            "subscriptionsEmptyHtml",
+            "subscriptionsErrorText",
+        )
     )
     harness = helpers + "\n" + functions + """
 const claude = {
@@ -276,6 +287,11 @@ console.log(JSON.stringify({
   claude: subscriptionRowHtml(claude),
   missing: subscriptionRowHtml(missing),
   stray: subscriptionRowHtml(stray),
+  absent: subscriptionsEmptyHtml({ configured: false, error: null, rows: [] }),
+  absentError: subscriptionsErrorText({ configured: false, error: null, rows: [] }),
+  invalid: subscriptionsEmptyHtml({ configured: false, error: "subscriptions must be a list", rows: [] }),
+  invalidError: subscriptionsErrorText({ configured: false, error: "subscriptions must be a list", rows: [] }),
+  configuredEmpty: subscriptionsEmptyHtml({ configured: true, error: null, rows: [] }),
 }));
 """
     completed = subprocess.run(
@@ -297,6 +313,13 @@ console.log(JSON.stringify({
     assert "<td>not listed</td>" in out["stray"]
     assert "<td>$1.25 / $unlimited</td>" in out["stray"]
     assert "<td>monthly</td>" in out["stray"]
+    absent = "No subscription inventory: $AGENT_HOME/ai-subscriptions.json is absent"
+    assert absent in out["absent"]
+    assert out["absentError"] is None
+    assert absent not in out["invalid"]
+    assert out["invalid"] == "<tr><td colspan='11'>—</td></tr>"
+    assert out["invalidError"] == "ai-subscriptions.json: subscriptions must be a list"
+    assert out["configuredEmpty"] == "<tr><td colspan='11'>—</td></tr>"
 
 
 def static_page(name: str) -> str:

@@ -463,8 +463,9 @@ tick as the Grok billing read; each provider's scanner reads only its own
 accounts. On that tick it reads each `claude` account at most once every 15
 minutes, because the Claude usage endpoint answers per-minute polling with
 HTTP 429. A rate-limit answer is reported as
-`usage.snapshot error: <account>: Claude usage returned HTTP 429; retry after <N> s`
-and postpones the next read of that account by its `Retry-After` when that is
+`usage.snapshot error: <account>: Claude usage returned HTTP 429`, followed by
+`; retry after <N> s` when its `Retry-After` header gives a usable number of
+seconds, and postpones the next read of that account by its `Retry-After` when that is
 longer than 15 minutes. `agent watch claude-usage` reads every Claude account
 immediately.
 

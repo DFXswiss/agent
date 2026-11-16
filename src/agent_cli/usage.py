@@ -41,6 +41,8 @@ CLAUDE_USAGE_POLL_SECONDS = 15 * 60
 # ``security`` exit status for an item that does not exist.
 _SECURITY_ITEM_NOT_FOUND = 44
 _KEYCHAIN_USER = re.compile(r"[a-zA-Z0-9._-]+")
+# A bearer token must be visible ASCII: no whitespace, control or non-ASCII characters.
+_VISIBLE_ASCII = re.compile(r"[\x21-\x7e]+")
 _MAX_MULTIPLIER = re.compile(r"(?:^|_)max_(\d+x)$", re.IGNORECASE)
 _COMPARE_KEYS = (
     "vendor",
@@ -467,7 +469,9 @@ def _get_bearer_json(
                 response = owned.get(url, headers=headers)
         else:
             response = client.get(url, headers=headers)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, UnicodeError):
+        # A header value httpx cannot encode raises UnicodeEncodeError, whose
+        # ``object`` holds the header; never chain it.
         raise StoreError(f"{name} request failed") from None
     if response.status_code == 429:
         raise UsageRateLimited(
@@ -704,6 +708,10 @@ def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
         raise StoreError(
             f"claude credentials in {source}: accessToken must be a non-empty string"
         )
+    if not _VISIBLE_ASCII.fullmatch(token):
+        raise StoreError(
+            f"claude credentials in {source}: accessToken must be visible ASCII characters"
+        )
     expires_at = oauth.get("expiresAt")
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
         raise StoreError(
@@ -821,10 +829,14 @@ def _claude_reset(value: Any, field: str) -> str | None:
         raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
     if when.tzinfo is None:
         raise StoreError(f"Claude usage {field} has no time zone")
-    when = when.astimezone(timezone.utc)
-    minute = when.replace(second=0, microsecond=0)
-    if when - minute >= timedelta(seconds=30):
-        minute += timedelta(minutes=1)
+    try:
+        when = when.astimezone(timezone.utc)
+        minute = when.replace(second=0, microsecond=0)
+        if when - minute >= timedelta(seconds=30):
+            minute += timedelta(minutes=1)
+    except OverflowError:
+        # Converting or rounding at the edge of the datetime range.
+        raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
     return minute.isoformat()
 
 

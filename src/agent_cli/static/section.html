@@ -296,6 +296,20 @@
       return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td>${idOrText(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
     }
 
+    // The table row without subscriptions: "absent" only when there is no file;
+    // an invalid file is reported on the error line instead.
+    function subscriptionsEmptyHtml(subscriptions) {
+      if (!subscriptions.configured && !subscriptions.error) {
+        return `<tr><td colspan='${SUBSCRIPTION_COLUMNS}'>${esc(NO_INVENTORY)}</td></tr>`;
+      }
+      return empty(SUBSCRIPTION_COLUMNS);
+    }
+
+    // The error line text for an invalid inventory file, or null.
+    function subscriptionsErrorText(subscriptions) {
+      return subscriptions.error ? "ai-subscriptions.json: " + subscriptions.error : null;
+    }
+
     async function postControl(id, body) {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
         method: "POST",
@@ -392,7 +406,7 @@
 
         const subscriptions = data.subscriptions || {};
         setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(subscriptionRowHtml).join("")
-          || (subscriptions.configured ? empty(SUBSCRIPTION_COLUMNS) : `<tr><td colspan='${SUBSCRIPTION_COLUMNS}'>${esc(NO_INVENTORY)}</td></tr>`));
+          || subscriptionsEmptyHtml(subscriptions));
 
         sessionsById = {};
         (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
@@ -449,9 +463,10 @@
         setHtml(document.querySelector("#pings tbody"), (data.pings || []).map(p =>
           `<tr><td>${idOrText(p.from_login)}</td><td>${idOrText(p.to_login)}</td><td>${idOrText(p.kind)}</td><td>${idOrText(p.acked_at)}</td></tr>`
         ).join("") || empty(4));
-        if (section === "usage" && subscriptions.error) {
+        const inventoryError = subscriptionsErrorText(subscriptions);
+        if (section === "usage" && inventoryError) {
           err.hidden = false;
-          err.textContent = "ai-subscriptions.json: " + subscriptions.error;
+          err.textContent = inventoryError;
         }
       } catch (e) {
         err.hidden = false;

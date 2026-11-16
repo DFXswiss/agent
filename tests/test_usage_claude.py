@@ -922,3 +922,67 @@ def test_rate_limit_with_an_unusable_retry_after_keeps_the_interval(tmp_path: Pa
         assert pace["seat"] == 1000.0 + CLAUDE_USAGE_POLL_SECONDS
     finally:
         store.close()
+
+
+# --- Robustness --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:45+00:00"])
+def test_reset_at_the_edge_of_the_date_range_is_a_store_error(value: str) -> None:
+    with pytest.raises(StoreError, match="seven_day.resets_at is not a valid timestamp"):
+        claude_snapshot(
+            "seat-1@example.com", None, {"seven_day": {"utilization": 1, "resets_at": value}}, "t"
+        )
+
+
+@pytest.mark.parametrize("value", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:45+00:00"])
+def test_scan_reports_an_edge_reset_and_still_reads_the_next_account(
+    tmp_path: Path, value: str
+) -> None:
+    store = _paced_store(tmp_path, ["edge", "other"])
+    try:
+        def fetch(token: str) -> dict[str, Any]:
+            body = usage_body()
+            if token == "token-edge":
+                body["seven_day"]["resets_at"] = value
+            return body
+
+        with pytest.raises(ClaudeUsageError) as info:
+            scan_claude_usage(store, fetch=fetch, read_keychain=no_keychain)
+        assert info.value.errors == (
+            "edge: Claude usage seven_day.resets_at is not a valid timestamp",
+        )
+        assert len(info.value.activity_ids) == 1
+        assert [row["payload"]["account_email"] for row in _claude_snapshots(store)] == [
+            "other@example.com"
+        ]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("token", ["t\u00f6ken-secret", "token secret", "token-secret\n"])
+def test_access_token_must_be_visible_ascii(tmp_path: Path, token: str) -> None:
+    config_dir = tmp_path / "seat"
+    write_login(config_dir, creds=credentials(token=token))
+    with pytest.raises(StoreError, match="accessToken must be visible ASCII") as info:
+        load_claude_credentials(str(config_dir), read_keychain=no_keychain)
+    assert not isinstance(info.value, AuthStale)
+    assert "secret" not in str(info.value)
+    assert ".credentials.json" in str(info.value)
+
+
+def test_unencodable_bearer_is_a_request_failure_without_the_token() -> None:
+    token = "t\u00f6ken-secret"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("the request must not be sent")
+
+    for name in ("Claude usage", "OpenRouter usage"):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(StoreError) as info:
+                _get_bearer_json(
+                    "https://usage.example.com/", {"Authorization": f"Bearer {token}"}, name, client
+                )
+        assert str(info.value) == f"{name} request failed"
+        assert info.value.__cause__ is None
+        assert "secret" not in str(info.value)
