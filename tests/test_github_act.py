@@ -14,6 +14,7 @@ from agent_cli.github_act import (
     ACTIVITY_MARKER,
     A38_MODEL_SECOND_REVIEW_COMMENT,
     COMMENT_KIND_KEY,
+    execute_activity as account_execute_activity,
     scan_github as account_scan_github,
 )
 from agent_cli.main import main
@@ -28,6 +29,13 @@ from github_support import configure_accounts, transport
 def scan_github(store, runner):
     configure_accounts(store.home, [r['id'] for r in store.rows('session')], login='theo-vane')
     return account_scan_github(store, transport(runner, login='theo-vane'))
+
+
+def execute_activity(store, runner, activity_id):
+    configure_accounts(store.home, [r['id'] for r in store.rows('session')], login='theo-vane')
+    return account_execute_activity(
+        store, transport(runner, login='theo-vane'), activity_id
+    )
 
 
 def run(home: Path, argv: list[str]) -> None:
@@ -61,6 +69,79 @@ def _pending(
             "execution_status": "pending",
         },
     )
+
+
+def test_execute_activity_rejects_stale_a38_report_activity_before_github(
+    tmp_path: Path,
+) -> None:
+    # A directly named report activity takes the same lock and revalidation path
+    # as one found by the scanner: both entry points share the per-row step.
+    store = Store(tmp_path)
+    _owned_session(store)
+    task_id = "aa000001-0000-4000-8000-000000000311"
+    activity_id = "aa000001-0000-4000-8000-000000000312"
+    body = "verified report for the old base"
+    body_sha256 = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "s1",
+            "repo": "example/project",
+            "ref": 42,
+            "payload": {
+                "coordinator": {
+                    "pr_number": 42,
+                    "source": {"repo": "example/project"},
+                    "a38": {
+                        "report_intent": {
+                            "head": "a" * 40,
+                            "base_sha": "c" * 40,
+                            "policy_revision": "c" * 40,
+                            "activity_id": "replacement-activity",
+                            "body_sha256": "d" * 64,
+                            "private": True,
+                        }
+                    },
+                }
+            },
+        },
+    )
+    _pending(
+        store,
+        activity_id,
+        "comment.post",
+        {
+            "repo": "example/project",
+            "number": 42,
+            "body": body,
+            "target": "pr",
+            "exact_body": True,
+            "_coordinator_a38_report": {
+                "task_id": task_id,
+                "head": "a" * 40,
+                "base_sha": "b" * 40,
+                "policy_revision": "b" * 40,
+                "body_sha256": body_sha256,
+                "private": True,
+            },
+        },
+    )
+    calls: list[list[str]] = []
+
+    line = execute_activity(
+        store,
+        lambda argv: calls.append(list(argv)) or Completed(1, "", "must not run"),
+        activity_id,
+    )
+
+    assert line == f"comment.post {activity_id} error"
+    row = store.row("activity", activity_id)
+    assert row["execution_status"] == "error"
+    assert "no matching current report intent" in row["execution_error"]
+    assert calls == []
 
 
 def test_scan_rejects_stale_a38_report_activity_before_github(
@@ -1762,6 +1843,113 @@ def test_review_post_is_an_executable_activity_type() -> None:
     assert "review.post" in EXECUTABLE_ACTIVITY_TYPES
 
 
+def test_execute_activity_runs_one_pending_review_by_id(tmp_path: Path) -> None:
+    # The worker names its own row instead of waiting for a scheduled scan; the
+    # external effect and the account binding are still the shared executor's.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "worker-review-1"
+    review_url = "https://github.com/example-owner/example-repository/pull/3#pullrequestreview-77"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {
+            "repo": "example-owner/example-repository",
+            "number": 3,
+            "body": "the review body",
+            "event": "COMMENT",
+            "commit_id": "a" * 40,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            joined = " ".join(argv)
+            assert "event=COMMENT" in joined
+            assert f"commit_id={'a' * 40}" in joined
+            assert ACTIVITY_MARKER.format(id=act_id) in joined
+            return Completed(0, json.dumps({"id": 77, "html_url": review_url}), "")
+        if argv[-1].endswith("/reviews"):
+            return Completed(0, json.dumps([]), "")
+        raise AssertionError(argv)
+
+    assert execute_activity(store, runner, act_id) == f"review.post {act_id} done"
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["execution_account"]["account"] == "test"
+    assert row["result"]["url"] == review_url
+
+    # Already delivered: a direct call is not a second post.
+    assert execute_activity(store, runner, act_id) is None
+    posts = [argv for argv in calls if "-X" in argv]
+    assert len(posts) == 1
+
+
+def test_execute_activity_ignores_absent_and_non_pending_rows(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    assert execute_activity(store, lambda _argv: Completed(0, "[]", ""), "missing") is None
+    store.write(
+        "activity",
+        "insert",
+        "done-1",
+        {
+            "id": "done-1",
+            "session_id": "s1",
+            "type": "review.post",
+            "payload": {
+                "repo": "example-owner/example-repository",
+                "number": 3,
+                "body": "already posted",
+            },
+            "execution_status": "done",
+        },
+    )
+    assert execute_activity(store, lambda _argv: Completed(0, "[]", ""), "done-1") is None
+
+
+def test_execute_activity_does_not_run_a_type_it_does_not_own(tmp_path: Path) -> None:
+    # A named call is not a licence to execute every activity type; only the
+    # five types this module implements reach GitHub here.
+    store = Store(tmp_path)
+    _owned_session(store)
+    _pending(store, "query-1", "query.request", {})
+    assert execute_activity(store, lambda _argv: Completed(0, "[]", ""), "query-1") is None
+
+
+def test_execute_activity_refuses_an_account_switch(tmp_path: Path) -> None:
+    # The same row pinned to one account must not be posted by another one.
+    store = Store(tmp_path)
+    _owned_session(store)
+    _pending(
+        store,
+        "pinned-1",
+        "review.post",
+        {
+            "repo": "example-owner/example-repository",
+            "number": 3,
+            "body": "review",
+        },
+    )
+    row = store.row("activity", "pinned-1")
+    assert row is not None
+    saved = {key: value for key, value in row.items() if not key.startswith("_")}
+    saved["execution_account"] = {"account": "other", "login": "someone-else"}
+    store.write("activity", "update", "pinned-1", saved)
+
+    assert execute_activity(
+        store, lambda _argv: Completed(0, "[]", ""), "pinned-1"
+    ) == "review.post pinned-1 error"
+    saved = store.row("activity", "pinned-1")
+    assert saved is not None
+    assert saved["execution_status"] == "error"
+    assert "account binding changed" in saved["execution_error"].lower()
+
+
 def test_review_post_ignores_a_marker_in_someone_elses_review(tmp_path: Path) -> None:
     # The marker is visible to anyone reading the pull request. Treating a copy of it
     # as our own delivery would suppress the findings entirely.
@@ -1886,7 +2074,9 @@ def test_the_scanner_documents_every_type_it_executes() -> None:
 
     from agent_cli import github_act
 
-    source = inspect.getsource(github_act.scan_github)
+    # The per-type dispatch lives in `_execute_row`, which both entry points
+    # share; `scan_github` itself only filters the types it owns.
+    source = inspect.getsource(github_act._execute_row)
     handled = set(re.findall(r'typ == "([^"]+)"', source))
     assert handled, "no dispatch branches found — this test measures nothing"
 
