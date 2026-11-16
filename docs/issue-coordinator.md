@@ -512,7 +512,15 @@ A record of a check lane is closed the same way, but closing it does not retry t
    `close_allowed` permits it, then publishes a GitHub-visible blocker with
    `resume_phase` of `pr_gates_grok` / `pr_gates_codex` and a pinned
    `question_activity_id` — not a rejected complete gate and not an implementer
-   fix loop. Every complete dimension is persisted before incomplete dimensions
+   fix loop. The blocker names `status` and `result` of every affected
+   dimension. After `Not a code rejection.` it adds `Lane output:` with one
+   excerpt per affected dimension whose lane wrote output: the last non-empty
+   line, stderr first when the lane returned no valid result, redacted,
+   without terminal control sequences, and cut to at most 200 characters.
+   The excerpt is taken from the complete lane output and saved with the
+   reviewer outcome checkpoint, because the stored stdout and stderr keep
+   only the start of a long stream.
+   Every complete dimension is persisted before incomplete dimensions
    are handled; a complete rejection always routes back to implementation even
    when its parallel peer is unavailable. The next implementer receives every
    rejecting dimension under `Quality review findings:` or `Logic review
@@ -884,7 +892,9 @@ and collections are bounded and redacted through the same serializer as
 `lane.run`, and the complete JSON file has a hard size limit. After tool entries
 are removed to meet that limit,
 stdout and stderr are shortened against their JSON-escaped size while the
-already parsed protocol result remains intact. Each parallel worker writes its
+already parsed protocol result remains intact. The output excerpt for the
+incomplete-review blocker is taken from the complete output before that
+shortening and is kept whole. Each parallel worker writes its
 checkpoint atomically as soon as its lane returns, before publishing the result to shared memory or
 waiting for its sibling. If serialization raises, including a coordinator
 validation error, that worker removes its owned raw output plus any temporary or

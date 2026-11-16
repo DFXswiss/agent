@@ -82,12 +82,15 @@ from .model_slots import (
     models_from_snapshot,
 )
 from .store import Store, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
 PR_REVIEW_PROMPT_LIMIT = 20_000
 # Two prompts, each written twice (record and JSON block), must fit one GitHub comment.
 A38_REVIEW_PROMPT_LIMIT = 14_000
+# Characters of lane output that the incomplete-review blocker quotes per dimension.
+INCOMPLETE_OUTPUT_EXCERPT_LIMIT = 200
 PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
 REVIEWER_SPOOL_WRITE_ERROR = "reviewer result checkpoint failed"
@@ -426,6 +429,34 @@ def implementer_replay_fields(
     }
 
 
+def _incomplete_output_excerpt(outcome: LaneResult) -> str:
+    """Last visible line of a reviewer lane's output, or ``""``.
+
+    The incomplete-review blocker quotes this line. Without a valid result the
+    provider's own error is expected on stderr, so stderr is read before
+    stdout. The line is redacted, stripped of terminal control sequences, and
+    cut to ``INCOMPLETE_OUTPUT_EXCERPT_LIMIT``. Call it on the complete lane
+    output: the stored copies keep the start of a long stream, not its end.
+    """
+    from .coordinator_checks import one_line
+
+    streams = (
+        (outcome.stdout, outcome.stderr)
+        if outcome.protocol_result in _REVIEWER_RESULTS
+        else (outcome.stderr, outcome.stdout)
+    )
+    for text in streams:
+        # Redact the whole stream before one line is taken from it, so a
+        # secret that spans several lines is masked as a whole.
+        visible = sanitize_terminal_text(
+            redact_lane_text(text or "", config_dir=outcome.config_dir, limit=None)
+        )
+        lines = [line for line in visible.splitlines() if line.strip()]
+        if lines:
+            return one_line(lines[-1], INCOMPLETE_OUTPUT_EXCERPT_LIMIT)
+    return ""
+
+
 def _reviewer_replay_fields(
     result: LaneResult,
     *,
@@ -434,8 +465,20 @@ def _reviewer_replay_fields(
     head: str,
     dimension: str,
     stage: str,
+    output_excerpt: str | None = None,
 ) -> dict[str, Any]:
-    """Return one bounded, redacted reviewer result for durable replay."""
+    """Return one bounded, redacted reviewer result for durable replay.
+
+    ``output_excerpt`` is the excerpt a crash-recovery spool saved from the
+    complete output; without it the excerpt is taken from ``result``.
+    """
+    if output_excerpt is None:
+        output_excerpt = _incomplete_output_excerpt(result)
+    else:
+        from .coordinator_checks import one_line
+
+        # Redact and bound a spooled excerpt again, like the spooled streams.
+        output_excerpt = one_line(output_excerpt, INCOMPLETE_OUTPUT_EXCERPT_LIMIT)
     return {
         "role": result.role,
         "vendor": result.vendor,
@@ -458,6 +501,7 @@ def _reviewer_replay_fields(
         "stderr": redact_lane_text(
             result.stderr, config_dir=result.config_dir, limit=4000
         ),
+        "output_excerpt": output_excerpt,
     }
 
 
@@ -505,6 +549,8 @@ def reviewer_replay_outcomes(
             or not isinstance(outcome.get("result"), str)
             or not isinstance(outcome.get("stdout"), str)
             or not isinstance(outcome.get("stderr"), str)
+            # Absent in checkpoints written before the excerpt was stored.
+            or not isinstance(outcome.get("output_excerpt", ""), str)
         ):
             raise CoordinatorError("reviewer lane outcome checkpoint is invalid")
         agent = store.row("agent", agent_id)
@@ -540,6 +586,7 @@ def _checkpoint_reviewer_outcome(
     stage: str,
     session_id: str,
     lane_marker: dict[str, Any] | None = None,
+    output_excerpt: str | None = None,
 ) -> dict[str, Any]:
     """Atomically persist a reviewer audit, agent, and replayable result."""
     committed_task = copy.deepcopy(task)
@@ -560,6 +607,7 @@ def _checkpoint_reviewer_outcome(
         head=head,
         dimension=dimension,
         stage=stage,
+        output_excerpt=output_excerpt,
     )
     for existing in outcomes:
         if not isinstance(existing, dict):
@@ -780,6 +828,9 @@ def _write_reviewer_spool(
                 characters=100,
                 bytes_limit=400,
             ),
+            # Taken from the complete output, because the bounded stdout and
+            # stderr above keep only the start of a long stream.
+            "output_excerpt": _incomplete_output_excerpt(result),
         },
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -826,7 +877,11 @@ def _read_reviewer_spool(
     head: str,
     dimension: str,
     stage: str,
-) -> tuple[LaneResult, str | None] | None:
+) -> tuple[LaneResult, str | None, str | None] | None:
+    """Return the saved result, its owned output file and its output excerpt.
+
+    The excerpt is ``None`` for a spool written before it was stored.
+    """
     _remove_legacy_reviewer_spool(worker, str(task["id"]), str(agent["id"]))
     path = _reviewer_spool_path(
         store, worker, str(task["id"]), str(agent["id"])
@@ -870,6 +925,9 @@ def _read_reviewer_spool(
     ) or isinstance(saved.get("returncode"), bool) or not isinstance(
         saved.get("returncode"), int
     ):
+        return None
+    output_excerpt = saved.get("output_excerpt")
+    if output_excerpt is not None and not isinstance(output_excerpt, str):
         return None
     usage_payload = saved.get("usage")
     try:
@@ -920,7 +978,7 @@ def _read_reviewer_spool(
         return None
     else:
         output_file = owned_output
-    return result, output_file
+    return result, output_file, output_excerpt
 
 
 def _cleanup_reviewer_spool(
@@ -1037,7 +1095,7 @@ def _retry_reviewer_checkpoint(
     )
     if recovered is None:
         return None
-    result, output_file = recovered
+    result, output_file, output_excerpt = recovered
     if lane_marker is not None:
         lane_marker = {
             **lane_marker,
@@ -1055,6 +1113,7 @@ def _retry_reviewer_checkpoint(
         stage=stage,
         session_id=worker.session_id,
         lane_marker=lane_marker,
+        output_excerpt=output_excerpt,
     )
     _cleanup_reviewer_spool(
         store, worker, str(task["id"]), str(agent["id"]), output_file
@@ -3649,6 +3708,24 @@ def phase_pr_gates(
         f"{vendor} {incomplete_affected} review unavailable/incomplete "
         f"({incomplete_details}). Not a code rejection."
     )
+    incomplete_excerpts: list[str] = []
+    for prep, outcome, _status, _result, _evidence in incomplete_outcomes:
+        # The checkpoint took the excerpt from the complete lane output. Only a
+        # checkpoint written before that field existed falls back to the
+        # stored streams, which keep the start of a long output.
+        excerpt = replayed_by_dimension[str(prep["dimension"])].get(
+            "output_excerpt"
+        )
+        if excerpt is None:
+            excerpt = _incomplete_output_excerpt(outcome)
+        if excerpt:
+            incomplete_excerpts.append(f"{prep['dimension']}: {excerpt}")
+    if incomplete_excerpts:
+        # The excerpts follow the fixed text. The published comment is redacted
+        # again as a whole, and a quoted value that the excerpt bound cut open
+        # then runs to the end of the text. It can only consume later excerpts,
+        # never the status details or the fixed sentence.
+        incomplete_blocker += f" Lane output: {'; '.join(incomplete_excerpts)}"
     incomplete_retry: list[str] | None = None
 
     # Complete both dimensions' durable work before the first external call.
