@@ -1,11 +1,12 @@
 # The runner
 
-`agent runner` runs detached agent jobs on this device. It reads GitHub
-notifications, queues the mentions it is admitted for, dispatches queued jobs
-into a private worktree, supervises them, and prunes finished queue rows. The
-command group owns the external effects; the rules it applies live in the
-tested modules `jobs`, `ingest`, `dispatch`, `finalize`, `reap`, `queue` and
-`health`.
+`agent runner` manages detached agent jobs on this device. Today it reads
+GitHub notifications and queues the mentions it is admitted for (`ingest`),
+supervises and cleans up jobs (`supervise`, `prune`, `retry`), and reports on
+the queue and the configuration (`status`, `doctor`). Starting jobs
+(`dispatch`) refuses until the worker lands; see "Not yet". The command group
+owns the external effects; the rules it applies live in the tested modules
+`jobs`, `ingest`, `dispatch`, `finalize`, `reap`, `queue` and `health`.
 
 The runner lives under `$AGENT_HOME/runner` and uses no other directory. Every
 subcommand resolves its paths from that base, so moving `$AGENT_HOME` moves the
@@ -51,10 +52,11 @@ reads, apart from the login check:
 case-insensitively. A runner authenticated as another account would attribute
 every action to that account, so the check is fail-closed rather than a warning.
 
-`runner.json` answers *how this device runs work*. `dispatch`, `supervise` and
-`prune` read this file; they do not read the policy, with the one exception
-that `supervise` reads `expected_gh_user`. `retry` needs no setting and reads
-neither file.
+`runner.json` answers *how this device runs work*. `supervise` and `prune` read
+this file; they do not read the policy, with the one exception that `supervise`
+reads `expected_gh_user`. `dispatch` will read `max_concurrent` here once the
+worker exists; today it refuses before reading any file. `retry` needs no
+setting and reads neither file.
 
 ```json
 {
@@ -107,10 +109,12 @@ Output: `job.started <job-id>` per job, or `job.started none`.
 
 ### `agent runner supervise`
 
-Finalizes workers that have exited or whose tmux session is gone, then reaps
-worktrees and sessions left behind by killed workers. A row whose exit code is
-missing but whose session is alive is measured against the timeout and stall
-budgets; a row whose session has disappeared is recorded as crashed.
+Once a worker runs jobs, finalizes those that have exited or whose tmux session
+is gone, then reaps worktrees and sessions left behind by killed workers. Until
+the worker lands, no row on this device reaches `running`, so there is nothing
+to finalize. A row whose exit code is missing but whose session is alive is
+measured against the timeout and stall budgets; a row whose session has
+disappeared is recorded as crashed.
 
 Output: `job.finalized <job-id>` (or `job.finalized none`),
 `worktree.removed <job-id>` and `session.killed <name>` per item, with failures
@@ -167,14 +171,17 @@ Output: one `doctor problem: <text>` line per problem followed by
 `ingest`, `dispatch`, `supervise`, `prune` and `retry` take one exclusive,
 non-blocking `flock` on `state/runner.lock`. When another runner command holds
 it, they print `runner busy` and return success; the schedule tries again on its
-next pass.
+next pass. `dispatch` is listed because the sequence guarded below runs once the
+worker exists, but today it refuses before it takes the lock.
 
 The lock exists because dispatch is a sequence of external steps. Between
 creating a worktree and writing the row as running, the worktree belongs to a
 queued job and looks like an orphan. A concurrent `supervise` would remove it
 mid-construction. Serialising the mutating commands makes that impossible,
 which is also why no separate "preparing" marker is written: there is no
-concurrent reaper to protect the worktree from.
+concurrent reaper to protect the worktree from. Until a worker exists, nothing
+reaches that sequence, so the lock serialises only `ingest`, `supervise`,
+`prune` and `retry`.
 
 `status` and `doctor` are read-only and take no lock.
 
