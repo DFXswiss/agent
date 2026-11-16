@@ -160,6 +160,18 @@ def test_malformed_draft_fails_closed() -> None:
             "created_at": "2026-09-05T12:00:00Z",
             "actor": {"id": MAINTAINER_ID, "login": "", "type": "User"},
         },
+        {
+            "event": "convert_to_draft",
+            "id": 1,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": MAINTAINER_ID, "login": "maintainer"},
+        },
+        {
+            "event": "convert_to_draft",
+            "id": 1,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": MAINTAINER_ID, "login": "maintainer", "type": None},
+        },
     )
     for event in cases:
         fake = FakeAPI()
@@ -263,6 +275,27 @@ def test_unreadable_hold_keeps_draft_and_writes_the_comment() -> None:
     fake = LifecycleAPI()
     fake.pull["draft"] = True
     fake.timeline_404 = True
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert "draft hold unavailable" in result.lifecycle["reasons"]
+    assert fake.transitions == []
+    bodies = [c["body"] for c in fake.comments if "PR-GUARD:LIFECYCLE:v1" in c.get("body", "")]
+    assert len(bodies) == 1
+    assert "cannot read who set this pull request to draft" in bodies[0]
+    assert "kann nicht lesen" in bodies[0]
+
+
+def test_draft_event_without_an_actor_type_keeps_draft_and_writes_the_comment() -> None:
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.timeline = [
+        {
+            "event": "convert_to_draft",
+            "id": 1,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": MAINTAINER_ID, "login": "maintainer"},
+        }
+    ]
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.lifecycle["action"] == "unchanged"
     assert "draft hold unavailable" in result.lifecycle["reasons"]

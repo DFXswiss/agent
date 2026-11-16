@@ -2801,12 +2801,13 @@ def load_draft_hold(
     Returns ``("ok", draft_hold_or_none)``, ``("pending", None)`` when no hold
     is found and the newest relevant event is a ``ready_for_review``, or
     ``("unavailable", None)`` when the timeline or the newest draft event
-    cannot be read. A non-``User`` draft event does not hold. The guard's own
-    draft event does not hold. A newer ``User`` ready event releases an older
-    draft event, so no hold remains; older draft events do not change that.
-    A malformed ready event is skipped, as the existing ready-actor timeline
-    reader skips it, but it still makes the state pending. The caller decides
-    whether a pending state still blocks a mutation.
+    cannot be read. A draft event whose actor is not a mapping or whose actor
+    type is missing or empty is unavailable. A non-``User`` draft event does
+    not hold. The guard's own draft event does not hold. A newer ``User`` ready
+    event releases an older draft event, so no hold remains; older draft events
+    do not change that. A malformed ready event is skipped, as the existing
+    ready-actor timeline reader skips it, but it still makes the state pending.
+    The caller decides whether a pending state still blocks a mutation.
     """
     newest_is_ready = False
     seen_event = False
@@ -2847,7 +2848,10 @@ def load_draft_hold(
                 continue
             if not isinstance(actor, Mapping):
                 return "unavailable", None
-            if actor.get("type") != "User":
+            actor_type = actor.get("type")
+            if not isinstance(actor_type, str) or not actor_type:
+                return "unavailable", None
+            if actor_type != "User":
                 continue
             if not isinstance(created_at, str) or type(event_id) is not int:
                 return "unavailable", None
