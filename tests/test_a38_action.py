@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Reviewed guard revision installed by this repository; moving the pin is a
 # reviewed change that updates this.
-GUARD_ACTION_SHA = "63bd283dc9a3b6eb29827af9f690d2ba79ed1f14"
+GUARD_ACTION_SHA = "3528240c62d72e8f50f8ec5ddda0c4d213f0f04a"
 GUARD_ACTION_USES = f"DFXswiss/agent/.github/actions/a38-guard@{GUARD_ACTION_SHA}"
 
 
