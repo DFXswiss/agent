@@ -1178,8 +1178,6 @@ def test_show_prints_the_pending_checkpoint_even_when_acknowledged(device, capsy
         "check",
         "acked",
         "answers",
-        "digest",
-        "opinion",
     }
 
 

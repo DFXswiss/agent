@@ -520,9 +520,9 @@ def test_order_events_have_their_own_page() -> None:
     assert "Acknowledge" not in main
     assert 'orderCall("ack"' not in main
     assert 'orderCall("events"' not in main
-    assert "cp.digest" in main
-    assert "cp.opinion" in main
-    assert 'key === "digest" || key === "opinion"' in main
+    assert "cp.digest" not in main
+    assert "cp.opinion" not in main
+    assert 'key === "digest" || key === "opinion"' not in main
     assert 'getElementById("order-events")' not in main
     assert 'getElementById("ev-wake")' not in main
     assert 'getElementById("ev-unacked")' not in main
@@ -553,6 +553,14 @@ def test_order_events_have_their_own_page() -> None:
     )
     partial = json.loads(html.split("const ORDER_VIEW = ", 1)[1].split(";", 1)[0])
     assert partial == {"events": main_view["events"], "ack": main_view["ack"]}
+    assert main_view["show"]["nested"]["checkpoint"] == [
+        "event_id",
+        "seq",
+        "kind",
+        "check",
+        "acked",
+        "answers",
+    ]
 
 
 def test_orders_script_is_a_second_element() -> None:
