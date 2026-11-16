@@ -212,8 +212,11 @@ def active_github_rate_limit(store: Store, worker: WorkerConfig) -> str | None:
     try:
         accounts = load_accounts(store.home)
         names = [accounts.for_session(worker.session_id).name]
-        if not worker.a38 and worker.review_session is not None:
-            names.append(accounts.for_session(worker.review_session).name)
+        # A conflict worker has no review account. WorkerConfig still has both
+        # attributes, so this reads the same accounts as before.
+        review_session = getattr(worker, "review_session", None)
+        if not getattr(worker, "a38", False) and review_session is not None:
+            names.append(accounts.for_session(review_session).name)
     except AccountError:
         return None
     now = parse_utc_timestamp(utcnow())
@@ -3242,7 +3245,8 @@ def _advance_task(
         ]
     except RateLimitError as exc:
         restore_saved_task(store, task)
-        return [remember_github_rate_limit(store, exc)]
+        remember_github_rate_limit(store, exc)
+        raise
     except Exception as exc:  # noqa: BLE001 — never escape as silent tick failure
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
@@ -3345,7 +3349,8 @@ def _advance_guarded(
         lines = [f"store error: {redact(str(exc))}"]
     except RateLimitError as exc:
         restore_saved_task(store, task)
-        lines = [remember_github_rate_limit(store, exc)]
+        remember_github_rate_limit(store, exc)
+        raise
     except Exception as exc:  # noqa: BLE001 — one task must not stop the tick
         lines = [f"error: {redact(str(exc))}"]
     try:

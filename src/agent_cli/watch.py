@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .a38_errors import RateLimitError
 from .runtime import Completed
 from .store import Store, StoreError
 
@@ -136,7 +137,7 @@ def scan_merged(
                 ],
                 scoped_runner,
             )
-        except (StoreError, json.JSONDecodeError):
+        except (StoreError, json.JSONDecodeError, RateLimitError):
             skipped += 1
             continue
         state = str(info.get("state") or "").upper()

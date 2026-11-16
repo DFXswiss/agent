@@ -458,8 +458,39 @@ def _rate_limit_clock(completed: Completed) -> tuple[bool, datetime | None]:
     return True, retry_at
 
 
-def _reset_from_rate_limit_body(stdout: str) -> datetime | None:
-    """Earliest reset among exhausted pools in a ``gh api rate_limit`` body."""
+def _exhausted_reset(bucket: Any) -> int | None:
+    if not isinstance(bucket, dict):
+        return None
+    remaining = bucket.get("remaining")
+    reset = bucket.get("reset")
+    if type(remaining) is not int or remaining != 0:
+        return None
+    if type(reset) is not int or reset < 0:
+        return None
+    return reset
+
+
+def _named_rate_bucket(payload: dict[str, Any], resource: str) -> Any:
+    """The ``gh api rate_limit`` pool named by ``x-ratelimit-resource``."""
+    want = resource.casefold()
+    resources = payload.get("resources")
+    if isinstance(resources, dict):
+        for key, bucket in resources.items():
+            if isinstance(key, str) and key.casefold() == want:
+                return bucket
+    if want == "core":
+        return payload.get("rate")
+    return None
+
+
+def _reset_from_rate_limit_body(stdout: str, *, resource: str | None = None) -> datetime | None:
+    """Reset of the pool that rejected the call.
+
+    ``resource`` is ``x-ratelimit-resource`` when the failed response named its
+    pool. Without that name, the latest exhausted reset is used so an earlier
+    unrelated pool cannot end the wait first. This body has no secondary
+    ``retry-after``.
+    """
     if not isinstance(stdout, str):
         return None
     try:
@@ -468,36 +499,61 @@ def _reset_from_rate_limit_body(stdout: str) -> datetime | None:
         return None
     if not isinstance(payload, dict):
         return None
-    buckets: list[Any] = []
-    resources = payload.get("resources")
-    if isinstance(resources, dict):
-        buckets.extend(resources.values())
-    rate = payload.get("rate")
-    if isinstance(rate, dict):
-        buckets.append(rate)
-    earliest: int | None = None
-    for bucket in buckets:
-        if not isinstance(bucket, dict):
-            continue
-        remaining = bucket.get("remaining")
-        reset = bucket.get("reset")
-        if type(remaining) is not int or remaining != 0:
-            continue
-        if type(reset) is not int or reset < 0:
-            continue
-        if earliest is None or reset < earliest:
-            earliest = reset
-    if earliest is None:
+    resets: list[int] = []
+
+    def take(bucket: Any) -> None:
+        reset = _exhausted_reset(bucket)
+        if reset is not None:
+            resets.append(reset)
+
+    if resource is not None and resource.strip() != "":
+        take(_named_rate_bucket(payload, resource))
+    else:
+        resources = payload.get("resources")
+        if isinstance(resources, dict):
+            for bucket in resources.values():
+                take(bucket)
+        take(payload.get("rate"))
+    if not resets:
         return None
     from .a38_guard import _rate_limit_deadline
 
     retry_at, _epoch = _rate_limit_deadline(
-        {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(earliest)},
+        {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(max(resets))},
         now=time.time(),
     )
     if retry_at is not None and retry_at.tzinfo is None:
         return None
     return retry_at
+
+
+def _response_resource(result: Completed) -> str | None:
+    headers, _statuses, _message = _rate_limit_fields(result)
+    resource = headers.get("x-ratelimit-resource")
+    if resource is None or resource.strip() == "":
+        return None
+    return resource.strip()
+
+
+def _gh_api_include_command(command: list[str]) -> list[str] | None:
+    """Same ``gh api`` call, with response headers in the captured text.
+
+    A failed ``gh api`` call otherwise prints one ``gh: … (HTTP nnn)`` line.
+    ``--include`` (``-i``) prints ``retry-after`` and ``x-ratelimit-reset``.
+    """
+    if len(command) < 2 or command[0] != "gh" or command[1] != "api":
+        return None
+    if "--include" in command or "-i" in command:
+        return None
+    return [*command, "--include"]
+
+
+def _needs_response_headers(result: Completed) -> bool:
+    limited, reset_at = _rate_limit_clock(result)
+    if not limited or reset_at is not None:
+        return False
+    headers, _statuses, _message = _rate_limit_fields(result)
+    return "retry-after" not in headers and "x-ratelimit-reset" not in headers
 
 
 def _raise_if_rate_limited(
@@ -516,7 +572,9 @@ def _raise_if_rate_limited(
         except OSError:
             probe = None
         if probe is not None and probe.returncode == 0:
-            reset_at = _reset_from_rate_limit_body(probe.stdout)
+            reset_at = _reset_from_rate_limit_body(
+                probe.stdout, resource=_response_resource(result)
+            )
     if reset_at is None:
         raise RateLimitError(
             f"GitHub rate limit exhausted for account {account.name}; reset time unavailable",
@@ -607,8 +665,19 @@ class Account:
                 ]
             result = base([*self.command_prefix, *prefix, *command])
             # Rate-limit text stays in this process. The raised error names only
-            # the account and the reset time.
-            _raise_if_rate_limited(self, command, result, base, prefix)
+            # the account and the reset time. A failed gh api line omits
+            # response headers, so one repeat with --include is read here and
+            # is not returned to the caller or the store.
+            detected = result
+            include = _gh_api_include_command(command)
+            if include is not None and _needs_response_headers(result):
+                try:
+                    captured = base([*self.command_prefix, *prefix, *include])
+                except OSError:
+                    captured = None
+                if captured is not None and _rate_limit_clock(captured)[0]:
+                    detected = captured
+            _raise_if_rate_limited(self, command, detected, base, prefix)
             return result
 
         try:

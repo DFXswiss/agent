@@ -696,6 +696,7 @@ def _resolve_private(
         return private
     if not github_session:
         raise A38Error("visibility lookup requires an explicitly configured --github-session, or --private/--public")
+    from .a38_errors import RateLimitError
     from .github_accounts import AccountError, load_accounts
     try:
         if config_home is None:
@@ -704,7 +705,7 @@ def _resolve_private(
         account = load_accounts(config_home).for_session(github_session)
         scoped = account.runner(lambda argv: run(argv, repo_path, None))
         completed = scoped(["gh", "repo", "view", repository, "--json", "isPrivate"])
-    except AccountError as exc:
+    except (AccountError, RateLimitError) as exc:
         raise A38Error(str(exc)) from None
     if completed.returncode != 0:
         raise A38Error("configured GitHub account could not resolve repository visibility")

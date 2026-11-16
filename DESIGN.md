@@ -766,7 +766,8 @@ the workflow is enabled on a deployment:
   [docs/issue-coordinator.md](docs/issue-coordinator.md). `agent coordinate
   --session ID` performs a bounded advancement; `--follow` is the script's loop.
   An exhausted GitHub rate limit is a transient wait until the reset time: the
-  task keeps its phase and round, and the coordinator does not open a blocker.
+  task keeps its phase and round, the current tick stops, and the coordinator
+  does not open a blocker.
   Authentication failure stays a blocker with no fallback.
   No worker, account or role is installed by default.
 

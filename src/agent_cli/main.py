@@ -5061,13 +5061,15 @@ def cmd_knock(args: list[str]) -> None:
                     # One scanner per provider; each reads only its own accounts.
                     for scan_accounts in (scan_openrouter_usage, scan_claude_paced):
                         _print_account_usage(scan_accounts, store)
+                from .a38_errors import RateLimitError
+
                 try:
                     created, skipped = scan_merged(store, run_argv)
                     for activity_id in created:
                         print(f"pr.merged {activity_id}")
                     if skipped:
                         print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
-                except StoreError as exc:
+                except (StoreError, RateLimitError) as exc:
                     print(f"pr.merged error: {exc}", file=sys.stderr)
                 hub_url = store.meta("hub_url")
                 hub_token = store.meta("device_token")
@@ -5081,7 +5083,6 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"pending error: {exc}", file=sys.stderr)
                     finally:
                         hub.close()
-                from .a38_errors import RateLimitError
                 from .github_act import scan_github
                 from .mail_act import scan_mail
 

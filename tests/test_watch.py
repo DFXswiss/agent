@@ -160,6 +160,43 @@ def test_scan_merged_counts_merged_without_sha(tmp_path: Path) -> None:
     assert skipped == 1
 
 
+def test_scan_merged_skips_rate_limited_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: 1_700_000_000)
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    store.write(
+        "activity",
+        "insert",
+        "open-1",
+        {
+            "id": "open-1",
+            "session_id": "s1",
+            "type": "pr.open",
+            "payload": {},
+            "result": {"repo": "dfxswiss/agent", "number": 8, "url": "https://github.com/dfxswiss/agent/pull/8"},
+            "execution_status": "done",
+        },
+    )
+    configure_accounts(store.home, ["s1"])
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh"):]
+        if "--include" in command:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 45\n\n",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+            )
+        return Completed(1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)\n")
+
+    created, skipped = account_scan_merged(store, runner)
+    assert created == []
+    assert skipped == 1
+    stored = json.dumps(store.rows("activity"))
+    assert "Retry-After" not in stored
+    assert "HTTP/2.0" not in stored
+
+
 def test_scan_merged_counts_missing_gh(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})

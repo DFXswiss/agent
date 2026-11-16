@@ -2093,16 +2093,29 @@ def tick(
     already exists on GitHub, without Git, a lane, or a comment.
 
     Errors become observation lines; only a termination (a SystemExit that is not
-    a StoreError, or KeyboardInterrupt) propagates to the caller.
+    a StoreError, or KeyboardInterrupt) propagates to the caller. An exhausted
+    GitHub rate limit is a wait until the reset time: this tick does not report
+    it as an error, and the next tick does not call GitHub before that time.
     """
+    from .a38_errors import RateLimitError
+    from .coordinator_runtime import (
+        active_github_rate_limit,
+        remember_github_rate_limit,
+    )
+
     lock_key = f"{WORKER_LOCK_PREFIX}{worker.session_id}"
     if runner is default_run_argv:
         runner = lambda argv: run_bounded(argv, timeout=worker.lane_timeout)
     observations: list[str] = []
     try:
         with process_scope(), store.exclusive(lock_key):
+            waiting = active_github_rate_limit(store, worker)
+            if waiting is not None:
+                return [waiting]
             try:
                 runtime = _preflight(store, worker, runner)
+            except RateLimitError as exc:
+                return [remember_github_rate_limit(store, exc)]
             except StateUnreadable as exc:
                 return _state_unreadable(worker, exc)
             except (ConflictsError, CoordinatorError, AccountError) as exc:
@@ -2196,10 +2209,14 @@ def tick(
                 return [f"transient: {safe(worker, exc)}", *observations]
             except (_Blocker, ConflictsError) as exc:
                 return [f"blocked: {safe(worker, exc)}", *observations]
+            except RateLimitError as exc:
+                return [remember_github_rate_limit(store, exc), *observations]
             except StoreError as exc:
                 return [f"store error: {safe(worker, exc)}", *observations]
             except Exception as exc:  # noqa: BLE001 — tick must never raise silently
                 return [f"error: {safe(worker, exc)}", *observations]
+    except RateLimitError as exc:
+        return [remember_github_rate_limit(store, exc), *observations]
     except StateUnreadable as exc:
         return [*_state_unreadable(worker, exc), *observations]
     except StoreError as exc:

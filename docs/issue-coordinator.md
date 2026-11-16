@@ -289,12 +289,19 @@ for worker in workers.values():
   HTTP 403 or 429 with a rate-limit response, or a secondary limit with
   `retry-after`) is not an authentication failure. The login check and every
   later `gh` or `git` call raise a rate-limit error that names the account and
-  the reset time taken from the response headers or from `gh api rate_limit`
-  (that query does not count against the limit). The coordinator remembers that
-  reset time and does not call GitHub again before it. The task keeps its phase
-  and its round. The coordinator does not publish a blocker and does not emit a
-  `blocked` wake event. It tries the same phase again at or after the reset
-  time. A real authentication failure, including HTTP 401, still raises
+  the reset time. `gh` prints that failure as one line without response
+  headers, so a failed `gh api` call is repeated once with `--include`.
+  `retry-after` and `x-ratelimit-reset` are read from that captured text, and
+  the text is not stored. `gh api rate_limit` (it does not count against the
+  limit) supplies a primary reset only when those headers still do not name a
+  time; it does not carry a secondary `retry-after`. The reset is the pool
+  named by `x-ratelimit-resource` when that header is present, otherwise the
+  latest exhausted pool, so an earlier unrelated pool cannot end the wait.
+  The coordinator remembers that reset time, ends the current tick, and does
+  not call GitHub again before it. The task keeps its phase and its round.
+  The coordinator does not publish a blocker and does not emit a `blocked`
+  wake event. It tries the same phase again at or after the reset time. A
+  real authentication failure, including HTTP 401, still raises
   `Authentication failed for account <name>; no fallback` and keeps the existing
   blocker. Response bodies and credentials stay out of the store; detection
   reads them only in memory.

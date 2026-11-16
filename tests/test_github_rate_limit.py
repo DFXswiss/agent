@@ -158,7 +158,12 @@ def test_missing_reset_does_not_invent_a_time(monkeypatch: pytest.MonkeyPatch) -
     assert caught.value.retry_at is None
     assert caught.value.account == "worker"
     _secret_absent(message)
-    assert [cmd[:3] for cmd in calls] == [["gh", "api", "user"], ["gh", "api", "rate_limit"]]
+    assert [cmd[:3] for cmd in calls] == [
+        ["gh", "api", "user"],
+        ["gh", "api", "user"],
+        ["gh", "api", "rate_limit"],
+    ]
+    assert calls[1][-1] == "--include"
 
 
 @pytest.mark.no_pg
@@ -180,7 +185,7 @@ def test_rate_limit_endpoint_is_not_probed_again() -> None:
 
     def base(argv: list[str]) -> Completed:
         cmd = _gh(argv)
-        calls.append(cmd[:3])
+        calls.append(cmd)
         if cmd[:3] == ["gh", "api", "user"]:
             return Completed(0, "worker-bot\n", "")
         return Completed(1, "", _PRIMARY)
@@ -188,7 +193,11 @@ def test_rate_limit_endpoint_is_not_probed_again() -> None:
     scoped = _account().runner(base)
     with pytest.raises(RateLimitError, match="reset time unavailable"):
         scoped(["gh", "api", "rate_limit"])
-    assert calls.count(["gh", "api", "rate_limit"]) == 1
+    assert calls == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "rate_limit"],
+        ["gh", "api", "rate_limit", "--include"],
+    ]
 
 
 @pytest.mark.no_pg
@@ -264,12 +273,29 @@ def _install(
             if mode["kind"] == "auth":
                 return Completed(1, "", _AUTH)
             if limited and mode["kind"] != "step":
+                if "--include" in cmd:
+                    if mode["kind"] == "secondary":
+                        return Completed(
+                            1,
+                            "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n"
+                            "{\"message\":\"You have exceeded a secondary rate limit.\"}\n",
+                            "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+                        )
+                    if mode["kind"] == "unavailable":
+                        return Completed(1, "", _PRIMARY)
+                    return Completed(
+                        1,
+                        "HTTP/2.0 403 Forbidden\n"
+                        "X-RateLimit-Remaining: 0\n"
+                        f"X-RateLimit-Reset: {mode['reset']}\n\n"
+                        "{\"message\":\"API rate limit exceeded for user ID 1.\"}\n",
+                        _PRIMARY,
+                    )
                 if mode["kind"] == "secondary":
                     return Completed(
                         1,
                         "",
-                        "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
-                        "retry-after: 120\n",
+                        "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
                     )
                 return Completed(1, "", _PRIMARY)
             config = next(part.split("=", 1)[1] for part in argv if part.startswith("GH_CONFIG_DIR="))
@@ -288,6 +314,15 @@ def _install(
                 }
             return Completed(0, json.dumps(body), "")
         if mode["kind"] == "step" and clock["epoch"] < mode["reset"]:
+            if "--include" in cmd:
+                return Completed(
+                    1,
+                    "HTTP/2.0 403 Forbidden\n"
+                    "X-RateLimit-Remaining: 0\n"
+                    f"X-RateLimit-Reset: {mode['reset']}\n\n"
+                    "{\"message\":\"API rate limit exceeded for user ID 1.\"}\n",
+                    _PRIMARY,
+                )
             return Completed(1, "", _PRIMARY)
         if mode["kind"] == "step-auth":
             return Completed(1, "", "gh: Bad credentials (HTTP 401)\n")
@@ -355,9 +390,10 @@ def test_rate_limited_login_waits_and_resumes(tmp_path: Path, monkeypatch: pytes
     lines = tick(store, worker, runner=runner)
     _assert_still_waiting(store, lines, message)
     assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "worker") == _stamp(reset)
-    assert [_gh(argv)[:3] for argv in calls] == [
-        ["gh", "api", "user"],
-        ["gh", "api", "rate_limit"],
+    gh_cmds = [_gh(argv) for argv in calls if "gh" in argv]
+    assert gh_cmds == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "user", "--jq", ".login", "--include"],
     ]
 
     clock["epoch"] = reset - 1
@@ -418,7 +454,11 @@ def test_secondary_limit_waits_for_retry_after(tmp_path: Path, monkeypatch: pyte
 
     lines = tick(store, worker, runner=runner)
     _assert_still_waiting(store, lines, message)
-    assert all(_gh(argv)[:3] != ["gh", "api", "rate_limit"] for argv in calls if "gh" in argv)
+    gh_cmds = [_gh(argv) for argv in calls if "gh" in argv]
+    assert gh_cmds == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "user", "--jq", ".login", "--include"],
+    ]
 
     clock["epoch"] = reset - 1
     before = len(calls)
@@ -446,7 +486,8 @@ def test_mid_step_rate_limit_resumes_after_reset(tmp_path: Path, monkeypatch: py
     _assert_still_waiting(store, lines, message)
     cmds = [_gh(argv) for argv in calls if "gh" in argv]
     assert cmds[-2][-1] == "repos/example/project/issues/7"
-    assert cmds[-1][:3] == ["gh", "api", "rate_limit"]
+    assert cmds[-1] == [*cmds[-2], "--include"]
+    assert all(cmd[:3] != ["gh", "api", "rate_limit"] for cmd in cmds)
     assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "worker") == _stamp(reset)
 
     clock["epoch"] = reset - 1
@@ -480,3 +521,163 @@ def test_unavailable_reset_does_not_block_or_hold(tmp_path: Path, monkeypatch: p
     _assert_still_waiting(store, lines, message)
     assert len(calls) > before
     assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "worker") is None
+
+
+_SECONDARY_LINE = "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
+_PARKED = "66666666-6666-6666-6666-666666666666"
+
+
+@pytest.mark.no_pg
+def test_one_line_gh_error_reads_headers_from_include(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The installed gh prints one stderr line and no retry-after header."""
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    calls: list[list[str]] = []
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        calls.append(cmd)
+        if "--include" in cmd:
+            assert cmd == ["gh", "api", "user", "--jq", ".login", "--include"]
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 120\nX-RateLimit-Remaining: 4999\n\n"
+                "{\"message\":\"You have exceeded a secondary rate limit.\"}\n",
+                _SECONDARY_LINE + "Authorization: Bearer ghp_secretvalue\n",
+            )
+        assert cmd == ["gh", "api", "user", "--jq", ".login"]
+        return Completed(1, "", _SECONDARY_LINE)
+
+    with pytest.raises(RateLimitError) as caught:
+        _account().runner(base)
+    message = str(caught.value)
+    assert message == _wait("worker", EPOCH + 120)
+    assert caught.value.retry_at == datetime.fromtimestamp(EPOCH + 120, tz=timezone.utc)
+    _secret_absent(message)
+    assert "HTTP/2.0" not in message
+    assert "Retry-After" not in message
+    assert "secondary" not in message
+    assert calls == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "user", "--jq", ".login", "--include"],
+    ]
+
+
+@pytest.mark.no_pg
+def test_include_oserror_still_uses_the_rate_limit_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        if "--include" in cmd:
+            raise OSError("include failed")
+        if cmd[:3] == ["gh", "api", "user"]:
+            return Completed(1, "", _PRIMARY)
+        assert cmd[:3] == ["gh", "api", "rate_limit"]
+        return Completed(
+            0,
+            json.dumps({"rate": {"remaining": 0, "reset": EPOCH + 3600}}),
+            "",
+        )
+
+    with pytest.raises(RateLimitError) as caught:
+        _account().runner(base)
+    assert str(caught.value) == _wait("worker", EPOCH + 3600)
+    assert "Cannot authenticate" not in str(caught.value)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("resource", "expected"),
+    [(None, EPOCH + 3600), ("core", EPOCH + 60)],
+)
+def test_probe_does_not_end_on_an_earlier_other_pool(
+    monkeypatch: pytest.MonkeyPatch, resource: str | None, expected: int
+) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    body = {
+        "resources": {
+            "search": {"remaining": 0, "reset": EPOCH + 3600},
+            "core": {"remaining": 0, "reset": EPOCH + 60},
+        },
+        "rate": {"remaining": 0, "reset": EPOCH + 60},
+    }
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        if cmd[:3] == ["gh", "api", "user"] and "--include" not in cmd:
+            return Completed(1, "", _PRIMARY)
+        if "--include" in cmd:
+            header = "HTTP/2.0 403 Forbidden\nX-RateLimit-Remaining: 0\n"
+            if resource is not None:
+                header += f"X-RateLimit-Resource: {resource}\n"
+            return Completed(1, header + "\n", _PRIMARY)
+        assert cmd[:3] == ["gh", "api", "rate_limit"]
+        return Completed(0, json.dumps(body), "")
+
+    with pytest.raises(RateLimitError) as caught:
+        _account().runner(base)
+    message = str(caught.value)
+    assert message == _wait("worker", expected)
+    _secret_absent(message)
+
+
+def test_rate_limit_stops_later_tasks_in_the_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mode = {"kind": "step", "reset": EPOCH + 3600}
+    clock = {"epoch": EPOCH}
+    store, worker, _calls, runner = _install(tmp_path, monkeypatch, mode, clock)
+    seed_task(
+        store,
+        worker,
+        _PARKED,
+        {
+            "id": _PARKED,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "Wait for merge",
+            "repo": "example/project",
+            "ref": None,
+            "payload": {
+                "coordinator": {
+                    "phase": "await_merge",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 8,
+                        "assigned_id": "a-parked",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Wait for merge",
+                    },
+                    "worker_login": "worker-bot",
+                }
+            },
+            "state": "open",
+            "current_round": 0,
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    seen: list[str] = []
+
+    def stop(store: Store, worker: Any, task: dict[str, Any], **_kwargs: Any) -> list[str]:
+        seen.append(str(task["id"]))
+        raise RateLimitError(
+            _wait("worker", EPOCH + 3600),
+            retry_at=datetime.fromtimestamp(EPOCH + 3600, tz=timezone.utc),
+            retry_epoch=EPOCH + 3600,
+            account="worker",
+        )
+
+    monkeypatch.setattr("agent_cli.coordinator_runtime._advance_task", stop)
+    lines = tick(store, worker, runner=runner)
+    assert lines == [_wait("worker", EPOCH + 3600)]
+    assert seen == [_PARKED]
+    assert store.row("task", _TID)["payload"]["coordinator"]["phase"] == "accept"
+    assert store.row("task", _PARKED)["payload"]["coordinator"]["phase"] == "await_merge"
+    assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "worker") == _stamp(EPOCH + 3600)
+    assert _blocked_events(store) == []

@@ -1424,6 +1424,44 @@ def test_lease_rejection_leaves_request_unfinished(tmp_path: Path, monkeypatch: 
     assert len(fake.pr_comments) == 1
 
 
+def test_rate_limit_waits_and_does_not_call_github_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    epoch = 1_700_000_000
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["conflicts"])
+    monkeypatch.setattr("agent_cli.conflict_mandate._now", lambda: NOW)
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: epoch)
+    stamp = datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr("agent_cli.coordinator_runtime.utcnow", lambda: stamp)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh"):]
+        calls.append(command)
+        if "--include" in command:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+            )
+        return Completed(
+            1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
+        )
+
+    reset = datetime.fromtimestamp(epoch + 120, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    message = f"GitHub rate limit exhausted for account worker; resets at {reset}"
+    lines = tick(store, worker(tmp_path), runner=runner)
+    assert lines == [message]
+    assert len(calls) == 2
+    assert calls[0][:3] == ["gh", "api", "user"]
+    assert calls[1][-1] == "--include"
+    again = tick(store, worker(tmp_path), runner=runner)
+    assert again == [message]
+    assert len(calls) == 2
+
+
 def test_missing_skill_and_unknown_provider_refuse_before_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)

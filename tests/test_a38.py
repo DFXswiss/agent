@@ -3733,3 +3733,33 @@ def test_visibility_lookup_rejects_wrong_or_unavailable_account(tmp_path, auth_r
                          github_session='chosen', config_home=tmp_path)
     assert len(calls) == 1
     assert 'synthetic-private-error' not in str(exc.value)
+
+
+def test_visibility_lookup_rate_limit_is_a_visible_error(tmp_path, monkeypatch):
+    from agent_cli.a38 import _resolve_private
+    monkeypatch.setattr('agent_cli.github_accounts.time.time', lambda: 1_700_000_000)
+    (tmp_path / 'github-accounts.json').write_text(json.dumps({
+        'accounts': {'selected': {'login': 'ExpectedWorker', 'gh_config_dir': '/test/selected'}},
+        'sessions': {'chosen': 'selected'},
+    }))
+
+    def runner(argv, cwd, env):
+        command = argv[argv.index('gh'):]
+        if '--include' in command:
+            return subprocess.CompletedProcess(
+                argv, 1,
+                'HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n',
+                'gh: You have exceeded a secondary rate limit. (HTTP 403)\n',
+            )
+        return subprocess.CompletedProcess(
+            argv, 1, '', 'gh: You have exceeded a secondary rate limit. (HTTP 403)\n',
+        )
+
+    with pytest.raises(A38Error) as exc:
+        _resolve_private(tmp_path, None, run=runner, repository='example/app',
+                         github_session='chosen', config_home=tmp_path)
+    message = str(exc.value)
+    assert message.startswith('GitHub rate limit exhausted for account selected; resets at ')
+    assert 'HTTP/2.0' not in message
+    assert 'Retry-After' not in message
+    assert 'secondary' not in message
