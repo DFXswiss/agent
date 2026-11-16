@@ -276,12 +276,17 @@ def _guard_drafted(record: Mapping, *, head: str, base: str) -> bool:
 
     An applied draft is the direct evidence. A held record carries that
     evidence forward when the timeline became unreadable before a later run.
+    A planned record carries it forward when an intended Ready transition was
+    aborted before the mutation.
     """
     if record.get("head") != head or record.get("base") != base:
         return False
     if record.get("phase") == "applied" and record.get("state") == "draft":
         return True
-    return record.get("phase") == "held" and record.get("guard_drafted") is True
+    return (
+        record.get("phase") in {"held", "planned"}
+        and record.get("guard_drafted") is True
+    )
 
 
 def _review_heads(assessment: Any) -> list[str]:
@@ -1630,7 +1635,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         return {"action": "unchanged", "reasons": [], "dry_run": False}
     record = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha,
               "base": snap.base_sha, "state": target, "reasons": final_reasons,
-              "phase": "planned", "review_heads": _review_heads(assessment)}
+              "phase": "planned", "review_heads": _review_heads(assessment),
+              "guard_drafted": we_drafted}
     planned_comment = _save_record(
         api, assessment, STATE_MARKER, record,
         "I am checking the final conditions for the documented readiness change.",

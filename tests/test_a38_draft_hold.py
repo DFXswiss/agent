@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,7 +15,8 @@ except ImportError:
 
 from agent_cli import a38_guard
 from agent_cli.a38_guard import DraftHold, load_draft_hold, reconcile_pull
-from test_a38_guard import AUTHOR_ID, BOT_ID, REPO, FakeAPI
+from agent_cli.pr_lifecycle import STATE_MARKER
+from test_a38_guard import AUTHOR_ID, BASE, BOT_ID, HEAD, REPO, FakeAPI
 from test_pr_lifecycle import LifecycleAPI
 
 MAINTAINER_ID = 3003
@@ -499,6 +501,105 @@ def test_a_person_draft_held_record_does_not_carry_guard_provenance() -> None:
     assert second.lifecycle["action"] == "unchanged"
     assert fake.pull["draft"]
     assert fake.transitions == []
+
+
+def test_a_planned_ready_aborted_by_the_final_hold_keeps_guard_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    assert fake.transitions == [True]
+
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+    }
+    fake.timeline = [
+        _ready(created_at="2101-01-01T00:00:00Z", eid=2),
+        _draft(
+            uid=BOT_ID,
+            login="github-actions[bot]",
+            created_at="2102-01-01T00:00:00Z",
+            eid=3,
+        ),
+    ]
+    calls: list[int] = []
+
+    def staged_hold(api, repo, number, *, guard_user_id):
+        calls.append(1)
+        if len(calls) == 2:
+            return "unavailable", None
+        return "ok", None
+
+    monkeypatch.setattr(a38_guard, "load_draft_hold", staged_hold)
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert len(calls) >= 2
+    assert second.lifecycle["action"] == "unchanged"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+    bodies = [
+        c["body"]
+        for c in fake.comments
+        if "PR-GUARD:LIFECYCLE:v1" in c.get("body", "")
+    ]
+    planned = [body for body in bodies if '"phase": "planned"' in body]
+    assert len(planned) == 1
+    assert '"guard_drafted": true' in planned[0]
+
+    # The readable timeline on the next run lets the planned restore proceed
+    # because the planned record still names the guard draft.
+    third = reconcile_pull(fake.api(), REPO, 1)
+    assert third.lifecycle["action"] == "ready"
+    assert fake.transitions[-1] is False
+    assert not fake.pull["draft"]
+
+
+def test_a_planned_record_without_guard_provenance_does_not_count() -> None:
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+    }
+    fake.timeline = [
+        _ready(created_at="2101-01-01T00:00:00Z", eid=2),
+        _draft(
+            uid=BOT_ID,
+            login="github-actions[bot]",
+            created_at="2102-01-01T00:00:00Z",
+            eid=3,
+        ),
+    ]
+    record = {
+        "repo": REPO,
+        "pr": 1,
+        "head": HEAD,
+        "base": BASE,
+        "state": "ready",
+        "reasons": [],
+        "phase": "planned",
+        "guard_drafted": False,
+    }
+    fake.comments.append({
+        "id": 900,
+        "user": {"id": BOT_ID},
+        "created_at": "2026-09-05T12:00:00Z",
+        "body": STATE_MARKER + "\n```json\n" + json.dumps(record) + "\n```",
+    })
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.write_ready
+    assert second.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]
+    assert fake.transitions == [True]
 
 
 def test_dry_run_reports_the_hold_without_writing() -> None:
