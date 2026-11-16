@@ -1008,6 +1008,11 @@ def consume_order_intents(
                 cancel,
                 lambda: _finish_intent(store, intent, effect="cancel"),
             )
+            # The commit stands. A lane still running after a restart is not
+            # inside this process, so cancel has to kill the recorded group.
+            from .coordinator_lanes import stop_recorded_lanes
+
+            stop_recorded_lanes(store, worker, str(task["id"]))
             lines.append(f"order cancelled {oid}")
             continue
 

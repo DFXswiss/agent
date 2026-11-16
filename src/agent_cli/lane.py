@@ -126,15 +126,29 @@ class LaneResult:
 Runner = Callable[[list[str], str | None], object]
 
 
+def _github_cleared_argv(argv: list[str], profile: str) -> list[str]:
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    prefix.append(f"GH_CONFIG_DIR={profile}")
+    return [*prefix, *argv]
+
+
 @contextmanager
-def sanitized_lane_argv(argv: list[str]):
-    """Yield lane argv with no ambient GitHub login available to the child."""
+def sanitized_lane_argv(argv: list[str], profile_dir: str | None = None):
+    """Yield lane argv with no ambient GitHub login available to the child.
+
+    ``profile_dir`` is an empty GitHub config directory the caller keeps. A
+    surviving model lane passes its own directory so a coordinator stop does
+    not delete the profile the lane is still using. Without it, the empty
+    profile lasts only for this call.
+    """
+    if profile_dir is not None:
+        Path(profile_dir).mkdir(parents=True, exist_ok=True)
+        yield _github_cleared_argv(argv, profile_dir)
+        return
     with tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-") as profile:
-        prefix = ["env"]
-        for key in LANE_GITHUB_TOKEN_ENV:
-            prefix.extend(["-u", key])
-        prefix.append(f"GH_CONFIG_DIR={profile}")
-        yield [*prefix, *argv]
+        yield _github_cleared_argv(argv, profile)
 
 
 def _env_strip_prefix() -> list[str]:

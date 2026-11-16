@@ -7,8 +7,9 @@ import functools
 import json
 import os
 import re
-import tempfile
+import shutil
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -50,11 +51,12 @@ from .coordinator_common import (
     strip_row,
 )
 from .coordinator_config import WorkerConfig
-from .coordinator_exec import kill_process_group, run_bounded
+from .coordinator_exec import kill_process_group, read_capture_returncode, run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
 from .gate_order import latest_gates, ordered_snapshot_gates
 from .lane import (
     LANE_MODEL_LIMIT,
+    LANE_ROLES,
     OUTPUT_FILE_VENDORS,
     SPEC_VIA_STDIN,
     LaneResult,
@@ -1234,11 +1236,32 @@ def vendor_stage_has_working_agents(
 
 
 LANE_PROCESS_DIR = "lanes"
+# A lane that exited while nobody was waiting still has to flush its return code.
+_CAPTURE_STATUS_GRACE_SECONDS = 2.0
 
 
 def lane_process_path(worker: WorkerConfig, task_id: str, agent_id: str) -> Path:
     _require_plain_agent_id(agent_id)
     return control_dir(worker, task_id) / LANE_PROCESS_DIR / f"{agent_id}.json"
+
+
+def _lane_capture_paths(
+    worker: WorkerConfig, task_id: str, agent_id: str
+) -> dict[str, Path]:
+    """Durable files of one model lane, beside its process record.
+
+    Paths are derived from the agent id. They are not stored in the checkpoint.
+    """
+    stem = lane_process_path(worker, task_id, agent_id).with_suffix("")
+    status = stem.with_suffix(".status")
+    return {
+        "stdout": stem.with_suffix(".stdout"),
+        "stderr": stem.with_suffix(".stderr"),
+        "status": status,
+        "pid": stem.with_suffix(".pid"),
+        "provider": stem.with_suffix(".provider"),
+        "profile": Path(str(status) + ".gh"),
+    }
 
 
 def process_start_time(pid: int, worker: WorkerConfig) -> str:
@@ -1254,9 +1277,17 @@ def process_start_time(pid: int, worker: WorkerConfig) -> str:
 
 
 def lane_start_recorder(
-    worker: WorkerConfig, task_id: str, agent_id: str
+    worker: WorkerConfig,
+    task_id: str,
+    agent_id: str,
+    *,
+    capture: bool = False,
 ) -> Callable[[int], None]:
-    """Callback for run_bounded: record the lane's process id and start time."""
+    """Callback for run_bounded: record the lane's process id and start time.
+
+    ``capture`` marks a model lane whose output files a later coordinator can
+    adopt. Check lanes and injected runners leave the record without that mark.
+    """
     path = lane_process_path(worker, task_id, agent_id)
 
     def record(pid: int) -> None:
@@ -1265,6 +1296,8 @@ def lane_start_recorder(
             "lstart": process_start_time(pid, worker),
             "started_at": utcnow(),
         }
+        if capture:
+            payload["capture"] = True
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".tmp")
@@ -1276,12 +1309,31 @@ def lane_start_recorder(
     return record
 
 
-def forget_lane_process(worker: WorkerConfig, task_id: str, agent_id: str) -> None:
-    """Remove the record of a lane that returned."""
+def _unlink_quiet(path: Path) -> None:
     try:
-        lane_process_path(worker, task_id, agent_id).unlink()
+        path.unlink()
     except OSError:
         pass
+
+
+def forget_lane_process(worker: WorkerConfig, task_id: str, agent_id: str) -> None:
+    """Remove the record of a lane that returned, and its capture files."""
+    record = lane_process_path(worker, task_id, agent_id)
+    _unlink_quiet(record)
+    _unlink_quiet(record.with_suffix(".tmp"))
+    try:
+        paths = _lane_capture_paths(worker, task_id, agent_id)
+    except CoordinatorError:
+        return
+    for key in ("stdout", "stderr", "status", "pid", "provider"):
+        _unlink_quiet(paths[key])
+        _unlink_quiet(Path(str(paths[key]) + ".tmp"))
+    profile = paths["profile"]
+    if profile.exists():
+        try:
+            shutil.rmtree(profile)
+        except OSError:
+            pass
 
 
 def _read_lane_process(
@@ -1300,6 +1352,32 @@ def _read_lane_process(
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or pid > 2**31 - 1:
         return None
     return value
+
+
+def _capture_marked(worker: WorkerConfig, task_id: str, agent_id: str) -> bool:
+    """True only when this lane was started to survive a coordinator stop."""
+    data = _read_lane_process(worker, task_id, agent_id)
+    return data is not None and data.get("capture") is True
+
+
+def stop_recorded_lanes(store: Store, worker: WorkerConfig, task_id: str) -> None:
+    """Kill every recorded lane of this task that is still the same process.
+
+    A reused process id reads as dead and is left alone. The result is not
+    recorded: the caller has already ended the order.
+    """
+    for row in store.rows("agent"):
+        if row.get("task_id") != task_id:
+            continue
+        agent_id = row.get("id")
+        if not isinstance(agent_id, str) or not agent_id:
+            continue
+        if lane_process_state(worker, task_id, agent_id) not in ("alive", "expired"):
+            continue
+        data = _read_lane_process(worker, task_id, agent_id)
+        if data is None:
+            continue
+        kill_process_group(data["pid"])
 
 
 def lane_process_state(worker: WorkerConfig, task_id: str, agent_id: str) -> str:
@@ -1366,14 +1444,372 @@ def _saved_reviewer_result(
     )
 
 
+def _await_captured_process(
+    worker: WorkerConfig, task_id: str, agent_id: str
+) -> str:
+    """Wait until a captured lane is dead or past its original start timeout."""
+    while True:
+        state = lane_process_state(worker, task_id, agent_id)
+        if state != "alive":
+            return state
+        time.sleep(0.2)
+
+
+def _wait_capture_returncode(path: Path) -> int | None:
+    """Poll for the wrapper's return code after the command pid is already gone."""
+    deadline = time.monotonic() + _CAPTURE_STATUS_GRACE_SECONDS
+    while True:
+        rc = read_capture_returncode(str(path))
+        if rc is not None:
+            return rc
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.05)
+
+
+def _captured_output_path(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    row: dict[str, Any],
+    paths: dict[str, Path],
+) -> Path | None:
+    """Provider output file for this lane, when its vendor writes one."""
+    role = str(row.get("role") or "")
+    vendor = str(row.get("vendor") or "")
+    if vendor not in OUTPUT_FILE_VENDORS:
+        return None
+    if role == "implementer":
+        return paths["provider"]
+    owned = _owned_reviewer_output(store, worker, str(task["id"]), row)
+    if owned is None:
+        raise CoordinatorError("reviewer spool output file is invalid")
+    return Path(owned)
+
+
+def _close_failed_implementer_checkpoint(
+    store: Store,
+    task: dict[str, Any],
+    agent: dict[str, Any],
+    *,
+    role: str,
+    vendor: str,
+) -> None:
+    """Close an implementer whose result cannot be checkpointed, then the caller raises."""
+    committed_task = copy.deepcopy(task)
+    committed_agent = copy.deepcopy(agent)
+    committed_c = coord(committed_task)
+    committed_agent["status"] = "done"
+    committed_agent["finished_at"] = utcnow()
+    committed_agent["note"] = "implementer checkpoint redaction failed"
+    committed_c["lane"] = {
+        "agent_id": str(agent["id"]),
+        "role": role,
+        "vendor": vendor,
+        "state": "checkpoint-failed",
+    }
+    committed_c.pop("lane_outcome", None)
+    with store.conn.transaction():
+        store.write("agent", "update", str(agent["id"]), strip_row(committed_agent))
+        save_task(store, committed_task)
+    task.clear()
+    task.update(committed_task)
+    agent.clear()
+    agent.update(committed_agent)
+
+
+def _finish_captured_lane(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    returncode: int,
+    timed_out: bool,
+) -> None:
+    """Record one captured lane with the same result transaction as a live launch."""
+    agent_id = str(row["id"])
+    agent = store.row("agent", agent_id)
+    if agent is None or agent.get("status") != "working":
+        return
+    role = str(agent.get("role") or "")
+    vendor = str(agent.get("vendor") or "")
+    if role not in LANE_ROLES:
+        raise CoordinatorError("captured lane role is unknown")
+    c = coord(task)
+    worktree = str(c.get("worktree") or "")
+    if not worktree or not Path(worktree).is_dir():
+        raise CoordinatorError("worktree missing; cannot launch lane")
+    try:
+        ai = load_ai_accounts(store.home)
+        selected = ai.for_lane(
+            worker.session_id, role, vendor, require_execution=False
+        )
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    paths = _lane_capture_paths(worker, str(task["id"]), agent_id)
+    path_replacements = _coordinator_path_replacements(store, worker, task)
+    try:
+        stdout = paths["stdout"].read_text(encoding="utf-8")
+        stderr = paths["stderr"].read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        stdout = ""
+        stderr = ""
+        read_error: BaseException | None = exc
+    else:
+        read_error = None
+    if timed_out:
+        returncode = 124
+        stderr = stderr + "\ntimeout"
+    stderr = _redact_coordinator_lane_text(
+        stderr,
+        config_dir=selected.account.config_dir,
+        path_replacements=path_replacements,
+        limit=None,
+    )
+    output_path = _captured_output_path(store, worker, task, agent, paths)
+    output_file_text = ""
+    if read_error is None and output_path is not None:
+        try:
+            output_file_text = output_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            read_error = exc
+    if read_error is not None:
+        result = unreadable_output_result(
+            role=role,
+            vendor=vendor,
+            model=selected.model,
+            argv=[],
+            returncode=returncode,
+            stderr=stderr,
+            exc=read_error,
+            config_dir=selected.account.config_dir,
+        )
+        finalized = None
+        replay_source = None
+    else:
+        finalized = finalize_lane_output(
+            vendor,
+            stdout,
+            output_file_text,
+            cwd=worktree,
+            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+            config_dir=selected.account.config_dir,
+        )
+        status, model_result = parse_model_result(finalized.source_text, returncode)
+        safe_stdout = _redact_coordinator_lane_text(
+            finalized.text,
+            config_dir=selected.account.config_dir,
+            path_replacements=path_replacements,
+            limit=None,
+        )
+        result = LaneResult(
+            role=role,
+            vendor=vendor,
+            model=selected.model,
+            status=status,
+            argv=[],
+            returncode=returncode,
+            stdout=safe_stdout,
+            stderr=stderr,
+            config_dir=selected.account.config_dir,
+            usage=finalized.usage,
+            tools=finalized.tools,
+            tools_truncated=finalized.tools_truncated,
+            protocol_result=model_result,
+        )
+        replay_source = finalized.source_text
+    round_raw = agent.get("round")
+    round_num = (
+        round_raw
+        if isinstance(round_raw, int) and not isinstance(round_raw, bool)
+        else None
+    )
+    if role != "reviewer" and not role.startswith("pr-reviewer"):
+        _record_lane_audit(
+            store,
+            worker,
+            c,
+            result,
+            task_id=str(task["id"]),
+            agent_id=agent_id,
+            round_num=round_num,
+        )
+    note = redact_lane_text(
+        result.stdout or result.stderr or "",
+        config_dir=result.config_dir,
+        limit=4000,
+    )
+    replay_fields: dict[str, Any] = {}
+    if role == "implementer":
+        try:
+            replay_fields = implementer_replay_fields(
+                replay_source if replay_source is not None else result.stdout,
+                config_dir=result.config_dir,
+                path_replacements=path_replacements,
+            )
+        except CoordinatorError:
+            _close_failed_implementer_checkpoint(
+                store, task, agent, role=role, vendor=vendor
+            )
+            forget_lane_process(worker, str(task["id"]), agent_id)
+            raise
+    finished_lane = {
+        "agent_id": agent_id,
+        "role": role,
+        "vendor": vendor,
+        "state": "finished",
+        "status": result.status,
+        "result": result.protocol_result,
+    }
+    if role == "implementer":
+        committed_task = copy.deepcopy(task)
+        committed_agent = copy.deepcopy(agent)
+        committed_c = coord(committed_task)
+        committed_c["lane"] = finished_lane
+        committed_c["lane_outcome"] = {
+            "role": role,
+            "vendor": vendor,
+            "round": round_num,
+            "agent_id": agent_id,
+            "status": result.status,
+            "result": result.protocol_result,
+            "returncode": result.returncode,
+            "stdout": redact_lane_text(
+                result.stdout, config_dir=result.config_dir, limit=4000
+            ),
+            **replay_fields,
+            "applied": False,
+        }
+        committed_agent["status"] = "done"
+        committed_agent["finished_at"] = utcnow()
+        committed_agent["note"] = note
+        with store.conn.transaction():
+            store.write("agent", "update", agent_id, strip_row(committed_agent))
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        agent.clear()
+        agent.update(committed_agent)
+        forget_lane_process(worker, str(task["id"]), agent_id)
+        return
+    if role == "reviewer" or role.startswith("pr-reviewer"):
+        dimension = str(agent.get("dimension") or "")
+        stage = canonical_stage(str(agent.get("stage") or ""))
+        head = str(agent.get("head_sha") or c.get("head_sha") or "")
+        output_file = str(output_path) if output_path is not None else None
+        try:
+            _write_reviewer_spool(
+                store,
+                worker,
+                task,
+                agent,
+                result,
+                round_num=round_num,
+                head=head,
+                dimension=dimension,
+                stage=stage,
+                output_file=output_file,
+            )
+        except BaseException as exc:  # noqa: BLE001 — CoordinatorError is SystemExit
+            _discard_failed_reviewer_spool(
+                store,
+                worker,
+                str(task["id"]),
+                agent_id,
+                output_file,
+            )
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            if isinstance(exc, SystemExit) and not isinstance(exc, StoreError):
+                raise
+            raise CoordinatorError(REVIEWER_SPOOL_WRITE_ERROR) from exc
+        try:
+            _checkpoint_reviewer_outcome(
+                store,
+                task,
+                agent,
+                result,
+                round_num=round_num,
+                head=head,
+                dimension=dimension,
+                stage=stage,
+                session_id=worker.session_id,
+                lane_marker=finished_lane,
+            )
+        except StoreError:
+            return
+        _cleanup_reviewer_spool(store, worker, str(task["id"]), agent_id, output_file)
+        forget_lane_process(worker, str(task["id"]), agent_id)
+        return
+    raise CoordinatorError("captured lane role is unknown")
+
+
+def _adopt_captured_lane(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    row: dict[str, Any],
+) -> bool:
+    """Wait for one surviving lane and record it. False leaves the old recovery."""
+    task_id = str(task["id"])
+    agent_id = str(row["id"])
+    state = _await_captured_process(worker, task_id, agent_id)
+    timed_out = False
+    if state == "expired":
+        data = _read_lane_process(worker, task_id, agent_id)
+        if data is not None:
+            kill_process_group(data["pid"])
+        timed_out = True
+    elif state != "dead":
+        return False
+    paths = _lane_capture_paths(worker, task_id, agent_id)
+    if timed_out:
+        returncode = 124
+    else:
+        returncode = _wait_capture_returncode(paths["status"])
+        if returncode is None:
+            return False
+    _finish_captured_lane(
+        store,
+        worker,
+        task,
+        row,
+        returncode=returncode,
+        timed_out=timed_out,
+    )
+    return True
+
+
 def recover_working_lanes(
     store: Store, worker: WorkerConfig, task: dict[str, Any]
 ) -> str:
-    """Close working lane rows without a live process: "none", "waiting" or "recovered"; closed check-lane rows alone give "none"."""
+    """Close working lane rows without a live process: "none", "waiting" or "recovered"; closed check-lane rows alone give "none".
+
+    A model lane marked for capture is adopted instead: this call waits for it,
+    or collects the output it already wrote, and records that result once.
+    """
     task_id = str(task["id"])
+    adopted: set[str] = set()
+    for row in list(store.rows("agent")):
+        if row.get("task_id") != task["id"] or row.get("status") != "working":
+            continue
+        if str(row.get("role") or "") == "check":
+            continue
+        agent_id = str(row["id"])
+        if not _capture_marked(worker, task_id, agent_id):
+            continue
+        if _adopt_captured_lane(store, worker, task, row):
+            adopted.add(agent_id)
     closed_rows: list[dict[str, Any]] = []
     lane_alive = False
     for row in store.rows("agent"):
+        current = store.row("agent", str(row.get("id") or ""))
+        if current is None:
+            continue
+        row = current
+        if str(row.get("id") or "") in adopted:
+            continue
         if row.get("task_id") != task["id"] or row.get("status") != "working":
             continue
         agent_id = str(row["id"])
@@ -1573,6 +2009,7 @@ def launch_lane(
 
     aid = str(uuid.uuid4())
     lane_output: str | None = None
+    leave_running = False
     try:
         replay_source: str | None = None
         try:
@@ -1588,10 +2025,11 @@ def launch_lane(
                 )
                 Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
             else:
-                fd, lane_output = tempfile.mkstemp(
-                    prefix=f"agent-coord-{vendor}-", suffix=".txt"
+                lane_output = str(
+                    _lane_capture_paths(worker, str(task["id"]), aid)["provider"]
                 )
-                os.close(fd)
+                Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
+                Path(lane_output).write_text("", encoding="utf-8")
         argv = [
             *selected.env_prefix(),
             *provider_argv(
@@ -1660,8 +2098,14 @@ def launch_lane(
         }
         save_task(store, task)
 
+        capture = _lane_capture_paths(worker, str(task["id"]), aid)
         try:
-            with sanitized_lane_argv(argv) as run_argv:
+            with sanitized_lane_argv(
+                argv,
+                profile_dir=(
+                    None if lane_runner is not None else str(capture["profile"])
+                ),
+            ) as run_argv:
                 argv = run_argv
                 if lane_runner is not None:
                     completed = lane_runner(argv, stdin_text)
@@ -1672,8 +2116,13 @@ def launch_lane(
                         cwd=worktree,
                         stdin_text=stdin_text,
                         on_start=lane_start_recorder(
-                            worker, str(task["id"]), aid
+                            worker, str(task["id"]), aid, capture=True
                         ),
+                        survive_stop=True,
+                        stdout_path=str(capture["stdout"]),
+                        stderr_path=str(capture["stderr"]),
+                        status_path=str(capture["status"]),
+                        pid_path=str(capture["pid"]),
                     )
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
@@ -1786,13 +2235,20 @@ def launch_lane(
                 agent_id=aid,
                 round_num=round_num,
             )
+    except SystemExit as exc:
+        # StoreError and lane failures are SystemExit too, and those lanes
+        # were already stopped. Only a coordinator stop leaves the lane running.
+        if not isinstance(exc, StoreError):
+            leave_running = True
+        raise
     finally:
-        forget_lane_process(worker, str(task["id"]), aid)
-        if lane_output is not None and role != "reviewer":
-            try:
-                os.unlink(lane_output)
-            except OSError:
-                pass
+        if not leave_running:
+            forget_lane_process(worker, str(task["id"]), aid)
+            if lane_output is not None and role != "reviewer":
+                try:
+                    os.unlink(lane_output)
+                except OSError:
+                    pass
 
     # The lane verdict is the script-owned result status. For a normal run it
     # already equals the parsed output status; an unreadable output file keeps
@@ -2787,9 +3243,12 @@ def _prepare_pr_review_agent(
             except OSError:
                 pass
         raise
+    capture = _lane_capture_paths(worker, str(task["id"]), aid)
     return {
         "agent_id": aid,
-        "on_start": lane_start_recorder(worker, str(task["id"]), aid),
+        "on_start": lane_start_recorder(
+            worker, str(task["id"]), aid, capture=True
+        ),
         "forget": functools.partial(
             forget_lane_process, worker, str(task["id"]), aid
         ),
@@ -2798,6 +3257,11 @@ def _prepare_pr_review_agent(
         "argv": argv,
         "stdin_text": stdin_text,
         "output_file": lane_output,
+        "stdout_path": str(capture["stdout"]),
+        "stderr_path": str(capture["stderr"]),
+        "status_path": str(capture["status"]),
+        "pid_path": str(capture["pid"]),
+        "profile_dir": str(capture["profile"]),
         "reviewer_output": (
             _reviewer_output_checkpoint(aid) if lane_output is not None else None
         ),
@@ -2816,16 +3280,47 @@ def _run_prepared(
     lane_runner: LaneRunner | None,
 ) -> tuple[str, Any]:
     """Pure subprocess work for worker threads — no Store access."""
+    leave_running = False
     try:
         argv = list(prepared["argv"])
         stdin_text = prepared["stdin_text"]
         worktree = prepared["worktree"]
         output_file = prepared.get("output_file")
+        stdout_path = prepared.get("stdout_path")
+        stderr_path = prepared.get("stderr_path")
+        status_path = prepared.get("status_path")
+        pid_path = prepared.get("pid_path")
+        profile_dir = prepared.get("profile_dir")
+        supplied = (stdout_path, stderr_path, status_path, pid_path, profile_dir)
+        present = tuple(
+            isinstance(item, str) and item != "" for item in supplied
+        )
+        if any(present) and not all(present):
+            return prepared["agent_id"], CoordinatorError(
+                "lane capture paths are required"
+            )
+        survive = lane_runner is None and all(present)
         try:
-            with sanitized_lane_argv(argv) as run_argv:
+            with sanitized_lane_argv(
+                argv,
+                profile_dir=profile_dir if survive else None,
+            ) as run_argv:
                 argv = run_argv
                 if lane_runner is not None:
                     completed = lane_runner(argv, stdin_text)
+                elif survive:
+                    completed = run_bounded(
+                        argv,
+                        timeout=timeout,
+                        cwd=worktree,
+                        stdin_text=stdin_text,
+                        on_start=prepared.get("on_start"),
+                        survive_stop=True,
+                        stdout_path=stdout_path,
+                        stderr_path=stderr_path,
+                        status_path=status_path,
+                        pid_path=pid_path,
+                    )
                 else:
                     completed = run_bounded(
                         argv,
@@ -2895,10 +3390,15 @@ def _run_prepared(
             tools_truncated=finalized.tools_truncated,
             protocol_result=model_result,
         )
+    except SystemExit as exc:
+        if not isinstance(exc, StoreError):
+            leave_running = True
+        raise
     finally:
-        forget = prepared.get("forget")
-        if callable(forget):
-            forget()
+        if not leave_running:
+            forget = prepared.get("forget")
+            if callable(forget):
+                forget()
 
 
 def _abort_prepared_pr_reviews(

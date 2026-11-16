@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,11 +28,15 @@ from agent_cli.coordinator_lanes import (
 )
 from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
+from agent_cli.coordinator_orders import consume_order_intents
 from agent_cli.store import Store
 from test_coordinator_support import (
     grok_messages_stream,
+    insert_order_intent,
+    make_order_worker,
     make_session,
     make_worker,
+    seed_order_task,
     write_accounts,
 )
 
@@ -636,3 +642,230 @@ def test_recover_closes_a_dead_row_next_to_a_live_one(tmp_path: Path) -> None:
         assert recover_working_lanes(store, worker, task) == "waiting"
         assert store.row("agent", "agent-live")["status"] == "working"
         assert store.row("agent", "agent-dead")["status"] == "done"
+
+
+def _lane_runs(store: Store) -> list[dict]:
+    return [row for row in store.rows("activity") if row.get("type") == "lane.run"]
+
+
+def _implementer_stream() -> str:
+    text = (
+        "STATUS: complete\n"
+        "RESULT: done\n"
+        "SUMMARY_EN: The lane kept running and its result was recorded once.\n"
+        "SUMMARY_DE: Die Lane lief weiter und ihr Ergebnis wurde einmal gespeichert.\n"
+        "REUSED: none — the process record already identifies the lane.\n"
+        "ADDED: none — the captured output is the lane result.\n"
+    )
+    return grok_messages_stream(text)
+
+
+def _prepared_store(tmp_path: Path):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    task = seed_lane_task(store, worker)
+    return store, worker, task
+
+
+def test_coordinator_stop_adopts_a_running_lane(tmp_path: Path) -> None:
+    store, worker, task = _prepared_store(tmp_path)
+    agent_id = "agent-restart"
+    working_row(store, worker, agent_id)
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    marker = tmp_path / "release-lane"
+    program = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from agent_cli.coordinator_config import WorkerConfig\n"
+        "from agent_cli.coordinator_exec import process_scope, run_bounded\n"
+        "from agent_cli.coordinator_lanes import lane_start_recorder\n"
+        "workspace, stdout_path, stderr_path, status_path, pid_path, task_id, agent_id, marker, stream = sys.argv[1:]\n"
+        "worker = WorkerConfig(\n"
+        " session_id='worker-session', review_session=None, workspace_root=Path(workspace),\n"
+        " repositories={}, reply_logins=(), poll_seconds=30, lane_timeout=60, check_timeout=30,\n"
+        ")\n"
+        "script = (\n"
+        " 'import sys, time\\n'\n"
+        " 'from pathlib import Path\\n'\n"
+        " 'sys.stdout.write(\"PARTIAL\\\\n\")\\n'\n"
+        " 'sys.stdout.flush()\\n'\n"
+        " 'sys.stderr.write(\"ERR\\\\n\")\\n'\n"
+        " 'sys.stderr.flush()\\n'\n"
+        " 'deadline = time.time() + 20\\n'\n"
+        " 'while time.time() < deadline and not Path(sys.argv[1]).exists():\\n'\n"
+        " ' time.sleep(0.05)\\n'\n"
+        " 'sys.stdout.write(sys.argv[2])\\n'\n"
+        " 'sys.stdout.flush()\\n'\n"
+        ")\n"
+        "with process_scope():\n"
+        " run_bounded([sys.executable, '-u', '-c', script, marker, stream], timeout=40,\n"
+        "  on_start=lane_start_recorder(worker, task_id, agent_id, capture=True),\n"
+        "  survive_stop=True, stdout_path=stdout_path, stderr_path=stderr_path,\n"
+        "  status_path=status_path, pid_path=pid_path)\n"
+    )
+    owner = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(worker.workspace_root),
+            str(paths["stdout"]),
+            str(paths["stderr"]),
+            str(paths["status"]),
+            str(paths["pid"]),
+            TID,
+            agent_id,
+            str(marker),
+            _implementer_stream(),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    command_pid = None
+    try:
+        record = lane_process_path(worker, TID, agent_id)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and owner.poll() is None:
+            if (
+                paths["pid"].is_file()
+                and record.is_file()
+                and paths["stdout"].is_file()
+                and paths["stderr"].is_file()
+                and "PARTIAL" in paths["stdout"].read_text(encoding="utf-8")
+                and "ERR" in paths["stderr"].read_text(encoding="utf-8")
+            ):
+                command_pid = int(paths["pid"].read_text(encoding="utf-8").strip())
+                saved_process = json.loads(record.read_text(encoding="utf-8"))
+                if (
+                    saved_process.get("capture") is True
+                    and saved_process.get("pid") == command_pid
+                ):
+                    break
+                command_pid = None
+            time.sleep(0.05)
+        assert command_pid is not None, owner.communicate(timeout=5)
+        os.kill(command_pid, 0)
+        owner.send_signal(signal.SIGTERM)
+        owner.communicate(timeout=5)
+        assert owner.returncode == 128 + signal.SIGTERM
+        os.kill(command_pid, 0)
+        marker.write_text("go", encoding="utf-8")
+        assert recover_working_lanes(store, worker, task) == "none"
+    finally:
+        if owner.poll() is None:
+            os.killpg(owner.pid, signal.SIGKILL)
+            owner.communicate(timeout=5)
+        if command_pid is not None:
+            try:
+                os.killpg(command_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    saved = store.row("agent", agent_id)
+    assert saved["status"] == "done"
+    assert saved["note"] != "recovered: no live process"
+    outcome = coord(store.row("task", TID))["lane_outcome"]
+    assert outcome["agent_id"] == agent_id
+    assert outcome["status"] == "complete"
+    assert outcome["result"] == "done"
+    assert outcome["applied"] is False
+    assert len(_lane_runs(store)) == 1
+    assert "lane-failed" not in json.dumps(coord(store.row("task", TID)))
+    assert recover_working_lanes(store, worker, task) == "none"
+    assert len(_lane_runs(store)) == 1
+
+
+def test_finished_lane_is_collected_once_after_downtime(tmp_path: Path) -> None:
+    store, worker, task = _prepared_store(tmp_path)
+    agent_id = "agent-finished"
+    working_row(store, worker, agent_id)
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    completed = run_bounded(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            "import sys; sys.stdout.write(sys.argv[1])",
+            _implementer_stream(),
+        ],
+        timeout=30,
+        on_start=lane_start_recorder(worker, TID, agent_id, capture=True),
+        survive_stop=True,
+        stdout_path=str(paths["stdout"]),
+        stderr_path=str(paths["stderr"]),
+        status_path=str(paths["status"]),
+        pid_path=str(paths["pid"]),
+    )
+    assert completed.returncode == 0
+    assert recover_working_lanes(store, worker, task) == "none"
+    saved = store.row("agent", agent_id)
+    assert saved["status"] == "done"
+    assert saved["note"] != "recovered: no live process"
+    outcome = coord(store.row("task", TID))["lane_outcome"]
+    assert outcome["result"] == "done"
+    assert outcome["returncode"] == 0
+    assert len(_lane_runs(store)) == 1
+    assert recover_working_lanes(store, worker, task) == "none"
+    assert len(_lane_runs(store)) == 1
+    assert not paths["status"].exists()
+
+
+def test_lane_timeout_across_a_restart_kills_and_records_once(tmp_path: Path) -> None:
+    store, worker, task = _prepared_store(tmp_path)
+    agent_id = "agent-timeout"
+    working_row(store, worker, agent_id)
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    paths["stdout"].parent.mkdir(parents=True, exist_ok=True)
+    paths["stdout"].write_text("", encoding="utf-8")
+    paths["stderr"].write_text("", encoding="utf-8")
+    with sleeping_process() as proc:
+        lane_start_recorder(worker, TID, agent_id, capture=True)(proc.pid)
+        record = lane_process_path(worker, TID, agent_id)
+        data = json.loads(record.read_text(encoding="utf-8"))
+        data["started_at"] = "2020-01-01T00:00:00Z"
+        record.write_text(json.dumps(data), encoding="utf-8")
+        assert lane_process_state(worker, TID, agent_id) == "expired"
+        assert recover_working_lanes(store, worker, task) == "none"
+        proc.wait(timeout=5)
+        assert proc.returncode is not None and proc.returncode < 0
+    saved = store.row("agent", agent_id)
+    assert saved["status"] == "done"
+    assert saved["note"] != "recovered: no live process"
+    outcome = coord(store.row("task", TID))["lane_outcome"]
+    assert outcome["status"] == "timeout"
+    assert outcome["returncode"] == 124
+    assert outcome["result"] == ""
+    assert len(_lane_runs(store)) == 1
+    assert recover_working_lanes(store, worker, task) == "none"
+    assert len(_lane_runs(store)) == 1
+    assert store.row("agent", agent_id)["note"] != "recovered: no live process"
+
+
+def test_cancel_still_kills_a_recorded_lane(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_order_worker(tmp_path)
+    task = seed_order_task(store, worker, TID, phase="implement")
+    working_row(store, worker, "agent-cancel")
+    intent_id = insert_order_intent(store, worker, TID, "cancel", reason="stop")
+
+    def runner(*_args, **_kwargs):
+        raise AssertionError("cancel must not call the runner")
+
+    with sleeping_process() as proc:
+        lane_start_recorder(worker, TID, "agent-cancel")(proc.pid)
+        assert lane_process_state(worker, TID, "agent-cancel") == "alive"
+        lines = consume_order_intents(
+            store, worker, task, runner, [store.row("activity", intent_id)]
+        )
+        assert lines == [f"order cancelled {TID}"]
+        proc.wait(timeout=5)
+        assert proc.returncode is not None and proc.returncode < 0
+    saved = store.row("task", TID)
+    assert saved["state"] == "failed"
+    assert coord(saved)["failed_kind"] == "cancelled"
+    assert store.row("agent", "agent-cancel")["status"] == "working"
+    assert _lane_runs(store) == []
