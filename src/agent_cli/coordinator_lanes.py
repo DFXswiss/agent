@@ -432,17 +432,24 @@ def implementer_replay_fields(
 def _incomplete_output_excerpt(outcome: LaneResult) -> str:
     """Last visible line of a reviewer lane's output, or ``""``.
 
-    The incomplete-review blocker quotes this line. Without a valid result the
-    provider's own error is expected on stderr, so stderr is read before
-    stdout. The line is redacted, stripped of terminal control sequences, and
+    The incomplete-review blocker quotes this line. A lane whose status is not
+    ``complete`` (for example ``timeout``, ``partial`` or ``unavailable``), or
+    that returned no valid result, is expected to carry the provider's own
+    error on stderr even when it printed a result token, so stderr is read
+    before stdout; only a complete lane with a valid result reads stdout
+    first. The line is redacted, stripped of terminal control sequences, and
     cut to ``INCOMPLETE_OUTPUT_EXCERPT_LIMIT``. Call it on the complete lane
     output: the stored copies keep the start of a long stream, not its end.
+    The crash-recovery spool, and the replay of a spool or checkpoint saved
+    without an excerpt, call it with the lane's status and result, so every
+    path chooses the same stream.
     """
     from .coordinator_checks import one_line
 
     streams = (
         (outcome.stdout, outcome.stderr)
-        if outcome.protocol_result in _REVIEWER_RESULTS
+        if outcome.status == "complete"
+        and outcome.protocol_result in _REVIEWER_RESULTS
         else (outcome.stderr, outcome.stdout)
     )
     for text in streams:
