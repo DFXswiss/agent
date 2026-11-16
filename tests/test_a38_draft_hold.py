@@ -87,13 +87,13 @@ def test_newest_human_draft_is_a_hold() -> None:
     assert hold == DraftHold(MAINTAINER_ID, "maintainer", "2026-09-05T12:00:00Z")
 
 
-def test_newer_human_ready_releases_the_hold() -> None:
+def test_newer_human_ready_releases_the_hold_but_the_state_is_pending() -> None:
     fake = FakeAPI()
     fake.timeline = [
         _draft(created_at="2026-09-05T10:00:00Z"),
         _ready(created_at="2026-09-05T12:00:00Z", eid=2),
     ]
-    assert _hold(fake) == ("ok", None)
+    assert _hold(fake) == ("pending", None)
 
 
 def test_non_user_ready_does_not_release_a_hold() -> None:
@@ -186,6 +186,21 @@ def test_malformed_ready_is_skipped_and_an_older_draft_holds() -> None:
 def test_newest_ready_without_a_hold_is_pending() -> None:
     fake = FakeAPI()
     fake.timeline = [_ready()]
+    assert _hold(fake) == ("pending", None)
+
+
+def test_newest_ready_with_older_draft_events_of_every_actor_is_pending() -> None:
+    fake = FakeAPI()
+    fake.timeline = [
+        _ready(created_at="2026-09-05T10:00:00Z", eid=1),
+        _draft(
+            uid=BOT_ID,
+            login="github-actions[bot]",
+            created_at="2026-09-05T11:00:00Z",
+            eid=2,
+        ),
+        _ready(created_at="2026-09-05T12:00:00Z", eid=3),
+    ]
     assert _hold(fake) == ("pending", None)
 
 
@@ -338,6 +353,40 @@ def test_hold_appearing_at_the_final_check_blocks_ready(
     monkeypatch.setattr(a38_guard, "load_draft_hold", staged_hold)
     result = reconcile_pull(fake.api(), REPO, 1)
     assert len(calls) >= 2
+    assert result.lifecycle["action"] == "unchanged"
+    assert "draft held by maintainer" in result.lifecycle["reasons"]
+    assert fake.transitions == []
+    assert fake.pull["draft"]
+
+
+def test_pending_at_the_final_check_blocks_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    calls: list[int] = []
+
+    def staged_hold(api, repo, number, *, guard_user_id):
+        calls.append(1)
+        if len(calls) == 1:
+            return "ok", None
+        return "pending", None
+
+    monkeypatch.setattr(a38_guard, "load_draft_hold", staged_hold)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert len(calls) >= 2
+    assert result.lifecycle["action"] == "unchanged"
+    assert "draft hold pending" in result.lifecycle["reasons"]
+    assert fake.transitions == []
+    assert fake.pull["draft"]
+
+
+def test_a_review_record_before_the_hold_does_not_release_it() -> None:
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    # The injected first-run review record for this head is created in 2099.
+    fake.timeline = [_draft(created_at="2100-01-01T00:00:00Z")]
+    result = reconcile_pull(fake.api(), REPO, 1)
     assert result.lifecycle["action"] == "unchanged"
     assert "draft held by maintainer" in result.lifecycle["reasons"]
     assert fake.transitions == []

@@ -224,6 +224,38 @@ def test_visible_transition_sentences_green_ready_names_the_one_review_exception
     assert "Two review comments are required." not in en
 
 
+def test_visible_transition_sentences_draft_names_the_stale_record_head():
+    record_head = "b" * 12
+    current_head = "a" * 12
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            f"review head {record_head} is not the current head {current_head}"
+        ],
+    })
+    assert (
+        f"The review record names `{record_head}`, but the current head "
+        f"`{current_head}` changes more than markdown files after it."
+    ) in en
+    assert (
+        f"Der Review-Nachweis nennt `{record_head}`, aber der aktuelle Head "
+        f"`{current_head}` ändert danach mehr als Markdown-Dateien."
+    ) in de
+
+
+def test_visible_transition_sentences_ready_names_a_markdown_only_ancestor():
+    ancestor = "b" * 40
+    current = "a" * 40
+    en, de = visible_transition_sentences({
+        "state": "ready",
+        "head": current,
+        "reasons": [],
+        "review_heads": [ancestor],
+    })
+    assert "changes only markdown files after it" in en
+    assert "ändert danach nur Markdown-Dateien" in de
+
+
 def test_visible_transition_sentences_queued_ci():
     en, de = visible_transition_sentences({
         "state": "draft",

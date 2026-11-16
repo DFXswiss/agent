@@ -248,8 +248,9 @@ def _draft_hold_state(
 
     A hold is released by a first-run review record for the current head
     created strictly after it. ``unavailable`` fails closed while the pull
-    is draft and blocks a Ready mutation. ``pending`` means the timeline has
-    no draft event and the newest relevant event is Ready.
+    is draft and blocks a Ready mutation. ``pending`` means the newest
+    relevant timeline event is Ready while the pull is draft, so the timeline
+    has not caught up; it blocks a Ready mutation too.
     """
     if status == "unavailable":
         return "unavailable", _DRAFT_HOLD_UNAVAILABLE
@@ -1658,7 +1659,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 else first_created_at
             ),
         )
-        if final_hold_state in {"active", "unavailable"}:
+        if final_hold_state in {"active", "unavailable", "pending"}:
             blocked = list(final_reasons)
             if final_hold_reason and final_hold_reason not in blocked:
                 blocked.insert(0, final_hold_reason)

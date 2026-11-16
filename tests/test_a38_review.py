@@ -2515,6 +2515,35 @@ def test_stale_second_run_does_not_hide_an_older_signal() -> None:
     assert reasons == []
 
 
+def test_exact_head_second_run_is_the_signal_over_a_newer_stale_one() -> None:
+    exact = _second_run_comment(
+        _v2_second(blocks_merge=False, defects=0),
+        cid=8,
+        created="2026-09-02T00:00:00Z",
+    )
+    stale = _ancestor_second_run(cid=9, created="2026-09-03T00:00:00Z")
+    ok, reasons = _gate(
+        _ancestor_api([{"status": "modified", "filename": "src/app.py"}]),
+        [_first_run_comment(), exact, stale],
+    )
+    assert ok is True
+    assert reasons == []
+
+
+def test_a_stale_second_run_alone_is_not_a_missing_second_review() -> None:
+    stale = _ancestor_second_run(cid=9, created="2026-09-03T00:00:00Z")
+    ok, reasons = _gate(
+        _ancestor_api([{"status": "modified", "filename": "src/app.py"}]),
+        [_first_run_comment(), stale],
+    )
+    assert ok is False
+    assert reasons == [
+        f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"
+    ]
+    assert SECOND_REVIEW_MISSING not in reasons
+    assert BLOCKING_REVIEW_REASON not in reasons
+
+
 def test_unreadable_second_run_ancestry_outranks_stale() -> None:
     broken_head = "c" * 40
     broken = _ancestor_second_run(

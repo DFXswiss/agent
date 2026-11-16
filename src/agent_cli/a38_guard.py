@@ -2798,18 +2798,18 @@ def load_draft_hold(
 ) -> tuple[str, DraftHold | None]:
     """The newest human draft hold, or a reason no hold can be read.
 
-    Returns ``("ok", draft_hold_or_none)``, ``("pending", None)`` when the
-    timeline has no ``convert_to_draft`` event and its newest relevant event
-    is a ``ready_for_review``, or ``("unavailable", None)`` when the timeline
-    or the newest draft event cannot be read. A non-``User`` draft event does
-    not hold. The guard's own draft event does not hold. A newer ``User``
-    ready event releases an older draft event, so no hold remains. A malformed
-    ready event is skipped, as the existing ready-actor timeline reader skips
-    it. The caller decides whether a pending state still blocks a mutation.
+    Returns ``("ok", draft_hold_or_none)``, ``("pending", None)`` when no hold
+    is found and the newest relevant event is a ``ready_for_review``, or
+    ``("unavailable", None)`` when the timeline or the newest draft event
+    cannot be read. A non-``User`` draft event does not hold. The guard's own
+    draft event does not hold. A newer ``User`` ready event releases an older
+    draft event, so no hold remains; older draft events do not change that.
+    A malformed ready event is skipped, as the existing ready-actor timeline
+    reader skips it, but it still makes the state pending. The caller decides
+    whether a pending state still blocks a mutation.
     """
     newest_is_ready = False
     seen_event = False
-    saw_draft = False
     ready_released = False
     try:
         for event in _iter_timeline_events(api, repo, number):
@@ -2838,11 +2838,9 @@ def load_draft_hold(
                 if not isinstance(login, str) or type(actor_id) is not int:
                     continue
                 # A person's Ready event ends every older hold. Keep walking
-                # only to learn whether any draft event exists at all: that
-                # decides pending (no draft event) versus settled (released).
+                # so an older draft event still cannot hold.
                 ready_released = True
                 continue
-            saw_draft = True
             if ready_released:
                 # Older than the newest person's Ready event, so it cannot
                 # hold, and its shape no longer matters.
@@ -2862,8 +2860,6 @@ def load_draft_hold(
             return "ok", DraftHold(id=actor_id, login=login, created_at=created_at)
     except _TimelineUnavailable:
         return "unavailable", None
-    if ready_released:
-        return ("ok" if saw_draft else "pending"), None
     if newest_is_ready:
         return "pending", None
     return "ok", None
