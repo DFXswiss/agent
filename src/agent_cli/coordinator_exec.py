@@ -307,13 +307,13 @@ def _await_command_pid(pid_path: str, proc: subprocess.Popen) -> int | None:
 
 def _captured_streams(stdout_path: str, stderr_path: str) -> tuple[str, str, str | None]:
     """Durable lane output, or ``(empty, empty, diagnostic)`` when it cannot be read."""
+    from .lane import output_read_failure
+
     try:
         stdout = Path(stdout_path).read_text(encoding="utf-8")
         stderr = Path(stderr_path).read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return "", "", "lane output file is not valid UTF-8"
-    except OSError:
-        return "", "", "lane output file is unavailable"
+    except (UnicodeDecodeError, OSError) as exc:
+        return "", "", output_read_failure(exc)
     return stdout, stderr, None
 
 
@@ -364,10 +364,14 @@ def _run_surviving_process(
 
     The recorded pid is the command, not this wrapper. Stdout, stderr, that pid
     and the return code are files the next coordinator can read. A stop signal
-    leaves both processes running. Timeout and any other failure still kill them.
+    leaves both processes running only after ``on_start`` has returned, which is
+    when the capture record is durable. Timeout and any other failure still kill
+    them. Missing capture directories are created here.
     """
     if not stdout_path or not stderr_path or not status_path or not pid_path:
         return Completed(127, "", "lane capture paths are required")
+    for capture_path in (stdout_path, stderr_path, status_path, pid_path):
+        Path(capture_path).parent.mkdir(parents=True, exist_ok=True)
     stdout_handle = open(stdout_path, "wb")
     stderr_handle = open(stderr_path, "wb")
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
@@ -393,6 +397,9 @@ def _run_surviving_process(
         stderr_handle.close()
     assert proc is not None
     abandoned = False
+    # True only after on_start returns. Until then a stop must not leave the
+    # command running: the capture record is written inside that callback.
+    recorded = False
     command_pid: int | None = None
     try:
         command_pid = _await_command_pid(pid_path, proc)
@@ -412,10 +419,27 @@ def _run_surviving_process(
             if tracked is not None:
                 tracked.command_pid = command_pid
         if on_start is not None:
+            # Hold SIGTERM and SIGINT across the start record. The recorder's
+            # ps is a child this handler would otherwise kill before the record
+            # exists, and the command would keep running unmarked.
+            held = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
+            )
             try:
-                on_start(command_pid)
-            except Exception:  # noqa: BLE001 — bookkeeping must not break the run
-                pass
+                try:
+                    on_start(command_pid)
+                except Exception:  # noqa: BLE001 — failed bookkeeping must not leave the lane running
+                    _signal_command(command_pid, proc, signal.SIGKILL)
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    return _completed_from_capture(
+                        stdout_path, stderr_path, status_path, forced=None
+                    )
+                recorded = True
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
         proc.communicate(
             input=None if stdin_text is None else stdin_text.encode("utf-8"),
             timeout=timeout,
@@ -437,7 +461,7 @@ def _run_surviving_process(
             stdout_path, stderr_path, status_path, forced=124
         )
     except SystemExit:
-        abandoned = True
+        abandoned = recorded
         raise
     except BaseException:
         _signal_command(command_pid, proc, signal.SIGKILL)

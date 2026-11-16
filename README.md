@@ -210,7 +210,8 @@ Installation starts with no configured worker. `agent coordinate --session ID`
 advances one worker; `--follow` lets the script observe later events. The daemon
 starts configured workers on startup; changing its worker set requires a restart.
 Restarting the daemon or `agent coordinate --follow` leaves a running model lane
-in place. The next coordinator reads that lane's saved process id, start time,
+in place once its process record is durable. A stop before that record is written
+ends the lane. The next coordinator reads that lane's saved process id, start time,
 and durable stdout and stderr, waits for the lane, and records its result once.
 A lane that finished in the gap is recorded from those files. `lane_timeout`
 still runs from the original start, and cancelling an order still kills the

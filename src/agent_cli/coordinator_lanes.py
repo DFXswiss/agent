@@ -1304,7 +1304,10 @@ def lane_start_recorder(
             temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
             temporary.replace(path)
         except OSError:
-            pass
+            if capture:
+                # The runner ends the lane when this raises. Swallowing it
+                # would leave the command running with no capture mark.
+                raise
 
     return record
 
@@ -1494,8 +1497,14 @@ def _close_failed_implementer_checkpoint(
     *,
     role: str,
     vendor: str,
+    surface_repair: dict[str, Any] | None = None,
 ) -> None:
-    """Close an implementer whose result cannot be checkpointed, then the caller raises."""
+    """Close an implementer whose result cannot be checkpointed.
+
+    ``surface_repair`` is the marker of a repair round already opened for a
+    malformed surface list. The implement phase resumes that round. Without
+    it the caller raises.
+    """
     committed_task = copy.deepcopy(task)
     committed_agent = copy.deepcopy(agent)
     committed_c = coord(committed_task)
@@ -1509,6 +1518,8 @@ def _close_failed_implementer_checkpoint(
         "state": "checkpoint-failed",
     }
     committed_c.pop("lane_outcome", None)
+    if surface_repair is not None:
+        committed_c["surface_repair"] = surface_repair
     with store.conn.transaction():
         store.write("agent", "update", str(agent["id"]), strip_row(committed_agent))
         save_task(store, committed_task)
@@ -1648,6 +1659,35 @@ def _finish_captured_lane(
                 config_dir=result.config_dir,
                 path_replacements=path_replacements,
             )
+        except MalformedSurfaceCheckpoint as exc:
+            # The lane.run audit above is the recorded result. Opening the
+            # repair round here lets phase_implement resume it; raising would
+            # become a phase-error before that handler runs.
+            repair: dict[str, Any] | None = None
+            if round_num is not None and task.get("current_round") == round_num:
+                from .coordinator_runtime import _prepare_surface_repair
+
+                prepared = _prepare_surface_repair(
+                    store,
+                    task,
+                    round_num=round_num,
+                    rule=exc.rule,
+                    line=exc.line,
+                )
+                if prepared is not None:
+                    repair = prepared[1]
+            _close_failed_implementer_checkpoint(
+                store,
+                task,
+                agent,
+                role=role,
+                vendor=vendor,
+                surface_repair=repair,
+            )
+            forget_lane_process(worker, str(task["id"]), agent_id)
+            if repair is None:
+                raise
+            return
         except CoordinatorError:
             _close_failed_implementer_checkpoint(
                 store, task, agent, role=role, vendor=vendor

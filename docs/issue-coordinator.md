@@ -468,9 +468,10 @@ pair.
    saved process id and start time. Implement, inner review, gate and
    pull-request review lanes write stdout and stderr into the task control
    directory while they run. SIGTERM or SIGINT to `agent daemon` or to
-   `agent coordinate --follow` does not kill those process groups. The
-   coordinator started afterwards recognises the same process id and start
-   time, waits for the lane and records its result once. It does not close that
+   `agent coordinate --follow` does not kill the process group of a lane whose
+   process record is already durable. A stop before that record is written ends
+   the lane. The coordinator started afterwards recognises the same process id
+   and start time, waits for the lane and records its result once. It does not close that
    row with `recovered: no live process`, does not start the lane again, and
    does not raise the `lane-failed` blocker. A lane that already finished is
    collected from those files on the next start and recorded once.

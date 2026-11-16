@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,7 +16,7 @@ import pytest
 
 from agent_cli import coordinator_lanes
 from agent_cli.coordinator_common import control_dir, coord
-from agent_cli.coordinator_exec import run_bounded
+from agent_cli.coordinator_exec import process_scope, run_bounded
 from agent_cli.coordinator_lanes import (
     _prepare_pr_review_agent,
     _run_prepared,
@@ -841,6 +842,178 @@ def test_lane_timeout_across_a_restart_kills_and_records_once(tmp_path: Path) ->
     assert recover_working_lanes(store, worker, task) == "none"
     assert len(_lane_runs(store)) == 1
     assert store.row("agent", agent_id)["note"] != "recovered: no live process"
+
+
+def _capture_files(root: Path) -> dict[str, str]:
+    return {
+        "stdout_path": str(root / "lane.stdout"),
+        "stderr_path": str(root / "lane.stderr"),
+        "status_path": str(root / "lane.status"),
+        "pid_path": str(root / "lane.pid"),
+    }
+
+
+def _wait_until_dead(pid: int) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    os.killpg(pid, signal.SIGKILL)
+    raise AssertionError(f"lane {pid} still alive")
+
+
+@pytest.mark.no_pg
+def test_surviving_lane_creates_a_missing_capture_directory(tmp_path: Path) -> None:
+    root = tmp_path / "missing" / "lanes"
+    completed = run_bounded(
+        [sys.executable, "-c", "print('ok')"],
+        timeout=10,
+        survive_stop=True,
+        clear_ambient_github=False,
+        **_capture_files(root),
+    )
+    assert completed.returncode == 0
+    assert (root / "lane.stdout").read_text(encoding="utf-8") == "ok\n"
+
+
+@pytest.mark.no_pg
+def test_stop_before_the_capture_record_kills_the_lane(tmp_path: Path) -> None:
+    seen: dict[str, int] = {}
+
+    def stop(pid: int) -> None:
+        seen["pid"] = pid
+        raise SystemExit(128 + signal.SIGTERM)
+
+    with pytest.raises(SystemExit):
+        run_bounded(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            timeout=30,
+            on_start=stop,
+            survive_stop=True,
+            clear_ambient_github=False,
+            **_capture_files(tmp_path / "lanes"),
+        )
+    _wait_until_dead(seen["pid"])
+
+
+@pytest.mark.no_pg
+def test_capture_record_write_failure_does_not_leave_the_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    agent_id = "agent-unwritable"
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    real_replace = Path.replace
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        if self.name.endswith(".tmp") and target.name.endswith(".json"):
+            raise OSError("read-only record")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    seen: dict[str, int] = {}
+    record = lane_start_recorder(worker, TID, agent_id, capture=True)
+
+    def remember(pid: int) -> None:
+        seen["pid"] = pid
+        record(pid)
+
+    completed = run_bounded(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        timeout=30,
+        on_start=remember,
+        survive_stop=True,
+        clear_ambient_github=False,
+        stdout_path=str(paths["stdout"]),
+        stderr_path=str(paths["stderr"]),
+        status_path=str(paths["status"]),
+        pid_path=str(paths["pid"]),
+    )
+    assert completed.returncode != 124
+    assert not lane_process_path(worker, TID, agent_id).exists()
+    _wait_until_dead(seen["pid"])
+
+
+@pytest.mark.no_pg
+def test_stop_during_process_start_keeps_the_recorded_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    agent_id = "agent-stop-during-ps"
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    started = threading.Event()
+    release = threading.Event()
+    real_start = coordinator_lanes.process_start_time
+
+    def slow_start(pid: int, configured) -> str:
+        started.set()
+        if not release.wait(timeout=5):
+            raise AssertionError("stop was not sent")
+        return real_start(pid, configured)
+
+    monkeypatch.setattr(coordinator_lanes, "process_start_time", slow_start)
+
+    def send_stop() -> None:
+        # Keep the signal pending for the masked main thread. A second thread
+        # that accepts SIGTERM would run the handler before the record exists.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        if not started.wait(timeout=5):
+            return
+        os.kill(os.getpid(), signal.SIGTERM)
+        release.set()
+
+    thread = threading.Thread(target=send_stop)
+    command_pid: int | None = None
+    wrapper_pid: int | None = None
+    thread.start()
+    try:
+        with pytest.raises(SystemExit) as raised:
+            with process_scope():
+                run_bounded(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    timeout=30,
+                    on_start=lane_start_recorder(
+                        worker, TID, agent_id, capture=True
+                    ),
+                    survive_stop=True,
+                    clear_ambient_github=False,
+                    stdout_path=str(paths["stdout"]),
+                    stderr_path=str(paths["stderr"]),
+                    status_path=str(paths["status"]),
+                    pid_path=str(paths["pid"]),
+                )
+        assert raised.value.code == 128 + signal.SIGTERM
+        saved = json.loads(
+            lane_process_path(worker, TID, agent_id).read_text(encoding="utf-8")
+        )
+        assert saved.get("capture") is True
+        assert str(saved.get("lstart") or "")
+        command_pid = int(saved["pid"])
+        os.kill(command_pid, 0)
+        parent = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(command_pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        wrapper_text = (parent.stdout or "").strip()
+        if wrapper_text:
+            wrapper_pid = int(wrapper_text)
+    finally:
+        thread.join(timeout=5)
+        if command_pid is not None:
+            try:
+                os.killpg(command_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if wrapper_pid is not None:
+            try:
+                os.kill(wrapper_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_cancel_still_kills_a_recorded_lane(tmp_path: Path) -> None:
