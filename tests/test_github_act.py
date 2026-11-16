@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -1919,6 +1920,95 @@ def test_execute_activity_does_not_run_a_type_it_does_not_own(tmp_path: Path) ->
     _owned_session(store)
     _pending(store, "query-1", "query.request", {})
     assert execute_activity(store, lambda _argv: Completed(0, "[]", ""), "query-1") is None
+
+
+def test_two_executors_post_one_review_through_the_activity_lock(
+    tmp_path: Path,
+) -> None:
+    # The worker's execute_activity and a scheduled scan can name the same
+    # pending row. Both would list reviews, find nothing and POST the same
+    # marker unless the shared per-row path serializes them. The second
+    # executor waits on the activity lock and then skips the now-done row.
+    from contextlib import contextmanager
+
+    first_store = Store(tmp_path)
+    second_store = Store(tmp_path)
+    _owned_session(first_store)
+    configure_accounts(tmp_path, ["s1"], login="theo-vane")
+    act_id = "r-concurrent"
+    review_url = (
+        "https://github.com/dfxswiss/agent/pull/3#pullrequestreview-91"
+    )
+    _pending(
+        first_store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "one finding"},
+    )
+    posts: list[list[str]] = []
+    first_in_post = threading.Event()
+    second_entering = threading.Event()
+    release_first = threading.Event()
+    real_exclusive = second_store.exclusive
+
+    @contextmanager
+    def observed_exclusive(key: str):
+        # Signal before waiting for the lock, so the first executor can tell
+        # that the second reached the shared per-row path and stayed pending.
+        second_entering.set()
+        with real_exclusive(key):
+            yield
+
+    second_store.exclusive = observed_exclusive  # type: ignore[method-assign]
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posts.append(list(argv))
+            first_in_post.set()
+            assert second_entering.wait(5)
+            assert release_first.wait(5)
+            return Completed(
+                0, json.dumps({"id": 91, "html_url": review_url}), ""
+            )
+        return Completed(0, json.dumps([]), "")
+
+    wrapped = transport(runner, login="theo-vane")
+    results: dict[str, list[Any]] = {"first": [], "second": []}
+
+    def first() -> None:
+        results["first"].append(
+            account_execute_activity(first_store, wrapped, act_id)
+        )
+
+    def second() -> None:
+        assert first_in_post.wait(5)
+        results["second"].append(
+            account_execute_activity(second_store, wrapped, act_id)
+        )
+
+    first_thread = threading.Thread(target=first)
+    first_thread.start()
+    assert first_in_post.wait(5)
+    second_thread = threading.Thread(target=second)
+    second_thread.start()
+    assert second_entering.wait(5)
+    # The second executor is now at the advisory lock. The first still holds
+    # it and has not marked the row done, so without the lock the second would
+    # list an empty review set and post a duplicate.
+    time.sleep(0.2)
+    assert results["second"] == [], "the second executor did not wait for the lock"
+    release_first.set()
+    first_thread.join(5)
+    second_thread.join(5)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+
+    assert results["first"] == [f"review.post {act_id} done"]
+    assert results["second"] == [None]
+    assert len(posts) == 1
+    row = first_store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
 
 
 def test_execute_activity_refuses_an_account_switch(tmp_path: Path) -> None:

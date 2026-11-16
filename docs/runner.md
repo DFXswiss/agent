@@ -169,9 +169,12 @@ its working directory; an operator does not normally run it. It performs one
    remove the protocol lines, and refuse an empty review or a formatted body
    over 60,000 characters.
 8. Insert a deterministic `review.post` (COMMENT) bound to the checked-out
-   head. Its id includes the job, the attempt count and the head, so a retry
-   gets its own row while re-running one attempt reuses its own. A row already
-   `done` is not executed again; an `error` row is reset to `pending`.
+   head and to the GitHub account validated before the lane. Its id includes
+   the job, the attempt count and the head, so a retry gets its own row while
+   re-running one attempt reuses its own. A row already `done` is not executed
+   again; an `error` row is reset to `pending`. Because the row carries that
+   account binding, a session binding that changes during the lane cannot post
+   the review through another login: the executor refuses the switch.
 9. Execute the activity through the script's GitHub executor, require the row
    to be `done`, append `worker: review posted`, and write the exit file.
 

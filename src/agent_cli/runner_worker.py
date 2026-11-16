@@ -435,8 +435,14 @@ def _queue_review(
     number: int,
     head: str,
     body: str,
+    account: github_accounts.Account,
 ) -> bool:
     """Insert or re-open the deterministic review activity.
+
+    The account validated before the lane is pinned on a new row, in the same
+    shape `github_act` uses. The executor refuses a row whose current session
+    binding differs from that pin, so a binding that changes during the lane
+    cannot post this review through another login.
 
     Returns True when the activity still has to be executed. A row that is
     already `done` is left exactly as it is and needs no second posting; a row
@@ -458,6 +464,10 @@ def _queue_review(
     }
     existing = store.row("activity", activity_id)
     if existing is None:
+        payload["execution_account"] = {
+            "account": account.name,
+            "login": account.login.casefold(),
+        }
         store.write("activity", "insert", activity_id, payload)
         return True
     if existing.get("_origin_device_id") != store.device_id():
@@ -744,6 +754,7 @@ def _run_worker_body(
             number=number,
             head=head,
             body=final_body,
+            account=account,
         )
     except (Exception, SystemExit) as exc:
         raise _WorkerError(FAILED_ACTIVITY) from exc

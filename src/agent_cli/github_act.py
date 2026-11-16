@@ -63,6 +63,11 @@ def a38_report_task_lock(task_id: object) -> str:
     return f"coordinator-a38-report-task:{task_id}"
 
 
+def github_activity_lock(activity_id: str) -> str:
+    """Cross-process serialization key for one non-report GitHub activity row."""
+    return f"github-activity:{activity_id}"
+
+
 def coordinator_a38_report_activity_id(
     task_id: str,
     *,
@@ -1201,18 +1206,22 @@ def _execute_row(
 
 
 def _execute_row_bound(store: Store, runner: Runner, row: dict[str, Any]) -> str | None:
-    """Run one row completely, including the A38 report lock and revalidation.
+    """Run one row completely, including its lock and pending re-read.
 
     This is the whole per-row path: account binding, per-type dispatch, the A38
     report task/activity locks with their pending re-read and intent
-    revalidation, and per-row error marking. `scan_github` and
-    `execute_activity` both call it, so a directly named row receives exactly
-    the protection a scanned row receives.
+    revalidation, the generic per-activity lock and pending re-read for every
+    other row, and per-row error marking. `scan_github` and `execute_activity`
+    both call it, so a directly named row receives exactly the protection a
+    scanned row receives: two executors cannot both list the target and then
+    both post the same marker.
 
-    Returns the status line, or `None` when a concurrent invalidation made the
-    row stop being pending while this call waited for its lock.
+    Returns the status line, or `None` when a concurrent executor or
+    invalidation made the row stop being pending while this call waited for its
+    lock.
     """
     typ = row.get("type")
+    activity_id = str(row.get("id") or "")
     try:
         if typ == "comment.post" and _is_a38_report_activity(store, row):
             task_id = _a38_report_task_id(store, row)
@@ -1222,11 +1231,9 @@ def _execute_row_bound(store: Store, runner: Runner, row: dict[str, Any]) -> str
                         store.exclusive(a38_report_task_lock(task_id))
                     )
                 locks.enter_context(
-                    store.exclusive(
-                        a38_report_activity_lock(str(row.get("id") or ""))
-                    )
+                    store.exclusive(a38_report_activity_lock(activity_id))
                 )
-                current = store.row("activity", str(row.get("id") or ""))
+                current = store.row("activity", activity_id)
                 if (
                     not isinstance(current, dict)
                     or current.get("execution_status") != "pending"
@@ -1237,7 +1244,14 @@ def _execute_row_bound(store: Store, runner: Runner, row: dict[str, Any]) -> str
                     _retire_a38_report_activity(store, current, error=report_error)
                     return f"comment.post {current.get('id')} error"
                 return _execute_row(store, runner, current, a38_report=True)
-        return _execute_row(store, runner, row)
+        with store.exclusive(github_activity_lock(activity_id)):
+            current = store.row("activity", activity_id)
+            if (
+                not isinstance(current, dict)
+                or current.get("execution_status") != "pending"
+            ):
+                return None
+            return _execute_row(store, runner, current)
     except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
         rid = str(row.get("id") or "?")
         _mark(store, row, status="error", error=str(exc))

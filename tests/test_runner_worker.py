@@ -41,6 +41,9 @@ class _FakeAccount:
     def __init__(self, login: str = "example-bot", name: str = "test") -> None:
         self.name = name
         self.login = login
+        # The executor reads these when it redacts a failed row's error.
+        self.gh_config_dir = "/test/gh"
+        self.git_identity: dict[str, str] | None = None
 
     def runner(self, runner: Any) -> Any:
         return runner
@@ -1114,6 +1117,87 @@ def test_worker_fails_when_the_review_was_not_posted(
 
     assert code == 2
     assert runner_worker.FAILED_REVIEW_POST in _transcript(paths)
+
+
+def test_worker_pins_the_account_validated_before_the_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The account is checked against `expected_gh_user` before the lane. If the
+    # session binding changes during the lane, the queued row must still carry
+    # the validated account so the executor refuses the switch: the review is
+    # not posted through the new login.
+    from agent_cli import github_act
+
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    validated = _FakeAccount(login="example-bot", name="test")
+    switched = _FakeAccount(login="someone-else", name="other")
+
+    class _SwitchingAccounts:
+        account = validated
+
+        def for_session(self, _session_id: str) -> _FakeAccount:
+            return self.account
+
+    accounts = _SwitchingAccounts()
+    monkeypatch.setattr(
+        runner_worker.github_accounts,
+        "load_accounts",
+        lambda _home: accounts,
+    )
+    monkeypatch.setattr(github_act, "load_accounts", lambda _home: accounts)
+    launches: list[dict[str, Any]] = []
+    calls: list[list[str]] = []
+
+    def launch(**kwargs: Any) -> LaneResult:
+        launches.append(kwargs)
+        # The session's binding changes while the lane runs.
+        accounts.account = switched
+        return LaneResult(
+            role="reviewer",
+            vendor=str(kwargs["vendor"]),
+            model="m",
+            status="complete",
+            argv=[],
+            returncode=0,
+            stdout="Finding.\nSTATUS: complete\nRESULT: approved\n",
+            stderr="",
+            protocol_result="approved",
+        )
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "[]", "")
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=launch,
+        execute=lambda store, _runner, activity_id: github_act.execute_activity(
+            store, runner, activity_id
+        ),
+    )
+
+    assert code == 2
+    assert len(launches) == 1
+    assert runner_worker.FAILED_REVIEW_POST in _transcript(paths)
+    # The executor refused before any gh call, so nothing was posted.
+    assert not any("-X" in argv and "POST" in argv for argv in calls)
+    activity_id = runner_worker._review_activity_id(
+        job_id="job-1", attempts=0, head=HEAD
+    )
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+    finally:
+        store.close()
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "account binding changed" in row["execution_error"].lower()
+    assert row["execution_account"] == {
+        "account": "test",
+        "login": "example-bot",
+    }
 
 
 def test_worker_does_not_execute_an_activity_that_is_already_done(
