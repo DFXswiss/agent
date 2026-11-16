@@ -130,6 +130,9 @@ def _ingest_runner(
         joined = " ".join(argv)
         if "api user" in joined:
             return _completed(0, f"{login}\n")
+        # The PATCH URL contains "notifications" too, so it is answered first.
+        if "notifications/threads/" in joined:
+            return _completed()
         if joined.endswith("--slurp notifications"):
             return _completed(0, json.dumps([notifications or []]))
         if "/comments" in joined:
@@ -171,6 +174,7 @@ def test_ingest_creates_a_job_for_an_admitted_mention(
             calls=calls,
             notifications=[
                 {
+                    "id": "1001",
                     "repository": {"full_name": "owner/name"},
                     "subject": {"url": "https://api.github.com/repos/owner/name/issues/7"},
                 }
@@ -193,6 +197,82 @@ def test_ingest_creates_a_job_for_an_admitted_mention(
     finally:
         store.close()
     assert f"job.queued {expected}" in capsys.readouterr().out
+
+
+def test_a_handled_notification_does_not_requeue_a_pruned_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Once prune deletes the finished row, an unread notification would queue
+    # the same request again. Marking it read is what prevents that.
+    home = tmp_path / "home"
+    _write_policy(home)
+    _write_runner_config(home, {"retention_days": {"done": 1}})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    read: set[str] = set()
+    notification = {
+        "id": "1001",
+        "repository": {"full_name": "owner/name"},
+        "subject": {"url": "https://api.github.com/repos/owner/name/issues/7"},
+    }
+
+    def run(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        # The notification list honours the read flag, the way GitHub does.
+        if "notifications/threads/" in joined:
+            read.add(argv[-1].rsplit("/", 1)[-1])
+            return _completed()
+        if joined.endswith("--slurp notifications"):
+            return _completed(0, json.dumps([[] if read else [notification]]))
+        if "/comments" in joined:
+            return _completed(
+                0,
+                json.dumps(
+                    [
+                        [
+                            {
+                                "body": "@example-bot pr-review please",
+                                "user": {"login": "alice"},
+                            }
+                        ]
+                    ]
+                ),
+            )
+        if "--jq .private" in joined:
+            return _completed(0, "false\n")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    created = job_id("owner/name", "7", "pr-review")
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    store = Store(home)
+    try:
+        row = store.row("job", created)
+        assert row is not None
+        done = {key: value for key, value in row.items() if not key.startswith("_")}
+        done.update({"state": "done", "finished": "2020-01-01T00:00:00Z"})
+        store.write("job", "update", created, done)
+    finally:
+        store.close()
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        assert store.row("job", created) is None
+    finally:
+        store.close()
+
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    store = Store(home)
+    try:
+        assert store.rows("job") == []
+    finally:
+        store.close()
 
 
 def test_ingest_fails_closed_when_gh_is_another_account(

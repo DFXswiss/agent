@@ -86,7 +86,9 @@ Reads `policy.json`, verifies the GitHub login, scans notifications through
 `gh`, and inserts a queued row for every admitted mention. The session id is
 recorded on the row and may contain only letters, digits, `_` and `-`.
 De-duplication uses the whole store, including rows written by other devices,
-so the same request is one job.
+so the same request is one job. A notification that led to a job is marked
+read, so a pruned job does not come back on the next pass by itself; a later
+mention makes the thread unread again and is evaluated afresh.
 
 Output: `job.queued <job-id>` per new job, or `job.queued none`; skipped
 notifications are counted on standard error.
@@ -212,3 +214,5 @@ mention already queued by another device must not be inserted again.
   nothing: admission is fail-closed.
 - The mergeable probe for `pr-mergeable` jobs; those jobs record
   `work_performed` as `unknown` until it is ported.
+- Ingest parity: re-queueing a finished job when it is mentioned again while
+  its row still exists. Today such a mention is skipped as a duplicate.

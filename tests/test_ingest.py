@@ -7,8 +7,10 @@ import pytest
 
 from agent_cli.ingest import (
     job_row,
+    mark_read_argv,
     mentions,
     notification_request,
+    notification_thread_id,
     requested_job_type,
     scan_mentions,
 )
@@ -102,6 +104,40 @@ def test_an_unusable_notification_yields_nothing(item: object) -> None:
     assert notification_request(item) is None
 
 
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        ({"id": "1001"}, "1001"),
+        ({"id": ""}, None),
+        ({"id": "12a"}, None),
+        ({"id": 1001}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_a_thread_id_is_only_a_non_empty_string_of_digits(
+    item: object, expected: str | None
+) -> None:
+    assert notification_thread_id(item) == expected
+
+
+def test_mark_read_argv_uses_the_thread_id() -> None:
+    assert mark_read_argv("12") == [
+        "gh",
+        "api",
+        "-X",
+        "PATCH",
+        "notifications/threads/12",
+    ]
+
+
+def test_mark_read_argv_refuses_anything_but_digits() -> None:
+    # The id goes into the request path, so a value with a slash would address
+    # a different endpoint.
+    with pytest.raises(ValueError):
+        mark_read_argv("12a")
+
+
 # ------------------------------------------------------------ scanning
 
 
@@ -113,9 +149,16 @@ def _runner(
     notif_rc: int = 0,
     comments_rc: int = 0,
     private_rc: int = 0,
+    mark_read_rc: int = 0,
+    calls: list[list[str]] | None = None,
 ):
     def run(argv: list[str]) -> Completed:
+        if calls is not None:
+            calls.append(list(argv))
         joined = " ".join(argv)
+        # The PATCH URL contains "notifications" too, so it is matched first.
+        if "notifications/threads/" in joined:
+            return Completed(mark_read_rc, "", "")
         if "notifications" in joined:
             return Completed(notif_rc, json.dumps([notifications]), "")
         if "/comments" in joined:
@@ -127,11 +170,20 @@ def _runner(
     return run
 
 
-def _notification(repo: str = "owner/name", number: int = 7) -> dict:
-    return {
+def _notification(
+    repo: str = "owner/name", number: int = 7, thread_id: str | None = "1001"
+) -> dict:
+    item = {
         "repository": {"full_name": repo},
         "subject": {"url": f"https://api.github.com/repos/{repo}/pulls/{number}"},
     }
+    if thread_id is not None:
+        item["id"] = thread_id
+    return item
+
+
+def _mark_read_calls(calls: list[list[str]]) -> list[list[str]]:
+    return [call for call in calls if "notifications/threads/" in " ".join(call)]
 
 
 def _comment(body: str, actor: str = "davidleomay") -> dict:
@@ -175,6 +227,178 @@ def test_the_same_mention_twice_is_one_job(tmp_path: Path) -> None:
         scan_mentions(store, run, session_id="s", login="theo-vane", policy=POLICY)
         created, _ = scan_mentions(store, run, session_id="s", login="theo-vane", policy=POLICY)
         assert created == []
+        assert len(_jobs(store)) == 1
+    finally:
+        store.close()
+
+
+def test_a_handled_notification_is_marked_read(tmp_path: Path) -> None:
+    # Without this the notification stays unread forever, and once prune deletes
+    # the finished job row the same request is queued again.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review")],
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert len(created) == 1
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == [
+        ["gh", "api", "-X", "PATCH", "notifications/threads/1001"]
+    ]
+
+
+def test_a_notification_whose_job_already_exists_is_marked_read_again(
+    tmp_path: Path,
+) -> None:
+    # The row may outlive the notification's unread state; marking it read on
+    # the "already a job" branch keeps the thread from coming back.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        run = _runner(
+            notifications=[_notification()],
+            comments=[_comment("@theo-vane please review")],
+            calls=calls,
+        )
+        scan_mentions(store, run, session_id="s", login="theo-vane", policy=POLICY)
+        created, _ = scan_mentions(
+            store, run, session_id="s", login="theo-vane", policy=POLICY
+        )
+        assert created == []
+        assert len(_jobs(store)) == 1
+    finally:
+        store.close()
+    assert len(_mark_read_calls(calls)) == 2
+
+
+def test_a_denied_actor_leaves_the_notification_unread(tmp_path: Path) -> None:
+    # Skips are re-evaluated on the next pass, so the thread must stay unread.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[
+                    _comment("@theo-vane please review", actor="a-stranger")
+                ],
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert created == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_comment_without_a_mention_leaves_the_notification_unread(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("looks good to me")],
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert created == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_an_unreadable_comment_list_leaves_the_notification_unread(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review")],
+                comments_rc=1,
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert created == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+@pytest.mark.parametrize("thread_id", [None, "abc", 1001])
+def test_a_notification_without_a_usable_thread_id_still_creates_the_job(
+    tmp_path: Path, thread_id: object
+) -> None:
+    # An unusable id must not stop the request from being handled.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    item = _notification()
+    if thread_id is None:
+        item.pop("id")
+    else:
+        item["id"] = thread_id
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[item],
+                comments=[_comment("@theo-vane please review")],
+                calls=calls,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert len(created) == 1
+        assert len(_jobs(store)) == 1
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_failing_mark_read_does_not_stop_the_job(tmp_path: Path) -> None:
+    # The row still de-duplicates until prune, and the next pass tries again.
+    store = Store(tmp_path)
+    try:
+        created, _ = scan_mentions(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review")],
+                mark_read_rc=1,
+            ),
+            session_id="s",
+            login="theo-vane",
+            policy=POLICY,
+        )
+        assert len(created) == 1
         assert len(_jobs(store)) == 1
     finally:
         store.close()

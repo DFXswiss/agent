@@ -8,6 +8,14 @@ Every step is fail-closed. A notification that cannot be parsed, a body that
 cannot be read, a policy that does not name the actor — each ends the request
 rather than widening it. The cost of skipping one mention is that somebody asks
 again; the cost of admitting one wrongly is a bot acting on a stranger's word.
+
+A notification that led to a job row is marked read. GitHub keeps an unread
+notification in the list until a client marks the thread read, so without this
+the only thing preventing a second job would be the job row itself — and
+`prune` deletes finished rows once their retention has passed, which would let
+the same, already handled request be queued again. A later mention makes the
+thread unread again and is evaluated afresh: it creates a new job when no row
+exists any more and is skipped while one does.
 """
 
 from __future__ import annotations
@@ -29,6 +37,9 @@ _QUOTE = re.compile(r"^\s*>.*$", re.MULTILINE)
 # call this bot would otherwise call it.
 _FENCE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
 _CODE_SPAN = re.compile(r"`[^`\n]*`")
+# GitHub sends a notification's thread id as a string of ASCII digits. Only
+# that shape may become part of a request path.
+_DIGITS = re.compile(r"^[0-9]+$")
 
 
 def _addressing_text(body: str) -> str:
@@ -101,6 +112,45 @@ def notification_request(item: Any) -> tuple[str, str] | None:
     return full, str(number)
 
 
+def notification_thread_id(item: Any) -> str | None:
+    """The notification's thread id, or None when it carries no usable one.
+
+    GitHub sends the id as a string of digits. Anything else cannot be put into
+    a `gh api` path without inventing a value, so it counts as absent: the job
+    is still created, only the mark-read call is skipped.
+    """
+    if not isinstance(item, dict):
+        return None
+    value = item.get("id")
+    if isinstance(value, str) and _DIGITS.match(value) is not None:
+        return value
+    return None
+
+
+def mark_read_argv(thread_id: str) -> list[str]:
+    """The `gh` call that marks one notification thread read.
+
+    Raises `ValueError` for anything but ASCII digits: the id becomes part of
+    the request path, so a value with a slash in it would address a different
+    endpoint.
+    """
+    if not isinstance(thread_id, str) or _DIGITS.match(thread_id) is None:
+        raise ValueError(f"notification thread id must be digits: {thread_id!r}")
+    return ["gh", "api", "-X", "PATCH", f"notifications/threads/{thread_id}"]
+
+
+def _mark_thread_read(item: Any, runner: Callable[[list[str]], Completed]) -> None:
+    """Mark the notification's thread read; absence or failure is not fatal.
+
+    A notification without a usable id is left alone. A failed call is ignored:
+    the job row still de-duplicates until prune, and the next pass tries again.
+    """
+    thread_id = notification_thread_id(item)
+    if thread_id is None:
+        return
+    runner(mark_read_argv(thread_id))
+
+
 def job_row(
     *,
     session_id: str,
@@ -138,6 +188,11 @@ def scan_mentions(
     Returns the job ids created and the number of notifications skipped. A job
     that already exists is neither created nor counted as skipped: the same
     request arriving twice is one job, which is what the identity is for.
+
+    A notification that produced a job — newly inserted or already present — is
+    marked read, so its de-duplication does not depend on the job row outliving
+    its retention. Every skip path leaves the thread unread, so the next pass
+    re-evaluates it exactly as before.
     """
     created: list[str] = []
     skipped = 0
@@ -205,9 +260,13 @@ def scan_mentions(
             session_id=session_id, repo=repo, ref=ref, job_type=job_type, actor=actor
         )
         if store.row("job", row["id"]) is not None:
+            # Already a job, so the request is handled; the thread can be marked
+            # read even though this pass writes nothing.
+            _mark_thread_read(item, runner)
             continue
         store.write("job", "insert", row["id"], row)
         created.append(row["id"])
+        _mark_thread_read(item, runner)
 
     return created, skipped
 
