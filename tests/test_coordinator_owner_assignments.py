@@ -439,6 +439,10 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
             return Completed(0, "main", "")
         if argv == ["gh", "api", "repos/Example/project"]:
             return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/Example/project/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             lookups += 1
             if lookups == 1:
@@ -551,6 +555,10 @@ def test_owner_route_does_not_substitute_the_derived_fork_name(tmp_path):
             return Completed(0, "main", "")
         if argv == ["gh", "api", "repos/Example/project"]:
             return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/Example/project/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(0, json.dumps({"parent": {"full_name": "Example/project"}}), "")
         raise AssertionError(argv)
@@ -718,6 +726,283 @@ def test_fork_creation_existing_or_in_progress_response_is_pending(detail):
         repo="Example/project",
         publication_repo="worker-bot/project",
     )
+
+
+def _route_worker(tmp_path: Path):
+    return replace(
+        make_worker(tmp_path),
+        repository_owners=("dfxswiss",),
+        owner_check_argv=("/operator/check",),
+        owner_readiness_argv=("/operator/ready",),
+    )
+
+
+def _fork_json(full_name: str, parent: str) -> str:
+    return json.dumps({"full_name": full_name, "parent": {"full_name": parent}})
+
+
+def _route_prelude(argv: list[str], repo: str) -> Completed | None:
+    if argv[-2:] == ["--jq", ".default_branch"]:
+        return Completed(0, "main", "")
+    if argv == ["gh", "api", f"repos/{repo}"]:
+        return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+    return None
+
+
+def _writes(calls: list[list[str]]) -> list[list[str]]:
+    return [
+        argv
+        for argv in calls
+        if "-X" in argv or "POST" in argv or "PUT" in argv or "PATCH" in argv
+    ]
+
+
+def test_owner_route_pins_a_differently_named_fork_of_the_target(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/DFXswiss/app/forks?per_page=100",
+        ]:
+            return Completed(0, json.dumps([[{
+                "full_name": "taprootfreakai/old-app",
+                "owner": {"login": "TaprootFreakAI"},
+                "parent": {"full_name": "DFXswiss/app"},
+            }]]), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/old-app"]:
+            return Completed(0, _fork_json("TaprootFreakAI/dfxswiss-app", "DFXswiss/app"), "")
+        raise AssertionError(argv)
+
+    cfg = _owner_repository_config(
+        _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
+    assert _writes(calls) == []
+    assert all("taprootfreakai/app" not in " ".join(argv) for argv in calls)
+
+
+def test_unrelated_derived_name_does_not_replace_the_matching_fork(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        joined = " ".join(argv)
+        if "taprootfreakai/app" in joined:
+            raise AssertionError(argv)
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/DFXswiss/app/forks?per_page=100",
+        ]:
+            return Completed(0, json.dumps([[{
+                "full_name": "TaprootFreakAI/dfxswiss-app",
+                "owner": {"login": "TaprootFreakAI"},
+                "parent": {"full_name": "DFXswiss/app"},
+            }]]), "")
+        if argv == ["gh", "api", "repos/TaprootFreakAI/dfxswiss-app"]:
+            return Completed(0, _fork_json("TaprootFreakAI/dfxswiss-app", "DFXswiss/app"), "")
+        raise AssertionError(argv)
+
+    cfg = _owner_repository_config(
+        _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
+    assert _writes(calls) == []
+
+
+def test_missing_fork_with_a_free_derived_name_creates_without_a_name(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/DFXswiss/app/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            if sum(1 for call in calls if call == argv) == 1:
+                return Completed(1, "", "not found")
+            return Completed(0, _fork_json("TaprootFreakAI/app", "DFXswiss/app"), "")
+        if argv == ["gh", "api", "-X", "POST", "repos/DFXswiss/app/forks"]:
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    worker = _route_worker(tmp_path)
+    assert _owner_repository_config(
+        worker, runner, repo="DFXswiss/app", login="taprootfreakai",
+    ) is None
+    cfg = _owner_repository_config(
+        worker, runner, repo="DFXswiss/app", login="taprootfreakai", fork_request_done=True,
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/app"
+    assert _writes(calls) == [["gh", "api", "-X", "POST", "repos/DFXswiss/app/forks"]]
+
+
+def test_missing_fork_with_a_taken_derived_name_creates_the_alternate(tmp_path):
+    calls: list[list[str]] = []
+    state = {"visible": False}
+    create = [
+        "gh", "api", "-X", "POST", "repos/DFXswiss/app/forks", "-f", "name=dfxswiss-app",
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/DFXswiss/app/forks?per_page=100",
+        ]:
+            if not state["visible"]:
+                return Completed(0, "[]", "")
+            return Completed(0, json.dumps([[{
+                "full_name": "TaprootFreakAI/dfxswiss-app",
+                "owner": {"login": "TaprootFreakAI"},
+                "parent": {"full_name": "DFXswiss/app"},
+            }]]), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            return Completed(0, _fork_json("TaprootFreakAI/app", "zk-coins/app"), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/dfxswiss-app"]:
+            return Completed(1, "", "not found")
+        if argv == ["gh", "api", "repos/TaprootFreakAI/dfxswiss-app"]:
+            return Completed(0, _fork_json("TaprootFreakAI/dfxswiss-app", "DFXswiss/app"), "")
+        if argv == create:
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    worker = _route_worker(tmp_path)
+    assert _owner_repository_config(
+        worker, runner, repo="DFXswiss/app", login="taprootfreakai",
+    ) is None
+    assert _owner_repository_config(
+        worker,
+        runner,
+        repo="DFXswiss/app",
+        login="taprootfreakai",
+        fork_request_done=True,
+    ) is None
+    assert _writes(calls) == [create]
+    for argv in calls:
+        if "-X" in argv or "POST" in argv:
+            assert "repos/taprootfreakai/app" not in argv
+    state["visible"] = True
+    cfg = _owner_repository_config(
+        worker,
+        runner,
+        repo="DFXswiss/app",
+        login="taprootfreakai",
+        fork_request_done=True,
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
+    assert _writes(calls) == [create]
+
+
+def test_fork_search_finds_the_account_fork_on_a_later_page(tmp_path):
+    calls: list[list[str]] = []
+    page_one = [{
+        "full_name": "taprootfreakai/zk-fork",
+        "owner": {"login": "TaprootFreakAI"},
+        "parent": {"full_name": "zk-coins/app"},
+    }]
+    page_one.extend(
+        {
+            "full_name": f"person{index}/app",
+            "owner": {"login": f"person{index}"},
+            "parent": {"full_name": "DFXswiss/app"},
+        }
+        for index in range(99)
+    )
+    page_two = [{
+        "full_name": "TaprootFreakAI/dfxswiss-app",
+        "owner": {"login": "TaprootFreakAI"},
+        "parent": {"full_name": "dfxswiss/app"},
+    }]
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/DFXswiss/app/forks?per_page=100",
+        ]:
+            return Completed(0, json.dumps([page_one, page_two]), "")
+        if argv == ["gh", "api", "repos/TaprootFreakAI/dfxswiss-app"]:
+            return Completed(0, _fork_json("TaprootFreakAI/dfxswiss-app", "dfxswiss/APP"), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/zk-fork"]:
+            return Completed(0, _fork_json("taprootfreakai/zk-fork", "zk-coins/app"), "")
+        raise AssertionError(argv)
+
+    cfg = _owner_repository_config(
+        _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
+    assert _writes(calls) == []
+    assert ["gh", "api", "repos/taprootfreakai/zk-fork"] in calls
+    assert all("repos/taprootfreakai/zk-fork" not in argv or "-X" not in argv for argv in calls)
+
+
+def test_multiple_account_forks_prefer_the_derived_name_then_the_lowest(tmp_path):
+    def config_for(forks: list[dict[str, object]]):
+        def runner(argv: list[str]) -> Completed:
+            prelude = _route_prelude(argv, "Example/project")
+            if prelude is not None:
+                return prelude
+            if argv == [
+                "gh", "api", "--paginate", "--slurp",
+                "repos/Example/project/forks?per_page=100",
+            ]:
+                return Completed(0, json.dumps([forks]), "")
+            if argv[:2] == ["gh", "api"] and argv[-1].startswith("repos/"):
+                full_name = argv[-1].removeprefix("repos/")
+                return Completed(0, _fork_json(full_name, "Example/project"), "")
+            raise AssertionError(argv)
+
+        return _owner_repository_config(
+            _route_worker(tmp_path), runner, repo="Example/project", login="worker-bot",
+        )
+
+    preferred = config_for([
+        {
+            "full_name": "worker-bot/alpha",
+            "owner": {"login": "worker-bot"},
+            "parent": {"full_name": "example/project"},
+        },
+        {
+            "full_name": "worker-bot/project",
+            "owner": {"login": "Worker-Bot"},
+            "parent": {"full_name": "Example/project"},
+        },
+    ])
+    assert preferred is not None
+    assert preferred.publication_repo == "worker-bot/project"
+    lowest = config_for([
+        {
+            "full_name": "Worker-Bot/Zulu",
+            "owner": {"login": "worker-bot"},
+            "parent": {"full_name": "Example/project"},
+        },
+        {
+            "full_name": "worker-bot/alpha",
+            "owner": {"login": "Worker-Bot"},
+            "parent": {"full_name": "example/project"},
+        },
+    ])
+    assert lowest is not None
+    assert lowest.publication_repo == "worker-bot/alpha"
 
 
 class QueryHub:
@@ -1160,6 +1445,10 @@ def test_phase_accept_reposts_when_request_completion_was_not_persisted(
             return Completed(0, "main", "")
         if argv == ["gh", "api", "repos/Example/project"]:
             return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/Example/project/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -1219,6 +1508,10 @@ def test_phase_accept_crash_after_intent_save_retries_fork_post(
             return Completed(0, "main", "")
         if argv == ["gh", "api", "repos/Example/project"]:
             return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/Example/project/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
@@ -1275,6 +1568,10 @@ def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
             return Completed(0, "main", "")
         if argv == ["gh", "api", "repos/Example/project"]:
             return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == [
+            "gh", "api", "--paginate", "--slurp", "repos/Example/project/forks?per_page=100",
+        ]:
+            return Completed(0, "[]", "")
         if argv == ["gh", "api", "repos/worker-bot/project"]:
             return Completed(1, "", "not found")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:

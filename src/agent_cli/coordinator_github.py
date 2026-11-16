@@ -114,6 +114,9 @@ HUB_CONFIGURATION_BLOCKER = (
 HUB_ASSIGNMENT_QUERY_CAP = 500
 HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
 FORK_VISIBILITY_GRACE_SECONDS = 300
+_FORK_PAGE_SIZE = 100
+_FORK_MISSING = object()
+_GITHUB_FORK_NAME = re.compile(r"[A-Za-z0-9_.-]{1,100}")
 MANDATE_DEVIATION_BLOCKER = (
     'mandate has no explicit deviation statement; issue the assignment through '
     'the hub with "no deviation authorized"'
@@ -366,6 +369,76 @@ def _gh_jq_text(runner: Runner, argv: list[str], label: str) -> str:
     return value
 
 
+def _fork_list_argv(repo: str) -> list[str]:
+    return [
+        "gh",
+        "api",
+        "--paginate",
+        "--slurp",
+        f"repos/{repo}/forks?per_page={_FORK_PAGE_SIZE}",
+    ]
+
+
+def _fork_lookup(runner: Runner, publication_repo: str) -> Any:
+    """Return the repository JSON, or ``_FORK_MISSING`` when GitHub reports it missing."""
+    completed = runner(["gh", "api", f"repos/{publication_repo}"])
+    if completed.returncode != 0:
+        missing_detail = (completed.stderr or completed.stdout or "").casefold()
+        if "404" not in missing_detail and "not found" not in missing_detail:
+            raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
+        return _FORK_MISSING
+    try:
+        return json.loads((completed.stdout or "").strip())
+    except json.JSONDecodeError as exc:
+        raise CoordinatorError("fork lookup returned invalid JSON") from exc
+
+
+def _parent_full_name(data: Any) -> str | None:
+    parent = data.get("parent") if isinstance(data, dict) else None
+    parent_name = parent.get("full_name") if isinstance(parent, dict) else None
+    if not isinstance(parent_name, str):
+        return None
+    return parent_name
+
+
+def _canonical_fork_name(repo: str, data: Any) -> str:
+    parent_name = _parent_full_name(data)
+    if parent_name is None or parent_name.casefold() != repo.casefold():
+        raise CoordinatorError("publication fork has a different parent repository")
+    try:
+        # Same owner/name rule as configured repositories. A missing or malformed
+        # full_name must not fall back to the lookup address: that address can be a redirect.
+        return _repo(data.get("full_name") if isinstance(data, dict) else None)
+    except StoreError as exc:
+        raise CoordinatorError("fork lookup returned no usable full_name") from exc
+
+
+def _request_fork(
+    runner: Runner,
+    *,
+    repo: str,
+    name: str | None,
+    before_create: Callable[[], None] | None,
+    after_create: Callable[[], None] | None,
+) -> None:
+    if before_create is not None:
+        before_create()
+    argv = ["gh", "api", "-X", "POST", f"repos/{repo}/forks"]
+    if name is not None:
+        argv.extend(["-f", f"name={name}"])
+    created = runner(argv)
+    if created.returncode != 0:
+        detail = created.stderr or created.stdout or "fork creation failed"
+        folded = detail.casefold()
+        if not any(
+            marker in folded
+            for marker in ("already exists", "fork exists", "in progress")
+        ):
+            raise CoordinatorError(redact(detail))
+    if after_create is not None:
+        after_create()
+
+
 def _fork_repository(
     runner: Runner,
     *,
@@ -380,41 +453,132 @@ def _fork_repository(
     The lookup address may be a renamed fork's old name. GitHub still returns
     that repository, and its own ``full_name`` is the name later pull requests use.
     """
-    lookup = ["gh", "api", f"repos/{publication_repo}"]
-    completed = runner(lookup)
-    if completed.returncode != 0:
-        missing_detail = (completed.stderr or completed.stdout or "").casefold()
-        if "404" not in missing_detail and "not found" not in missing_detail:
-            raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
+    data = _fork_lookup(runner, publication_repo)
+    if data is _FORK_MISSING:
         if create_if_missing:
-            if before_create is not None:
-                before_create()
-            created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
-            if created.returncode != 0:
-                detail = created.stderr or created.stdout or "fork creation failed"
-                folded = detail.casefold()
-                if not any(
-                    marker in folded
-                    for marker in ("already exists", "fork exists", "in progress")
-                ):
-                    raise CoordinatorError(redact(detail))
-            if after_create is not None:
-                after_create()
+            _request_fork(
+                runner,
+                repo=repo,
+                name=None,
+                before_create=before_create,
+                after_create=after_create,
+            )
         return None
-    try:
-        data = json.loads((completed.stdout or "").strip())
-    except json.JSONDecodeError as exc:
-        raise CoordinatorError("fork lookup returned invalid JSON") from exc
-    parent = data.get("parent") if isinstance(data, dict) else None
-    parent_name = parent.get("full_name") if isinstance(parent, dict) else None
-    if not isinstance(parent_name, str) or parent_name.casefold() != repo.casefold():
+    return _canonical_fork_name(repo, data)
+
+
+def _account_fork_candidates(runner: Runner, *, repo: str, login: str) -> list[str]:
+    """List names of ``repo`` forks owned by ``login``, across every returned page."""
+    rows = gh_list(runner, _fork_list_argv(repo))
+    found: dict[str, str] = {}
+    folded_login = login.casefold()
+    for item in rows:
+        if not isinstance(item, dict):
+            raise CoordinatorError("fork list returned a malformed repository")
+        owner = item.get("owner")
+        owner_login = owner.get("login") if isinstance(owner, dict) else None
+        if (
+            not isinstance(owner_login, str)
+            or owner_login == ""
+            or any(char in owner_login for char in "\0\r\n")
+        ):
+            raise CoordinatorError("fork list returned a malformed repository")
+        if owner_login.casefold() != folded_login:
+            continue
+        try:
+            canonical = _repo(item.get("full_name"))
+        except StoreError as exc:
+            raise CoordinatorError("fork lookup returned no usable full_name") from exc
+        if canonical.split("/", 1)[0].casefold() != owner_login.casefold():
+            raise CoordinatorError(
+                "fork list full_name owner does not match the fork owner"
+            )
+        found.setdefault(canonical.casefold(), canonical)
+    return [found[key] for key in sorted(found)]
+
+
+def _forks_owned_by_account(runner: Runner, *, repo: str, login: str) -> list[str]:
+    """Canonical full_names of the account's forks whose parent is ``repo``."""
+    pinned: dict[str, str] = {}
+    folded_login = login.casefold()
+    for candidate in _account_fork_candidates(runner, repo=repo, login=login):
+        data = _fork_lookup(runner, candidate)
+        if data is _FORK_MISSING:
+            continue
+        parent_name = _parent_full_name(data)
+        if parent_name is None or parent_name.casefold() != repo.casefold():
+            continue
+        canonical = _canonical_fork_name(repo, data)
+        if canonical.split("/", 1)[0].casefold() != folded_login:
+            raise CoordinatorError(
+                "fork list full_name owner does not match the fork owner"
+            )
+        pinned[canonical.casefold()] = canonical
+    return [pinned[key] for key in sorted(pinned)]
+
+
+def _choose_publication_fork(names: list[str], derived: str) -> str:
+    derived_key = derived.casefold()
+    for name in names:
+        if name.casefold() == derived_key:
+            return name
+    return min(names, key=str.casefold)
+
+
+def _alternate_fork_name(repo: str) -> str:
+    owner, name = repo.split("/", 1)
+    fork_name = f"{owner}-{name}".lower()
+    if _GITHUB_FORK_NAME.fullmatch(fork_name) is None or fork_name in {".", ".."}:
+        raise CoordinatorError("publication fork has no usable alternate name")
+    return fork_name
+
+
+def _publication_fork_when_unlisted(
+    runner: Runner,
+    *,
+    repo: str,
+    login: str,
+    derived: str,
+    create_if_missing: bool,
+    before_create: Callable[[], None] | None,
+    after_create: Callable[[], None] | None,
+) -> str | None:
+    data = _fork_lookup(runner, derived)
+    if data is _FORK_MISSING:
+        if create_if_missing:
+            _request_fork(
+                runner,
+                repo=repo,
+                name=None,
+                before_create=before_create,
+                after_create=after_create,
+            )
+        return None
+    parent_name = _parent_full_name(data)
+    if isinstance(parent_name, str) and parent_name.casefold() == repo.casefold():
+        return _canonical_fork_name(repo, data)
+    if not isinstance(parent_name, str):
+        raise CoordinatorError("publication fork has a different parent repository")
+    fork_name = _alternate_fork_name(repo)
+    alternate = f"{login}/{fork_name}"
+    if alternate.casefold() == derived.casefold():
         raise CoordinatorError("publication fork has a different parent repository")
     try:
-        # Same owner/name rule as configured repositories. A missing or malformed
-        # full_name must not fall back to the lookup address: that address can be a redirect.
-        return _repo(data.get("full_name") if isinstance(data, dict) else None)
+        _repo(alternate)
     except StoreError as exc:
-        raise CoordinatorError("fork lookup returned no usable full_name") from exc
+        raise CoordinatorError("publication fork has no usable alternate name") from exc
+    alt = _fork_lookup(runner, alternate)
+    if alt is _FORK_MISSING:
+        if create_if_missing:
+            _request_fork(
+                runner,
+                repo=repo,
+                name=fork_name,
+                before_create=before_create,
+                after_create=after_create,
+            )
+        return None
+    return _canonical_fork_name(repo, alt)
 
 
 def _owner_repository_config(
@@ -438,14 +602,19 @@ def _owner_repository_config(
     publication = repo
     if not can_push:
         derived = f"{login}/{repo.split('/', 1)[1]}"
-        canonical = _fork_repository(
-            runner,
-            repo=repo,
-            publication_repo=derived,
-            create_if_missing=not fork_request_done,
-            before_create=before_fork_create,
-            after_create=after_fork_create,
-        )
+        matches = _forks_owned_by_account(runner, repo=repo, login=login)
+        if matches:
+            canonical = _choose_publication_fork(matches, derived)
+        else:
+            canonical = _publication_fork_when_unlisted(
+                runner,
+                repo=repo,
+                login=login,
+                derived=derived,
+                create_if_missing=not fork_request_done,
+                before_create=before_fork_create,
+                after_create=after_fork_create,
+            )
         if canonical is None:
             return None
         publication = canonical

@@ -71,13 +71,23 @@ issue count fails that owner's discovery loudly instead of silently accepting
 an incomplete result set. An explicit `repositories` entry wins for the same
 repository. At acceptance, an owner-scoped task pins the
 repository's current default branch and its publication route: direct push when
-the worker has push permission, otherwise the canonical `full_name` of the fork
-looked up as `<worker-login>/<repository-name>`. A lookup without a usable
-`full_name` fails. A missing fork is requested once per persisted request (a crash before the
-request is recorded repeats it). If it is not yet visible, acceptance stays in
-the same phase and the worker's `poll_seconds` loop retries; after 300 seconds the
-coordinator publishes a blocker. An existing fork with another parent is
-refused. Outside A38 mode,
+the worker has push permission, otherwise the canonical `full_name` of the
+account's fork of that repository. The coordinator finds that fork by parent.
+It pages through the target repository's forks with `gh api --paginate` and
+compares owner and name case-insensitively, so the fork need not be named
+`<worker-login>/<repository-name>`. The pinned name is that fork's own
+`full_name`, including when a lookup address redirects to a renamed fork. A
+lookup without a usable `full_name` fails. A missing fork is requested once
+per persisted request (a crash before the request is recorded repeats it).
+When `<worker-login>/<repository-name>` is free, creation uses that default
+name. When that name belongs to an unrelated repository, creation sends the
+fork `name` `<target-owner>-<repository-name>` in lower case. If the new fork
+is not yet visible, acceptance stays in the same phase and the worker's
+`poll_seconds` loop retries; after 300 seconds the coordinator publishes a
+blocker. A repository whose parent is not the target is never the publication
+repository. When the account has more than one fork of the target, the fork
+whose `full_name` is `<worker-login>/<repository-name>` is used when that one
+matches; otherwise the case-insensitive lowest `full_name` is used. Outside A38 mode,
 `owner_check_argv` is required and nonempty for owner-scoped repositories; A38
 mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 Both stay in the local worker config: the task stores only repository, base and
