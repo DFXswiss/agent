@@ -86,7 +86,10 @@ def test_newest_human_draft_is_a_hold() -> None:
     fake.timeline = [_draft()]
     status, hold = _hold(fake)
     assert status == "ok"
-    assert hold == DraftHold(MAINTAINER_ID, "maintainer", "2026-09-05T12:00:00Z")
+    assert hold == DraftHold(
+        actor_id=MAINTAINER_ID, login="maintainer", created_at="2026-09-05T12:00:00Z"
+    )
+    assert hold.actor_id == MAINTAINER_ID
 
 
 def test_newer_human_ready_releases_the_hold_but_the_state_is_pending() -> None:

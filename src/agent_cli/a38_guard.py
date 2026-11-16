@@ -163,7 +163,7 @@ class PullSnapshot:
 class DraftHold:
     """Newest person who set the pull request to draft without a later release."""
 
-    id: int
+    actor_id: int
     login: str
     created_at: str
 
@@ -2861,7 +2861,7 @@ def load_draft_hold(
                 return "unavailable", None
             if actor_id == guard_user_id:
                 continue
-            return "ok", DraftHold(id=actor_id, login=login, created_at=created_at)
+            return "ok", DraftHold(actor_id=actor_id, login=login, created_at=created_at)
     except _TimelineUnavailable:
         return "unavailable", None
     if newest_is_ready:
