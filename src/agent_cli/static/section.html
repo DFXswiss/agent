@@ -293,7 +293,7 @@
       const ev = row.usage || {};
       const p = ev.payload || {};
       const cells = row.usage ? usageCells(p) : { used: esc(NO_USAGE), reset: "" };
-      return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td>${idOrText(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
+      return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td${stateCellAttributes(row.status)}>${stateIcon(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
     }
 
     // The table row without subscriptions: "absent" only when there is no file;

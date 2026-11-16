@@ -1002,3 +1002,106 @@ def test_transport_failure_is_a_request_failure_without_a_chain() -> None:
         assert str(info.value) == f"{name} request failed"
         assert info.value.__cause__ is None
         assert info.value.__context__ is None
+
+
+# --- No credential material in the exception chain ----------------------------
+
+
+def _assert_unchained(error: BaseException) -> None:
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert TOKEN not in str(error)
+
+
+def test_keychain_failures_keep_the_output_out_of_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def slow(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=TOKEN)
+
+    monkeypatch.setattr(usage.subprocess, "run", slow)
+    with pytest.raises(StoreError, match="claude keychain read timed out") as info:
+        read_claude_keychain("Claude Code-credentials", "operator")
+    _assert_unchained(info.value)
+
+    def undecodable(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise UnicodeDecodeError("utf-8", b"\xff" + TOKEN.encode(), 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(usage.subprocess, "run", undecodable)
+    with pytest.raises(StoreError, match="claude keychain read failed") as info:
+        read_claude_keychain("Claude Code-credentials", "operator")
+    _assert_unchained(info.value)
+
+
+def test_invalid_credentials_json_keeps_the_text_out_of_the_chain(tmp_path: Path) -> None:
+    config_dir = tmp_path / "seat"
+    config_dir.mkdir()
+    with pytest.raises(StoreError, match="in the keychain are not valid JSON") as info:
+        load_claude_credentials(str(config_dir), read_keychain=lambda _s, _u: "{" + TOKEN)
+    _assert_unchained(info.value)
+
+    (config_dir / ".credentials.json").write_text("{" + TOKEN, encoding="utf-8")
+    with pytest.raises(StoreError, match=r"in \.credentials\.json are not valid JSON") as info:
+        load_claude_credentials(str(config_dir), read_keychain=no_keychain)
+    _assert_unchained(info.value)
+
+
+def test_invalid_account_file_keeps_the_text_out_of_the_chain(tmp_path: Path) -> None:
+    config_dir = tmp_path / "seat"
+    config_dir.mkdir()
+    (config_dir / ".claude.json").write_text("{" + TOKEN, encoding="utf-8")
+    with pytest.raises(StoreError, match="claude account file is not valid JSON") as info:
+        load_claude_account_email(str(config_dir))
+    _assert_unchained(info.value)
+
+
+@pytest.mark.parametrize(
+    ("blocked", "message"),
+    [
+        (".claude.json", "claude account file is not readable"),
+        (".credentials.json", "claude credentials file is not readable"),
+    ],
+)
+def test_unreadable_login_files_are_reported_and_the_next_account_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: str, message: str
+) -> None:
+    store = _paced_store(tmp_path, ["locked", "other"])
+    try:
+        original = Path.is_file
+        locked = tmp_path / "locked" / blocked
+
+        def is_file(self: Path) -> bool:
+            if self == locked:
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self)
+
+        monkeypatch.setattr(Path, "is_file", is_file)
+        reads = _Reads()
+        with pytest.raises(ClaudeUsageError) as info:
+            scan_claude_usage(store, fetch=reads.fetch, read_keychain=reads.read_keychain)
+        assert info.value.errors == (f"locked: {message}",)
+        assert reads.fetches == ["token-other"]
+        assert len(info.value.activity_ids) == 1
+    finally:
+        store.close()
+
+
+def test_account_file_read_error_is_not_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "seat"
+    write_login(config_dir)
+    account_file = config_dir / ".claude.json"
+    original = Path.read_text
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == account_file:
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert account_file.is_file()
+    with pytest.raises(StoreError) as info:
+        load_claude_account_email(str(config_dir))
+    assert str(info.value) == "claude account file is not readable"
+    _assert_unchained(info.value)

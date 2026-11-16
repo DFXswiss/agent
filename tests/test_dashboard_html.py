@@ -253,13 +253,11 @@ def test_subscription_rows_render_in_node() -> None:
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
     helpers = "\n".join(
         line for line in script.splitlines()
-        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const NO_INVENTORY", "    const UUID_PATTERN", "    const copyFeedback"))
+        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const NO_INVENTORY"))
     )
     functions = "\n".join(
         section_function(html, name)
         for name in (
-            "idChip",
-            "idOrText",
             "percentText",
             "claudeWindows",
             "usageCells",
@@ -268,7 +266,9 @@ def test_subscription_rows_render_in_node() -> None:
             "subscriptionsErrorText",
         )
     )
-    harness = helpers + "\n" + functions + """
+    # The shared block brings idOrText, stateIcon and stateCellAttributes.
+    shared = "const document = { addEventListener() {} };\n" + common_block(html)
+    harness = helpers + "\n" + shared + "\n" + functions + """
 const claude = {
   provider: "claude", account: "seat-1@example.com", label: "Seat <1>", status: "active", note: "a & b", listed: true,
   usage: { _origin_device_id: "device-a", payload: {
@@ -287,6 +287,7 @@ console.log(JSON.stringify({
   claude: subscriptionRowHtml(claude),
   missing: subscriptionRowHtml(missing),
   stray: subscriptionRowHtml(stray),
+  unknownStatus: subscriptionRowHtml({ ...missing, status: "on-hold" }),
   absent: subscriptionsEmptyHtml({ configured: false, error: null, rows: [] }),
   absentError: subscriptionsErrorText({ configured: false, error: null, rows: [] }),
   invalid: subscriptionsEmptyHtml({ configured: false, error: "subscriptions must be a list", rows: [] }),
@@ -303,6 +304,16 @@ console.log(JSON.stringify({
     assert "<td>Seat &lt;1&gt;</td>" in claude
     assert "<td>a &amp; b</td>" in claude
     assert "<td>listed</td>" in claude
+    active = state_icons(html)["active"]
+    assert (
+        '<td title="active" aria-label="active"><span class="state-icon" role="img" '
+        f'aria-label="active">{active}&#xFE0E;</span></td>'
+    ) in claude
+    assert (
+        '<td title="on-hold" aria-label="on-hold"><span class="state-icon state-unknown" '
+        'role="img" aria-label="on-hold">◌&#xFE0E;</span></td>'
+    ) in out["unknownStatus"]
+    assert "<td>—</td>" in out["missing"]
     assert "<td>max_20x</td>" in claude
     assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Fable&lt;/b&gt;: 21.5%</td>" in claude
     assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Fable&lt;/b&gt;: —</td>" in claude
@@ -804,12 +815,19 @@ def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
 
 def test_state_and_status_cells_show_icons_and_keep_their_classes() -> None:
     section = static_page("section.html")
-    for expr in ("s.status", "t.state", "a.status", "w.status"):
-        assert (
-            f'<td class="${{esc({expr})}}"${{stateCellAttributes({expr})}}>${{stateIcon({expr})}}</td>'
-            in section
-        )
+    for expr in ("s.status", "t.state", "a.status", "w.status", "row.status"):
+        if expr == "row.status":
+            # Free text from the inventory: no class, only the shared state display.
+            assert (
+                f"<td${{stateCellAttributes({expr})}}>${{stateIcon({expr})}}</td>" in section
+            )
+        else:
+            assert (
+                f'<td class="${{esc({expr})}}"${{stateCellAttributes({expr})}}>${{stateIcon({expr})}}</td>'
+                in section
+            )
         assert f"${{esc({expr})}}</td>" not in section
+        assert f"${{idOrText({expr})}}</td>" not in section
         assert f'title="${{esc({expr})}}"' not in section
     for rule in (".failed {", ".implementing, .working, .open {", ".done, .approved {", ".merged {"):
         assert rule in section

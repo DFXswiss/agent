@@ -381,8 +381,8 @@ first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
-`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
-watch ignores them too.
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter and
+Claude usage watches ignore them too.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 

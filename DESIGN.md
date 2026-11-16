@@ -337,7 +337,7 @@ v1 types (mechanism only):
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
 | `usage.snapshot` | — | script | — (configured Grok billing, OpenRouter key-usage or Claude OAuth-usage GET on this device; no TUI knock). Missing or expired Grok or Claude login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`, `agent watch claude-usage` prints `usage.snapshot skipped <account>: <reason>`; OpenRouter and Claude account failures are reported and never stored as zero values. |
-| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; the OpenRouter usage GET uses `trust_env=False`. |
+| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; the OpenRouter and Claude usage GETs use `trust_env=False`. |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
@@ -867,7 +867,7 @@ device's hub identity or transfer ownership of store rows.
 
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
-used by lane launches, interactive Grok starts and optional Grok/OpenRouter usage reads.
+used by lane launches, interactive Grok starts and optional Grok, OpenRouter and Claude usage reads.
 Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid

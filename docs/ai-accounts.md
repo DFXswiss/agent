@@ -492,7 +492,9 @@ subscription usage from Claude's OAuth usage endpoint as `usage.snapshot`:
   only of `a-z`, `A-Z`, `0-9`, `.`, `_` and `-`, else `claude-code-user`. It is
   read with `/usr/bin/security find-generic-password -w`. When the item does not
   exist, and on every other system, the credentials come from
-  `<config_dir>/.credentials.json`. Only `claudeAiOauth.accessToken`,
+  `<config_dir>/.credentials.json`. When the Keychain read fails (time-out or
+  another exit status), the file is used if it exists; the Keychain failure is
+  reported only when there is no file. Only `claudeAiOauth.accessToken`,
   `expiresAt`, `subscriptionType` and `rateLimitTier` are used.
 - A missing login or a token whose `expiresAt` has passed skips the account
   quietly (the next Claude Code start renews the token); `agent watch
@@ -545,7 +547,9 @@ and account (case-insensitive). A listed subscription that no paired device
 polls shows `No usage: no paired device polls this login`. Usage snapshots of
 accounts missing from the inventory are still shown and marked `not listed`.
 Claude rows show the five-hour, weekly and per-model weekly percentages with
-their reset times. A file that does not validate is shown as an error on that
+their reset times. `status` is shown as an icon from the dashboard's state
+mapping with the word as the cell's title; a word the mapping does not know
+gets the neutral fallback icon. A file that does not validate is shown as an error on that
 page; the rest of the dashboard keeps working. `/api/state` delivers the joined
 rows as `subscriptions` (`configured`, `error`, `rows`).
 
@@ -591,8 +595,8 @@ Every lane provider also removes the upper- and lower-case `HTTP_PROXY`,
 `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`
 and `CURL_CA_BUNDLE`. A lane therefore never inherits an ambient proxy or CA
 trust that could read its provider credential. There is no opt-in for this
-stripping. The script-owned OpenRouter usage watcher builds its own HTTP client
-with `trust_env=False` for the same reason.
+stripping. The script-owned OpenRouter and Claude usage watchers build their own
+HTTP client with `trust_env=False` for the same reason.
 
 ## Interactive selection
 

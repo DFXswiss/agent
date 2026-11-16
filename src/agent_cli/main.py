@@ -5003,8 +5003,8 @@ def cmd_lane(args: list[str]) -> None:
 
 def _print_account_usage(
     scan: Callable[[Store], list[str]], store: Store
-) -> bool:
-    """Run one ``usage_accounts`` scanner; print new ids and errors. True when clean."""
+) -> None:
+    """Run one ``usage_accounts`` scanner; print new ids and errors."""
     try:
         activity_ids = scan(store)
     except AccountUsageError as exc:
@@ -5012,13 +5012,12 @@ def _print_account_usage(
             print(f"usage.snapshot {activity_id}")
         for message in exc.errors:
             print(f"usage.snapshot error: {message}", file=sys.stderr)
-        return False
+        return
     except StoreError as exc:
         print(f"usage.snapshot error: {exc}", file=sys.stderr)
-        return False
+        return
     for activity_id in activity_ids:
         print(f"usage.snapshot {activity_id}")
-    return True
 
 
 def cmd_knock(args: list[str]) -> None:

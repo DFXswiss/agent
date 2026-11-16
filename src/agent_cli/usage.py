@@ -657,6 +657,10 @@ def read_claude_keychain(service: str, user: str) -> str | None:
 
     The output is the credential itself and is never echoed in an error.
     """
+    # Errors are raised after each ``except`` block: the original exception
+    # carries the captured output (the credential), so it must not stay in
+    # ``__context__``.
+    failure: str | None = None
     try:
         completed = subprocess.run(
             [SECURITY_BIN, "find-generic-password", "-s", service, "-a", user, "-w"],
@@ -666,9 +670,11 @@ def read_claude_keychain(service: str, user: str) -> str | None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        raise StoreError("claude keychain read timed out") from None
+        failure = "claude keychain read timed out"
     except (OSError, ValueError):
-        raise StoreError("claude keychain read failed") from None
+        failure = "claude keychain read failed"
+    if failure is not None:
+        raise StoreError(failure)
     if completed.returncode == _SECURITY_ITEM_NOT_FOUND:
         return None
     if completed.returncode != 0:
@@ -694,10 +700,15 @@ def _claude_tier(subscription: Any, rate_limit_tier: Any) -> str | None:
 
 
 def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
+    data: Any = None
+    valid = True
     try:
         data = json.loads(raw)
     except ValueError:
-        raise StoreError(f"claude credentials in {source} are not valid JSON") from None
+        # Raised below: the decode error holds the credential text in ``doc``.
+        valid = False
+    if not valid:
+        raise StoreError(f"claude credentials in {source} are not valid JSON")
     if not isinstance(data, dict):
         raise StoreError(f"claude credentials in {source} are not an object")
     oauth = data.get("claudeAiOauth")
@@ -759,15 +770,21 @@ def load_claude_credentials(
             if raw is not None:
                 return _parse_claude_credentials(raw, "the keychain")
     path = Path(config_dir) / ".credentials.json"
-    if not path.is_file():
+    raw_file: str | None = None
+    readable = True
+    try:
+        if path.is_file():
+            raw_file = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        # Raised below so that the original stays out of ``__context__``.
+        readable = False
+    if not readable:
+        raise StoreError("claude credentials file is not readable")
+    if raw_file is None:
         if keychain_error is not None:
             raise keychain_error
         raise AuthStale(f"claude login not found for {config_dir}; run claude auth login")
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        raise StoreError("claude credentials file is not readable") from None
-    return _parse_claude_credentials(raw, ".credentials.json")
+    return _parse_claude_credentials(raw_file, ".credentials.json")
 
 
 def _claude_account_file(config_dir: str) -> Path:
@@ -781,12 +798,27 @@ def _claude_account_file(config_dir: str) -> Path:
 def load_claude_account_email(config_dir: str) -> str:
     """The e-mail address of the Claude login, from ``oauthAccount.emailAddress``."""
     path = _claude_account_file(config_dir)
-    if not path.is_file():
+    # Errors are raised after each ``except`` block, never chained.
+    readable = True
+    exists = False
+    try:
+        exists = path.is_file()
+    except OSError:
+        readable = False
+    if not readable:
+        raise StoreError("claude account file is not readable")
+    if not exists:
         raise AuthStale(f"claude account file not found: {path}")
+    data: Any = None
+    failure: str | None = None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        raise StoreError("claude account file is not valid JSON") from None
+    except OSError:
+        failure = "claude account file is not readable"
+    except (UnicodeError, ValueError):
+        failure = "claude account file is not valid JSON"
+    if failure is not None:
+        raise StoreError(failure)
     if not isinstance(data, dict):
         raise StoreError("claude account file is not an object")
     account = data.get("oauthAccount")

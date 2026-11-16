@@ -593,7 +593,7 @@ def test_subscription_inventory_reads_entries(tmp_path: Path) -> None:
         ({"subscriptions": ["claude"]}, r"subscriptions\[0\] must be an object"),
         (
             {"subscriptions": [{"provider": "claude", "account": "a@example.com", "plan": "max"}]},
-            r"subscriptions\[0\] has unknown fields: plan",
+            r"subscriptions\[0\] has unknown keys: plan",
         ),
         ({"subscriptions": [{"account": "a@example.com"}]}, r"subscriptions\[0\]\.provider"),
         (

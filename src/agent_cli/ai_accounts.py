@@ -523,7 +523,7 @@ def load_ai_subscriptions(home: Path) -> tuple[AISubscription, ...] | None:
         unknown = set(entry) - _SUBSCRIPTION_FIELDS
         if unknown:
             raise AccountError(
-                f"{where} has unknown fields: {', '.join(sorted(map(str, unknown)))}"
+                f"{where} has unknown keys: {', '.join(sorted(map(str, unknown)))}"
             )
         provider = entry.get("provider")
         if not isinstance(provider, str) or not _SUBSCRIPTION_PROVIDER.fullmatch(provider):
