@@ -499,7 +499,9 @@ subscription usage from Claude's OAuth usage endpoint as `usage.snapshot`:
 - Snapshot: `account_email`, `tier` (the plan, with the Max multiplier, for
   example `max_20x`), and `windows` with `five_hour`, `weekly` (all models) and
   `weekly_models` (weekly limits scoped to one model, with the model's display
-  name). Each window has `used_percent` and `resets_at` (UTC, whole seconds); a
+  name). Each window has `used_percent` and `resets_at` (UTC, rounded to the nearest
+  minute, because the endpoint reports the same reset with about a second of
+  jitter); a
   window the response does not report is `null`, not 0 %. A snapshot is stored
   only when a value other than `fetched_at` changed. The token is never stored
   or logged.

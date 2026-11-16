@@ -12,7 +12,7 @@ import sys
 import unicodedata
 import uuid
 from collections.abc import Callable, Collection
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -761,7 +761,13 @@ def _fetch_claude_usage(
 
 
 def _claude_reset(value: Any, field: str) -> str | None:
-    """Reset time as UTC ISO-8601 with whole seconds, or ``None``."""
+    """Reset time as UTC ISO-8601 rounded to the nearest minute, or ``None``.
+
+    The endpoint reports the same reset with about a second of jitter between
+    calls (for example ``09:59:59.66`` and ``10:00:00.41``). Rounding to the
+    nearest full minute (30 seconds and more round up) keeps an unchanged
+    window equal, so no new snapshot is written for jitter alone.
+    """
     if value is None:
         return None
     if not isinstance(value, str) or value == "":
@@ -773,7 +779,11 @@ def _claude_reset(value: Any, field: str) -> str | None:
         raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
     if when.tzinfo is None:
         raise StoreError(f"Claude usage {field} has no time zone")
-    return when.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    when = when.astimezone(timezone.utc)
+    minute = when.replace(second=0, microsecond=0)
+    if when - minute >= timedelta(seconds=30):
+        minute += timedelta(minutes=1)
+    return minute.isoformat()
 
 
 def _claude_window(raw: Any, field: str) -> dict[str, Any] | None:

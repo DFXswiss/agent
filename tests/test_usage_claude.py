@@ -16,6 +16,7 @@ from agent_cli.usage import (
     CLAUDE_USAGE_URL,
     AuthStale,
     ClaudeUsageError,
+    _claude_reset,
     _fetch_claude_usage,
     claude_keychain_service,
     claude_keychain_user,
@@ -401,6 +402,34 @@ def test_snapshot_without_reported_values_invents_no_zero() -> None:
     assert windows["weekly_models"] == [{"model": None, "used_percent": 5.0, "resets_at": None}]
 
 
+# Four consecutive live answers for the same weekly reset.
+JITTERED_RESETS = (
+    "2026-11-23T10:00:00.406269+00:00",
+    "2026-11-23T09:59:59.659417+00:00",
+    "2026-11-23T09:59:59.923301+00:00",
+    "2026-11-23T10:00:00.173192+00:00",
+)
+
+
+def test_reset_jitter_maps_to_one_minute() -> None:
+    assert {_claude_reset(value, "f") for value in JITTERED_RESETS} == {
+        "2026-11-23T10:00:00+00:00"
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-11-23T10:00:29.999999+00:00", "2026-11-23T10:00:00+00:00"),
+        ("2026-11-23T10:00:30+00:00", "2026-11-23T10:01:00+00:00"),
+        ("2026-11-23T23:59:45Z", "2026-11-24T00:00:00+00:00"),
+        ("2026-11-23T12:00:10+02:00", "2026-11-23T10:00:00+00:00"),
+    ],
+)
+def test_reset_rounds_to_the_nearest_minute_in_utc(value: str, expected: str) -> None:
+    assert _claude_reset(value, "f") == expected
+
+
 @pytest.mark.parametrize(
     ("body", "message"),
     [
@@ -557,6 +586,33 @@ def test_scan_records_changed_snapshots_only(tmp_path: Path) -> None:
             )
         ) == 1
         assert len(_claude_snapshots(store)) == 2
+    finally:
+        store.close()
+
+
+def test_scan_writes_no_snapshot_for_reset_jitter(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        _session(store, "s-claude", "claude")
+        seat = tmp_path / "seat"
+        write_login(seat)
+        _config(store, {"seat": {"provider": "claude", "config_dir": str(seat)}}, ["seat"])
+        answers = iter(JITTERED_RESETS)
+
+        def fetch(_token: str) -> dict[str, Any]:
+            reset = next(answers)
+            body = usage_body()
+            body["seven_day"]["resets_at"] = reset
+            for limit in body["limits"]:
+                limit["resets_at"] = reset
+            return body
+
+        created = [
+            scan_claude_usage(store, fetch=fetch, read_keychain=no_keychain)
+            for _ in JITTERED_RESETS
+        ]
+        assert [len(ids) for ids in created] == [1, 0, 0, 0]
+        assert len(_claude_snapshots(store)) == 1
     finally:
         store.close()
 
