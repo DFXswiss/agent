@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
+import re
+import subprocess
+import sys
+import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Collection
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +30,20 @@ USAGE_POLL_SECONDS = 60
 VENDOR = "grok"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 OPENROUTER_VENDOR = "openrouter"
+CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_VENDOR = "claude"
+CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
+CLAUDE_KEYCHAIN_FALLBACK_USER = "claude-code-user"
+SECURITY_BIN = "/usr/bin/security"
+# The Claude usage endpoint answers per-minute polling with HTTP 429 and a
+# Retry-After header, so the poll reads each Claude account at most this often.
+CLAUDE_USAGE_POLL_SECONDS = 15 * 60
+# ``security`` exit status for an item that does not exist.
+_SECURITY_ITEM_NOT_FOUND = 44
+_KEYCHAIN_USER = re.compile(r"[a-zA-Z0-9._-]+")
+# A bearer token must be visible ASCII: no whitespace, control or non-ASCII characters.
+_VISIBLE_ASCII = re.compile(r"[\x21-\x7e]+")
+_MAX_MULTIPLIER = re.compile(r"(?:^|_)max_(\d+x)$", re.IGNORECASE)
 _COMPARE_KEYS = (
     "vendor",
     "provider",
@@ -42,13 +64,53 @@ class AuthStale(StoreError):
     """Grok login missing or expired. Not a runtime failure of this scan."""
 
 
-class OpenRouterUsageError(StoreError):
-    """One or more configured OpenRouter accounts could not be scanned."""
+class AccountUsageError(StoreError):
+    """One or more configured usage accounts could not be scanned."""
 
     def __init__(self, errors: list[str], activity_ids: list[str]):
         super().__init__("; ".join(errors))
         self.errors = tuple(errors)
         self.activity_ids = tuple(activity_ids)
+
+
+class UsageRateLimited(StoreError):
+    """The provider answered HTTP 429; ``retry_after`` is its wait in seconds."""
+
+    def __init__(self, message: str, retry_after: float | None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Seconds from a ``Retry-After`` value (delay or HTTP date).
+
+    ``None`` when the value is missing or is not a finite number of seconds,
+    so an unusable header is treated like a missing one.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if text.isascii() and text.isdigit():
+        seconds = float(text)
+        return seconds if math.isfinite(seconds) else None
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, seconds) if math.isfinite(seconds) else None
+
+
+class OpenRouterUsageError(AccountUsageError):
+    """One or more configured OpenRouter accounts could not be scanned."""
+
+
+class ClaudeUsageError(AccountUsageError):
+    """One or more configured Claude accounts could not be scanned."""
 
 
 def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
@@ -390,10 +452,14 @@ def usage_poll_due(last: float | None, now: float, interval: float = USAGE_POLL_
     return last is None or now - last >= interval
 
 
-def _fetch_openrouter_key(
-    token: str, client: httpx.Client | None = None
+def _get_bearer_json(
+    url: str,
+    headers: dict[str, str],
+    name: str,
+    client: httpx.Client | None = None,
 ) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    """GET ``url`` with a bearer header; error text never carries the token."""
+    response: httpx.Response | None = None
     try:
         if client is None:
             # The bearer must never follow an ambient proxy or trust an ambient
@@ -401,20 +467,37 @@ def _fetch_openrouter_key(
             with httpx.Client(
                 timeout=8.0, follow_redirects=False, trust_env=False
             ) as owned:
-                response = owned.get(OPENROUTER_KEY_URL, headers=headers)
+                response = owned.get(url, headers=headers)
         else:
-            response = client.get(OPENROUTER_KEY_URL, headers=headers)
-    except httpx.HTTPError:
-        raise StoreError("OpenRouter usage request failed") from None
+            response = client.get(url, headers=headers)
+    except (httpx.HTTPError, UnicodeError):
+        # A header value httpx cannot encode raises UnicodeEncodeError, whose
+        # ``object`` holds the header with the token. Raising outside this
+        # block keeps the original out of both __cause__ and __context__.
+        pass
+    if response is None:
+        raise StoreError(f"{name} request failed")
+    if response.status_code == 429:
+        raise UsageRateLimited(
+            f"{name} returned HTTP 429",
+            _retry_after_seconds(response.headers.get("Retry-After")),
+        )
     if response.status_code != 200:
-        raise StoreError(f"OpenRouter usage returned HTTP {response.status_code}")
+        raise StoreError(f"{name} returned HTTP {response.status_code}")
     try:
         body = response.json()
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-        raise StoreError("OpenRouter usage returned invalid JSON") from exc
+        raise StoreError(f"{name} returned invalid JSON") from exc
     if not isinstance(body, dict):
-        raise StoreError("OpenRouter usage response is not an object")
+        raise StoreError(f"{name} response is not an object")
     return body
+
+
+def _fetch_openrouter_key(
+    token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    return _get_bearer_json(OPENROUTER_KEY_URL, headers, "OpenRouter usage", client)
 
 
 def _openrouter_number(value: Any, field: str, *, nullable: bool = False) -> int | float | None:
@@ -457,6 +540,39 @@ def _openrouter_snapshot(
     }
 
 
+def _record_account_snapshot(
+    store: Store,
+    snapshot: dict[str, Any],
+    match: Callable[[dict[str, Any]], bool],
+    *,
+    provider: str,
+    lock_key: str,
+) -> str | None:
+    """Insert ``snapshot`` unless the newest matching snapshot equals it."""
+    compare_keys = tuple(key for key in snapshot if key != "fetched_at")
+    if usage_unchanged(last_usage_snapshot(store, match), snapshot, compare_keys):
+        return None
+    session_id = pick_session_id(store, provider)
+    activity_id = str(uuid.uuid4())
+    event = store.write_with_advisory(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": session_id,
+            "type": "usage.snapshot",
+            "payload": snapshot,
+            "execution_status": "done",
+        },
+        lock_key=lock_key,
+        skip=lambda: usage_unchanged(
+            last_usage_snapshot(store, match), snapshot, compare_keys
+        ),
+    )
+    return None if event is None else activity_id
+
+
 def scan_openrouter_usage(
     store: Store,
     *,
@@ -471,6 +587,8 @@ def scan_openrouter_usage(
     errors: list[str] = []
     for account_name in accounts.usage_accounts:
         account = accounts.accounts[account_name]
+        if account.provider != OPENROUTER_VENDOR:
+            continue
         key_path = Path(account.config_dir) / "openrouter-api-key"
         try:
             try:
@@ -485,7 +603,6 @@ def scan_openrouter_usage(
             snapshot = _openrouter_snapshot(
                 account_name, body, (now or utcnow)()
             )
-            compare_keys = tuple(key for key in snapshot if key != "fetched_at")
 
             def match(payload: dict[str, Any], name: str = account_name) -> bool:
                 return (
@@ -493,32 +610,425 @@ def scan_openrouter_usage(
                     and payload.get("account") == name
                 )
 
-            if usage_unchanged(
-                last_usage_snapshot(store, match), snapshot, compare_keys
-            ):
-                continue
-            session_id = pick_session_id(store, "openrouter")
-            activity_id = str(uuid.uuid4())
-            event = store.write_with_advisory(
-                "activity",
-                "insert",
-                activity_id,
-                {
-                    "id": activity_id,
-                    "session_id": session_id,
-                    "type": "usage.snapshot",
-                    "payload": snapshot,
-                    "execution_status": "done",
-                },
+            activity_id = _record_account_snapshot(
+                store,
+                snapshot,
+                match,
+                provider=OPENROUTER_VENDOR,
                 lock_key=f"usage.snapshot:openrouter:{account_name}",
-                skip=lambda matcher=match, snap=snapshot, keys=compare_keys: (
-                    usage_unchanged(last_usage_snapshot(store, matcher), snap, keys)
-                ),
             )
-            if event is not None:
+            if activity_id is not None:
                 created.append(activity_id)
         except StoreError as exc:
             errors.append(f"{account_name}: {exc}")
     if errors:
         raise OpenRouterUsageError(errors, created)
+    return created
+
+
+KeychainReader = Callable[[str, str], str | None]
+
+
+def claude_keychain_service(config_dir: str) -> str:
+    """Claude Code's Keychain service name for the login of ``config_dir``.
+
+    The default profile (``~/.claude``) uses the unsuffixed service; any other
+    directory adds the first 8 hex characters of the SHA-256 of the NFC form of
+    the directory exactly as ``CLAUDE_CONFIG_DIR`` names it.
+    """
+    from .ai_accounts import _is_default_claude_dir
+
+    if _is_default_claude_dir(config_dir):
+        return CLAUDE_KEYCHAIN_SERVICE
+    digest = hashlib.sha256(
+        unicodedata.normalize("NFC", config_dir).encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{CLAUDE_KEYCHAIN_SERVICE}-{digest}"
+
+
+def claude_keychain_user(environ: dict[str, str] | None = None) -> str:
+    """The Keychain account Claude Code uses: ``$USER`` when it is a plain name."""
+    user = (os.environ if environ is None else environ).get("USER", "")
+    return user if _KEYCHAIN_USER.fullmatch(user) else CLAUDE_KEYCHAIN_FALLBACK_USER
+
+
+def read_claude_keychain(service: str, user: str) -> str | None:
+    """Read one generic password; ``None`` when the item does not exist.
+
+    The output is the credential itself and is never echoed in an error.
+    """
+    # Errors are raised after each ``except`` block: the original exception
+    # carries the captured output (the credential), so it must not stay in
+    # ``__context__``.
+    failure: str | None = None
+    try:
+        completed = subprocess.run(
+            [SECURITY_BIN, "find-generic-password", "-s", service, "-a", user, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        failure = "claude keychain read timed out"
+    except (OSError, ValueError):
+        failure = "claude keychain read failed"
+    if failure is not None:
+        raise StoreError(failure)
+    if completed.returncode == _SECURITY_ITEM_NOT_FOUND:
+        return None
+    if completed.returncode != 0:
+        raise StoreError(f"claude keychain read failed (exit {completed.returncode})")
+    text = completed.stdout.strip()
+    return text or None
+
+
+def _keychain_supported() -> bool:
+    return sys.platform == "darwin"
+
+
+def _claude_tier(subscription: Any, rate_limit_tier: Any) -> str | None:
+    """Plan name; a Max plan adds its multiplier (``default_claude_max_20x`` → ``max_20x``)."""
+    plan = subscription.strip() if isinstance(subscription, str) else ""
+    if plan == "":
+        return None
+    if plan.lower() == "max" and isinstance(rate_limit_tier, str):
+        multiplier = _MAX_MULTIPLIER.search(rate_limit_tier.strip())
+        if multiplier is not None:
+            return f"max_{multiplier.group(1).lower()}"
+    return plan
+
+
+def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
+    data: Any = None
+    valid = True
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # Raised below: the decode error holds the credential text in ``doc``.
+        valid = False
+    if not valid:
+        raise StoreError(f"claude credentials in {source} are not valid JSON")
+    if not isinstance(data, dict):
+        raise StoreError(f"claude credentials in {source} are not an object")
+    oauth = data.get("claudeAiOauth")
+    if oauth is None:
+        raise AuthStale(f"claude credentials in {source} hold no Claude login")
+    if not isinstance(oauth, dict):
+        raise StoreError(f"claude credentials in {source}: claudeAiOauth must be an object")
+    token = oauth.get("accessToken")
+    if token is None:
+        raise AuthStale(f"claude credentials in {source} hold no access token")
+    if not isinstance(token, str) or token == "":
+        raise StoreError(
+            f"claude credentials in {source}: accessToken must be a non-empty string"
+        )
+    if not _VISIBLE_ASCII.fullmatch(token):
+        raise StoreError(
+            f"claude credentials in {source}: accessToken must be visible ASCII characters"
+        )
+    expires_at = oauth.get("expiresAt")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+        raise StoreError(
+            f"claude credentials in {source}: expiresAt must be epoch milliseconds"
+        )
+    try:
+        expires_seconds = float(expires_at) / 1000.0
+    except OverflowError:
+        expires_seconds = math.inf
+    if not math.isfinite(expires_seconds):
+        raise StoreError(
+            f"claude credentials in {source}: expiresAt must be epoch milliseconds"
+        )
+    if datetime.now(timezone.utc).timestamp() >= expires_seconds:
+        raise AuthStale("claude login token expired; start claude to renew it")
+    return token, _claude_tier(oauth.get("subscriptionType"), oauth.get("rateLimitTier"))
+
+
+def load_claude_credentials(
+    config_dir: str,
+    *,
+    read_keychain: KeychainReader | None = None,
+) -> tuple[str, str | None]:
+    """Return ``(access_token, tier)`` for the Claude login of ``config_dir``.
+
+    macOS: the Keychain item of that directory first, then
+    ``<config_dir>/.credentials.json``; elsewhere only the file. A missing login
+    or an expired token is ``AuthStale``; malformed data is ``StoreError``.
+    Never refreshes and never reads the refresh token. Never log the token.
+    """
+    keychain_error: StoreError | None = None
+    reader = read_keychain
+    if reader is None and _keychain_supported():
+        reader = read_claude_keychain
+    if reader is not None:
+        try:
+            raw = reader(claude_keychain_service(config_dir), claude_keychain_user())
+        except StoreError as exc:
+            keychain_error = exc
+        else:
+            if raw is not None:
+                return _parse_claude_credentials(raw, "the keychain")
+    path = Path(config_dir) / ".credentials.json"
+    raw_file: str | None = None
+    readable = True
+    try:
+        if path.is_file():
+            raw_file = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        # Raised below so that the original stays out of ``__context__``.
+        readable = False
+    if not readable:
+        raise StoreError("claude credentials file is not readable")
+    if raw_file is None:
+        if keychain_error is not None:
+            raise keychain_error
+        raise AuthStale(f"claude login not found for {config_dir}; run claude auth login")
+    return _parse_claude_credentials(raw_file, ".credentials.json")
+
+
+def _claude_account_file(config_dir: str) -> Path:
+    from .ai_accounts import _is_default_claude_dir
+
+    if _is_default_claude_dir(config_dir):
+        return Path.home() / ".claude.json"
+    return Path(config_dir) / ".claude.json"
+
+
+def load_claude_account_email(config_dir: str) -> str:
+    """The e-mail address of the Claude login, from ``oauthAccount.emailAddress``."""
+    path = _claude_account_file(config_dir)
+    # Errors are raised after each ``except`` block, never chained.
+    readable = True
+    exists = False
+    try:
+        exists = path.is_file()
+    except OSError:
+        readable = False
+    if not readable:
+        raise StoreError("claude account file is not readable")
+    if not exists:
+        raise AuthStale(f"claude account file not found: {path}")
+    data: Any = None
+    failure: str | None = None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        failure = "claude account file is not readable"
+    except (UnicodeError, ValueError):
+        failure = "claude account file is not valid JSON"
+    if failure is not None:
+        raise StoreError(failure)
+    if not isinstance(data, dict):
+        raise StoreError("claude account file is not an object")
+    account = data.get("oauthAccount")
+    if account is None:
+        raise AuthStale("claude account file has no oauthAccount; run claude auth login")
+    if not isinstance(account, dict):
+        raise StoreError("claude account file field oauthAccount must be an object")
+    email = account.get("emailAddress")
+    if not isinstance(email, str) or email.strip() == "":
+        raise StoreError(
+            "claude account file field oauthAccount.emailAddress is missing or invalid"
+        )
+    return email
+
+
+def _fetch_claude_usage(
+    token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+        "Accept": "application/json",
+        "User-Agent": "dfx-agent",
+    }
+    return _get_bearer_json(CLAUDE_USAGE_URL, headers, "Claude usage", client)
+
+
+def _claude_reset(value: Any, field: str) -> str | None:
+    """Reset time as UTC ISO-8601 rounded to the nearest minute, or ``None``.
+
+    The endpoint reports the same reset with about a second of jitter between
+    calls (for example ``09:59:59.66`` and ``10:00:00.41``). Rounding to the
+    nearest full minute (30 seconds and more round up) keeps an unchanged
+    window equal, so no new snapshot is written for jitter alone.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or value == "":
+        raise StoreError(f"Claude usage {field} must be a timestamp string or null")
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
+    if when.tzinfo is None:
+        raise StoreError(f"Claude usage {field} has no time zone")
+    try:
+        when = when.astimezone(timezone.utc)
+        minute = when.replace(second=0, microsecond=0)
+        if when - minute >= timedelta(seconds=30):
+            minute += timedelta(minutes=1)
+    except OverflowError:
+        # Converting or rounding at the edge of the datetime range.
+        raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
+    return minute.isoformat()
+
+
+def _claude_window(raw: Any, field: str) -> dict[str, Any] | None:
+    """A reported window, or ``None`` when the response has no value for it."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise StoreError(f"Claude usage {field} must be an object or null")
+    used = raw.get("utilization")
+    if used is None:
+        return None
+    return {
+        "used_percent": _require_float(used, f"Claude usage {field}.utilization"),
+        "resets_at": _claude_reset(raw.get("resets_at"), f"{field}.resets_at"),
+    }
+
+
+def claude_snapshot(
+    account_email: str,
+    tier: str | None,
+    body: dict[str, Any],
+    fetched_at: str,
+) -> dict[str, Any]:
+    """Map the OAuth usage response to a ``usage.snapshot`` payload.
+
+    ``windows.five_hour`` and ``windows.weekly`` are ``None`` when the response
+    reports no value; a missing window is never shown as 0 %.
+    ``windows.weekly_models`` lists the weekly limits scoped to one model.
+    """
+    if not isinstance(body, dict):
+        raise StoreError("Claude usage response is not an object")
+    weekly_all: dict[str, Any] | None = None
+    weekly_models: list[dict[str, Any]] = []
+    limits = body.get("limits")
+    if limits is None:
+        limits = []
+    if not isinstance(limits, list):
+        raise StoreError("Claude usage limits must be a list or null")
+    for index, item in enumerate(limits):
+        field = f"limits[{index}]"
+        if not isinstance(item, dict):
+            raise StoreError(f"Claude usage {field} must be an object")
+        kind = item.get("kind")
+        if kind not in ("weekly_all", "weekly_scoped") or item.get("percent") is None:
+            continue
+        window = {
+            "used_percent": _require_float(
+                item.get("percent"), f"Claude usage {field}.percent"
+            ),
+            "resets_at": _claude_reset(item.get("resets_at"), f"{field}.resets_at"),
+        }
+        if kind == "weekly_all":
+            if weekly_all is None:
+                weekly_all = window
+            continue
+        scope = item.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        name: str | None = None
+        if isinstance(model, dict):
+            for key in ("display_name", "id"):
+                value = model.get(key)
+                if isinstance(value, str) and value.strip():
+                    name = value.strip()
+                    break
+        weekly_models.append({"model": name, **window})
+    weekly = _claude_window(body.get("seven_day"), "seven_day") or weekly_all
+    return {
+        "vendor": CLAUDE_VENDOR,
+        "provider": CLAUDE_VENDOR,
+        "account_email": _require_nonempty_str(account_email, "account_email"),
+        "tier": tier,
+        "windows": {
+            "five_hour": _claude_window(body.get("five_hour"), "five_hour"),
+            "weekly": weekly,
+            "weekly_models": weekly_models,
+        },
+        "fetched_at": fetched_at,
+    }
+
+
+def scan_claude_usage(
+    store: Store,
+    *,
+    fetch: Callable[[str], dict[str, Any]] | None = None,
+    read_keychain: KeychainReader | None = None,
+    now: Callable[[], str] | None = None,
+    skipped: list[str] | None = None,
+    pace: dict[str, float] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> list[str]:
+    """Record changed Claude subscription usage for configured ``usage_accounts``.
+
+    An account without a usable login (missing or expired) is skipped quietly;
+    its reason is appended to ``skipped`` when the caller passes a list.
+
+    ``pace`` maps an account name to the ``clock`` time before which it is not
+    read again. An attempted account waits ``CLAUDE_USAGE_POLL_SECONDS``, or the
+    server's ``Retry-After`` when that is longer. Without ``pace`` every account
+    is read on every call.
+    """
+    tick = clock or time.monotonic
+    from .ai_accounts import load_ai_accounts
+
+    accounts = load_ai_accounts(store.home)
+    created: list[str] = []
+    errors: list[str] = []
+    for account_name in accounts.usage_accounts:
+        account = accounts.accounts[account_name]
+        if account.provider != CLAUDE_VENDOR:
+            continue
+        if pace is not None:
+            started = tick()
+            if started < pace.get(account_name, -math.inf):
+                continue
+            pace[account_name] = started + CLAUDE_USAGE_POLL_SECONDS
+        try:
+            try:
+                email = load_claude_account_email(account.config_dir)
+                token, tier = load_claude_credentials(
+                    account.config_dir, read_keychain=read_keychain
+                )
+            except AuthStale as exc:
+                if skipped is not None:
+                    skipped.append(f"{account_name}: {exc}")
+                continue
+            body = (fetch or _fetch_claude_usage)(token)
+            snapshot = claude_snapshot(email, tier, body, (now or utcnow)())
+            key = email.casefold()
+
+            def match(payload: dict[str, Any], key: str = key) -> bool:
+                value = payload.get("account_email")
+                return (
+                    payload.get("vendor") == CLAUDE_VENDOR
+                    and isinstance(value, str)
+                    and value.casefold() == key
+                )
+
+            activity_id = _record_account_snapshot(
+                store,
+                snapshot,
+                match,
+                provider=CLAUDE_VENDOR,
+                lock_key=f"usage.snapshot:claude:{key}",
+            )
+            if activity_id is not None:
+                created.append(activity_id)
+        except UsageRateLimited as exc:
+            message = f"{account_name}: {exc}"
+            if exc.retry_after is not None:
+                message += f"; retry after {math.ceil(exc.retry_after)} s"
+                if pace is not None and exc.retry_after > CLAUDE_USAGE_POLL_SECONDS:
+                    pace[account_name] = tick() + exc.retry_after
+            errors.append(message)
+        except StoreError as exc:
+            errors.append(f"{account_name}: {exc}")
+    if errors:
+        raise ClaudeUsageError(errors, created)
     return created

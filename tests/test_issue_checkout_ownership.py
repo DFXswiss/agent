@@ -132,6 +132,27 @@ def test_worker_termination_reaps_the_separate_child_process_group(tmp_path):
                 pass
 
 
+@pytest.mark.parametrize(
+    'name',
+    ['ai-accounts.json', 'ai-subscriptions.json', 'github-accounts.json', 'coordinator.json', '.env'],
+)
+def test_device_configuration_files_block_commit(monkeypatch, name):
+    from agent_cli import coordinator_git as git_work
+    from agent_cli.runtime import Completed
+    calls = []
+    def git(_store, _worker, _runner, _cwd, *argv):
+        calls.append(argv)
+        if argv[0] == 'status':
+            return Completed(0, '?? ' + name + '\n', '')
+        if argv == ('diff', '--cached', '--name-only'):
+            return Completed(0, name + '\n', '')
+        return Completed(0, '', '')
+    monkeypatch.setattr(git_work, 'git', git)
+    with pytest.raises(StoreError, match='device configuration or control files cannot be published'):
+        git_work.stage_sign_commit_if_changes(None, None, None, '/unused', 'Change issue.')
+    assert not any(argv[0] == 'commit' for argv in calls)
+
+
 def test_potential_credential_material_blocks_commit(monkeypatch):
     from agent_cli import coordinator_git as git_work
     from agent_cli.runtime import Completed

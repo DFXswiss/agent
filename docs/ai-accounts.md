@@ -16,7 +16,7 @@ implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
 This device-local manifest is used by `agent lane run`, the lane steps of
-`agent run`, interactive Grok session starts, optional Grok and OpenRouter usage reads,
+`agent run`, interactive Grok session starts, optional Grok, OpenRouter and Claude usage reads,
 and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
 unknown top-level key or a malformed model selection therefore stops task
@@ -456,14 +456,102 @@ those reads; it never chooses the host profile or the first available account.
 The selected session must exist locally, be owned and active.
 
 The optional top-level `usage_accounts` is a list of explicitly named
-`openrouter` accounts. Missing/null/`[]` disables OpenRouter polling. Each
-configured account is read from `<config_dir>/openrouter-api-key`; unknown names,
-accounts of another provider and duplicate names are rejected. `agent watch openrouter-usage`
+`openrouter` or `claude` accounts. Missing/null/`[]` disables account usage
+polling. Unknown names, accounts of another provider and duplicate names are
+rejected. The device daemon polls these accounts on the same 60-second usage
+tick as the Grok billing read; each provider's scanner reads only its own
+accounts. On that tick it reads each `claude` account at most once every 15
+minutes, because the Claude usage endpoint answers per-minute polling with
+HTTP 429. A rate-limit answer is reported as
+`usage.snapshot error: <account>: Claude usage returned HTTP 429`, followed by
+`; retry after <N> s` when its `Retry-After` header gives a usable number of
+seconds, and postpones the next read of that account by its `Retry-After` when that is
+longer than 15 minutes. `agent watch claude-usage` reads every Claude account
+immediately.
+
+Each `openrouter` account is read from `<config_dir>/openrouter-api-key`.
+`agent watch openrouter-usage`
 records changed USD key-usage values from OpenRouter's key endpoint as
 `usage.snapshot`, without storing the key, label, or provider ids. Its request
 uses an owned client with `trust_env=False`, so ambient proxy and CA
 environment variables are ignored and the bearer key cannot be routed through
 an intercepting proxy.
+
+Each `claude` account uses the Claude Code login of its `config_dir`; the
+operator logs in there with Claude Code, Agent never logs in, refreshes a token
+or reads the refresh token. `agent watch claude-usage` records changed
+subscription usage from Claude's OAuth usage endpoint as `usage.snapshot`:
+
+- Identity: `oauthAccount.emailAddress` from Claude Code's global config file,
+  `~/.claude.json` for the default profile `~/.claude` and
+  `<config_dir>/.claude.json` for any other directory.
+- Credentials on macOS: the Keychain generic password of service
+  `Claude Code-credentials` (default profile) or
+  `Claude Code-credentials-<first 8 hex characters of the SHA-256 of the NFC
+  form of config_dir>` (any other directory), account `$USER` when it consists
+  only of `a-z`, `A-Z`, `0-9`, `.`, `_` and `-`, else `claude-code-user`. It is
+  read with `/usr/bin/security find-generic-password -w`. When the item does not
+  exist, and on every other system, the credentials come from
+  `<config_dir>/.credentials.json`. When the Keychain read fails (time-out or
+  another exit status), the file is used if it exists; the Keychain failure is
+  reported only when there is no file. Only `claudeAiOauth.accessToken`,
+  `expiresAt`, `subscriptionType` and `rateLimitTier` are used.
+- A missing login or a token whose `expiresAt` has passed skips the account
+  quietly (the next Claude Code start renews the token); `agent watch
+  claude-usage` prints `usage.snapshot skipped <account>: <reason>`. Malformed
+  files, a failed Keychain read without a credentials file, and request
+  failures are reported as `usage.snapshot error: <account>: <reason>` and are
+  never stored as 0 %.
+- Request: `GET https://api.anthropic.com/api/oauth/usage` with the access
+  token, header `anthropic-beta: oauth-2025-04-20` and `User-Agent: dfx-agent`,
+  through an owned client with `trust_env=False` as above.
+- Snapshot: `account_email`, `tier` (the plan, with the Max multiplier, for
+  example `max_20x`), and `windows` with `five_hour`, `weekly` (all models) and
+  `weekly_models` (weekly limits scoped to one model, with the model's display
+  name). Each window has `used_percent` and `resets_at` (UTC, rounded to the nearest
+  minute, because the endpoint reports the same reset with about a second of
+  jitter); a
+  window the response does not report is `null`, not 0 %. A snapshot is stored
+  only when a value other than `fetched_at` changed. The token is never stored
+  or logged.
+
+## Subscription inventory
+
+The optional, device-local file `$AGENT_HOME/ai-subscriptions.json` lists every
+known AI subscription, whether or not a device has its login. It holds no
+credentials and is separate from `ai-accounts.json`. A missing file means no
+inventory is configured. Example (operator-supplied, never installed):
+
+```json
+{
+  "subscriptions": [
+    {"provider": "claude", "account": "seat-1@example.com", "label": "Team seat 1", "status": "active", "note": "Billed yearly"},
+    {"provider": "openrouter", "account": "router-a"}
+  ]
+}
+```
+
+- `subscriptions` is the only top-level key and must be a list.
+- `provider`: required lowercase token of `a-z`, `0-9` and `-`; it is not
+  limited to providers with a usage reader, so other AI plans can be listed.
+- `account`: required non-empty single-line string, unique per provider
+  without regard to case. For `claude` and `grok` it is the login's e-mail
+  address; for `openrouter` it is the account name from `ai-accounts.json`.
+- `label`, `status`, `note`: optional non-empty single-line strings.
+- Unknown keys are rejected with an error naming the entry.
+
+The dashboard's **Subscriptions** page (`/usage`, linked from the main page)
+reads the file on every refresh. It lists every inventory entry with label,
+status and note, joined with the newest `usage.snapshot` of the same provider
+and account (case-insensitive). A listed subscription that no paired device
+polls shows `No usage: no paired device polls this login`. Usage snapshots of
+accounts missing from the inventory are still shown and marked `not listed`.
+Claude rows show the five-hour, weekly and per-model weekly percentages with
+their reset times. `status` is shown as an icon from the dashboard's state
+mapping with the word as the cell's title; a word the mapping does not know
+gets the neutral fallback icon. A file that does not validate is shown as an error on that
+page; the rest of the dashboard keeps working. `/api/state` delivers the joined
+rows as `subscriptions` (`configured`, `error`, `rows`).
 
 Each session may include:
 
@@ -507,8 +595,8 @@ Every lane provider also removes the upper- and lower-case `HTTP_PROXY`,
 `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`
 and `CURL_CA_BUNDLE`. A lane therefore never inherits an ambient proxy or CA
 trust that could read its provider credential. There is no opt-in for this
-stripping. The script-owned OpenRouter usage watcher builds its own HTTP client
-with `trust_env=False` for the same reason.
+stripping. The script-owned OpenRouter and Claude usage watchers build their own
+HTTP client with `trust_env=False` for the same reason.
 
 ## Interactive selection
 
