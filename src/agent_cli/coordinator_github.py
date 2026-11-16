@@ -467,6 +467,10 @@ def _fork_repository(
     return _canonical_fork_name(repo, data)
 
 
+def _fork_full_name_matches_login(canonical: str, login: str) -> bool:
+    return canonical.split("/", 1)[0].casefold() == login.casefold()
+
+
 def _account_fork_candidates(runner: Runner, *, repo: str, login: str) -> list[str]:
     """List names of ``repo`` forks owned by ``login``, across every returned page."""
     rows = gh_list(runner, _fork_list_argv(repo))
@@ -489,7 +493,7 @@ def _account_fork_candidates(runner: Runner, *, repo: str, login: str) -> list[s
             canonical = _repo(item.get("full_name"))
         except StoreError as exc:
             raise CoordinatorError("fork lookup returned no usable full_name") from exc
-        if canonical.split("/", 1)[0].casefold() != owner_login.casefold():
+        if not _fork_full_name_matches_login(canonical, owner_login):
             raise CoordinatorError(
                 "fork list full_name owner does not match the fork owner"
             )
@@ -500,7 +504,6 @@ def _account_fork_candidates(runner: Runner, *, repo: str, login: str) -> list[s
 def _forks_owned_by_account(runner: Runner, *, repo: str, login: str) -> list[str]:
     """Canonical full_names of the account's forks whose parent is ``repo``."""
     pinned: dict[str, str] = {}
-    folded_login = login.casefold()
     for candidate in _account_fork_candidates(runner, repo=repo, login=login):
         data = _fork_lookup(runner, candidate)
         if data is _FORK_MISSING:
@@ -509,7 +512,7 @@ def _forks_owned_by_account(runner: Runner, *, repo: str, login: str) -> list[st
         if parent_name is None or parent_name.casefold() != repo.casefold():
             continue
         canonical = _canonical_fork_name(repo, data)
-        if canonical.split("/", 1)[0].casefold() != folded_login:
+        if not _fork_full_name_matches_login(canonical, login):
             raise CoordinatorError(
                 "fork list full_name owner does not match the fork owner"
             )
@@ -556,8 +559,15 @@ def _publication_fork_when_unlisted(
         return None
     parent_name = _parent_full_name(data)
     if isinstance(parent_name, str) and parent_name.casefold() == repo.casefold():
-        return _canonical_fork_name(repo, data)
-    if not isinstance(parent_name, str):
+        canonical = _canonical_fork_name(repo, data)
+        # The lookup address can redirect to another owner's repository.
+        if _fork_full_name_matches_login(canonical, login):
+            return canonical
+    elif not isinstance(parent_name, str) and not (
+        isinstance(data, dict) and data.get("fork") is False
+    ):
+        # fork:true with no parent is unusable. fork:false is an unrelated repository
+        # and takes the same alternate name as a parent that is not the target.
         raise CoordinatorError("publication fork has a different parent repository")
     fork_name = _alternate_fork_name(repo)
     alternate = f"{login}/{fork_name}"
@@ -578,7 +588,12 @@ def _publication_fork_when_unlisted(
                 after_create=after_create,
             )
         return None
-    return _canonical_fork_name(repo, alt)
+    canonical = _canonical_fork_name(repo, alt)
+    if not _fork_full_name_matches_login(canonical, login):
+        raise CoordinatorError(
+            "fork list full_name owner does not match the fork owner"
+        )
+    return canonical
 
 
 def _owner_repository_config(

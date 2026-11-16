@@ -12,6 +12,7 @@ from agent_cli.coordinator_github import (
     HubAssignmentMandate,
     MANDATE_DEVIATION_BLOCKER,
     _apply_readiness_checklist,
+    _fork_list_argv,
     _fork_repository,
     _hub_assignment_row,
     _owner_repository_config,
@@ -20,7 +21,11 @@ from agent_cli.coordinator_github import (
     phase_readiness,
 )
 from agent_cli.coordinator_config import RepositoryConfig
-from agent_cli.coordinator_common import CoordinatorError, NonRecoverableCoordinatorError
+from agent_cli.coordinator_common import (
+    CoordinatorError,
+    NonRecoverableCoordinatorError,
+    gh_list,
+)
 from agent_cli.coordinator_runtime import advance_one, discover_assignments
 from agent_cli.hub import HubError
 from agent_cli.runtime import Completed
@@ -569,6 +574,24 @@ def test_owner_route_does_not_substitute_the_derived_fork_name(tmp_path):
         )
 
 
+def _gh_list_assignment_or_real_forks(runner, argv, *_args, **_kwargs):
+    """Issue events stay the assignment fixture. Fork pages use the real gh_list."""
+    if (
+        isinstance(argv, list)
+        and argv
+        and isinstance(argv[-1], str)
+        and "/forks?" in argv[-1]
+    ):
+        return gh_list(runner, argv)
+    return [{
+        "id": 70,
+        "event": "assigned",
+        "assignee": {"login": "worker-bot"},
+        "actor": {"login": "human-owner", "type": "User"},
+        "created_at": "2026-01-01T00:00:00Z",
+    }]
+
+
 class CanonicalForkGh(FakeGh):
     """Owner-scoped fork lookup plus the git transport checkout already uses."""
 
@@ -630,13 +653,7 @@ def test_fork_full_name_is_pinned_through_accept_remote_and_draft(
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_github.gh_list",
-        lambda *_a, **_k: [{
-            "id": 70,
-            "event": "assigned",
-            "assignee": {"login": "worker-bot"},
-            "actor": {"login": "human-owner", "type": "User"},
-            "created_at": "2026-01-01T00:00:00Z",
-        }],
+        _gh_list_assignment_or_real_forks,
     )
     monkeypatch.setattr("agent_cli.coordinator_github.set_checklist", lambda *_a, **_k: None)
 
@@ -907,6 +924,146 @@ def test_missing_fork_with_a_taken_derived_name_creates_the_alternate(tmp_path):
     assert cfg is not None
     assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
     assert _writes(calls) == [create]
+
+
+def test_taken_non_fork_derived_name_creates_the_alternate(tmp_path):
+    calls: list[list[str]] = []
+    state = {"visible": False}
+    create = [
+        "gh", "api", "-X", "POST", "repos/DFXswiss/app/forks", "-f", "name=dfxswiss-app",
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == _fork_list_argv("DFXswiss/app"):
+            return Completed(0, "[]", "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            return Completed(0, json.dumps({
+                "full_name": "TaprootFreakAI/app",
+                "fork": False,
+            }), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/dfxswiss-app"]:
+            if not state["visible"]:
+                return Completed(1, "", "not found")
+            return Completed(0, _fork_json("TaprootFreakAI/dfxswiss-app", "DFXswiss/app"), "")
+        if argv == create:
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    worker = _route_worker(tmp_path)
+    assert _owner_repository_config(
+        worker, runner, repo="DFXswiss/app", login="taprootfreakai",
+    ) is None
+    assert _writes(calls) == [create]
+    for argv in calls:
+        if "-X" in argv or "POST" in argv:
+            assert "repos/taprootfreakai/app" not in argv
+    state["visible"] = True
+    cfg = _owner_repository_config(
+        worker,
+        runner,
+        repo="DFXswiss/app",
+        login="taprootfreakai",
+        fork_request_done=True,
+    )
+    assert cfg is not None
+    assert cfg.publication_repo == "TaprootFreakAI/dfxswiss-app"
+    assert _writes(calls) == [create]
+
+
+def test_fork_true_without_parent_is_not_created(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == _fork_list_argv("DFXswiss/app"):
+            return Completed(0, "[]", "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            return Completed(0, json.dumps({
+                "full_name": "TaprootFreakAI/app",
+                "fork": True,
+            }), "")
+        raise AssertionError(argv)
+
+    with pytest.raises(
+        CoordinatorError, match="publication fork has a different parent repository"
+    ):
+        _owner_repository_config(
+            _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+        )
+    assert _writes(calls) == []
+
+
+def test_derived_lookup_owned_by_another_account_uses_the_alternate_name(tmp_path):
+    calls: list[list[str]] = []
+    create = [
+        "gh", "api", "-X", "POST", "repos/DFXswiss/app/forks", "-f", "name=dfxswiss-app",
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == _fork_list_argv("DFXswiss/app"):
+            return Completed(0, "[]", "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            return Completed(0, json.dumps({
+                "full_name": "OtherOrg/app",
+                "fork": True,
+                "parent": {"full_name": "DFXswiss/app"},
+            }), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/dfxswiss-app"]:
+            return Completed(1, "", "not found")
+        if argv == create:
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    assert _owner_repository_config(
+        _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+    ) is None
+    assert _writes(calls) == [create]
+    assert all("OtherOrg" not in argv for call in calls for argv in call)
+
+
+def test_alternate_lookup_owned_by_another_account_is_refused(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        prelude = _route_prelude(argv, "DFXswiss/app")
+        if prelude is not None:
+            return prelude
+        if argv == _fork_list_argv("DFXswiss/app"):
+            return Completed(0, "[]", "")
+        if argv == ["gh", "api", "repos/taprootfreakai/app"]:
+            return Completed(0, json.dumps({
+                "full_name": "TaprootFreakAI/app",
+                "fork": False,
+            }), "")
+        if argv == ["gh", "api", "repos/taprootfreakai/dfxswiss-app"]:
+            return Completed(0, json.dumps({
+                "full_name": "OtherOrg/dfxswiss-app",
+                "fork": True,
+                "parent": {"full_name": "DFXswiss/app"},
+            }), "")
+        raise AssertionError(argv)
+
+    with pytest.raises(
+        CoordinatorError,
+        match="fork list full_name owner does not match the fork owner",
+    ):
+        _owner_repository_config(
+            _route_worker(tmp_path), runner, repo="DFXswiss/app", login="taprootfreakai",
+        )
+    assert _writes(calls) == []
+    assert all("OtherOrg" not in argv for call in calls for argv in call)
 
 
 def test_fork_search_finds_the_account_fork_on_a_later_page(tmp_path):
@@ -1228,11 +1385,7 @@ def _patch_accept_prerequisites(monkeypatch):
     monkeypatch.setattr("agent_cli.coordinator_github.save_task", lambda *_a, **_k: None)
     monkeypatch.setattr(
         "agent_cli.coordinator_github.gh_list",
-        lambda *_a, **_k: [{
-            "id": 70, "event": "assigned", "assignee": {"login": "worker-bot"},
-            "actor": {"login": "human-owner", "type": "User"},
-            "created_at": "2026-01-01T00:00:00Z",
-        }],
+        _gh_list_assignment_or_real_forks,
     )
 
 
