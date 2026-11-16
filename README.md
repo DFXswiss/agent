@@ -37,8 +37,10 @@ paths. A38 visibility lookup likewise requires an explicitly configured
 access and session bindings without built-in selections. `agent lane run` needs
 `--session`; `agent run` uses its task session. Interactive Grok starts require
 an interactive role binding. Automatic Grok usage reads are disabled until
-`usage_session` is explicitly configured. OpenRouter key-usage reads are
-disabled until `usage_accounts` explicitly names one or more OpenRouter accounts.
+`usage_session` is explicitly configured. OpenRouter key-usage and Claude
+subscription-usage reads are disabled until `usage_accounts` explicitly names one
+or more OpenRouter or Claude accounts. The optional `ai-subscriptions.json`
+inventory lists every known subscription on the dashboard's Subscriptions page.
 
 ## Install
 
@@ -189,6 +191,7 @@ agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon c
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
+agent watch claude-usage # one scan of configured Claude subscription usage (5h, weekly, per model)
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
 agent order submit|list|show|events|wait|ack|reply|override|cancel|done|report  # local orders for the coordinator; coordinator.json "orders": true
 agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
@@ -228,7 +231,10 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 `agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
 
 `agent watch openrouter-usage` reads only explicitly selected `usage_accounts`
-and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
+and stores changed USD usage and limits from OpenRouter's key endpoint.
+`agent watch claude-usage` reads the Claude Code login of each selected `claude`
+account and stores changed five-hour, weekly and per-model weekly percentages;
+see [AI accounts](docs/ai-accounts.md). Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Tmux-backed lane captures join soft-wrapped lines before diagnostics are

@@ -15,7 +15,9 @@ from agent_cli.ai_accounts import (
     AIAccount,
     AIAccounts,
     AIRole,
+    AISubscription,
     load_ai_accounts,
+    load_ai_subscriptions,
 )
 from agent_cli.model_slots import ModelSlots
 
@@ -513,10 +515,19 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match="unknown account"):
         load_ai_accounts(tmp_path)
 
-    data["usage_accounts"] = ["grok-primary"]
+    data["accounts"]["seat"] = {
+        "provider": "claude",
+        "config_dir": "/operator/path/claude-seat",
+    }
+    data["usage_accounts"] = ["or", "seat"]
     write_config(tmp_path, data)
-    with pytest.raises(AccountError, match="provider openrouter"):
-        load_ai_accounts(tmp_path)
+    assert load_ai_accounts(tmp_path).usage_accounts == ("or", "seat")
+
+    for other in ("grok-primary", "codex-primary"):
+        data["usage_accounts"] = [other]
+        write_config(tmp_path, data)
+        with pytest.raises(AccountError, match="must use provider openrouter or claude"):
+            load_ai_accounts(tmp_path)
 
     data["usage_accounts"] = ["or", "or"]
     write_config(tmp_path, data)
@@ -536,3 +547,113 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
 
     # Task creation validates models and implementer but ignores broken usage_accounts.
     assert load_model_slots(tmp_path).as_dict()["first"]
+
+
+def write_subscriptions(home: Path, data: object) -> None:
+    (home / "ai-subscriptions.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_subscription_inventory_is_optional(tmp_path: Path) -> None:
+    assert load_ai_subscriptions(tmp_path) is None
+    write_subscriptions(tmp_path, {"subscriptions": []})
+    assert load_ai_subscriptions(tmp_path) == ()
+
+
+def test_subscription_inventory_reads_entries(tmp_path: Path) -> None:
+    write_subscriptions(
+        tmp_path,
+        {
+            "subscriptions": [
+                {
+                    "provider": "claude",
+                    "account": "seat-1@example.com",
+                    "label": "Team seat 1",
+                    "status": "active",
+                    "note": "free text",
+                },
+                {"provider": "openrouter", "account": "router-a"},
+                {"provider": "other-plan-2", "account": "seat-1@example.com", "note": None},
+            ]
+        },
+    )
+    assert load_ai_subscriptions(tmp_path) == (
+        AISubscription("claude", "seat-1@example.com", "Team seat 1", "active", "free text"),
+        AISubscription("openrouter", "router-a"),
+        AISubscription("other-plan-2", "seat-1@example.com"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ([], "accepts only subscriptions"),
+        ({}, "accepts only subscriptions"),
+        ({"subscriptions": [], "extra": 1}, "accepts only subscriptions"),
+        ({"subscriptions": {}}, "subscriptions must be a list"),
+        ({"subscriptions": ["claude"]}, r"subscriptions\[0\] must be an object"),
+        (
+            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "plan": "max"}]},
+            r"subscriptions\[0\] has unknown fields: plan",
+        ),
+        ({"subscriptions": [{"account": "a@example.com"}]}, r"subscriptions\[0\]\.provider"),
+        (
+            {"subscriptions": [{"provider": "Claude", "account": "a@example.com"}]},
+            r"subscriptions\[0\]\.provider must be a lowercase token",
+        ),
+        (
+            {"subscriptions": [{"provider": "claude ai", "account": "a@example.com"}]},
+            r"subscriptions\[0\]\.provider must be a lowercase token",
+        ),
+        ({"subscriptions": [{"provider": "claude"}]}, r"subscriptions\[0\]\.account"),
+        (
+            {"subscriptions": [{"provider": "claude", "account": " "}]},
+            r"subscriptions\[0\]\.account must be a non-empty",
+        ),
+        (
+            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "label": 3}]},
+            r"subscriptions\[0\]\.label",
+        ),
+        (
+            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "status": ""}]},
+            r"subscriptions\[0\]\.status",
+        ),
+        (
+            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "note": "a\nb"}]},
+            r"subscriptions\[0\]\.note",
+        ),
+        (
+            {
+                "subscriptions": [
+                    {"provider": "claude", "account": "Seat@Example.com"},
+                    {"provider": "claude", "account": "seat@example.com"},
+                ]
+            },
+            r"subscriptions\[1\] repeats provider claude",
+        ),
+    ],
+)
+def test_subscription_inventory_rejects_invalid_entries(
+    tmp_path: Path, data: object, message: str
+) -> None:
+    write_subscriptions(tmp_path, data)
+    with pytest.raises(AccountError, match=message):
+        load_ai_subscriptions(tmp_path)
+
+
+def test_subscription_inventory_allows_one_account_under_two_providers(tmp_path: Path) -> None:
+    write_subscriptions(
+        tmp_path,
+        {
+            "subscriptions": [
+                {"provider": "claude", "account": "seat@example.com"},
+                {"provider": "grok", "account": "seat@example.com"},
+            ]
+        },
+    )
+    assert len(load_ai_subscriptions(tmp_path) or ()) == 2
+
+
+def test_subscription_inventory_rejects_unreadable_json(tmp_path: Path) -> None:
+    (tmp_path / "ai-subscriptions.json").write_text("{", encoding="utf-8")
+    with pytest.raises(AccountError, match="Cannot read ai-subscriptions.json"):
+        load_ai_subscriptions(tmp_path)

@@ -133,7 +133,7 @@ def stage_sign_commit_if_changes(
     paths = git(store, worker, runner, worktree, 'diff', '--cached', '--name-only')
     require_git_ok(paths, 'staged file scope')
     for name in paths.stdout.splitlines():
-        if (name in {'ai-accounts.json', 'github-accounts.json', 'coordinator.json', '.env'}
+        if (name in {'ai-accounts.json', 'ai-subscriptions.json', 'github-accounts.json', 'coordinator.json', '.env'}
                 or name.startswith(('.agent-coordinator/', '.coordinator-control/', '.ssh/', '.config/'))):
             raise CoordinatorError('device configuration or control files cannot be published')
     patch = git(store, worker, runner, worktree, 'diff', '--cached')

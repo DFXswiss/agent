@@ -10,7 +10,7 @@ from test_dashboard_control import _running_dashboard
 pytestmark = pytest.mark.no_pg
 
 MOVED_SECTIONS = (
-    ("usage", "Usage", "usage"),
+    ("usage", "Subscriptions", "usage"),
     ("sessions", "Sessions", "sessions"),
     ("tasks", "Tasks", "tasks"),
     ("rounds", "Rounds", "rounds"),
@@ -66,3 +66,76 @@ def test_dashboard_serves_the_main_page_and_every_subpage(monkeypatch) -> None:
         status, _, raw = _get(port, "/unknown")
         assert status == 404
         assert b"404" in raw
+
+
+class _StateStore:
+    def __init__(self, agent_home) -> None:
+        self.home = agent_home
+
+    def snapshot(self) -> dict:
+        return {
+            "generated_at": "2026-11-16T12:00:00Z",
+            "sessions": [],
+            "activity": [
+                {
+                    "type": "usage.snapshot",
+                    "_origin_device_id": "device-a",
+                    "payload": {
+                        "vendor": "claude",
+                        "provider": "claude",
+                        "account_email": "seat-1@example.com",
+                    },
+                }
+            ],
+        }
+
+    def device_id(self) -> str:
+        return "device-a"
+
+    def close(self) -> None:
+        pass
+
+
+def _state(port: int) -> dict:
+    import json
+
+    status, content_type, raw = _get(port, "/api/state")
+    assert status == 200
+    assert content_type.startswith("application/json")
+    return json.loads(raw)
+
+
+def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
+    import json
+
+    monkeypatch.setattr(main_mod, "open_store", lambda: _StateStore(tmp_path))
+    with _running_dashboard(monkeypatch) as port:
+        state = _state(port)
+        assert state["subscriptions"]["configured"] is False
+        assert state["subscriptions"]["error"] is None
+        assert [row["listed"] for row in state["subscriptions"]["rows"]] == [False]
+        assert len(state["usage"]) == 1
+
+        path = tmp_path / "ai-subscriptions.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "subscriptions": [
+                        {"provider": "claude", "account": "Seat-1@example.com", "label": "Seat 1"},
+                        {"provider": "claude", "account": "seat-2@example.com"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        rows = _state(port)["subscriptions"]["rows"]
+        assert [(row["account"], row["label"], row["usage"] is not None) for row in rows] == [
+            ("Seat-1@example.com", "Seat 1", True),
+            ("seat-2@example.com", None, False),
+        ]
+
+        # A broken file is data on the page, not a broken endpoint.
+        path.write_text("{", encoding="utf-8")
+        subscriptions = _state(port)["subscriptions"]
+        assert subscriptions["error"] == "Cannot read ai-subscriptions.json"
+        assert [row["listed"] for row in subscriptions["rows"]] == [False]

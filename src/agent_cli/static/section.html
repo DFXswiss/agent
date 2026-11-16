@@ -41,7 +41,7 @@
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
 
   <nav id="section-nav">
-    <a href="/usage">Usage</a>
+    <a href="/usage">Subscriptions</a>
     <a href="/sessions">Sessions</a>
     <a href="/tasks">Tasks</a>
     <a href="/rounds">Rounds</a>
@@ -53,8 +53,8 @@
   </nav>
 
   <section class="dashboard-section" data-section="usage">
-    <h2>Usage</h2>
-    <table id="usage"><thead><tr><th>Owner</th><th>Email</th><th>Provider</th><th>Tier</th><th>Used</th><th>Reset</th><th>Fetched</th></tr></thead><tbody></tbody></table>
+    <h2>Subscriptions</h2>
+    <table id="usage"><thead><tr><th>Provider</th><th>Account</th><th>Label</th><th>Status</th><th>Note</th><th>Listed</th><th>Tier</th><th>Used</th><th>Reset</th><th>Owner</th><th>Fetched</th></tr></thead><tbody></tbody></table>
   </section>
 
   <section class="dashboard-section" data-section="sessions">
@@ -250,6 +250,52 @@
     }
     /* DASHBOARD_COMMON_END */
 
+    const SUBSCRIPTION_COLUMNS = 11;
+    const NO_USAGE = "No usage: no paired device polls this login";
+    const NO_INVENTORY = "No subscription inventory: $AGENT_HOME/ai-subscriptions.json is absent";
+
+    function percentText(w) {
+      return w && typeof w.used_percent === "number" ? w.used_percent + "%" : "—";
+    }
+
+    // The windows of a Claude snapshot: five hours, the week, and the week per model.
+    function claudeWindows(p) {
+      const w = p.windows || {};
+      const list = [["5h", w.five_hour], ["Week", w.weekly]];
+      (Array.isArray(w.weekly_models) ? w.weekly_models : []).forEach(m => list.push(["Week " + (m.model || "scoped"), m]));
+      return list;
+    }
+
+    // Used and reset cells of one usage.snapshot payload, escaped.
+    function usageCells(p) {
+      const provider = p.provider || p.vendor;
+      if (provider === "claude") {
+        const list = claudeWindows(p);
+        return {
+          used: list.map(([name, w]) => esc(name + ": " + percentText(w))).join("<br>"),
+          reset: list.map(([name, w]) => esc(name + ": " + (w && w.resets_at ? w.resets_at : "—"))).join("<br>"),
+        };
+      }
+      if (provider === "openrouter") {
+        return {
+          used: idOrText(typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : ""),
+          reset: idOrText(p.limit_reset),
+        };
+      }
+      return {
+        used: idOrText(typeof p.used_percent === "number" ? p.used_percent + "%" : ""),
+        reset: idOrText(p.period_end),
+      };
+    }
+
+    // One row of the subscription overview: an inventory entry, its usage, or both.
+    function subscriptionRowHtml(row) {
+      const ev = row.usage || {};
+      const p = ev.payload || {};
+      const cells = row.usage ? usageCells(p) : { used: esc(NO_USAGE), reset: "" };
+      return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td>${idOrText(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
+    }
+
     async function postControl(id, body) {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
         method: "POST",
@@ -344,16 +390,9 @@
         setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
 
-        setHtml(document.querySelector("#usage tbody"), (data.usage || []).map(ev => {
-          const p = ev.payload || {};
-          const openrouter = (p.provider || p.vendor) === "openrouter";
-          const account = openrouter ? p.account : p.account_email;
-          const used = openrouter
-            ? (typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : "")
-            : (typeof p.used_percent === "number" ? p.used_percent + "%" : "");
-          const reset = openrouter ? p.limit_reset : p.period_end;
-          return `<tr><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(account)}</td><td>${idOrText(p.provider || p.vendor)}</td><td>${idOrText(p.tier)}</td><td>${idOrText(used)}</td><td>${idOrText(reset)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
-        }).join("") || empty(7));
+        const subscriptions = data.subscriptions || {};
+        setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(subscriptionRowHtml).join("")
+          || (subscriptions.configured ? empty(SUBSCRIPTION_COLUMNS) : `<tr><td colspan='${SUBSCRIPTION_COLUMNS}'>${esc(NO_INVENTORY)}</td></tr>`));
 
         sessionsById = {};
         (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
@@ -410,6 +449,10 @@
         setHtml(document.querySelector("#pings tbody"), (data.pings || []).map(p =>
           `<tr><td>${idOrText(p.from_login)}</td><td>${idOrText(p.to_login)}</td><td>${idOrText(p.kind)}</td><td>${idOrText(p.acked_at)}</td></tr>`
         ).join("") || empty(4));
+        if (section === "usage" && subscriptions.error) {
+          err.hidden = false;
+          err.textContent = "ai-subscriptions.json: " + subscriptions.error;
+        }
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);

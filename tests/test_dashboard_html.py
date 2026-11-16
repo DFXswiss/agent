@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.main import TASK_STATES, _usage_dashboard_rows
+from agent_cli.ai_accounts import AISubscription
+from agent_cli.main import (
+    TASK_STATES,
+    _subscription_dashboard_rows,
+    _subscriptions_dashboard,
+    _usage_dashboard_rows,
+)
 from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
 
@@ -20,7 +26,7 @@ STATIC = (
 PAGE = STATIC / "index.html"
 SECTION_PAGE = STATIC / "section.html"
 MOVED_SECTIONS = (
-    ("usage", "Usage", "usage"),
+    ("usage", "Subscriptions", "usage"),
     ("sessions", "Sessions", "sessions"),
     ("tasks", "Tasks", "tasks"),
     ("rounds", "Rounds", "rounds"),
@@ -36,7 +42,10 @@ def test_dashboard_html_contains_usage_table() -> None:
     html = SECTION_PAGE.read_text(encoding="utf-8")
     assert 'id="usage"' in html
     assert 'typeof p.used_percent === "number"' in html
-    assert 'setHtml(document.querySelector("#usage tbody"), (data.usage || []).map(ev => {' in html
+    assert (
+        'setHtml(document.querySelector("#usage tbody"), '
+        "(subscriptions.rows || []).map(subscriptionRowHtml)"
+    ) in html
     assert ".reverse(" not in html
 
 
@@ -89,12 +98,11 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
     assert _usage_dashboard_rows([legacy]) == [legacy]
 
     html = SECTION_PAGE.read_text(encoding="utf-8")
-    assert 'const openrouter = (p.provider || p.vendor) === "openrouter";' in html
-    assert 'const account = openrouter ? p.account : p.account_email;' in html
+    assert 'if (provider === "openrouter") {' in html
     assert 'typeof p.usage_usd === "number"' in html
     assert 'typeof p.limit_usd === "number"' in html
-    assert 'p.limit_reset' in html
-    assert 'const reset = openrouter ? p.limit_reset : p.period_end;' in html
+    assert "reset: idOrText(p.limit_reset)," in html
+    assert "reset: idOrText(p.period_end)," in html
     assert (
         '"$" + p.usage_usd + " / $" + '
         '(typeof p.limit_usd === "number" ? p.limit_usd : "unlimited")'
@@ -139,6 +147,156 @@ def test_dashboard_usage_rows_keep_newest_openrouter_snapshot_per_device_alias()
     rows = _usage_dashboard_rows([newest, older])
 
     assert rows == [newest]
+
+
+def _snapshot(provider: str, account: str, device: str = "device-a", **extra: object) -> dict:
+    key = "account" if provider == "openrouter" else "account_email"
+    return {
+        "type": "usage.snapshot",
+        "_origin_device_id": device,
+        "payload": {"provider": provider, "vendor": provider, key: account, **extra},
+    }
+
+
+def test_subscription_rows_join_inventory_with_newest_usage() -> None:
+    claude = _snapshot("claude", "Seat-1@Example.com", tier="max_20x")
+    grok = _snapshot("grok", "grok@example.com")
+    router_a = _snapshot("openrouter", "router-a", "device-a")
+    router_b = _snapshot("openrouter", "router-a", "device-b")
+    stray = _snapshot("claude", "unlisted@example.com")
+    usage = _usage_dashboard_rows([claude, grok, router_a, router_b, stray])
+    inventory = (
+        AISubscription("claude", "seat-1@example.com", "Team seat 1", "active", "free text"),
+        AISubscription("claude", "seat-2@example.com", "Team seat 2"),
+        AISubscription("openrouter", "ROUTER-A"),
+        AISubscription("grok", "grok@example.com", status="paused"),
+        AISubscription("chatgpt", "seat-1@example.com"),
+    )
+
+    rows = _subscription_dashboard_rows(inventory, usage)
+
+    assert [(row["provider"], row["account"], row["listed"], row["usage"]) for row in rows] == [
+        ("claude", "seat-1@example.com", True, claude),
+        ("claude", "seat-2@example.com", True, None),
+        ("openrouter", "ROUTER-A", True, router_a),
+        ("openrouter", "ROUTER-A", True, router_b),
+        ("grok", "grok@example.com", True, grok),
+        ("chatgpt", "seat-1@example.com", True, None),
+        ("claude", "unlisted@example.com", False, stray),
+    ]
+    assert rows[0]["label"] == "Team seat 1"
+    assert rows[0]["status"] == "active"
+    assert rows[0]["note"] == "free text"
+    assert rows[-1]["label"] is None and rows[-1]["note"] is None
+
+
+def test_subscription_rows_without_inventory_keep_every_snapshot() -> None:
+    grok = _snapshot("grok", "grok@example.com")
+    legacy = {"type": "usage.snapshot", "payload": {"vendor": "grok", "account_email": "old@example.com"}}
+    rows = _subscription_dashboard_rows((), [grok, legacy])
+    assert [(row["provider"], row["account"], row["listed"]) for row in rows] == [
+        ("grok", "grok@example.com", False),
+        ("grok", "old@example.com", False),
+    ]
+
+
+def test_subscriptions_dashboard_reports_file_state_as_data(tmp_path: Path) -> None:
+    grok = _snapshot("grok", "grok@example.com")
+    assert _subscriptions_dashboard(tmp_path, [grok]) == {
+        "configured": False,
+        "error": None,
+        "rows": _subscription_dashboard_rows((), [grok]),
+    }
+    path = tmp_path / "ai-subscriptions.json"
+    path.write_text(
+        json.dumps({"subscriptions": [{"provider": "grok", "account": "grok@example.com"}]}),
+        encoding="utf-8",
+    )
+    state = _subscriptions_dashboard(tmp_path, [grok])
+    assert state["configured"] is True and state["error"] is None
+    assert state["rows"][0]["listed"] is True and state["rows"][0]["usage"] == grok
+
+    path.write_text(json.dumps({"subscriptions": [{"provider": "Grok"}]}), encoding="utf-8")
+    state = _subscriptions_dashboard(tmp_path, [grok])
+    assert state["configured"] is False
+    assert "provider must be a lowercase token" in state["error"]
+    assert [row["listed"] for row in state["rows"]] == [False]
+
+
+def test_subscriptions_section_markup() -> None:
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    assert "<h2>Subscriptions</h2>" in html
+    assert "<h2>Usage</h2>" not in html
+    assert '<a href="/usage">Subscriptions</a>' in html
+    assert '<a href="/usage">Subscriptions</a>' in PAGE.read_text(encoding="utf-8")
+    header = html.split('<table id="usage"><thead><tr>', 1)[1].split("</tr>", 1)[0]
+    assert header.count("<th>") == 11
+    for column in ("Provider", "Account", "Label", "Status", "Note", "Listed", "Tier", "Used", "Reset"):
+        assert f"<th>{column}</th>" in header
+    assert "const SUBSCRIPTION_COLUMNS = 11;" in html
+    # A file error reuses the page's error line, only on this section.
+    assert 'if (section === "usage" && subscriptions.error) {' in html
+    assert 'err.textContent = "ai-subscriptions.json: " + subscriptions.error;' in html
+
+
+def section_function(html: str, name: str) -> str:
+    start = html.index(f"\n    function {name}(") + 1
+    return html[start : html.index("\n    }\n", start) + 7]
+
+
+def test_subscription_rows_render_in_node() -> None:
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
+    helpers = "\n".join(
+        line for line in script.splitlines()
+        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const UUID_PATTERN", "    const copyFeedback"))
+    )
+    functions = "\n".join(
+        section_function(html, name)
+        for name in ("idChip", "idOrText", "percentText", "claudeWindows", "usageCells", "subscriptionRowHtml")
+    )
+    harness = helpers + "\n" + functions + """
+const claude = {
+  provider: "claude", account: "seat-1@example.com", label: "Seat <1>", status: "active", note: "a & b", listed: true,
+  usage: { _origin_device_id: "device-a", payload: {
+    provider: "claude", vendor: "claude", account_email: "seat-1@example.com", tier: "max_20x", fetched_at: "2026-11-16T12:00:00Z",
+    windows: {
+      five_hour: null,
+      weekly: { used_percent: 14.0, resets_at: "2026-11-23T10:00:00+00:00" },
+      weekly_models: [{ model: "<b>Fable</b>", used_percent: 21.5, resets_at: null }],
+    },
+  } },
+};
+const missing = { provider: "claude", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, usage: null };
+const stray = { provider: "openrouter", account: "router-a", listed: false,
+  usage: { _origin_device_id: "device-b", payload: { provider: "openrouter", account: "router-a", usage_usd: 1.25, limit_usd: null, limit_reset: "monthly" } } };
+console.log(JSON.stringify({
+  claude: subscriptionRowHtml(claude),
+  missing: subscriptionRowHtml(missing),
+  stray: subscriptionRowHtml(stray),
+}));
+"""
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout)
+    claude = out["claude"]
+    assert "<td>Seat &lt;1&gt;</td>" in claude
+    assert "<td>a &amp; b</td>" in claude
+    assert "<td>listed</td>" in claude
+    assert "<td>max_20x</td>" in claude
+    assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Fable&lt;/b&gt;: 21.5%</td>" in claude
+    assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Fable&lt;/b&gt;: —</td>" in claude
+    assert "<b>" not in claude
+    assert out["missing"].count("<td>") == 11
+    assert "<td>No usage: no paired device polls this login</td>" in out["missing"]
+    assert "0%" not in out["missing"]
+    assert "<td>not listed</td>" in out["stray"]
+    assert "<td>$1.25 / $unlimited</td>" in out["stray"]
+    assert "<td>monthly</td>" in out["stray"]
 
 
 def static_page(name: str) -> str:

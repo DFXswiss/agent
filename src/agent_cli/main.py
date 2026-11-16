@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,7 +24,12 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from .ai_accounts import load_ai_accounts, load_model_configuration
+from .ai_accounts import (
+    AISubscription,
+    load_ai_accounts,
+    load_ai_subscriptions,
+    load_model_configuration,
+)
 from .allow import (
     ACTIONS,
     GATE_PAIRS,
@@ -114,8 +120,9 @@ from .small_change import (
 )
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import (
+    AccountUsageError,
     AuthStale,
-    OpenRouterUsageError,
+    scan_claude_usage,
     scan_openrouter_usage,
     scan_usage,
     usage_poll_due,
@@ -2372,6 +2379,18 @@ def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
             item["key"] = canonical_key(str(item["key"]))
 
 
+def _usage_account(payload: dict[str, Any]) -> tuple[Any, Any]:
+    """Provider and account named by a usage snapshot payload.
+
+    OpenRouter snapshots name the device-local account alias; Grok and Claude
+    snapshots name the login's e-mail address.
+    """
+    provider = payload.get("provider") or payload.get("vendor")
+    if provider == "openrouter":
+        return provider, payload.get("account")
+    return provider, payload.get("account_email")
+
+
 def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep the newest usage snapshot per provider account for the dashboard.
 
@@ -2387,12 +2406,7 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
-        provider = payload.get("provider") or payload.get("vendor")
-        account = (
-            payload.get("account")
-            if provider == "openrouter"
-            else payload.get("account_email")
-        )
+        provider, account = _usage_account(payload)
         if provider == "openrouter":
             origin = event.get("_origin_device_id")
             key = (str(provider), origin if isinstance(origin, str) else "", str(account))
@@ -2403,6 +2417,82 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
         seen.add(key)
         rows.append(event)
     return rows
+
+
+def _usage_identity(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """Provider and case-folded account a usage snapshot belongs to."""
+    provider, account = _usage_account(payload)
+    if not isinstance(provider, str) or not isinstance(account, str):
+        return None
+    return provider, account.casefold()
+
+
+def _subscription_dashboard_rows(
+    inventory: tuple[AISubscription, ...],
+    usage: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Join every listed subscription with its newest usage snapshots.
+
+    A listed subscription without a snapshot keeps one row with ``usage`` null.
+    A snapshot whose account is not listed gets its own row with ``listed``
+    false, so that no recorded usage is hidden.
+    """
+    identities = [
+        _usage_identity(event.get("payload") if isinstance(event.get("payload"), dict) else {})
+        for event in usage
+    ]
+    joined: set[int] = set()
+    rows: list[dict[str, Any]] = []
+    for item in inventory:
+        entry = {
+            "provider": item.provider,
+            "account": item.account,
+            "label": item.label,
+            "status": item.status,
+            "note": item.note,
+            "listed": True,
+        }
+        key = (item.provider, item.account.casefold())
+        matches = [index for index, identity in enumerate(identities) if identity == key]
+        if not matches:
+            rows.append({**entry, "usage": None})
+        for index in matches:
+            joined.add(index)
+            rows.append({**entry, "usage": usage[index]})
+    for index, event in enumerate(usage):
+        if index in joined:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        provider, account = _usage_account(payload)
+        rows.append(
+            {
+                "provider": provider,
+                "account": account,
+                "label": None,
+                "status": None,
+                "note": None,
+                "listed": False,
+                "usage": event,
+            }
+        )
+    return rows
+
+
+def _subscriptions_dashboard(
+    agent_home: Path, usage: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The subscription overview of ``/api/state``; a file error is data, not a failure."""
+    error: str | None = None
+    try:
+        inventory = load_ai_subscriptions(agent_home)
+    except StoreError as exc:
+        inventory = None
+        error = str(exc)
+    return {
+        "configured": inventory is not None,
+        "error": error,
+        "rows": _subscription_dashboard_rows(inventory or (), usage),
+    }
 
 
 def cmd_dashboard(args: list[str]) -> None:
@@ -2497,6 +2587,11 @@ def cmd_dashboard(args: list[str]) -> None:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
                 snap["usage"] = _usage_dashboard_rows(snap.get("activity") or [])
+                store_home = getattr(store, "home", None)
+                snap["subscriptions"] = _subscriptions_dashboard(
+                    store_home if isinstance(store_home, Path) else home(),
+                    snap["usage"],
+                )
                 _canonicalize_snapshot_names(snap)
                 self._json(200, snap)
                 return
@@ -4905,6 +5000,26 @@ def cmd_lane(args: list[str]) -> None:
         raise SystemExit(2)
 
 
+def _print_account_usage(
+    scan: Callable[[Store], list[str]], store: Store
+) -> bool:
+    """Run one ``usage_accounts`` scanner; print new ids and errors. True when clean."""
+    try:
+        activity_ids = scan(store)
+    except AccountUsageError as exc:
+        for activity_id in exc.activity_ids:
+            print(f"usage.snapshot {activity_id}")
+        for message in exc.errors:
+            print(f"usage.snapshot error: {message}", file=sys.stderr)
+        return False
+    except StoreError as exc:
+        print(f"usage.snapshot error: {exc}", file=sys.stderr)
+        return False
+    for activity_id in activity_ids:
+        print(f"usage.snapshot {activity_id}")
+    return True
+
+
 def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
@@ -4930,18 +5045,16 @@ def cmd_knock(args: list[str]) -> None:
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 try:
-                    if load_ai_accounts(
+                    usage_accounts = load_ai_accounts(
                         store.home, defer_model_configuration=True
-                    ).usage_accounts:
-                        for activity_id in scan_openrouter_usage(store):
-                            print(f"usage.snapshot {activity_id}")
-                except OpenRouterUsageError as exc:
-                    for activity_id in exc.activity_ids:
-                        print(f"usage.snapshot {activity_id}")
-                    for message in exc.errors:
-                        print(f"usage.snapshot error: {message}", file=sys.stderr)
+                    ).usage_accounts
                 except StoreError as exc:
+                    usage_accounts = ()
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                if usage_accounts:
+                    # One scanner per provider; each reads only its own accounts.
+                    for scan_accounts in (scan_openrouter_usage, scan_claude_usage):
+                        _print_account_usage(scan_accounts, store)
                 try:
                     created, skipped = scan_merged(store, run_argv)
                     for activity_id in created:
@@ -5092,12 +5205,13 @@ def cmd_watch(args: list[str]) -> None:
         "assigned",
         "grok-usage",
         "openrouter-usage",
+        "claude-usage",
         "errors",
         "error-fix",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|claude-usage|errors|error-fix"
         )
     store = open_store()
     try:
@@ -5123,18 +5237,26 @@ def cmd_watch(args: list[str]) -> None:
             else:
                 print("usage.snapshot none")
             return
-        if args[0] == "openrouter-usage":
+        if args[0] in ("openrouter-usage", "claude-usage"):
+            skipped: list[str] = []
             try:
-                activity_ids = scan_openrouter_usage(store)
-            except OpenRouterUsageError as exc:
+                if args[0] == "openrouter-usage":
+                    activity_ids = scan_openrouter_usage(store)
+                else:
+                    activity_ids = scan_claude_usage(store, skipped=skipped)
+            except AccountUsageError as exc:
                 for activity_id in exc.activity_ids:
                     print(f"usage.snapshot {activity_id}")
+                for message in skipped:
+                    print(f"usage.snapshot skipped {message}")
                 for message in exc.errors:
                     print(f"usage.snapshot error: {message}", file=sys.stderr)
                 raise SystemExit(1) from None
             for activity_id in activity_ids:
                 print(f"usage.snapshot {activity_id}")
-            if not activity_ids:
+            for message in skipped:
+                print(f"usage.snapshot skipped {message}")
+            if not activity_ids and not skipped:
                 print("usage.snapshot none")
             return
         if args[0] == "assigned":
@@ -5145,7 +5267,7 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|claude-usage|errors|error-fix"
                 )
             follow = extra == ["--follow"]
             while True:

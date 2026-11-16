@@ -9,6 +9,7 @@ launch sites resolve these bindings before invoking a provider.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,12 @@ from .model_slots import (
 from .store import StoreError
 
 CONFIG_FILE = "ai-accounts.json"
+# Optional device-local inventory of known AI subscriptions (no logins needed).
+SUBSCRIPTIONS_FILE = "ai-subscriptions.json"
+# Providers whose account usage can be polled through ``usage_accounts``.
+USAGE_ACCOUNT_PROVIDERS = frozenset({"openrouter", "claude"})
+_SUBSCRIPTION_PROVIDER = re.compile(r"[a-z0-9-]+")
+_SUBSCRIPTION_FIELDS = frozenset({"provider", "account", "label", "status", "note"})
 TOP_LEVEL_KEYS = frozenset(
     {
         "accounts",
@@ -182,7 +189,7 @@ class AIAccounts:
     lane_execution: LaneExecution | None = None
     lane_execution_error: str = LANE_EXECUTION_ERROR
     model_configuration_error: str | None = None
-    # OpenRouter accounts whose API-key usage is polled. Empty is unconfigured.
+    # OpenRouter and Claude accounts whose usage is polled. Empty is unconfigured.
     usage_accounts: tuple[str, ...] = ()
 
     def require_model_configuration(self) -> tuple[ModelSlots, str]:
@@ -398,9 +405,9 @@ def load_ai_accounts(
         account = accounts.get(account_name)
         if account is None:
             raise AccountError(f"usage_accounts references unknown account {account_name}")
-        if account.provider != "openrouter":
+        if account.provider not in USAGE_ACCOUNT_PROVIDERS:
             raise AccountError(
-                f"usage_accounts account {account_name} must use provider openrouter"
+                f"usage_accounts account {account_name} must use provider openrouter or claude"
             )
         if account_name in usage_accounts:
             raise AccountError(f"usage_accounts contains duplicate account {account_name}")
@@ -470,3 +477,71 @@ def load_model_slots(home: Path) -> ModelSlots:
     creation. Launches still validate the whole file.
     """
     return load_model_configuration(home)[0]
+
+
+@dataclass(frozen=True)
+class AISubscription:
+    """One known AI subscription; listing it needs no login on this device."""
+
+    provider: str
+    account: str
+    label: str | None = None
+    status: str | None = None
+    note: str | None = None
+
+
+def _optional_text(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    return _text(value, field)
+
+
+def load_ai_subscriptions(home: Path) -> tuple[AISubscription, ...] | None:
+    """Read ``$AGENT_HOME/ai-subscriptions.json``; ``None`` when it is absent.
+
+    The inventory lists every known subscription, including those whose login
+    is on no device. It holds no credentials. Unknown keys are rejected.
+    """
+    path = home / SUBSCRIPTIONS_FILE
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise AccountError(f"Cannot read {SUBSCRIPTIONS_FILE}") from exc
+    if not isinstance(raw, dict) or set(raw) != {"subscriptions"}:
+        raise AccountError(f"{SUBSCRIPTIONS_FILE} accepts only subscriptions")
+    entries = raw["subscriptions"]
+    if not isinstance(entries, list):
+        raise AccountError("subscriptions must be a list")
+    seen: set[tuple[str, str]] = set()
+    subscriptions: list[AISubscription] = []
+    for index, entry in enumerate(entries):
+        where = f"subscriptions[{index}]"
+        if not isinstance(entry, dict):
+            raise AccountError(f"{where} must be an object")
+        unknown = set(entry) - _SUBSCRIPTION_FIELDS
+        if unknown:
+            raise AccountError(
+                f"{where} has unknown fields: {', '.join(sorted(map(str, unknown)))}"
+            )
+        provider = entry.get("provider")
+        if not isinstance(provider, str) or not _SUBSCRIPTION_PROVIDER.fullmatch(provider):
+            raise AccountError(
+                f"{where}.provider must be a lowercase token of a-z, 0-9 and -"
+            )
+        account = _text(entry.get("account"), f"{where}.account")
+        key = (provider, account.casefold())
+        if key in seen:
+            raise AccountError(f"{where} repeats provider {provider} account {account}")
+        seen.add(key)
+        subscriptions.append(
+            AISubscription(
+                provider=provider,
+                account=account,
+                label=_optional_text(entry.get("label"), f"{where}.label"),
+                status=_optional_text(entry.get("status"), f"{where}.status"),
+                note=_optional_text(entry.get("note"), f"{where}.note"),
+            )
+        )
+    return tuple(subscriptions)
