@@ -29,27 +29,65 @@ _EXEC_UNMASKED = (
     ' sys.stderr.write("configured command unavailable\\n")\n'
     ' sys.exit(127)\n'
 )
-# The wrapper stays alive if its parent is stopped. It starts the command in
-# its own session so the recorded pid is the process-group leader, then writes
-# that pid and, after the command exits, its return code.
-_SURVIVE_WRAPPER = (
-    'import json,os,signal,subprocess,sys\n'
-    'signal.pthread_sigmask(signal.SIG_SETMASK, [])\n'
-    'status_path, pid_path = sys.argv[1], sys.argv[2]\n'
-    'cmd = sys.argv[3:]\n'
+# Stops before exec. The recorded pid is this process, and it is still alive
+# when the parent reads the start time. Continuing it execs the real command.
+_SURVIVE_STARTER = (
+    'import os,signal,sys\n'
+    'os.kill(os.getpid(), signal.SIGSTOP)\n'
     'try:\n'
-    ' proc = subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.PIPE)\n'
+    ' os.execvpe(sys.argv[1], sys.argv[1:], os.environ)\n'
     'except OSError:\n'
     ' sys.stderr.write("configured command unavailable\\n")\n'
     ' sys.exit(127)\n'
-    'tmp = pid_path + ".tmp"\n'
-    'with open(tmp, "w", encoding="utf-8") as handle:\n'
-    ' handle.write(str(proc.pid))\n'
-    ' handle.flush()\n'
-    ' os.fsync(handle.fileno())\n'
-    'os.replace(tmp, pid_path)\n'
+)
+# The wrapper stays alive if its parent is stopped. It starts the command in
+# its own session so the recorded pid is the process-group leader, holds that
+# process stopped until the parent has read the start time, then writes the
+# pid and, after the command exits, its return code.
+_SURVIVE_WRAPPER = (
+    'import json,os,signal,subprocess,sys\n'
+    'signal.pthread_sigmask(signal.SIG_SETMASK, [])\n'
+    'status_path, pid_path, starter = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+    'cmd = sys.argv[4:]\n'
+    'def publish(path, text):\n'
+    ' tmp = path + ".tmp"\n'
+    ' with open(tmp, "w", encoding="utf-8") as handle:\n'
+    '  handle.write(text)\n'
+    '  handle.flush()\n'
+    '  os.fsync(handle.fileno())\n'
+    ' os.replace(tmp, path)\n'
+    'def finish(rc):\n'
+    ' publish(status_path, json.dumps({"returncode": int(rc)}))\n'
+    ' code = rc if 0 <= rc <= 255 else (128 + (-rc) if rc < 0 else 1)\n'
+    ' sys.exit(code if 0 <= code <= 255 else 1)\n'
     'try:\n'
-    ' data = sys.stdin.buffer.read()\n'
+    ' proc = subprocess.Popen([sys.executable, "-c", starter, *cmd], start_new_session=True, stdin=subprocess.PIPE)\n'
+    'except OSError:\n'
+    ' sys.stderr.write("configured command unavailable\\n")\n'
+    ' sys.exit(127)\n'
+    'while True:\n'
+    ' try:\n'
+    '  _pid, status = os.waitpid(proc.pid, os.WUNTRACED)\n'
+    '  break\n'
+    ' except InterruptedError:\n'
+    '  continue\n'
+    'if not os.WIFSTOPPED(status):\n'
+    ' if os.WIFEXITED(status):\n'
+    '  rc = os.WEXITSTATUS(status)\n'
+    ' elif os.WIFSIGNALED(status):\n'
+    '  rc = -os.WTERMSIG(status)\n'
+    ' else:\n'
+    '  rc = 1\n'
+    ' proc.returncode = rc\n'
+    ' publish(pid_path, str(proc.pid))\n'
+    ' finish(rc)\n'
+    'publish(pid_path, str(proc.pid))\n'
+    'data = sys.stdin.buffer.read()\n'
+    'try:\n'
+    ' os.kill(proc.pid, signal.SIGCONT)\n'
+    'except OSError:\n'
+    ' pass\n'
+    'try:\n'
     ' if data:\n'
     '  proc.stdin.write(data)\n'
     ' proc.stdin.close()\n'
@@ -58,16 +96,20 @@ _SURVIVE_WRAPPER = (
     '  proc.stdin.close()\n'
     ' except OSError:\n'
     '  pass\n'
-    'rc = proc.wait()\n'
-    'payload = json.dumps({"returncode": int(rc)})\n'
-    'tmp = status_path + ".tmp"\n'
-    'with open(tmp, "w", encoding="utf-8") as handle:\n'
-    ' handle.write(payload)\n'
-    ' handle.flush()\n'
-    ' os.fsync(handle.fileno())\n'
-    'os.replace(tmp, status_path)\n'
-    'code = rc if 0 <= rc <= 255 else (128 + (-rc) if rc < 0 else 1)\n'
-    'sys.exit(code if 0 <= code <= 255 else 1)\n'
+    'while True:\n'
+    ' try:\n'
+    '  _pid, status = os.waitpid(proc.pid, 0)\n'
+    '  break\n'
+    ' except InterruptedError:\n'
+    '  continue\n'
+    'if os.WIFEXITED(status):\n'
+    ' rc = os.WEXITSTATUS(status)\n'
+    'elif os.WIFSIGNALED(status):\n'
+    ' rc = -os.WTERMSIG(status)\n'
+    'else:\n'
+    ' rc = 1\n'
+    'proc.returncode = rc\n'
+    'finish(rc)\n'
 )
 
 
@@ -401,6 +443,27 @@ def _signal_command(command_pid: int | None, proc: subprocess.Popen, sig: signal
     _kill_group(proc.pid, sig)
 
 
+def _release_survive_stdin(proc: subprocess.Popen, stdin_text: str | None) -> None:
+    """Close the wrapper stdin so it continues the stopped command.
+
+    The wrapper reads this only after the command has stopped. Closing it is
+    the signal that ``on_start`` has finished reading the start time.
+    """
+    if proc.stdin is None:
+        return
+    payload = None if stdin_text is None else stdin_text.encode("utf-8")
+    try:
+        if payload:
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+    except BrokenPipeError:
+        pass
+    try:
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
+
+
 def _run_surviving_process(
     argv,
     timeout,
@@ -416,13 +479,14 @@ def _run_surviving_process(
 ) -> Completed:
     """Run a model lane whose process group outlives SIGTERM and SIGINT.
 
-    The recorded pid is the command, not this wrapper. Stdout, stderr, that pid
-    and the return code are files the next coordinator can read. A stop signal
-    leaves both processes running only after ``on_start`` has returned, which is
-    when the capture record is durable. Until then the stop path kills the
-    command group even when the local pid is still empty, using the pid file.
-    Timeout and any other failure still kill them. Missing capture directories
-    are created here.
+    The recorded pid is the command, not this wrapper. The command stops before
+    exec, so ``on_start`` can read its start time before the command runs or is
+    reaped. Stdout, stderr, that pid and the return code are files the next
+    coordinator can read. A stop signal leaves both processes running only after
+    ``on_start`` has returned, which is when the capture record is durable.
+    Until then the stop path kills the command group even when the local pid is
+    still empty, using the pid file. Timeout and any other failure still kill
+    them. Missing capture directories are created here.
     """
     if not stdout_path or not stderr_path or not status_path or not pid_path:
         return Completed(127, "", "lane capture paths are required")
@@ -436,8 +500,16 @@ def _run_surviving_process(
         with _CHILD_LOCK:
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, "-c", _SURVIVE_WRAPPER, status_path, pid_path, *argv],
-                    stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                    [
+                        sys.executable,
+                        "-c",
+                        _SURVIVE_WRAPPER,
+                        status_path,
+                        pid_path,
+                        _SURVIVE_STARTER,
+                        *argv,
+                    ],
+                    stdin=subprocess.PIPE,
                     stdout=stdout_handle,
                     stderr=stderr_handle,
                     cwd=cwd,
@@ -502,12 +574,19 @@ def _run_surviving_process(
                     if tracked is not None and not tracked.doomed:
                         tracked.durable = True
                         recorded = True
+                if recorded:
+                    # Unblock the wrapper only after the start time is durable,
+                    # and before pending stop signals are unmasked.
+                    _release_survive_stdin(proc, stdin_text)
+                else:
+                    return _completed_from_capture(
+                        stdout_path, stderr_path, status_path, forced=None
+                    )
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, held)
-        proc.communicate(
-            input=None if stdin_text is None else stdin_text.encode("utf-8"),
-            timeout=timeout,
-        )
+        else:
+            _release_survive_stdin(proc, stdin_text)
+        proc.wait(timeout=timeout)
         return _completed_from_capture(
             stdout_path, stderr_path, status_path, forced=None
         )

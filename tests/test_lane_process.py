@@ -707,6 +707,12 @@ def test_coordinator_stop_adopts_a_running_lane(tmp_path: Path) -> None:
         "  survive_stop=True, stdout_path=stdout_path, stderr_path=stderr_path,\n"
         "  status_path=status_path, pid_path=pid_path)\n"
     )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(Path(__file__).resolve().parents[1] / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
     owner = subprocess.Popen(
         [
             sys.executable,
@@ -725,6 +731,7 @@ def test_coordinator_stop_adopts_a_running_lane(tmp_path: Path) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env=env,
     )
     command_pid = None
     try:
@@ -1120,7 +1127,6 @@ def test_stop_during_process_start_keeps_the_recorded_lane(
                 pass
 
 
-@pytest.mark.no_pg
 def test_stop_during_worker_thread_start_does_not_leave_an_unmarked_lane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
