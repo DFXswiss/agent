@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -320,6 +322,7 @@ def test_worker_wrapper_runs_the_work_subcommand_with_the_exact_argv(
         "env",
         f"AGENT_HOME={tmp_path}",
         sys.executable,
+        "-P",
         "-m",
         "agent_cli.main",
         "runner",
@@ -332,6 +335,52 @@ def test_worker_wrapper_refuses_a_relative_agent_home() -> None:
     # relative home would name two places.
     with pytest.raises(ValueError, match="absolute"):
         runner_worker.worker_wrapper("home")
+
+
+def test_worker_wrapper_does_not_import_agent_cli_from_the_job_worktree(
+    tmp_path: Path,
+) -> None:
+    # Dispatch runs the wrapper with the pull-request checkout as its working
+    # directory. This repository copy stands in for that checkout and ships an
+    # `agent_cli` package that records its own import. The wrapper's own
+    # interpreter flags must keep it off `sys.path`.
+    home = tmp_path / "home"
+    home.mkdir()
+    shadow_cwd = tmp_path / "checkout"
+    package = shadow_cwd / "agent_cli"
+    package.mkdir(parents=True)
+    marker = tmp_path / "shadow-imported"
+    write_marker = f"open({str(marker)!r}, 'a').write('imported')\n"
+    (package / "__init__.py").write_text(write_marker, encoding="utf-8")
+    (package / "main.py").write_text(write_marker, encoding="utf-8")
+
+    # Keep the interpreter flags exactly as the wrapper builds them; only the
+    # `runner work` tail is replaced so no real worker starts.
+    argv = shlex.split(runner_worker.worker_wrapper(home))
+    interpreter_argv = argv[: argv.index("-m")] + [
+        "-c",
+        "import agent_cli, sys; print(agent_cli.__file__)",
+    ]
+    environment = dict(os.environ)
+    # The real package stays reachable through the environment, which `-P`
+    # deliberately keeps. Without `-P` the working directory comes first.
+    environment["PYTHONPATH"] = str(
+        Path(runner_worker.__file__).resolve().parent.parent
+    )
+
+    completed = subprocess.run(
+        interpreter_argv,
+        cwd=str(shadow_cwd),
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert not marker.exists()
+    imported = Path(completed.stdout.strip()).resolve()
+    assert imported == Path(runner_worker.__file__).resolve().parent / "__init__.py"
 
 
 # ---------------------------------------------------------------- happy path
@@ -399,6 +448,7 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
         "diff",
         "--no-color",
         "--no-ext-diff",
+        "--no-textconv",
         "refs/remotes/origin/develop...HEAD",
     ] in calls
     assert not any("pr view" in " ".join(argv) or "pr diff" in " ".join(argv) for argv in calls)
@@ -444,6 +494,28 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
     assert "Finding." in text
     stdout = out.getvalue().decode("utf-8")
     assert "worker: review posted" in stdout
+
+
+def test_worker_diff_disables_external_diff_and_textconv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The diff is shown to the lane. A repository attribute may select a
+    # text-conversion driver that runs a command and rewrites the displayed
+    # content, so the worker passes `--no-textconv` right after `--no-ext-diff`
+    # exactly as the other Git readers in this repository do.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    calls: list[list[str]] = []
+
+    code, _out = _run(paths, tmp_path, runner=_fake_runner(calls))
+
+    assert code == 0
+    diff_calls = [
+        argv for argv in calls if argv[:2] == ["git", "-C"] and "diff" in argv
+    ]
+    assert len(diff_calls) == 1
+    diff = diff_calls[0]
+    assert diff[diff.index("--no-ext-diff") + 1] == "--no-textconv"
 
 
 def test_worker_accepts_the_job_type_case_insensitively(

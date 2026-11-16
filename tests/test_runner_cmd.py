@@ -841,6 +841,7 @@ def test_dispatch_uses_the_installed_worker_by_default(
         "env",
         f"AGENT_HOME={home}",
         sys.executable,
+        "-P",
         "-m",
         "agent_cli.main",
         "runner",

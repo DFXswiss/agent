@@ -155,6 +155,13 @@ def worker_wrapper(agent_home: Path | str) -> str:
     the job worktree: the worker must not infer the runner layout from its
     current directory. A relative home would name two different places from the
     dispatching command and the job, so only an absolute path is accepted.
+
+    `-P` is passed because that working directory is the pull-request checkout:
+    without it `-m` puts the working directory first on `sys.path`, so a pull
+    request that ships an `agent_cli` package at its root would import its own
+    code instead of the installed worker. `-P` leaves the working directory off
+    the path while the installed package, the user site directory and the
+    environment keep working; `-I` would also drop the environment.
     """
     home = Path(agent_home)
     if not home.is_absolute():
@@ -164,6 +171,7 @@ def worker_wrapper(agent_home: Path | str) -> str:
             "env",
             f"AGENT_HOME={home}",
             sys.executable,
+            "-P",
             "-m",
             "agent_cli.main",
             "runner",
@@ -396,6 +404,7 @@ def _diff_of(
                 "diff",
                 "--no-color",
                 "--no-ext-diff",
+                "--no-textconv",
                 f"refs/remotes/origin/{base}...HEAD",
             ]
         )

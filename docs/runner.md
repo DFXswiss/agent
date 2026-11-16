@@ -129,8 +129,10 @@ Output: `job.started <job-id>` per job, or `job.started none`.
 ### `agent runner work`
 
 The detached worker for one job. `dispatch` starts it with the job worktree as
-its working directory; an operator does not normally run it. It performs one
-`pr-review` job and writes `state/logs/<id>.exit` last:
+its working directory and runs the interpreter with `-P`, so an `agent_cli`
+package shipped by the pull request is never imported; an operator does not
+normally run it. It performs one `pr-review` job and writes
+`state/logs/<id>.exit` last:
 
 1. Identify the job from the current directory: it must be exactly the direct
    child worktree named by a safe job id. Require the row to be this device's,
@@ -150,9 +152,11 @@ its working directory; an operator does not normally run it. It performs one
    lowercase SHA. Read the pull request's base branch through that account with
    `gh api .../pulls/<n> --jq .base.ref` and accept it only when
    `git check-ref-format --branch` accepts it. Take the local three-dot diff
-   `refs/remotes/origin/<base>...HEAD`. An empty diff fails, and a diff over
-   400,000 characters fails rather than being truncated: the lane always
-   reviews exactly the change that was checked out.
+   `refs/remotes/origin/<base>...HEAD` with `--no-ext-diff` and `--no-textconv`,
+   so repository configuration or attributes cannot run a command or replace
+   the shown content. An empty diff fails, and a diff over 400,000 characters
+   fails rather than being truncated: the lane always reviews exactly the change
+   that was checked out.
 5. Write the rendered prompt atomically to `state/logs/<id>.prompt`. Its fixed
    section marks everything below as repository data, fences the diff with a
    fence longer than any backtick run in it, and states the output contract:
