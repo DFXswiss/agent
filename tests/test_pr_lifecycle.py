@@ -224,6 +224,38 @@ def test_visible_transition_sentences_green_ready_names_the_one_review_exception
     assert "Two review comments are required." not in en
 
 
+def test_visible_transition_sentences_draft_names_the_stale_record_head():
+    record_head = "b" * 12
+    current_head = "a" * 12
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            f"review head {record_head} is not the current head {current_head}"
+        ],
+    })
+    assert (
+        f"The review record names `{record_head}`, but the current head "
+        f"`{current_head}` changes more than markdown files after it."
+    ) in en
+    assert (
+        f"Der Review-Nachweis nennt `{record_head}`, aber der aktuelle Head "
+        f"`{current_head}` ändert danach mehr als Markdown-Dateien."
+    ) in de
+
+
+def test_visible_transition_sentences_ready_names_a_markdown_only_ancestor():
+    ancestor = "b" * 40
+    current = "a" * 40
+    en, de = visible_transition_sentences({
+        "state": "ready",
+        "head": current,
+        "reasons": [],
+        "review_heads": [ancestor],
+    })
+    assert "changes only markdown files after it" in en
+    assert "ändert danach nur Markdown-Dateien" in de
+
+
 def test_visible_transition_sentences_queued_ci():
     en, de = visible_transition_sentences({
         "state": "draft",
@@ -1867,7 +1899,14 @@ def test_auto_draft_then_timeline_restores_write_ready():
             "id": 2,
             "created_at": "2026-09-05T12:00:00Z",
             "actor": {"id": 3003, "login": "maintainer", "type": "User"},
-        }
+        },
+        # The guard's own convert_to_draft must not read as a hold.
+        {
+            "event": "convert_to_draft",
+            "id": 3,
+            "created_at": "2026-09-05T12:05:00Z",
+            "actor": {"id": BOT_ID, "login": "github-actions[bot]", "type": "User"},
+        },
     ]
     fake.permissions["maintainer"] = {
         "permission": "admin",
@@ -1904,6 +1943,42 @@ def test_human_draft_with_ready_timeline_does_not_restore():
     assert result.lifecycle["action"] == "unchanged"
     assert fake.transitions == []
     assert fake.pull["draft"]
+
+
+def test_final_assessment_review_heads_name_the_evidence_used(monkeypatch):
+    from agent_cli import a38_guard
+
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    ancestor = BASE2
+    real_assess = a38_guard.assess_pull
+    calls = []
+
+    def staged_assess(api, repo, number, **kwargs):
+        assessed = real_assess(api, repo, number, **kwargs)
+        calls.append(assessed)
+        # After the planned record exists, this is the final assessment.
+        if any(
+            '"phase": "planned"' in (comment.get("body") or "")
+            for comment in fake.comments
+        ):
+            assessed.review_first_head = ancestor
+            assessed.review_second_head = ""
+        return assessed
+
+    monkeypatch.setattr(a38_guard, "assess_pull", staged_assess)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert calls[0].review_first_head == HEAD
+    assert calls[-1].review_first_head == ancestor
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    body = states[-1]["body"]
+    payload = json.loads(body.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert payload["phase"] == "applied"
+    assert payload["state"] == "ready"
+    assert payload["review_heads"] == [ancestor]
+    assert f"`{ancestor[:12]}`" in body
+    assert f"`{HEAD[:12]}`" in body
 
 
 def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():

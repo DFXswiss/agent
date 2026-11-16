@@ -158,8 +158,9 @@ sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
 until both review runs on this head are approved. The first review run is
 `conformity-a` with `logic-a`. The second review run is `conformity-b` with
 `logic-b`. That approval still
-covers a later commit when the current head contains the reviewed commit and
-that commit is after the pull request base. The target
+covers a later commit when the current head contains the reviewed commit,
+that commit is after the pull request base, and every file changed between it
+and the current head ends with `.md`. The target
 repository's written CI rules hold on this head.
 CI stays bound to the current head. Two review runs are required. The checklist
 keys for the second run are `n_a` with evidence exactly

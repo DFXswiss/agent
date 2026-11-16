@@ -1898,6 +1898,7 @@ def _gate(
     comments: list[dict],
     *,
     one_review_author: bool = False,
+    record: dict | None = None,
 ) -> tuple[bool, list[str]]:
     return evaluate_review_gate(
         api,
@@ -1909,11 +1910,16 @@ def _gate(
         comments=comments,
         markdown_only=False,
         one_review_author=one_review_author,
+        record=record,
     )
 
 
-def _ahead() -> tuple[int, dict[str, int | str], dict]:
-    return 200, {"status": "ahead", "ahead_by": 1, "behind_by": 0}, {}
+def _ahead(files: object = ()) -> tuple[int, dict[str, object], dict]:
+    return (
+        200,
+        {"status": "ahead", "ahead_by": 1, "behind_by": 0, "files": list(files)},
+        {},
+    )
 
 
 def _gate_api() -> _GateApi:
@@ -2373,3 +2379,201 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
     assert ok is False
     assert reasons == ["review head does not match the pull request"]
     assert before_base.compare_calls == [ancient_path, ancient_base]
+
+
+def _markdown_files(*names: str) -> list[dict[str, str]]:
+    return [{"status": "modified", "filename": name} for name in names]
+
+
+def _ancestor_api(files: object, *, files_present: bool = True) -> _GateApi:
+    to_head = f"/repos/o/r/compare/{OTHER}...{HEAD}"
+    to_base = f"/repos/o/r/compare/{BASE}...{OTHER}"
+    body: dict[str, object] = {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+    }
+    if files_present:
+        body["files"] = files
+    return _GateApi(
+        {
+            BASE: "2026-07-01T00:00:00Z",
+            OTHER: "2026-08-01T00:00:00Z",
+            HEAD: "2026-09-01T00:00:00Z",
+        },
+        {to_head: (200, body, {}), to_base: _ahead()},
+    )
+
+
+def _ancestor_first_run() -> dict:
+    return _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=7,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+
+
+def _ancestor_second_run(
+    *, cid: int, created: str, head: str = OTHER
+) -> dict:
+    payload = _v2_second(blocks_merge=False, defects=0)
+    payload["head"] = head
+    return _second_run_comment(payload, cid=cid, created=created)
+
+
+def test_ancestor_with_only_markdown_changes_covers_both_runs() -> None:
+    first = _ancestor_first_run()
+    second = _ancestor_second_run(cid=8, created="2026-08-03T00:00:00Z")
+    for files in ([], _markdown_files("docs/a.md", "README.md")):
+        ok, reasons = _gate(_ancestor_api(files), [first, second])
+        assert ok is True, reasons
+        assert reasons == []
+
+
+def test_markdown_relaxation_reports_both_record_heads() -> None:
+    first = _ancestor_first_run()
+    second = _ancestor_second_run(cid=8, created="2026-08-03T00:00:00Z")
+    record: dict = {}
+    ok, reasons = _gate(_ancestor_api(_markdown_files("docs/a.md")), [first, second], record=record)
+    assert ok is True
+    assert reasons == []
+    assert record == {
+        "first_head": OTHER,
+        "first_created_at": "2026-08-02T00:00:00Z",
+        "second_head": OTHER,
+    }
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        None,
+        "docs/a.md",
+        [{"status": "modified"}],
+        _markdown_files("a.md") * 300,
+    ],
+)
+def test_unreadable_compare_file_list_fails_closed(files: object) -> None:
+    ok, reasons = _gate(_ancestor_api(files), [_ancestor_first_run()])
+    assert ok is False
+    assert reasons == ["review ancestry unavailable"]
+
+
+def test_missing_compare_file_list_fails_closed() -> None:
+    ok, reasons = _gate(
+        _ancestor_api([], files_present=False), [_ancestor_first_run()]
+    )
+    assert ok is False
+    assert reasons == ["review ancestry unavailable"]
+
+
+def test_ancestor_with_a_non_markdown_change_is_stale() -> None:
+    api = _ancestor_api(
+        _markdown_files("docs/a.md")
+        + [{"status": "modified", "filename": "src/app.py"}]
+    )
+    ok, reasons = _gate(api, [_ancestor_first_run()])
+    assert ok is False
+    assert reasons == [
+        f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"
+    ]
+
+
+def test_stale_blocking_second_run_neither_blocks_nor_excuses_it() -> None:
+    payload = _v2_second(blocks_merge=True, defects=1)
+    payload["head"] = OTHER
+    stale = _second_run_comment(payload, cid=8, created="2026-09-03T00:00:00Z")
+    api = _ancestor_api([{"status": "modified", "filename": "src/app.py"}])
+    ok, reasons = _gate(api, [_first_run_comment(), stale])
+    assert ok is False
+    assert reasons == [
+        f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"
+    ]
+    assert BLOCKING_REVIEW_REASON not in reasons
+    excused, excused_reasons = _gate(
+        api, [_first_run_comment(), stale], one_review_author=True
+    )
+    assert excused is True
+    assert excused_reasons == []
+
+
+def test_stale_second_run_does_not_hide_an_older_signal() -> None:
+    stale = _ancestor_second_run(
+        cid=9, created="2026-09-03T00:00:00Z"
+    )
+    clear = _second_run_comment(
+        _v2_second(blocks_merge=False, defects=0),
+        cid=8,
+        created="2026-09-02T00:00:00Z",
+    )
+    ok, reasons = _gate(
+        _ancestor_api([{"status": "modified", "filename": "src/app.py"}]),
+        [_first_run_comment(), clear, stale],
+    )
+    assert ok is True
+    assert reasons == []
+
+
+def test_exact_head_second_run_is_the_signal_over_a_newer_stale_one() -> None:
+    exact = _second_run_comment(
+        _v2_second(blocks_merge=False, defects=0),
+        cid=8,
+        created="2026-09-02T00:00:00Z",
+    )
+    stale = _ancestor_second_run(cid=9, created="2026-09-03T00:00:00Z")
+    ok, reasons = _gate(
+        _ancestor_api([{"status": "modified", "filename": "src/app.py"}]),
+        [_first_run_comment(), exact, stale],
+    )
+    assert ok is True
+    assert reasons == []
+
+
+def test_a_stale_second_run_alone_is_not_a_missing_second_review() -> None:
+    stale = _ancestor_second_run(cid=9, created="2026-09-03T00:00:00Z")
+    ok, reasons = _gate(
+        _ancestor_api([{"status": "modified", "filename": "src/app.py"}]),
+        [_first_run_comment(), stale],
+    )
+    assert ok is False
+    assert reasons == [
+        f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"
+    ]
+    assert SECOND_REVIEW_MISSING not in reasons
+    assert BLOCKING_REVIEW_REASON not in reasons
+
+
+def test_unreadable_second_run_ancestry_outranks_stale() -> None:
+    broken_head = "c" * 40
+    broken = _ancestor_second_run(
+        cid=7, created="2026-09-02T00:00:00Z", head=broken_head
+    )
+    stale = _ancestor_second_run(cid=8, created="2026-09-03T00:00:00Z")
+    api = _GateApi(
+        {
+            BASE: "2026-07-01T00:00:00Z",
+            OTHER: "2026-08-01T00:00:00Z",
+            broken_head: "2026-08-05T00:00:00Z",
+            HEAD: "2026-09-01T00:00:00Z",
+        },
+        {
+            f"/repos/o/r/compare/{OTHER}...{HEAD}": (
+                200,
+                {
+                    "status": "ahead",
+                    "ahead_by": 1,
+                    "behind_by": 0,
+                    "files": [
+                        {"status": "modified", "filename": "src/app.py"}
+                    ],
+                },
+                {},
+            ),
+            f"/repos/o/r/compare/{BASE}...{OTHER}": _ahead(),
+            f"/repos/o/r/compare/{broken_head}...{HEAD}": (500, {}, {}),
+        },
+    )
+    ok, reasons = _gate(api, [_first_run_comment(), broken, stale])
+    assert ok is False
+    assert reasons == ["review ancestry unavailable"]

@@ -160,6 +160,15 @@ class PullSnapshot:
 
 
 @dataclass(frozen=True)
+class DraftHold:
+    """Newest person who set the pull request to draft without a later release."""
+
+    actor_id: int
+    login: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class TrustedGuardConfig:
     """Resolved `.github/pr-guard.json` from an immutable default-branch revision."""
 
@@ -232,6 +241,11 @@ class Assessment:
     # pulls set True because the gate does not apply.
     review_ok: bool = False
     review_reasons: list[str] = field(default_factory=list)
+    # Heads named by the review comments the gate selected. Empty when the
+    # gate found no such comment for that run.
+    review_first_head: str = ""
+    review_first_created_at: str = ""
+    review_second_head: str = ""
     # In-memory webhook sender for this reconcile; not serialized.
     event_actor: tuple[int, str] | None = None
     hard_fail: bool = False
@@ -274,6 +288,9 @@ class Assessment:
             "write_ready_reason": self.write_ready_reason,
             "review_ok": self.review_ok,
             "review_reasons": list(self.review_reasons),
+            "review_first_head": self.review_first_head,
+            "review_first_created_at": self.review_first_created_at,
+            "review_second_head": self.review_second_head,
             "hard_fail": self.hard_fail,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
@@ -2413,6 +2430,19 @@ def _apply_review_result(
         assessment.comment_body = build_comment_body(assessment)
 
 
+def _apply_review_record(
+    assessment: Assessment, record: Mapping[str, Any]
+) -> None:
+    """Copy the review heads the gate selected onto the assessment."""
+    for attr, key in (
+        ("review_first_head", "first_head"),
+        ("review_first_created_at", "first_created_at"),
+        ("review_second_head", "second_head"),
+    ):
+        value = record.get(key)
+        setattr(assessment, attr, value if isinstance(value, str) else "")
+
+
 def _apply_write_ready_pass(assessment: Assessment) -> None:
     """Author-report gate only: policy/workflow failures must not call this."""
     assessment.ok = True
@@ -2700,17 +2730,46 @@ def collaborator_has_write(
     return True
 
 
+class _TimelineUnavailable(Exception):
+    """The issue timeline cannot be read (401, 403, or 404 while paginating)."""
+
+
+def _iter_timeline_events(
+    api: GitHubApi, repo: str, number: int
+) -> Iterator[Any]:
+    """Issue timeline events newest-first.
+
+    A permission or missing-resource error while paginating becomes
+    ``_TimelineUnavailable``. Rate limits and other pagination errors still
+    raise.
+    """
+    path = f"/repos/{repo}/issues/{number}/timeline"
+    try:
+        yield from api.iter_pages_newest_first(path)
+    except RuntimeError as exc:
+        if not _is_guard_error(exc):
+            raise
+        _reraise_rate_limit(exc)
+        message = str(exc)
+        if (
+            "denied (401)" in message
+            or "denied (403)" in message
+            or "HTTP 404 while paginating" in message
+        ):
+            raise _TimelineUnavailable from exc
+        raise
+
+
 def load_ready_timeline(
     api: GitHubApi, repo: str, number: int
 ) -> tuple[str, tuple[int, str] | None]:
     """Return ``("ok", actor_or_none)`` or ``("unavailable", None)``.
 
-    HTTP 404 is an empty timeline (``ok``, None). 401/403 are unavailable.
-    Other pagination errors still raise.
+    HTTP 404 of the timeline is unavailable while paginating. 401/403 are
+    unavailable. Other pagination errors still raise.
     """
-    path = f"/repos/{repo}/issues/{number}/timeline"
     try:
-        for event in api.iter_pages_newest_first(path):
+        for event in _iter_timeline_events(api, repo, number):
             if not isinstance(event, Mapping):
                 continue
             if event.get("event") != "ready_for_review":
@@ -2729,18 +2788,88 @@ def load_ready_timeline(
             if not isinstance(login, str) or type(actor_id) is not int:
                 continue
             return "ok", (actor_id, login)
-    except RuntimeError as exc:
-        if not _is_guard_error(exc):
-            raise
-        _reraise_rate_limit(exc)
-        message = str(exc)
-        if (
-            "denied (401)" in message
-            or "denied (403)" in message
-            or "HTTP 404 while paginating" in message
-        ):
-            return "unavailable", None
-        raise
+    except _TimelineUnavailable:
+        return "unavailable", None
+    return "ok", None
+
+
+def load_draft_hold(
+    api: GitHubApi, repo: str, number: int, *, guard_user_id: int
+) -> tuple[str, DraftHold | None]:
+    """The newest human draft hold, or a reason no hold can be read.
+
+    Returns ``("ok", draft_hold_or_none)``, ``("pending", None)`` when no hold
+    is found and the newest relevant event is a ``ready_for_review``, or
+    ``("unavailable", None)`` when the timeline or the newest draft event
+    cannot be read. A timeline entry that is not a mapping, or that carries no
+    readable ``event`` string, is unavailable because it could hide a draft
+    event. A draft event whose actor is not a mapping or whose actor type is
+    missing or empty is unavailable. A non-``User`` draft event does not hold.
+    The guard's own draft event does not hold. A newer ``User`` ready event
+    releases an older draft event, so no hold remains; older draft events do
+    not change that. A malformed ready event is skipped, as the existing
+    ready-actor timeline reader skips it, but it still makes the state pending.
+    The caller decides whether a pending state still blocks a mutation.
+    """
+    newest_is_ready = False
+    seen_event = False
+    ready_released = False
+    try:
+        for event in _iter_timeline_events(api, repo, number):
+            if not isinstance(event, Mapping):
+                return "unavailable", None
+            kind = event.get("event")
+            if not isinstance(kind, str) or not kind:
+                return "unavailable", None
+            if kind not in {"ready_for_review", "convert_to_draft"}:
+                continue
+            if not seen_event:
+                seen_event = True
+                newest_is_ready = kind == "ready_for_review"
+            created_at = event.get("created_at")
+            event_id = event.get("id")
+            actor = event.get("actor")
+            if kind == "ready_for_review":
+                if ready_released:
+                    continue
+                if not isinstance(created_at, str) or type(event_id) is not int:
+                    continue
+                if not isinstance(actor, Mapping):
+                    continue
+                if actor.get("type") != "User":
+                    continue
+                login = actor.get("login")
+                actor_id = actor.get("id")
+                if not isinstance(login, str) or type(actor_id) is not int:
+                    continue
+                # A person's Ready event ends every older hold. Keep walking
+                # so an older draft event still cannot hold.
+                ready_released = True
+                continue
+            if ready_released:
+                # Older than the newest person's Ready event, so it cannot
+                # hold, and its shape no longer matters.
+                continue
+            if not isinstance(actor, Mapping):
+                return "unavailable", None
+            actor_type = actor.get("type")
+            if not isinstance(actor_type, str) or not actor_type:
+                return "unavailable", None
+            if actor_type != "User":
+                continue
+            if not isinstance(created_at, str) or type(event_id) is not int:
+                return "unavailable", None
+            login = actor.get("login")
+            actor_id = actor.get("id")
+            if not isinstance(login, str) or not login or type(actor_id) is not int:
+                return "unavailable", None
+            if actor_id == guard_user_id:
+                continue
+            return "ok", DraftHold(actor_id=actor_id, login=login, created_at=created_at)
+    except _TimelineUnavailable:
+        return "unavailable", None
+    if newest_is_ready:
+        return "pending", None
     return "ok", None
 
 
@@ -3130,6 +3259,7 @@ def assess_pull(
     assessment.report_gate_ok = (
         assessment.ok and assessment.status == "pass" and not assessment.hard_fail
     )
+    review_record: dict[str, Any] = {}
     review_ok, review_reasons = evaluate_review_gate(
         api,
         repo=snap.repo,
@@ -3140,8 +3270,10 @@ def assess_pull(
         comments=comments,
         markdown_only=markdown_only,
         one_review_author=one_review_for(trusted.config, snap.author_login),
+        record=review_record,
     )
     _apply_review_result(assessment, review_ok, review_reasons)
+    _apply_review_record(assessment, review_record)
     return assessment
 
 
@@ -3325,6 +3457,7 @@ def publish_assessment(
             gate_markdown, _gate_guard_docs = pull_markdown_and_guard_docs(
                 api, assessment.repo, assessment.pr
             )
+            gate_record: dict[str, Any] = {}
             gate_ok, gate_reasons = evaluate_review_gate(
                 api,
                 repo=assessment.repo,
@@ -3338,7 +3471,9 @@ def publish_assessment(
                     resolve_trusted_guard_config(api, fresh).config,
                     fresh.author_login,
                 ),
+                record=gate_record,
             )
+            _apply_review_record(assessment, gate_record)
             if not gate_ok:
                 # Statuses are append-only. Never leave or write enforce success
                 # once the declaration is gone. A non-draft retries assessment.
@@ -3465,6 +3600,7 @@ def publish_assessment(
     fresh_markdown, _fresh_guard_docs = pull_markdown_and_guard_docs(
         api, assessment.repo, assessment.pr
     )
+    fresh_record: dict[str, Any] = {}
     fresh_ok, fresh_reasons = evaluate_review_gate(
         api,
         repo=assessment.repo,
@@ -3478,7 +3614,9 @@ def publish_assessment(
             resolve_trusted_guard_config(api, fresh).config,
             fresh.author_login,
         ),
+        record=fresh_record,
     )
+    _apply_review_record(assessment, fresh_record)
     review_changed = fresh_ok != assessment.review_ok or list(fresh_reasons) != list(
         assessment.review_reasons
     )

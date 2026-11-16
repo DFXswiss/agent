@@ -16,11 +16,13 @@ file is absent only when the base commit itself can be read. Otherwise the
 lookup fails closed. A repository without REVIEW.md at a readable base
 keeps the previous prompt check.
 A review declaration stays valid when its head is the pull request head,
-or when a later commit still contains the named commit and that commit is
-after the pull request base. The comment must be created after the commit
-it names. The base commit, an older commit, and an unrelated or diverged
-SHA do not count. A failed ancestry lookup fails closed. The local CI
-report stays bound to the current head.
+or when a later commit still contains the named commit, that commit is
+after the pull request base, and every file changed between that commit
+and the current head ends with ``.md``. The comment must be created after
+the commit it names. The base commit, an older commit, an unrelated or
+diverged SHA, and a non-markdown change after the named commit do not
+count. An unreadable or possibly truncated change list fails closed. The
+local CI report stays bound to the current head.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from .a38_errors import is_guard_error, is_rate_limit_error
+from .readme_only import github_file_paths, is_markdown_path
 
 
 def _reraise_rate_limit(exc: BaseException) -> None:
@@ -55,7 +58,13 @@ RUNS = (
     ("conformity-b", "logic-b"),
 )
 LANE_IDS = tuple(lane_id for run in RUNS for lane_id in run)
+# GitHub caps a compare response's file list at 300 entries and does not mark
+# the list as truncated. A list at that length is treated as incomplete.
+GITHUB_COMPARE_FILES_CAP = 300
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_STALE_REVIEW_REASON = re.compile(
+    r"^review head ([0-9a-f]{12}) is not the current head ([0-9a-f]{12})$"
+)
 _NA_EVIDENCE = re.compile(
     r"^markdown-only rebase, previously approved at ([0-9a-f]{40})$"
 )
@@ -77,6 +86,21 @@ COMPLIANCE_PROMPT = (
 
 class ReviewError(ValueError):
     """The comment is not a readable A38 review block."""
+
+
+def is_stale_review_reason(reason: object) -> bool:
+    """True for the forced reason of an ancestor head with non-markdown changes."""
+    return isinstance(reason, str) and _STALE_REVIEW_REASON.fullmatch(reason) is not None
+
+
+def stale_review_heads(reason: object) -> tuple[str, str] | None:
+    """The record head and current head named by a stale review reason."""
+    if not isinstance(reason, str):
+        return None
+    match = _STALE_REVIEW_REASON.fullmatch(reason)
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
 
 
 def looks_like_review(body: str | None) -> bool:
@@ -1391,16 +1415,20 @@ def _review_candidates(
     author_id: int,
     guard_user_id: int,
     committed: datetime,
+    head: str,
     covered_at: Mapping[str, str] | None,
     ancestry_unavailable: Collection[str] | None,
+    stale_heads: Collection[str] | None = None,
 ) -> tuple[list[tuple[datetime, int, Mapping[str, Any], str | None]], bool]:
     """Author review comments that are new enough to cover this head.
 
-    The fourth item is a forced reason when ancestry cannot be read or the
-    declared head is not this pull request. ``mixed_after_head`` is true when
-    a comment carries both the review block and the local CI report.
+    The fourth item is a forced reason when ancestry cannot be read, the
+    declared head is not this pull request, or the declared head is an
+    ancestor with a non-markdown change after it. ``mixed_after_head`` is
+    true when a comment carries both the review block and the local CI report.
     """
     unavailable = frozenset(ancestry_unavailable or ())
+    stale = frozenset(stale_heads or ())
     candidates: list[tuple[datetime, int, Mapping[str, Any], str | None]] = []
     mixed_after_head = False
     for comment in comments:
@@ -1430,6 +1458,12 @@ def _review_candidates(
             declared = _declared_sha(text)
             if declared in unavailable:
                 forced = "review ancestry unavailable"
+                boundary = None
+            elif declared is not None and declared in stale:
+                forced = (
+                    f"review head {declared[:12]} is not the current head "
+                    f"{head[:12]}"
+                )
                 boundary = None
             elif declared is not None and declared in covered_at:
                 named = _utc(covered_at[declared])
@@ -1474,7 +1508,7 @@ def _second_run_merge_signal(payload: Mapping[str, Any]) -> bool | None:
     return None
 
 
-def second_run_status(
+def _second_run_selection(
     comments: Sequence[Mapping[str, Any]],
     *,
     author_id: int,
@@ -1485,47 +1519,27 @@ def second_run_status(
     rules_bound: bool,
     covered_at: Mapping[str, str] | None = None,
     ancestry_unavailable: Collection[str] | None = None,
-) -> str:
-    """``blocking``, ``clear``, or ``absent`` for the newest well-formed second run.
-
-    The signal is boolean ``blocks_merge`` together with a counted ``defects``.
-    A v1 second run with ``defects`` 0 and no flag is ``clear``. The visible
-    sentence must be the one that flag requires, and a pass run must name one
-    shared non-empty model in both titles. The guard does not judge that name.
-    The comment must also pass the same declaration and human-record checks
-    as the first run, including the prompt. A comment that does not parse,
-    whose declaration or record is invalid, whose prompt or record is missing,
-    whose sentence does not match the flag, whose pass-run titles do not name
-    that model, or whose flag is not a boolean paired with a counted defect,
-    is skipped. A declared head that is not this pull request is skipped
-    before those checks. It is not an ancestry failure. A second run whose
-    ancestry cannot be read is remembered, and the search continues. An
-    older well-formed second run remains the signal and is ``blocking`` or
-    ``clear``. If none remains, the result is ``review ancestry unavailable``,
-    not ``absent``. ``absent`` is no well-formed second run and no unread
-    ancestry. Under the standard that absence fails Ready. One review is
-    enough only when the opener is listed in one_review_authors on the
-    trusted default-branch file. A missing file, a missing key, or an empty
-    list keeps that failure. An entry only on the pull request head does
-    not count. Unreadable ancestry fails Ready for every opener, including
-    one on that list.
-    This does not choose the first-run completion comment.
-    """
+    stale_heads: Collection[str] | None = None,
+) -> tuple[str, Mapping[str, Any] | None]:
+    """Status and the comment that carries it, if a second run covers the head."""
     committed = _utc(committed_at)
     if committed is None:
-        return "absent"
+        return "absent", None
     if covered_at is not None and _utc(covered_at.get(head, "")) is None:
-        return "absent"
+        return "absent", None
     candidates, _mixed = _review_candidates(
         comments,
         author_id=author_id,
         guard_user_id=guard_user_id,
         committed=committed,
+        head=head,
         covered_at=covered_at,
         ancestry_unavailable=ancestry_unavailable,
+        stale_heads=stale_heads,
     )
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     ancestry_reason: str | None = None
+    stale_reason: str | None = None
     for _stamp, _cid, comment, forced in candidates:
         body = comment.get("body")
         text = body if isinstance(body, str) else ""
@@ -1536,7 +1550,10 @@ def second_run_status(
         if forced == "review head does not match the pull request":
             continue
         if forced:
-            if ancestry_reason is None:
+            if is_stale_review_reason(forced):
+                if stale_reason is None:
+                    stale_reason = forced
+            elif ancestry_reason is None:
                 ancestry_reason = forced
             continue
         try:
@@ -1557,10 +1574,69 @@ def second_run_status(
             covered_heads=None if covered_at is None else covered_at.keys(),
         ):
             continue
-        return "blocking" if signal else "clear"
+        return ("blocking" if signal else "clear"), comment
+    # Nothing covers the head. Unreadable ancestry outranks stale, which
+    # outranks absence.
     if ancestry_reason is not None:
-        return ancestry_reason
-    return "absent"
+        return ancestry_reason, None
+    if stale_reason is not None:
+        return stale_reason, None
+    return "absent", None
+
+
+def second_run_status(
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    author_id: int,
+    guard_user_id: int,
+    committed_at: str,
+    head: str,
+    markdown_only: bool,
+    rules_bound: bool,
+    covered_at: Mapping[str, str] | None = None,
+    ancestry_unavailable: Collection[str] | None = None,
+    stale_heads: Collection[str] | None = None,
+) -> str:
+    """``blocking``, ``clear``, or ``absent`` for the newest well-formed second run.
+
+    The signal is boolean ``blocks_merge`` together with a counted ``defects``.
+    A v1 second run with ``defects`` 0 and no flag is ``clear``. The visible
+    sentence must be the one that flag requires, and a pass run must name one
+    shared non-empty model in both titles. The guard does not judge that name.
+    The comment must also pass the same declaration and human-record checks
+    as the first run, including the prompt. A comment that does not parse,
+    whose declaration or record is invalid, whose prompt or record is missing,
+    whose sentence does not match the flag, whose pass-run titles do not name
+    that model, or whose flag is not a boolean paired with a counted defect,
+    is skipped. A declared head that is not this pull request is skipped
+    before those checks. It is not an ancestry failure. A stale second run,
+    whose declared head is an ancestor with a non-markdown change after it,
+    is also skipped. A second run whose ancestry cannot be read, or that is
+    stale, is remembered, and the search continues. An older well-formed
+    second run remains the signal and is ``blocking`` or ``clear``. If none
+    remains, unreadable ancestry outranks stale: the result is
+    ``review ancestry unavailable``, then the stale reason, and only then
+    ``absent``. ``absent`` is no well-formed second run, no unread read, and
+    no stale run. Under the standard that absence fails Ready. One review is
+    enough only when the opener is listed in one_review_authors on the
+    trusted default-branch file. A missing file, a missing key, or an empty
+    list keeps that failure. An entry only on the pull request head does
+    not count. Unreadable ancestry fails Ready for every opener, including
+    one on that list.
+    This does not choose the first-run completion comment.
+    """
+    return _second_run_selection(
+        comments,
+        author_id=author_id,
+        guard_user_id=guard_user_id,
+        committed_at=committed_at,
+        head=head,
+        markdown_only=markdown_only,
+        rules_bound=rules_bound,
+        covered_at=covered_at,
+        ancestry_unavailable=ancestry_unavailable,
+        stale_heads=stale_heads,
+    )[0]
 
 
 def newest_second_run_blocks_merge(
@@ -1574,6 +1650,7 @@ def newest_second_run_blocks_merge(
     rules_bound: bool,
     covered_at: Mapping[str, str] | None = None,
     ancestry_unavailable: Collection[str] | None = None,
+    stale_heads: Collection[str] | None = None,
 ) -> bool:
     """True when the newest well-formed second-run comment counts blocking defects."""
     return (
@@ -1587,6 +1664,7 @@ def newest_second_run_blocks_merge(
             rules_bound=rules_bound,
             covered_at=covered_at,
             ancestry_unavailable=ancestry_unavailable,
+            stale_heads=stale_heads,
         )
         == "blocking"
     )
@@ -1603,6 +1681,7 @@ def select_review_comment(
     rules_bound: bool = True,
     covered_at: Mapping[str, str] | None = None,
     ancestry_unavailable: Collection[str] | None = None,
+    stale_heads: Collection[str] | None = None,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
     """Newest valid first-run author declaration that still covers this head.
 
@@ -1630,6 +1709,8 @@ def select_review_comment(
     those keys is ``review head does not match the pull request``, including
     when the comment is older than the current head. ``ancestry_unavailable``
     lists SHAs whose ancestry could not be read; those declarations fail closed.
+    ``stale_heads`` lists ancestor SHAs with a non-markdown change after them;
+    those declarations fail with the stale reason naming both heads.
     """
     committed = _utc(committed_at)
     if committed is None:
@@ -1642,8 +1723,10 @@ def select_review_comment(
         author_id=author_id,
         guard_user_id=guard_user_id,
         committed=committed,
+        head=head,
         covered_at=covered_at,
         ancestry_unavailable=ancestry_unavailable,
+        stale_heads=stale_heads,
     )
     if not candidates:
         if mixed_after_head:
@@ -1885,44 +1968,68 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
     return None
 
 
-def _history_relation(api: Any, repo: str, earlier: str, later: str) -> str:
+def _history_relation(
+    api: Any, repo: str, earlier: str, later: str
+) -> tuple[str, Any]:
     """How ``later`` stands relative to ``earlier``.
 
     ``descendant`` means ``later`` is strictly ahead and ``behind_by`` is 0.
     ``same`` means the two SHAs are the same commit. ``other`` means behind,
     diverged, or the earlier object is missing. ``unavailable`` means the
     comparison could not be read. The compare is ``earlier...later``.
+
+    The second item is the compare response's raw ``files`` value, or None
+    when no usable response was read. Callers that compare against the base
+    ignore it.
     """
     if (
         repo.count("/") != 1
         or _SHA.fullmatch(earlier) is None
         or _SHA.fullmatch(later) is None
     ):
-        return "unavailable"
+        return "unavailable", None
     if earlier == later:
-        return "same"
+        return "same", None
     try:
         status, data, _headers = api.request(
             "GET", f"/repos/{repo}/compare/{earlier}...{later}"
         )
     except Exception as exc:
         _reraise_rate_limit(exc)
-        return "unavailable"
+        return "unavailable", None
     if status == 404:
-        return "other"
+        return "other", None
     if status != 200 or not isinstance(data, Mapping):
-        return "unavailable"
+        return "unavailable", None
     relation = data.get("status")
+    files = data.get("files")
     if relation == "identical":
-        return "same"
+        return "same", files
     if relation == "ahead":
         behind = data.get("behind_by")
         if isinstance(behind, int) and not isinstance(behind, bool) and behind == 0:
-            return "descendant"
-        return "unavailable"
+            return "descendant", files
+        return "unavailable", None
     if relation in {"behind", "diverged"}:
-        return "other"
-    return "unavailable"
+        return "other", None
+    return "unavailable", None
+
+
+def _changes_after_are_markdown(files: Any) -> bool | None:
+    """Whether a compare file list is readable and holds only markdown files.
+
+    None means the list is unreadable, malformed, or possibly truncated, so
+    the caller must fail closed. An empty list is a readable change set with
+    no files and therefore counts as markdown-only.
+    """
+    if not isinstance(files, list):
+        return None
+    if len(files) >= GITHUB_COMPARE_FILES_CAP:
+        return None
+    paths = github_file_paths(files)
+    if paths is None:
+        return None
+    return all(is_markdown_path(path) for path in paths)
 
 
 def _covering_review_heads(
@@ -1934,13 +2041,17 @@ def _covering_review_heads(
     base_sha: str,
     author_id: int,
     guard_user_id: int,
-) -> tuple[dict[str, str], frozenset[str]]:
+) -> tuple[dict[str, str], frozenset[str], frozenset[str]]:
     """Commit times of declared heads that still cover this pull request.
 
     ``head`` itself is not included. A declared head counts when the current
-    head contains it and it is after ``base_sha``. The base commit itself does
-    not count. Only the author's review comments are read. A commit whose
-    history or commit time cannot be read is unreadable.
+    head contains it, it is after ``base_sha``, and every file changed between
+    that commit and ``head`` ends with ``.md``. The base commit itself does not
+    count. Only the author's review comments are read. A commit whose history,
+    change list, or commit time cannot be read is unreadable. A readable
+    ancestor with a non-markdown change after it is stale.
+
+    Returns ``(covered, unavailable, stale)``.
     """
     declared_shas: list[str] = []
     for comment in comments:
@@ -1959,14 +2070,15 @@ def _covering_review_heads(
         declared_shas.append(declared)
     covered: dict[str, str] = {}
     unavailable: set[str] = set()
+    stale: set[str] = set()
     for declared in declared_shas:
-        to_head = _history_relation(api, repo, declared, head)
+        to_head, files = _history_relation(api, repo, declared, head)
         if to_head == "other":
             continue
         if to_head not in {"descendant", "same"}:
             unavailable.add(declared)
             continue
-        to_base = _history_relation(api, repo, base_sha, declared)
+        to_base, _base_files = _history_relation(api, repo, base_sha, declared)
         if to_base == "unavailable":
             unavailable.add(declared)
             continue
@@ -1976,8 +2088,30 @@ def _covering_review_heads(
         if named_at is None:
             unavailable.add(declared)
             continue
+        if to_head == "descendant":
+            markdown_after = _changes_after_are_markdown(files)
+            if markdown_after is None:
+                unavailable.add(declared)
+                continue
+            if not markdown_after:
+                stale.add(declared)
+                continue
         covered[declared] = named_at
-    return covered, frozenset(unavailable)
+    return covered, frozenset(unavailable), frozenset(stale)
+
+
+def _record_review_comment(
+    record: dict[str, Any], which: str, comment: Mapping[str, Any]
+) -> None:
+    """Fill the declared head, and for the first run its creation time."""
+    body = comment.get("body")
+    declared = _declared_sha(body) if isinstance(body, str) else None
+    if declared is not None:
+        record[f"{which}_head"] = declared
+    if which == "first":
+        created = comment.get("created_at")
+        if isinstance(created, str):
+            record["first_created_at"] = created
 
 
 def evaluate_review_gate(
@@ -1991,6 +2125,7 @@ def evaluate_review_gate(
     comments: Sequence[Mapping[str, Any]],
     markdown_only: bool,
     one_review_author: bool = False,
+    record: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     """Ready needs two review runs. ``one_review_author`` is the only exception.
 
@@ -2000,10 +2135,19 @@ def evaluate_review_gate(
     An entry that exists only on the pull request head does not count.
     A blocking second run still fails Ready for that opener. An unreadable
     second-run ancestry fails Ready for every opener, including one listed
-    in one_review_authors. A missing file, a missing key, or an empty list
-    keeps two reviews required. An entry that exists only on the pull
+    in one_review_authors. A second run that is stale names both heads; for
+    that opener it is not added. A missing file, a missing key, or an empty
+    list keeps two reviews required. An entry that exists only on the pull
     request head does not count.
+
+    ``record``, when given, receives ``first_head``, ``first_created_at``,
+    and ``second_head`` for the comments this gate selected. Missing values
+    stay empty strings. The return shape is unchanged.
     """
+    if record is not None:
+        record["first_head"] = ""
+        record["first_created_at"] = ""
+        record["second_head"] = ""
     try:
         guard_id, _login = api.resolve_own_user()
     except Exception as exc:
@@ -2021,7 +2165,7 @@ def evaluate_review_gate(
     if committed_at is None:
         _add(reasons, "review commit time unavailable")
     else:
-        covered, unread = _covering_review_heads(
+        covered, unread, stale = _covering_review_heads(
             api,
             repo,
             head,
@@ -2031,7 +2175,7 @@ def evaluate_review_gate(
             guard_user_id=guard_id,
         )
         covered[head] = committed_at
-        _comment, selected = select_review_comment(
+        first_comment, selected = select_review_comment(
             comments,
             author_id=author_id,
             guard_user_id=guard_id,
@@ -2041,8 +2185,11 @@ def evaluate_review_gate(
             rules_bound=rules_bound,
             covered_at=covered,
             ancestry_unavailable=unread,
+            stale_heads=stale,
         )
         reasons.extend(selected)
+        if record is not None and first_comment is not None:
+            _record_review_comment(record, "first", first_comment)
         # The completion comment stays the first run. Two reviews are
         # required. One review is enough only when this opener is listed in
         # one_review_authors on the trusted default branch. A missing file,
@@ -2051,7 +2198,7 @@ def evaluate_review_gate(
         # that counts blocking defects still returns Ready to Draft,
         # including for that exception.
         if not selected:
-            status = second_run_status(
+            status, second_comment = _second_run_selection(
                 comments,
                 author_id=author_id,
                 guard_user_id=guard_id,
@@ -2061,12 +2208,20 @@ def evaluate_review_gate(
                 rules_bound=rules_bound,
                 covered_at=covered,
                 ancestry_unavailable=unread,
+                stale_heads=stale,
             )
+            if record is not None and second_comment is not None:
+                _record_review_comment(record, "second", second_comment)
             if status == "blocking":
                 _add(reasons, BLOCKING_REVIEW_REASON)
             elif status == "absent":
                 if not one_review_author:
                     _add(reasons, SECOND_REVIEW_MISSING)
+            elif is_stale_review_reason(status):
+                # A stale second run is news for a two-review opener. It is
+                # not blocking and it does not fail the one-review exception.
+                if not one_review_author:
+                    _add(reasons, status)
             elif status != "clear":
                 # Unreadable ancestry, and any other non-signal reason.
                 # This fails Ready for every opener, including one listed
