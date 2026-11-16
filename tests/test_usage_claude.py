@@ -985,4 +985,20 @@ def test_unencodable_bearer_is_a_request_failure_without_the_token() -> None:
                 )
         assert str(info.value) == f"{name} request failed"
         assert info.value.__cause__ is None
+        assert info.value.__context__ is None
         assert "secret" not in str(info.value)
+
+
+def test_transport_failure_is_a_request_failure_without_a_chain() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"refused {request.headers['Authorization']}", request=request)
+
+    for name in ("Claude usage", "OpenRouter usage"):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(StoreError) as info:
+                _get_bearer_json(
+                    "https://usage.example.com/", {"Authorization": f"Bearer {TOKEN}"}, name, client
+                )
+        assert str(info.value) == f"{name} request failed"
+        assert info.value.__cause__ is None
+        assert info.value.__context__ is None

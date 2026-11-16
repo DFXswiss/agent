@@ -459,6 +459,7 @@ def _get_bearer_json(
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """GET ``url`` with a bearer header; error text never carries the token."""
+    response: httpx.Response | None = None
     try:
         if client is None:
             # The bearer must never follow an ambient proxy or trust an ambient
@@ -471,8 +472,11 @@ def _get_bearer_json(
             response = client.get(url, headers=headers)
     except (httpx.HTTPError, UnicodeError):
         # A header value httpx cannot encode raises UnicodeEncodeError, whose
-        # ``object`` holds the header; never chain it.
-        raise StoreError(f"{name} request failed") from None
+        # ``object`` holds the header with the token. Raising outside this
+        # block keeps the original out of both __cause__ and __context__.
+        pass
+    if response is None:
+        raise StoreError(f"{name} request failed")
     if response.status_code == 429:
         raise UsageRateLimited(
             f"{name} returned HTTP 429",
