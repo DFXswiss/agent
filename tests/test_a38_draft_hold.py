@@ -184,6 +184,32 @@ def test_malformed_draft_fails_closed() -> None:
         assert _hold(fake) == ("unavailable", None), event
 
 
+def test_a_timeline_of_only_unreadable_entries_is_unavailable() -> None:
+    for entry in (None, {}):
+        fake = FakeAPI()
+        fake.timeline = [entry]
+        assert _hold(fake) == ("unavailable", None), entry
+
+
+def test_an_entry_with_a_non_string_event_is_unavailable() -> None:
+    fake = FakeAPI()
+    fake.timeline = [{"event": 5}]
+    assert _hold(fake) == ("unavailable", None)
+
+
+def test_an_unrelated_readable_event_is_ignored() -> None:
+    fake = FakeAPI()
+    fake.timeline = [
+        {
+            "event": "commented",
+            "id": 1,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+        }
+    ]
+    assert _hold(fake) == ("ok", None)
+
+
 def test_malformed_ready_is_skipped_and_an_older_draft_holds() -> None:
     fake = FakeAPI()
     fake.timeline = [
@@ -334,6 +360,41 @@ def test_a_review_record_after_the_hold_releases_it() -> None:
     assert not any(
         "draft held by" in reason for reason in result.lifecycle["reasons"]
     )
+
+
+def test_a_review_record_naming_a_markdown_only_ancestor_keeps_the_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.timeline = [_draft(created_at="2026-01-01T00:00:00Z")]
+    ancestor = "c" * 40
+    real_assess = a38_guard.assess_pull
+
+    def staged_assess(api, repo, number, **kwargs):
+        assessed = real_assess(api, repo, number, **kwargs)
+        # The review gate accepts the ancestor, so this is the selected head.
+        assessed.review_first_head = ancestor
+        assessed.review_first_created_at = "2099-01-01T00:00:00Z"
+        return assessed
+
+    monkeypatch.setattr(a38_guard, "assess_pull", staged_assess)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert "draft held by maintainer" in result.lifecycle["reasons"]
+    assert fake.transitions == []
+    assert fake.pull["draft"]
+
+
+def test_a_malformed_timeline_entry_blocks_ready() -> None:
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.timeline = [None]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert "draft hold unavailable" in result.lifecycle["reasons"]
+    assert fake.transitions == []
+    assert fake.pull["draft"]
 
 
 def test_ready_pull_with_an_active_hold_returns_to_draft() -> None:

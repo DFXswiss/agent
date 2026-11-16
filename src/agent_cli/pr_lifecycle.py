@@ -241,16 +241,18 @@ def _draft_hold_state(
     status: str,
     hold: Any,
     *,
+    current_head: str,
     first_head: str,
     first_created_at: str,
 ) -> tuple[str, str]:
     """Classify a load_draft_hold result into a state and a visible reason.
 
-    A hold is released by a first-run review record for the current head
-    created strictly after it. ``unavailable`` fails closed while the pull
-    is draft and blocks a Ready mutation. ``pending`` means the newest
-    relevant timeline event is Ready while the pull is draft, so the timeline
-    has not caught up; it blocks a Ready mutation too.
+    A hold is released by a first-run review record that names the current
+    head exactly, not a markdown-only ancestor, and was created strictly
+    after it. ``unavailable`` fails closed while the pull is draft and blocks
+    a Ready mutation. ``pending`` means the newest relevant timeline event is
+    Ready while the pull is draft, so the timeline has not caught up; it
+    blocks a Ready mutation too.
     """
     if status == "unavailable":
         return "unavailable", _DRAFT_HOLD_UNAVAILABLE
@@ -262,6 +264,7 @@ def _draft_hold_state(
     held_at = _utc(hold.created_at)
     released = (
         bool(first_head)
+        and first_head == current_head
         and named_at is not None
         and held_at is not None
         and named_at > held_at
@@ -1370,6 +1373,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     hold_state, hold_reason = _draft_hold_state(
         hold_status,
         draft_hold,
+        current_head=snap.head_sha,
         first_head=first_head if isinstance(first_head, str) else "",
         first_created_at=first_created_at if isinstance(first_created_at, str) else "",
     )
@@ -1680,6 +1684,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         final_hold_state, final_hold_reason = _draft_hold_state(
             final_hold_status,
             final_hold,
+            current_head=snap.head_sha,
             first_head=(
                 fresh_first_head
                 if isinstance(fresh_first_head, str) and fresh_first_head
