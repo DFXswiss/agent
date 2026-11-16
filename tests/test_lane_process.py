@@ -881,6 +881,62 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _stopped_descendant_pids(root: int) -> list[int]:
+    """Stopped descendants of ``root``. A published lane pid is not required."""
+    completed = subprocess.run(
+        ["ps", "-ax", "-o", "pid=,ppid=,stat="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr)
+    children: dict[int, list[int]] = {}
+    stats: dict[int, str] = {}
+    for line in (completed.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        pid = int(parts[0])
+        ppid = int(parts[1])
+        children.setdefault(ppid, []).append(pid)
+        stats[pid] = parts[2]
+    stopped: list[int] = []
+    stack = list(children.get(root, []))
+    while stack:
+        pid = stack.pop()
+        stack.extend(children.get(pid, []))
+        if "T" in stats.get(pid, ""):
+            stopped.append(pid)
+    return stopped
+
+
+def _durable_partial_lanes(directory: Path) -> list[dict]:
+    """Capture records whose command is alive and has already written output."""
+    ready: list[dict] = []
+    if not directory.is_dir():
+        return ready
+    for path in sorted(directory.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            pid_text = path.with_suffix(".pid").read_text(encoding="utf-8").strip()
+            stdout = path.with_suffix(".stdout").read_text(encoding="utf-8")
+            pid = int(pid_text)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            continue
+        if not path.with_suffix(".stderr").is_file():
+            continue
+        if (
+            isinstance(data, dict)
+            and data.get("capture") is True
+            and data.get("pid") == pid
+            and "PARTIAL" in stdout
+            and _pid_alive(pid)
+        ):
+            ready.append({"pid": pid, "record": path})
+    return ready
+
+
 @pytest.mark.no_pg
 def test_surviving_lane_creates_a_missing_capture_directory(tmp_path: Path) -> None:
     root = tmp_path / "missing" / "lanes"
@@ -971,6 +1027,73 @@ def test_stop_while_polling_the_pid_file_kills_the_lane(
         if command_pid is not None:
             try:
                 os.killpg(command_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.no_pg
+def test_stop_before_pid_publish_kills_the_stopped_starter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pid file is published only after SIGSTOP. The starter is already in
+    # its own session, so SIGKILL of the wrapper would leave it stopped.
+    source = coordinator_exec._SURVIVE_WRAPPER
+    old_import = "import json,os,signal,subprocess,sys\n"
+    old_publish = "publish(pid_path, str(proc.pid))\ndata = sys.stdin.buffer.read()\n"
+    assert source.count(old_import) == 1
+    assert source.count(old_publish) == 1
+    monkeypatch.setattr(
+        coordinator_exec,
+        "_SURVIVE_WRAPPER",
+        source.replace(old_import, "import json,os,signal,subprocess,sys,time\n", 1).replace(
+            old_publish, "time.sleep(30)\n" + old_publish, 1
+        ),
+    )
+    files = _capture_files(tmp_path / "lanes")
+    pid_path = Path(files["pid_path"])
+    seen: dict[str, list[int]] = {"pids": []}
+
+    def poke() -> None:
+        # A second thread must not accept SIGTERM; the main thread owns the handler.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if not pid_path.exists():
+                found = _stopped_descendant_pids(os.getpid())
+                if found:
+                    seen["pids"] = found
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+            time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    thread = threading.Thread(target=poke)
+    try:
+        with pytest.raises(SystemExit) as raised:
+            with process_scope():
+                thread.start()
+                run_bounded(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    timeout=10,
+                    survive_stop=True,
+                    clear_ambient_github=False,
+                    **files,
+                )
+        assert raised.value.code == 128 + signal.SIGTERM
+        assert seen["pids"]
+        assert not pid_path.exists()
+        for pid in seen["pids"]:
+            _wait_until_dead(pid)
+    finally:
+        if thread.ident is not None:
+            thread.join(timeout=6)
+        for pid in seen["pids"]:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
@@ -1217,6 +1340,203 @@ def test_stop_during_worker_thread_start_does_not_leave_an_unmarked_lane(
         if command_pid is not None:
             try:
                 os.killpg(command_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_pr_gate_stop_adopts_both_review_lanes(tmp_path: Path) -> None:
+    # Quality and logic run on non-daemon threads. SIGTERM goes to the
+    # coordinator process only; both lanes are in other sessions and stay up.
+    store, worker, task = _prepared_store(tmp_path)
+    head = "c" * 40
+    coord(task)["phase"] = "pr_gates_grok"
+    coord(task)["head_sha"] = head
+    coord(task)["base_sha"] = "b" * 40
+    store.write(
+        "task",
+        "update",
+        TID,
+        {key: value for key, value in task.items() if not str(key).startswith("_")},
+    )
+    marker = tmp_path / "release-reviews"
+    script = tmp_path / "fake_lane.py"
+    script.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "import time",
+                "from pathlib import Path",
+                "sys.stdout.write('PARTIAL\\n')",
+                "sys.stdout.flush()",
+                "deadline = time.time() + 30",
+                "while time.time() < deadline and not Path(sys.argv[1]).exists():",
+                "    time.sleep(0.05)",
+                "sys.stdout.write(Path(sys.argv[2]).read_text(encoding='utf-8'))",
+                "sys.stdout.flush()",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stream = tmp_path / "review-stream.txt"
+    stream.write_text(
+        grok_messages_stream("STATUS: complete\nRESULT: approved\n"),
+        encoding="utf-8",
+    )
+    child = tmp_path / "pr-gate-stop.py"
+    child.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "from pathlib import Path",
+                "from agent_cli import coordinator_lanes",
+                "from agent_cli.coordinator_config import WorkerConfig",
+                "from agent_cli.coordinator_exec import process_scope",
+                "from agent_cli.store import Store",
+                "home, workspace, marker, script, stream_path, head, task_id = sys.argv[1:]",
+                "def identity(*_args, **_kwargs):",
+                "    return {}",
+                "def signed_head(*_args, **_kwargs):",
+                "    return head",
+                "def review_diff(_store, _worker, task, _runner, *, head):",
+                "    directory = Path(workspace) / '.coordinator-control' / str(task['id'])",
+                "    directory.mkdir(parents=True, exist_ok=True)",
+                "    path = directory / ('review-diff-' + head[:12] + '.patch')",
+                "    path.write_text('diff\\n', encoding='utf-8')",
+                "    return path",
+                "def review_context(*_args, **_kwargs):",
+                "    return ''",
+                "def provider(*_args, **_kwargs):",
+                "    return [sys.executable, '-u', script, marker, stream_path]",
+                "coordinator_lanes.verify_checkout_identity = identity",
+                "coordinator_lanes.verify_signed_clean_head = signed_head",
+                "coordinator_lanes.write_review_diff = review_diff",
+                "coordinator_lanes.write_review_context = review_context",
+                "coordinator_lanes.provider_argv = provider",
+                "store = Store(Path(home))",
+                "task = store.row('task', task_id)",
+                "assert task is not None",
+                "worker = WorkerConfig(",
+                "    session_id='worker-session',",
+                "    review_session='review-session',",
+                "    workspace_root=Path(workspace),",
+                "    repositories={},",
+                "    reply_logins=(),",
+                "    poll_seconds=30,",
+                "    lane_timeout=60,",
+                "    check_timeout=30,",
+                ")",
+                "def runner(*_args, **_kwargs):",
+                "    raise AssertionError('phase_pr_gates must not call the runner')",
+                "with process_scope():",
+                "    coordinator_lanes.phase_pr_gates(",
+                "        store, worker, task, runner, None, vendor='grok', stage='review-1',",
+                "    )",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(Path(__file__).resolve().parents[1] / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
+    owner = subprocess.Popen(
+        [
+            sys.executable,
+            str(child),
+            str(store.home),
+            str(worker.workspace_root),
+            str(marker),
+            str(script),
+            str(stream),
+            head,
+            TID,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=env,
+    )
+    command_pids: list[int] = []
+    lanes_dir = control_dir(worker, TID) / "lanes"
+    try:
+        ready: list[dict] = []
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and owner.poll() is None:
+            ready = _durable_partial_lanes(lanes_dir)
+            if len(ready) == 2:
+                break
+            time.sleep(0.05)
+        if len(ready) != 2 or owner.poll() is not None:
+            output, error = owner.communicate(timeout=5)
+            raise AssertionError(
+                f"lanes={ready!r} rc={owner.returncode} out={output!r} err={error!r}"
+            )
+        command_pids = [item["pid"] for item in ready]
+        assert len(set(command_pids)) == 2
+        assert not marker.exists()
+        owner.send_signal(signal.SIGTERM)
+        output, error = owner.communicate(timeout=5)
+        assert owner.returncode == 128 + signal.SIGTERM, (output, error)
+        assert not marker.exists()
+        for item in ready:
+            record = item["record"]
+            pid = item["pid"]
+            saved_process = json.loads(record.read_text(encoding="utf-8"))
+            assert saved_process.get("capture") is True
+            assert saved_process.get("pid") == pid
+            assert record.with_suffix(".stdout").is_file()
+            assert record.with_suffix(".stderr").is_file()
+            assert record.with_suffix(".pid").is_file()
+            assert _pid_alive(pid)
+        pending = [
+            row
+            for row in store.rows("agent")
+            if row.get("task_id") == TID and row.get("status") == "working"
+        ]
+        assert len(pending) == 2
+        assert {row["role"] for row in pending} == {
+            "pr-reviewer-quality",
+            "pr-reviewer-logic",
+        }
+        marker.write_text("go", encoding="utf-8")
+        current = store.row("task", TID)
+        assert current is not None
+        assert recover_working_lanes(store, worker, current) == "none"
+        saved_agents = [
+            row for row in store.rows("agent") if row.get("task_id") == TID
+        ]
+        assert len(saved_agents) == 2
+        for row in saved_agents:
+            assert row["status"] == "done"
+            assert row["note"] != "recovered: no live process"
+        outcome = coord(current)["lane_outcome"]
+        assert outcome["role"] == "reviewer-results"
+        recorded = outcome["outcomes"]
+        assert {item["dimension"] for item in recorded} == {"quality", "logic"}
+        for item in recorded:
+            assert item["status"] == "complete"
+            assert item["result"] == "approved"
+            assert item["stage"] == "review-1"
+        assert len(_lane_runs(store)) == 2
+        assert recover_working_lanes(store, worker, current) == "none"
+        assert len(_lane_runs(store)) == 2
+        assert "lane-failed" not in json.dumps(coord(current))
+    finally:
+        if owner.poll() is None:
+            os.killpg(owner.pid, signal.SIGKILL)
+            owner.communicate(timeout=5)
+        for pid in command_pids:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 

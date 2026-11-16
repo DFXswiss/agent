@@ -43,12 +43,15 @@ _SURVIVE_STARTER = (
 # The wrapper stays alive if its parent is stopped. It starts the command in
 # its own session so the recorded pid is the process-group leader, holds that
 # process stopped until the parent has read the start time, then writes the
-# pid and, after the command exits, its return code.
+# pid and, after the command exits, its return code. SIGTERM reaps that command
+# even when the pid file does not exist yet: SIGKILL would skip this handler
+# and leave the stopped starter in its session.
 _SURVIVE_WRAPPER = (
     'import json,os,signal,subprocess,sys\n'
     'signal.pthread_sigmask(signal.SIG_SETMASK, [])\n'
     'status_path, pid_path, starter = sys.argv[1], sys.argv[2], sys.argv[3]\n'
     'cmd = sys.argv[4:]\n'
+    'child = []\n'
     'def publish(path, text):\n'
     ' tmp = path + ".tmp"\n'
     ' with open(tmp, "w", encoding="utf-8") as handle:\n'
@@ -60,11 +63,29 @@ _SURVIVE_WRAPPER = (
     ' publish(status_path, json.dumps({"returncode": int(rc)}))\n'
     ' code = rc if 0 <= rc <= 255 else (128 + (-rc) if rc < 0 else 1)\n'
     ' sys.exit(code if 0 <= code <= 255 else 1)\n'
+    'def reap(signum, _frame):\n'
+    ' if child:\n'
+    '  try:\n'
+    '   os.killpg(child[0], signal.SIGKILL)\n'
+    '  except OSError:\n'
+    '   try:\n'
+    '    os.kill(child[0], signal.SIGKILL)\n'
+    '   except OSError:\n'
+    '    pass\n'
+    ' code = 128 + signum\n'
+    ' sys.exit(code if 0 <= code <= 255 else 1)\n'
+    'signal.signal(signal.SIGTERM, reap)\n'
+    'signal.signal(signal.SIGINT, reap)\n'
+    'held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})\n'
     'try:\n'
-    ' proc = subprocess.Popen([sys.executable, "-c", starter, *cmd], start_new_session=True, stdin=subprocess.PIPE)\n'
-    'except OSError:\n'
-    ' sys.stderr.write("configured command unavailable\\n")\n'
-    ' sys.exit(127)\n'
+    ' try:\n'
+    '  proc = subprocess.Popen([sys.executable, "-c", starter, *cmd], start_new_session=True, stdin=subprocess.PIPE)\n'
+    ' except OSError:\n'
+    '  sys.stderr.write("configured command unavailable\\n")\n'
+    '  sys.exit(127)\n'
+    ' child.append(proc.pid)\n'
+    'finally:\n'
+    ' signal.pthread_sigmask(signal.SIG_SETMASK, held)\n'
     'while True:\n'
     ' try:\n'
     '  _pid, status = os.waitpid(proc.pid, os.WUNTRACED)\n'
@@ -126,6 +147,33 @@ class _Tracked:
 
 
 _CHILDREN: dict[int, _Tracked] = {}
+# A generation, not a sticky flag: a stop the caller already caught must not
+# abandon the next lane in this process. Each surviving wait snapshots the
+# generation before it spawns and treats a later value as a coordinator stop.
+_STOP_LOCK = threading.Lock()
+_STOP_GENERATION = 0
+_STOP_SIGNAL = signal.SIGTERM
+
+
+def _stop_generation() -> int:
+    with _STOP_LOCK:
+        return _STOP_GENERATION
+
+
+def _request_coordinator_stop(signum: int) -> None:
+    """Record one SIGTERM or SIGINT for every surviving wait in this process."""
+    global _STOP_GENERATION, _STOP_SIGNAL
+    with _STOP_LOCK:
+        _STOP_GENERATION += 1
+        _STOP_SIGNAL = signum
+
+
+def _stop_signal_since(generation: int) -> int | None:
+    """The signal requested after ``generation``, or None when none was."""
+    with _STOP_LOCK:
+        if _STOP_GENERATION == generation:
+            return None
+        return _STOP_SIGNAL
 
 
 def _stop_children() -> None:
@@ -134,6 +182,8 @@ def _stop_children() -> None:
     Check and test commands are always killed. A model lane keeps its process
     group only after its capture record is durable. Before that, the command
     pid may exist only in the pid file, and this handler kills that group too.
+    A starter that has not published its pid is reaped by the wrapper on
+    SIGTERM. SIGKILL would skip that handler and leave the starter stopped.
     """
     with _CHILD_LOCK:
         ephemeral: list[_Tracked] = []
@@ -150,12 +200,17 @@ def _stop_children() -> None:
             _kill_group(child.command_pid, signal.SIGKILL)
     for child in unsettled:
         _kill_published_command(child.command_pid, child.pid_path, signal.SIGKILL)
-        _kill_group(child.proc.pid, signal.SIGKILL)
-    for child in (*ephemeral, *unsettled):
+        _stop_survive_wrapper(child.proc)
+    for child in ephemeral:
         try:
             child.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            pass
+            _kill_group(child.proc.pid, signal.SIGKILL)
+            try:
+                child.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    for child in (*ephemeral, *unsettled):
         with _CHILD_LOCK:
             if _CHILDREN.get(child.proc.pid) is child:
                 _CHILDREN.pop(child.proc.pid, None)
@@ -167,8 +222,11 @@ def process_scope():
 
     SIGTERM and SIGINT stop check and test commands. A model lane marked
     ``survive_stop`` is left running once its capture record is durable, so
-    the next coordinator can adopt it. A stop before that record kills the
-    lane, including a command pid that is only in the pid file.
+    the next coordinator can adopt it. The handler records a process-wide stop.
+    A lane blocked in another thread polls that stop and returns without
+    killing its process group. A stop before the record is durable kills the
+    lane, including a command pid that is only in the pid file and a starter
+    the wrapper has not published yet.
     """
     if threading.current_thread() is not threading.main_thread():
         # Embedded thread callers retain their process's signal ownership.
@@ -176,6 +234,9 @@ def process_scope():
         return
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
     def stop(signum, _frame):
+        # Workers blocked in proc.wait do not run this handler. The flag is
+        # what lets them abandon a durable lane before forget() removes it.
+        _request_coordinator_stop(signum)
         _stop_children()
         raise SystemExit(128 + signum)
     try:
@@ -484,10 +545,16 @@ def _run_surviving_process(
     reaped. Stdout, stderr, that pid and the return code are files the next
     coordinator can read. A stop signal leaves both processes running only after
     ``on_start`` has returned, which is when the capture record is durable.
-    Until then the stop path kills the command group even when the local pid is
-    still empty, using the pid file. Timeout and any other failure still kill
-    them. Missing capture directories are created here.
+    The wait polls the process-wide stop flag because a gate or PR-review lane
+    runs on a worker thread, where the signal handler never raises. After a
+    durable record that stop returns ``SystemExit`` and does not kill the
+    group, so the caller must not forget the capture. Until the record is
+    durable the stop path kills the command, including a pid that is only in
+    the pid file and a starter the wrapper has not published yet.
+    Timeout and any other failure still kill them. Missing capture directories
+    are created here.
     """
+    stop_generation = _stop_generation()
     if not stdout_path or not stderr_path or not status_path or not pid_path:
         return Completed(127, "", "lane capture paths are required")
     for capture_path in (stdout_path, stderr_path, status_path, pid_path):
@@ -537,8 +604,7 @@ def _run_surviving_process(
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                _kill_group(proc.pid, signal.SIGKILL)
-                proc.wait(timeout=5)
+                _stop_survive_wrapper(proc)
             stdout, stderr, error = _captured_streams(stdout_path, stderr_path)
             if error is not None:
                 return Completed(127, "", error)
@@ -570,10 +636,17 @@ def _run_surviving_process(
                 with _CHILD_LOCK:
                     tracked = _CHILDREN.get(proc.pid)
                     # A stop that already claimed this lane must not be undone
-                    # by marking the record durable after the kill.
-                    if tracked is not None and not tracked.doomed:
+                    # by marking the record durable after the kill. A stop that
+                    # arrived before this child was registered is the same claim.
+                    if (
+                        tracked is not None
+                        and not tracked.doomed
+                        and _stop_signal_since(stop_generation) is None
+                    ):
                         tracked.durable = True
                         recorded = True
+                    elif tracked is not None:
+                        tracked.doomed = True
                 if recorded:
                     # Unblock the wrapper only after the start time is durable,
                     # and before pending stop signals are unmasked.
@@ -586,7 +659,24 @@ def _run_surviving_process(
                 signal.pthread_sigmask(signal.SIG_SETMASK, held)
         else:
             _release_survive_stdin(proc, stdin_text)
-        proc.wait(timeout=timeout)
+        # proc.wait(timeout=timeout) would hide a coordinator stop from this
+        # thread until the lane exited, and forget() would then drop the capture.
+        deadline = time.monotonic() + timeout
+        while True:
+            signum = _stop_signal_since(stop_generation)
+            if signum is not None and recorded:
+                raise SystemExit(128 + signum)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            try:
+                proc.wait(timeout=0.05 if remaining > 0.05 else remaining)
+            except subprocess.TimeoutExpired:
+                continue
+            signum = _stop_signal_since(stop_generation)
+            if signum is not None and recorded:
+                raise SystemExit(128 + signum)
+            break
         return _completed_from_capture(
             stdout_path, stderr_path, status_path, forced=None
         )
@@ -608,11 +698,7 @@ def _run_surviving_process(
         raise
     except BaseException:
         _kill_published_command(command_pid, pid_path, signal.SIGKILL)
-        _kill_group(proc.pid, signal.SIGKILL)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        _stop_survive_wrapper(proc)
         raise
     finally:
         if abandoned:
@@ -620,13 +706,27 @@ def _run_surviving_process(
                 _CHILDREN.pop(proc.pid, None)
         else:
             _kill_published_command(command_pid, pid_path, signal.SIGKILL)
-            _kill_group(proc.pid, signal.SIGKILL)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
+            _stop_survive_wrapper(proc)
             with _CHILD_LOCK:
                 _CHILDREN.pop(proc.pid, None)
+
+
+def _stop_survive_wrapper(proc: subprocess.Popen) -> None:
+    """SIGTERM the survive wrapper so it reaps an unpublished starter.
+
+    The starter is in its own session. SIGKILL of the wrapper does not run the
+    wrapper's handler and does not reach that session. SIGKILL follows only
+    when the wrapper ignores SIGTERM.
+    """
+    _kill_group(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc.pid, signal.SIGKILL)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _kill_group(pid: int, sig: signal.Signals) -> None:
