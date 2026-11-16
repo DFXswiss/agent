@@ -1287,13 +1287,19 @@ def lane_start_recorder(
 
     ``capture`` marks a model lane whose output files a later coordinator can
     adopt. Check lanes and injected runners leave the record without that mark.
+    A capture record requires a non-empty start time. Without one this raises
+    before writing, and the runner kills the command instead of leaving a pid
+    that a later coordinator would treat as dead.
     """
     path = lane_process_path(worker, task_id, agent_id)
 
     def record(pid: int) -> None:
+        lstart = process_start_time(pid, worker)
+        if capture and lstart == "":
+            raise RuntimeError("lane start time is missing")
         payload = {
             "pid": pid,
-            "lstart": process_start_time(pid, worker),
+            "lstart": lstart,
             "started_at": utcnow(),
         }
         if capture:

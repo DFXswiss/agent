@@ -76,24 +76,40 @@ class _Tracked:
     proc: subprocess.Popen
     survive_stop: bool
     command_pid: int | None = None
+    pid_path: str | None = None
+    # True only after on_start has returned. Until then the capture record is
+    # not durable and a stop must end the command, not leave it running.
+    durable: bool = False
+    doomed: bool = False
 
 
 _CHILDREN: dict[int, _Tracked] = {}
 
 
 def _stop_children() -> None:
-    """Stop children that do not outlive this coordinator.
+    """Stop children that must not outlive this coordinator.
 
-    A model lane started with ``survive_stop`` keeps its process group. Check
-    and test commands stay in this set and are still killed.
+    Check and test commands are always killed. A model lane keeps its process
+    group only after its capture record is durable. Before that, the command
+    pid may exist only in the pid file, and this handler kills that group too.
     """
     with _CHILD_LOCK:
-        children = [child for child in _CHILDREN.values() if not child.survive_stop]
-    for child in children:
+        ephemeral: list[_Tracked] = []
+        unsettled: list[_Tracked] = []
+        for child in _CHILDREN.values():
+            if not child.survive_stop:
+                ephemeral.append(child)
+            elif not child.durable:
+                child.doomed = True
+                unsettled.append(child)
+    for child in ephemeral:
         _kill_group(child.proc.pid, signal.SIGKILL)
         if child.command_pid is not None:
             _kill_group(child.command_pid, signal.SIGKILL)
-    for child in children:
+    for child in unsettled:
+        _kill_published_command(child.command_pid, child.pid_path, signal.SIGKILL)
+        _kill_group(child.proc.pid, signal.SIGKILL)
+    for child in (*ephemeral, *unsettled):
         try:
             child.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -108,7 +124,9 @@ def process_scope():
     """The foreground static worker owns termination of its attached subprocess groups.
 
     SIGTERM and SIGINT stop check and test commands. A model lane marked
-    ``survive_stop`` is left running so the next coordinator can adopt it.
+    ``survive_stop`` is left running once its capture record is durable, so
+    the next coordinator can adopt it. A stop before that record kills the
+    lane, including a command pid that is only in the pid file.
     """
     if threading.current_thread() is not threading.main_thread():
         # Embedded thread callers retain their process's signal ownership.
@@ -283,6 +301,48 @@ def read_capture_returncode(path: str) -> int | None:
     return rc
 
 
+def _parse_positive_pid(text: str) -> int | None:
+    """A positive integer pid, or None when the text is not one."""
+    try:
+        pid = int(text)
+    except ValueError:
+        return None
+    if pid <= 0:
+        return None
+    return pid
+
+
+def _read_published_pid(pid_path: str | None) -> int | None:
+    """Command pid the survive wrapper has published, or None when it has not.
+
+    A missing, empty, or unusable file is None. ``_await_command_pid`` still
+    tells a missing file from a present unusable one and stops waiting only
+    for the latter.
+    """
+    if pid_path is None or pid_path == "":
+        return None
+    try:
+        text = Path(pid_path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not text:
+        return None
+    return _parse_positive_pid(text)
+
+
+def _kill_published_command(
+    command_pid: int | None,
+    pid_path: str | None,
+    sig: signal.Signals,
+) -> None:
+    """Kill the command group. The pid file counts when the local pid is empty."""
+    published = command_pid
+    if published is None:
+        published = _read_published_pid(pid_path)
+    if published is not None:
+        _kill_group(published, sig)
+
+
 def _await_command_pid(pid_path: str, proc: subprocess.Popen) -> int | None:
     """Command pid published by the wrapper, or None when the wrapper ends first."""
     path = Path(pid_path)
@@ -293,13 +353,7 @@ def _await_command_pid(pid_path: str, proc: subprocess.Popen) -> int | None:
             except (OSError, UnicodeError):
                 text = ""
             if text:
-                try:
-                    pid = int(text)
-                except ValueError:
-                    return None
-                if pid > 0:
-                    return pid
-                return None
+                return _parse_positive_pid(text)
         if proc.poll() is not None:
             return None
         time.sleep(0.05)
@@ -365,8 +419,10 @@ def _run_surviving_process(
     The recorded pid is the command, not this wrapper. Stdout, stderr, that pid
     and the return code are files the next coordinator can read. A stop signal
     leaves both processes running only after ``on_start`` has returned, which is
-    when the capture record is durable. Timeout and any other failure still kill
-    them. Missing capture directories are created here.
+    when the capture record is durable. Until then the stop path kills the
+    command group even when the local pid is still empty, using the pid file.
+    Timeout and any other failure still kill them. Missing capture directories
+    are created here.
     """
     if not stdout_path or not stderr_path or not status_path or not pid_path:
         return Completed(127, "", "lane capture paths are required")
@@ -390,15 +446,17 @@ def _run_surviving_process(
                 )
             except OSError:
                 return Completed(127, "", "configured command unavailable")
-            _CHILDREN[proc.pid] = _Tracked(proc, survive_stop=True)
+            _CHILDREN[proc.pid] = _Tracked(
+                proc, survive_stop=True, pid_path=pid_path
+            )
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
         stdout_handle.close()
         stderr_handle.close()
     assert proc is not None
     abandoned = False
-    # True only after on_start returns. Until then a stop must not leave the
-    # command running: the capture record is written inside that callback.
+    # True only after on_start returns and no stop has claimed the lane.
+    # Until then a stop must not leave the command running.
     recorded = False
     command_pid: int | None = None
     try:
@@ -419,9 +477,9 @@ def _run_surviving_process(
             if tracked is not None:
                 tracked.command_pid = command_pid
         if on_start is not None:
-            # Hold SIGTERM and SIGINT across the start record. The recorder's
-            # ps is a child this handler would otherwise kill before the record
-            # exists, and the command would keep running unmarked.
+            # Block SIGTERM and SIGINT on this thread while the start record is
+            # written. The main thread's handler still runs and kills this lane
+            # until it is marked durable below.
             held = signal.pthread_sigmask(
                 signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
             )
@@ -437,7 +495,13 @@ def _run_surviving_process(
                     return _completed_from_capture(
                         stdout_path, stderr_path, status_path, forced=None
                     )
-                recorded = True
+                with _CHILD_LOCK:
+                    tracked = _CHILDREN.get(proc.pid)
+                    # A stop that already claimed this lane must not be undone
+                    # by marking the record durable after the kill.
+                    if tracked is not None and not tracked.doomed:
+                        tracked.durable = True
+                        recorded = True
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, held)
         proc.communicate(
@@ -464,7 +528,8 @@ def _run_surviving_process(
         abandoned = recorded
         raise
     except BaseException:
-        _signal_command(command_pid, proc, signal.SIGKILL)
+        _kill_published_command(command_pid, pid_path, signal.SIGKILL)
+        _kill_group(proc.pid, signal.SIGKILL)
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -475,8 +540,7 @@ def _run_surviving_process(
             with _CHILD_LOCK:
                 _CHILDREN.pop(proc.pid, None)
         else:
-            if command_pid is not None:
-                _kill_group(command_pid, signal.SIGKILL)
+            _kill_published_command(command_pid, pid_path, signal.SIGKILL)
             _kill_group(proc.pid, signal.SIGKILL)
             try:
                 proc.wait(timeout=5)
