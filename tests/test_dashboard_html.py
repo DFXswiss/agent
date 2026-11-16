@@ -541,6 +541,9 @@ def test_order_events_have_their_own_page() -> None:
     assert 'unacked: document.getElementById("ev-unacked").checked' in html
     assert "setInterval(eventsTick, 2000);" in html
     assert "ORDER_VIEW.events.nested.events" in html
+    cell_at = html.index("function orderCell(value) {")
+    cell = html[cell_at:html.index("\n    }\n", cell_at)]
+    assert r"/^[^/]+\/[^/]+\/pull\/([0-9]+)\/?$/" in cell
     main_view = json.loads(
         main.split("const ORDER_VIEW = ", 1)[1].split("/* ORDER_VIEW_END */", 1)[0].strip()[:-1]
     )
