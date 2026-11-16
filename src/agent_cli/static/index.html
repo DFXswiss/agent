@@ -59,6 +59,8 @@
       <button type="button" id="od-override">Override</button>
       <input type="text" id="od-cancel-reason" placeholder="reason" />
       <button type="button" id="od-cancel">Cancel order</button>
+      <input type="text" id="od-done-reason" placeholder="reason" />
+      <button type="button" id="od-done">Mark done</button>
     </div>
     <div id="order-report">
       <div class="control-form"><button type="button" id="od-report">Load report</button></div>
@@ -120,6 +122,7 @@ const ORDER_VIEW = {
   "reply": {"mode":"write","method":"POST","path":"/api/orders/reply","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true}],"fields":["intent","order_id"],"nested":{}},
   "override": {"mode":"write","method":"POST","path":"/api/orders/override","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"check","flag":"--check","kind":"line","required":true},{"name":"reason","flag":"--reason","kind":"line","required":true}],"fields":["intent","order_id","check"],"nested":{}},
   "cancel": {"mode":"write","method":"POST","path":"/api/orders/cancel","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"reason","flag":"--reason","kind":"line","required":true}],"fields":["intent","order_id"],"nested":{}},
+  "done": {"mode":"write","method":"POST","path":"/api/orders/done","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"reason","flag":"--reason","kind":"line","required":true}],"fields":["intent","order_id","state"],"nested":{}},
   "report": {"mode":"read","method":"GET","path":"/api/orders/report","params":[{"name":"order_id","flag":"--id","kind":"line","required":true}],"fields":["order_id","title","state","phase","repo","base","pr_url","head","summary_en","summary_de","rounds","waivers","files","reviews","reviews_omitted","comments","comments_omitted","a38_report","local_checks","ci"],"nested":{"rounds":["used","limit","max_rounds","origin","model"],"waivers":["check","kind","by","reason","at"],"files":["head","base","total","added","deleted","listed","omitted","error"],"files.listed":["path","added","deleted"],"reviews":["stage","round","head","provider","model","lanes","verdict","defects","at"],"comments":["kind","url","head","passes","defects","blocks_merge","visible"],"a38_report":["result","head","url","runs","runs_omitted","reason"],"a38_report.runs":["id","name","result","exit_code"],"local_checks":["name","result","head","ran_at"],"ci":["state","head","observed_at"]}}
 };
 /* ORDER_VIEW_END */
@@ -304,8 +307,9 @@ async function ordersTick() {
           const answers = cp === null ? [] : cp.answers;
           document.getElementById("od-reply").disabled = cp === null || !answers.includes("reply");
           document.getElementById("od-cancel").disabled = cp === null
-            ? ["merged", "failed", "cancelled"].includes(shown.state)
+            ? ["merged", "done", "failed", "cancelled"].includes(shown.state)
             : !answers.includes("cancel");
+          document.getElementById("od-done").disabled = ["merged", "done"].includes(shown.state);
           document.getElementById("od-override").disabled = shown.overridable_checks.length === 0;
           const select = document.getElementById("od-override-check");
           const keep = select.value;
@@ -327,6 +331,7 @@ function selectOrder(id) {
     document.getElementById("od-reply-body").value = "";
     document.getElementById("od-override-reason").value = "";
     document.getElementById("od-cancel-reason").value = "";
+    document.getElementById("od-done-reason").value = "";
     setOrderHtml(document.getElementById("od-body"), "");
     setOrderHtml(document.getElementById("od-opinion"), "");
     setOrderHtml(document.getElementById("od-report-body"), "");
@@ -336,6 +341,7 @@ function selectOrder(id) {
     document.getElementById("od-reply").disabled = true;
     document.getElementById("od-override").disabled = true;
     document.getElementById("od-cancel").disabled = true;
+    document.getElementById("od-done").disabled = true;
     orderLiveError = "";
     orderStickyError = "";
   }
@@ -398,6 +404,19 @@ document.getElementById("od-cancel").addEventListener("click", async event => {
   try {
     await orderCall("cancel", { order_id: id, reason: document.getElementById("od-cancel-reason").value });
     if (selectedOrderId === id) document.getElementById("od-cancel-reason").value = "";
+  } catch (e) {
+    if (selectedOrderId === id) orderStickyError = e.message;
+  }
+  ordersTick();
+});
+
+document.getElementById("od-done").addEventListener("click", async event => {
+  const id = selectedOrderId;
+  orderStickyError = "";
+  event.currentTarget.disabled = true;
+  try {
+    await orderCall("done", { order_id: id, reason: document.getElementById("od-done-reason").value });
+    if (selectedOrderId === id) document.getElementById("od-done-reason").value = "";
   } catch (e) {
     if (selectedOrderId === id) orderStickyError = e.message;
   }

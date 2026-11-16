@@ -205,3 +205,38 @@ def test_cancel_text_names_the_order_without_an_open_pull_request() -> None:
             "the order the same way without a comment; a cancel is refused "
             "when the pull request is already merged."
         ) in prose
+
+
+def test_order_states_and_the_done_operation_are_documented() -> None:
+    states = order_ops.OPEN_STATES + order_ops.ENDED_STATES
+    assert "done" in order_ops.ENDED_STATES
+    for relative in ("DESIGN.md", "docs/issue-coordinator.md"):
+        prose = _ws(_read(relative))
+        listed = prose.split("Order states are derived", 1)[1].split(".", 1)[0]
+        assert listed.count("`") == 2 * len(states)
+        for state in states:
+            assert f"`{state}`" in listed
+        assert "agent order done --id UUID --reason TEXT" in prose
+        assert "`merged` and `done` never wake" in prose
+        assert "`Order marked done by <who>: <reason>`" in prose
+        assert "fail with `order UUID is already done`" in prose
+        assert (
+            "never merges, closes, reopens, comments on or edits the pull "
+            "request and never pushes or deletes a branch"
+        ) in prose
+        assert "without a coordinator pass" in prose
+        assert "`coordinator-worker:<session_id>`" in prose
+        assert "Only an override, cancellation or done mark resolves it" in prose
+        assert "Only an override or cancel" not in prose
+    assert (
+        "Answers return through `agent order reply`, `agent order override`, "
+        "`agent order cancel`, `agent order done`, or an authorized pull-request "
+        "comment."
+    ) in _ws(_between(_read("DESIGN.md"), "### 19.7", "### 19.8"))
+    assert "agent order done --id UUID --reason TEXT" in _between(
+        _read("DESIGN.md"), "## 16. CLI surface", "## 17. "
+    )
+    assert "`agent order done`" in _between(
+        _read("DESIGN.md"), "## 14. Activity catalog", "## 15. "
+    )
+    assert "cancel or done mark" in _ws(_read("AGENTS.md"))

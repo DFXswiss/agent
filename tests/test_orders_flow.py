@@ -5,12 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli import github_act
+from agent_cli import coordinator_runtime, github_act, order_ops
 from agent_cli.a38_guard import status_context_enforce
 from agent_cli.a38_review import ReviewError, parse_review_block
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.coordinator import tick
-from agent_cli.coordinator_orders import own_order_events
+from agent_cli.coordinator_common import coord
+from agent_cli.coordinator_orders import order_state, own_order_events
 from agent_cli.order_report import build_order_report, render_order_report
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -409,3 +410,187 @@ def test_reference_flow_with_a_duplicate_stops_before_the_draft(
     assert len(wakes) == 1
     assert wakes[0]["payload"]["kind"] == "question"
     assert wakes[0]["payload"]["check"] == "duplicates_checked"
+
+
+class RecordingGh(A38FlowGh):
+    """Records every command once ``recorded`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.recorded: list[list[str]] | None = None
+
+    def __call__(self, argv: list[str]) -> Completed:
+        if self.recorded is not None:
+            self.recorded.append(list(argv))
+        return super().__call__(argv)
+
+
+GH_READ_SUBCOMMANDS = frozenset({"view", "list", "checks", "diff", "status"})
+GH_API_BODY_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+GITHUB_WRITE_ACTIVITIES = frozenset(
+    {"comment.post", "pr.open", "pr.body", "review.post", "issue.write"}
+)
+
+
+def _writes(commands: list[list[str]]) -> list[list[str]]:
+    """GitHub writes, pushes and branch deletions among recorded commands."""
+    found = []
+    for argv in commands:
+        tool = next((name for name in ("gh", "git") if name in argv), None)
+        if tool is None:
+            continue
+        command = argv[argv.index(tool) :]
+        if tool == "gh" and command[1:2] in (["pr"], ["issue"]):
+            if command[2:3] and command[2] not in GH_READ_SUBCOMMANDS:
+                found.append(command)
+        elif tool == "gh" and command[1:2] == ["api"]:
+            method = next(
+                (
+                    command[index + 1].upper()
+                    for index, part in enumerate(command[:-1])
+                    if part in ("-X", "--method")
+                ),
+                None,
+            )
+            if (method is not None and method != "GET") or (
+                method is None and GH_API_BODY_FLAGS & set(command)
+            ):
+                found.append(command)
+        elif tool == "git" and (
+            "push" in command
+            or ("branch" in command and {"-d", "-D", "--delete"} & set(command))
+        ):
+            found.append(command)
+    return found
+
+
+def test_done_on_an_open_order_stops_all_further_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    write_check_lane(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    store.set_meta("github_login", "human-owner")
+    worker = make_order_worker(
+        tmp_path,
+        review_session=None,
+        a38=True,
+        a38_second_review="model",
+    )
+    fake = RecordingGh()
+    fake.issues = []
+    fake.numstat = "3\t1\tsrc/app.py\n"
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    _install_a38_suite_fakes(monkeypatch, fake)
+    lane = order_lane_runner(fake)
+
+    order = submit_order(store, worker)
+    for _ in range(30):
+        c = store.row("task", order["id"])["payload"]["coordinator"]
+        if c["phase"] == "tests":
+            break
+        if c["phase"] == "implement" and "implementer" not in fake.launched:
+            fake.dirty = True
+        tick(store, worker, runner=fake, lane_runner=lane)
+    else:
+        pytest.fail("the order did not reach the tests phase")
+    task = store.row("task", order["id"])
+    assert order_state(task) == "running"
+    assert fake.pr_created is True
+    assert fake.launched[:2] == ["implementer", "reviewer"]
+
+    def github_rows() -> list[str]:
+        return sorted(
+            str(row["id"])
+            for row in store.rows("activity")
+            if row.get("type") in GITHUB_WRITE_ACTIVITIES
+        )
+
+    def pull_request_effects() -> tuple:
+        return (
+            list(fake.launched),
+            len(fake.pr_comments),
+            len(fake.comments),
+            fake.close_calls,
+            list(fake.pr_edits),
+            fake.ready_calls,
+            fake.pr["state"],
+            fake.pr["isDraft"],
+            fake.force_push_attempted,
+        )
+
+    before = pull_request_effects()
+    queued = github_rows()
+    rounds = task["current_round"]
+    agents = len(store.rows("agent"))
+
+    result = order_ops.run(
+        "done",
+        store,
+        store.home,
+        {"order_id": order["id"], "reason": "Finished by hand"},
+    )
+    assert result["state"] == "running"
+    assert store.row("activity", result["intent"])["execution_status"] == "pending"
+
+    fake.recorded = []
+
+    def fail(*_args, **_kwargs):
+        pytest.fail("a phase handler ran after the order was marked done")
+
+    monkeypatch.setattr(coordinator_runtime, "phase_tests", fail)
+    monkeypatch.setattr(coordinator_runtime, "phase_implement", fail)
+    for _ in range(3):
+        tick(store, worker, runner=fake, lane_runner=lane)
+
+    task = store.row("task", order["id"])
+    assert order_state(task) == "done"
+    assert task["state"] == "failed"
+    assert coord(task)["failed_kind"] == "done"
+    assert coord(task)["marked_done"]["reason"] == "Finished by hand"
+    assert coord(task)["marked_done"]["by"] == "human-owner"
+    assert coord(task)["order"]["closed"] is True
+    assert task["current_round"] == rounds
+    assert len(store.rows("agent")) == agents
+    assert pull_request_effects() == before
+    assert github_rows() == queued
+    assert _writes(fake.recorded) == []
+    assert store.row("activity", result["intent"])["result"]["effect"] == "done"
+
+    events = _events(store, order["id"])
+    done = [row["payload"] for row in events if row["payload"]["kind"] == "done"]
+    assert len(done) == 1
+    assert done[0]["wake"] is False
+    assert done[0]["digest"] == "Order marked done by human-owner: Finished by hand"
+    assert events[-1]["payload"]["kind"] == "done"
+    assert build_order_report(store, task)["state"] == "done"
+
+
+@pytest.mark.no_pg
+def test_write_detection_used_by_the_done_flow() -> None:
+    assert _writes(
+        [
+            ["gh", "pr", "view", "42"],
+            ["env", "GH_TOKEN=x", "gh", "api", "repos/example/project/pulls/42"],
+            ["gh", "api", "-X", "GET", "repos/example/project/issues"],
+            ["git", "status", "--porcelain"],
+            ["/operator/checks", "--full"],
+        ]
+    ) == []
+    writes = [
+        ["gh", "pr", "close", "42"],
+        ["gh", "pr", "merge", "42"],
+        ["gh", "pr", "reopen", "42"],
+        ["gh", "pr", "edit", "42", "--body", "x"],
+        ["gh", "pr", "comment", "42", "--body", "x"],
+        ["gh", "issue", "comment", "7", "--body", "x"],
+        ["gh", "api", "-X", "PATCH", "repos/example/project/pulls/42"],
+        ["gh", "api", "repos/example/project/issues/42/comments", "-f", "body=x"],
+        ["git", "push", "origin", "HEAD:refs/heads/task-1"],
+        ["git", "branch", "-D", "task-1"],
+    ]
+    assert _writes(writes) == writes

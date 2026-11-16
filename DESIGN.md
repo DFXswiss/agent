@@ -342,8 +342,8 @@ v1 types (mechanism only):
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
 | `supervise.event` | `supervise` | script | — (supervise follow bookkeeping / approve; optional closed-question path in tests; skip rows may carry a truncated pane excerpt; no TUI knock) |
-| `order.event` | `order` | script | — (written by the coordinator at order transitions; persists until acknowledged; `agent order ack` or an answering reply, override or cancel sets the acknowledgement; no `NOTIFY`, no TUI knock) |
-| `order.reply` | `order` | script (`agent order reply`, `agent order override`, `agent order cancel`, or the same operations of the local dashboard) | script (consumed by the coordinator tick) |
+| `order.event` | `order` | script | — (written by the coordinator at order transitions; persists until acknowledged; `agent order ack` or an answering reply, override, cancel or done sets the acknowledgement; no `NOTIFY`, no TUI knock) |
+| `order.reply` | `order` | script (`agent order reply`, `agent order override`, `agent order cancel`, `agent order done`, or the same operations of the local dashboard) | script (consumed by the coordinator tick; a done mark of an order in state `failed` or `cancelled` is consumed by the operation itself when no tick of its worker runs) |
 
 Both order types are script-only like `pr.merged`; `agent activity add` refuses
 them and a model never writes them (§19.10).
@@ -466,6 +466,7 @@ agent order ack --event ID
 agent order reply --id UUID --body-file PATH
 agent order override --id UUID --check KEY --reason TEXT
 agent order cancel --id UUID --reason TEXT
+agent order done --id UUID --reason TEXT
 agent order report --id UUID [--json]
 agent status
 agent dashboard [--port 7845]
@@ -730,8 +731,8 @@ hostnames belong in the deployment configuration, not this public repository.
    or a separate dashboard to manage the assigned issue.
    Questions and blockers of an order go to its order events and, once the
    draft exists, to pull-request comments. Answers return through `agent order
-   reply`, `agent order override`, `agent order cancel`, or an authorized
-   pull-request comment.
+   reply`, `agent order override`, `agent order cancel`, `agent order done`, or
+   an authorized pull-request comment.
    When the lane has no further work, it returns to the script; it does not
    monitor GitHub or wait for CI. The script observes subsequent events and
    informs a lane when further work is useful.
@@ -914,9 +915,9 @@ check `pr_mergeable` (§19.10). The mandate is the order, not a comment.
 
 The script is the orchestrator. The model between a human and the script is the
 concierge. It submits the human's request, reads status and the acceptance
-report, relays questions, passes back replies, overrides or cancellation, and
-returns a recommendation. It starts no lane, performs no review and does not
-wait with model turns.
+report, relays questions, passes back replies, overrides, cancellation or the
+human's done mark, and returns a recommendation. It starts no lane, performs no
+review and does not wait with model turns.
 
 The command line, the orders view of the local dashboard and a concierge are
 interchangeable front ends of the operation table in `order_ops.py`. Everything
@@ -971,21 +972,22 @@ local submission, with evidence
 submission cannot declare a deviation.
 
 Order states are derived, not stored: `queued`, `running`, `waiting`, `ready`,
-`merged`, `failed`, and `cancelled`. Order state `merged` is derived from task
-state `done`. It is not the spine task state `merged` of §19.5. Only `agent task
-close-from-pr` writes that spine state, and that command refuses coordinator
-tasks.
+`merged`, `done`, `failed`, and `cancelled`. The ended states are `merged`,
+`done`, `failed`, and `cancelled`; `agent order list --open` shows only the
+others. Order state `merged` is derived from task state `done`. It is not the
+spine task state `merged` of §19.5. Only `agent task close-from-pr` writes that
+spine state, and that command refuses coordinator tasks.
 
 The script writes one `order.event` at `accepted`, `draft-opened`, `question`,
-`blocked`, `resumed`, `ready`, `merged`, `failed`, and `cancelled`. Its payload
-contains the order id, kind, wake flag, per-device sequence, a redacted digest
-of at most 1,500 characters, pull-request URL, phase, round, failed check,
+`blocked`, `resumed`, `ready`, `merged`, `done`, `failed`, and `cancelled`. Its
+payload contains the order id, kind, wake flag, per-device sequence, a redacted
+digest of at most 1,500 characters, pull-request URL, phase, round, failed check,
 accepted answers, round-limit opinion, notification session, time and
 acknowledgement.
 
-`question`, `blocked`, `ready`, `failed`, and `cancelled` wake. `merged` never
-wakes. A merge observed before Ready produces the `ready` and `merged` events
-together. Events persist until acknowledged. `--notify-session` only filters.
+`question`, `blocked`, `ready`, `failed`, and `cancelled` wake. `merged` and
+`done` never wake. A merge observed before Ready produces the `ready` and
+`merged` events together. Events persist until acknowledged. `--notify-session` only filters.
 Any later concierge session or the dashboard can list unacknowledged wake
 events and acknowledge them.
 
@@ -998,6 +1000,28 @@ order with the fixed comment and ends the order as failed with kind
 the order the same way without a comment; a cancel is refused when the pull
 request is already merged. An answer acknowledges the question or blocker it
 answers.
+
+`agent order done --id UUID --reason TEXT` marks an order completed on the
+explicit decision of a human; a concierge calls it only on the human's
+request. The reason follows the cancel rule: one line of 1 to 500
+characters. It accepts every state except `done` and `merged`, and on those
+it fails with `order UUID is already STATE`. For an open order it writes an
+`order.reply` row, and the next tick ends the order the same way as a cancel
+but without the pull-request closure: no further round, lane start or GitHub
+write follows, and the state becomes `done`. For an order in state `failed`
+or `cancelled`, the operation itself sets `done`, without a coordinator pass.
+That includes a `failed` order whose blocker no reply can resume; it ends
+the same way as an open order. The operation rewrites the order only while it
+holds the lock of the order's worker (`coordinator-worker:<session_id>`), which
+a tick holds throughout. It never waits for that lock: while a tick of that
+worker runs, it leaves the `order.reply` row, and the next tick marks the order
+done the same way. Marking done never merges, closes, reopens, comments on or
+edits the pull request and never pushes or deletes a branch. The order records
+who marked it done and the reason; the `done` event's digest is `Order marked
+done by <who>: <reason>`. Like a cancel, it acknowledges the open question or
+blocker. `reply`, `override`, and `cancel` on a done order fail with `order
+UUID is already done`. The orders view of the dashboard offers the same
+operation as `Mark done` with a required reason.
 
 Events name accepted answers. `ready`, `failed`, and `cancelled` accept `ack`.
 A question or blocker accepts `reply` unless its failed check requires only an
@@ -1068,10 +1092,10 @@ list.
 
 A duplicate opens no pull request and creates no start commit. It records no
 and raises a question naming the pull request and `duplicates_checked`. Only an
-override or cancellation resolves it, unless it was skipped at submit. Invalid
-answers retry with backoff under `lane_retries`. More than 200 open pull
-requests, or exhausted lane retries, records `unavailable`; a plain reply tries
-the check again.
+override, cancellation or done mark resolves it, unless it was skipped at
+submit. Invalid answers retry with backoff under `lane_retries`. More than 200
+open pull requests, or exhausted lane retries, records `unavailable`; a plain
+reply tries the check again.
 
 Every round counts once; an implementer start reuses the current round while
 its implementer has no verdict, so a lane retry stays in its round. The limit

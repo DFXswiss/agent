@@ -33,6 +33,7 @@ from .coordinator_orders import (
     find_order,
     latest_order_intent,
     list_orders,
+    mark_order_done,
     order_state,
     own_order_events,
     serves_repo,
@@ -70,7 +71,7 @@ class Operation:
 
 REASON_BOUND = 500
 OPEN_STATES = ("queued", "running", "waiting", "ready")
-ENDED_STATES = ("merged", "failed", "cancelled")
+ENDED_STATES = ("merged", "done", "failed", "cancelled")
 ROUND_LIMIT_KEYS = ("max_rounds", "origin", "model", "limit")
 SKIPPED_CHECK_KEYS = ("key", "reason", "by", "at")
 OPINION_KEYS = ("result", "reasoning", "approach")
@@ -522,6 +523,9 @@ def op_reply(
     store: Store, home: Path, *, by: str, order_id: str, body: str
 ) -> dict[str, Any]:
     task = need_order(store, order_id)
+    state = order_state(task)
+    if state == "done":
+        raise OrderError(f"order {order_id} is already {state}")
     checkpoint_data = coord(task)
     event_id = checkpoint_event_id(task)
     if (
@@ -625,6 +629,45 @@ def op_cancel(
     if event_id is not None:
         acknowledge_event(store, event_id, by=by, via="cancel")
     return {"intent": intent_id, "order_id": order_id}
+
+
+def op_done(
+    store: Store,
+    home: Path,
+    *,
+    by: str,
+    order_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    from .coordinator import LOCK_PREFIX
+
+    task = need_order(store, order_id)
+    # A tick of the order's worker holds this lock and saves the copies of the
+    # order rows it read at its start, so only a holder may rewrite the task.
+    # The operation never waits for a running tick, which may run a lane; it
+    # then leaves the answer to the next tick, like an answer of an open order.
+    with store.try_exclusive(f"{LOCK_PREFIX}{task['session_id']}") as held:
+        if held:
+            task = need_order(store, order_id)
+        state = order_state(task)
+        if state in ("done", "merged"):
+            raise OrderError(f"order {order_id} is already {state}")
+        require_reason(reason)
+        event_id = checkpoint_event_id(task)
+        intent_id = insert_intent(
+            store,
+            task,
+            "done",
+            by=by,
+            answers=event_id,
+            reason=reason,
+        )
+        if event_id is not None:
+            acknowledge_event(store, event_id, by=by, via="done")
+        if held and state in ("failed", "cancelled"):
+            # Nothing in the coordinator can still move this order; no pass is needed.
+            mark_order_done(store, task, store.row("activity", intent_id))
+    return {"intent": intent_id, "order_id": order_id, "state": order_state(task)}
 
 
 def op_report(store, home, *, order_id) -> dict:
@@ -809,6 +852,14 @@ OPERATIONS: tuple[Operation, ...] = (
         (_ID, Param("reason", "--reason", "TEXT", required=True)),
         fields=("intent", "order_id"),
         func=op_cancel,
+        identity=True,
+    ),
+    Operation(
+        "done",
+        "write",
+        (_ID, Param("reason", "--reason", "TEXT", required=True)),
+        fields=("intent", "order_id", "state"),
+        func=op_done,
         identity=True,
     ),
     Operation(

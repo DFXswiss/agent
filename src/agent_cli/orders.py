@@ -222,6 +222,13 @@ def _render_cancel(result: dict[str, Any]) -> list[str]:
     return [f"cancel {result['intent']} order {result['order_id']}"]
 
 
+def _render_done(result: dict[str, Any]) -> list[str]:
+    return [
+        f"done {result['intent']} order {result['order_id']} "
+        f"state {result['state']}"
+    ]
+
+
 RENDER: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "submit": _render_submit,
     "list": _render_list,
@@ -231,6 +238,7 @@ RENDER: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "reply": _render_reply,
     "override": _render_override,
     "cancel": _render_cancel,
+    "done": _render_done,
     "report": render_order_report,
 }
 

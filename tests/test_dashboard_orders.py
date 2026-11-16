@@ -8,7 +8,7 @@ import pytest
 
 from agent_cli import order_ops
 from agent_cli.cli_bridge import MAX_REQUEST_BYTES
-from agent_cli.coordinator_common import coord
+from agent_cli.coordinator_common import coord, save_task
 from agent_cli.dashboard_orders import (
     PREFIX,
     error_text,
@@ -159,6 +159,7 @@ def test_schema_needs_no_store(tmp_path) -> None:
         "reply",
         "override",
         "cancel",
+        "done",
         "report",
     }
     json.dumps(payload)
@@ -832,6 +833,74 @@ def test_reply_override_cancel_insert_the_same_intents_as_the_command_line(
     assert payload["result"]["intent"] == route_row["id"]
 
 
+def test_done_route_and_done_orders_in_the_list(device) -> None:
+    open_id = str(uuid.uuid4())
+    seed_order_task(device.store, device.worker, open_id, phase="queued")
+    ended_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        ended_id,
+        phase="blocked",
+        failed_kind="no-change",
+    )
+    task["state"] = "failed"
+    save_task(device.store, task)
+
+    status, payload = call(
+        device.store,
+        device.home,
+        "POST",
+        "done",
+        body={"order_id": ended_id, "reason": "Delivered by hand"},
+    )
+    assert status == 200
+    assert payload["result"]["order_id"] == ended_id
+    assert payload["result"]["state"] == "done"
+    assert coord(device.store.row("task", ended_id))["marked_done"]["by"] == (
+        "human-owner"
+    )
+
+    status, payload = call(
+        device.store,
+        device.home,
+        "POST",
+        "done",
+        body={"order_id": open_id, "reason": "Delivered by hand"},
+    )
+    assert status == 200
+    assert payload["result"]["state"] == "queued"
+    intent = intent_of(device, open_id)
+    assert payload["result"]["intent"] == intent["id"]
+    assert intent["payload"]["kind"] == "done"
+    assert intent["execution_status"] == "pending"
+
+    status, payload = call(device.store, device.home, "GET", "list")
+    assert status == 200
+    assert {
+        item["order_id"]: item["state"] for item in payload["result"]["orders"]
+    } == {open_id: "queued", ended_id: "done"}
+    status, payload = call(
+        device.store, device.home, "GET", "list", query="open_only=1"
+    )
+    assert [item["order_id"] for item in payload["result"]["orders"]] == [open_id]
+
+    assert call(
+        device.store,
+        device.home,
+        "POST",
+        "done",
+        body={"order_id": ended_id, "reason": "Again"},
+    ) == (400, {"ok": False, "error": f"order {ended_id} is already done"})
+    assert call(
+        device.store,
+        device.home,
+        "POST",
+        "done",
+        body={"order_id": open_id},
+    ) == (400, {"ok": False, "error": "--reason is required"})
+
+
 def test_report_route(device) -> None:
     status, payload = call(
         device.store,
@@ -922,7 +991,7 @@ def test_order_routes_are_served_by_the_dashboard(device, monkeypatch) -> None:
         payload = json.loads(raw)
         assert status == 200
         assert payload["ok"] is True
-        assert len(payload["result"]["operations"]) == 9
+        assert len(payload["result"]["operations"]) == 10
 
         status, _, _ = _request(
             port,

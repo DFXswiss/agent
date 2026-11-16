@@ -164,6 +164,8 @@ def test_orders_view_markup() -> None:
         "od-override",
         "od-cancel-reason",
         "od-cancel",
+        "od-done-reason",
+        "od-done",
         "order-report",
         "od-report",
         "od-report-body",
@@ -200,6 +202,7 @@ def test_orders_view_markup() -> None:
         "Reply",
         "Override",
         "Cancel order",
+        "Mark done",
         "Load report",
         "wake only",
         "unacknowledged",
@@ -363,7 +366,7 @@ def test_order_actions_drop_answers_for_another_order() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     code = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[1]
-    for element_id in ("od-reply", "od-override", "od-cancel", "od-report"):
+    for element_id in ("od-reply", "od-override", "od-cancel", "od-done", "od-report"):
         start = code.index(
             f'document.getElementById("{element_id}").addEventListener("click"'
         )

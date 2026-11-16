@@ -12,8 +12,8 @@ import pytest
 
 from agent_cli import order_ops
 from agent_cli.coordinator_checks import CheckValue, record_check
-from agent_cli.coordinator_common import coord
-from agent_cli.coordinator_orders import reconcile_order_events
+from agent_cli.coordinator_common import coord, save_task
+from agent_cli.coordinator_orders import order_state, reconcile_order_events
 from agent_cli.main import main
 from agent_cli.order_ops import Operation
 from agent_cli.preconditions import CHECKS, SKIPPABLE
@@ -575,6 +575,7 @@ def test_write_operations_reach_the_same_function(
             "check": "duplicates_checked",
         },
         "cancel": {"intent": "i-1", "order_id": "o-1"},
+        "done": {"intent": "i-1", "order_id": "o-1", "state": "done"},
     }
 
     def fake_run(name, store, home, params):
@@ -636,6 +637,11 @@ def test_write_operations_reach_the_same_function(
             "cancel",
             ["--id", "o-1", "--reason", "not needed"],
             {"order_id": "o-1", "reason": "not needed"},
+        ),
+        (
+            "done",
+            ["--id", "o-1", "--reason", "delivered by hand"],
+            {"order_id": "o-1", "reason": "delivered by hand"},
         ),
     )
     for index, (name, argv, params) in enumerate(cases):
@@ -714,6 +720,21 @@ def test_error_texts_are_the_same_in_both_front_ends(device) -> None:
             ["--id", order_id, "--reason", "a\nb"],
             {"order_id": order_id, "reason": "a\nb"},
         ),
+        (
+            "done",
+            ["--id", order_id, "--reason", "a\nb"],
+            {"order_id": order_id, "reason": "a\nb"},
+        ),
+        (
+            "done",
+            ["--id", order_id, "--reason", ""],
+            {"order_id": order_id, "reason": ""},
+        ),
+        (
+            "done",
+            ["--id", unknown, "--reason", "delivered"],
+            {"order_id": unknown, "reason": "delivered"},
+        ),
     )
     for name, argv, params in cases:
         with pytest.raises(SystemExit) as exc:
@@ -727,6 +748,111 @@ def test_error_texts_are_the_same_in_both_front_ends(device) -> None:
         row.get("type") == "order.reply"
         for row in device.store.rows("activity")
     )
+
+
+def _ended_order(device) -> str:
+    order_id = str(uuid.uuid4())
+    task = seed_order_task(
+        device.store,
+        device.worker,
+        order_id,
+        phase="blocked",
+        failed_kind="cancelled",
+        blocker="not needed",
+    )
+    task["state"] = "failed"
+    save_task(device.store, task)
+    return order_id
+
+
+def _done_effect(device, order_id: str, intent_id: str) -> dict:
+    task = device.store.row("task", order_id)
+    intent = device.store.row("activity", intent_id)
+    marked = dict(coord(task)["marked_done"])
+    assert marked.pop("intent_id") == intent_id
+    marked.pop("at")
+    payload = dict(intent["payload"])
+    for key in ("order_id", "created_at"):
+        payload.pop(key)
+    events = [
+        {key: row["payload"][key] for key in ("kind", "wake", "digest", "answers")}
+        for row in device.store.rows("activity")
+        if row.get("type") == "order.event"
+        and row["payload"].get("order_id") == order_id
+    ]
+    return {
+        "state": order_state(task),
+        "task_state": task["state"],
+        "failed_kind": coord(task).get("failed_kind"),
+        "marked": marked,
+        "intent": payload,
+        "status": intent["execution_status"],
+        "result": (intent.get("result") or {}).get("effect"),
+        "events": events,
+    }
+
+
+def test_done_has_the_same_effect_in_both_front_ends(device, capsys) -> None:
+    cases = (
+        ("ended", _ended_order, "done"),
+        (
+            "failed, not ended",
+            lambda target: seed_order_task(
+                target.store,
+                target.worker,
+                str(uuid.uuid4()),
+                phase="blocked",
+                blocker="Ready PR closed without merge",
+            )["id"],
+            "done",
+        ),
+        (
+            "open",
+            lambda target: seed_order_task(
+                target.store, target.worker, str(uuid.uuid4()), phase="queued"
+            )["id"],
+            "queued",
+        ),
+    )
+    for _label, seed, state in cases:
+        cli_id, route_id = seed(device), seed(device)
+        order("done", "--id", cli_id, "--reason", "Delivered by hand")
+        printed = capsys.readouterr().out.split()
+        status, payload = route(
+            device, "done", {"order_id": route_id, "reason": "Delivered by hand"}
+        )
+        assert status == 200
+        result = payload["result"]
+        assert set(result) == {"intent", "order_id", "state"}
+        assert printed == ["done", printed[1], "order", cli_id, "state", state]
+        assert result["state"] == state
+        assert result["order_id"] == route_id
+        if state == "done":
+            assert _done_effect(device, cli_id, printed[1]) == _done_effect(
+                device, route_id, result["intent"]
+            )
+        else:
+            for order_id, intent_id in (
+                (cli_id, printed[1]),
+                (route_id, result["intent"]),
+            ):
+                intent = device.store.row("activity", intent_id)
+                assert intent["execution_status"] == "pending"
+                assert intent["payload"]["kind"] == "done"
+                assert intent["payload"]["reason"] == "Delivered by hand"
+                assert intent["payload"]["order_id"] == order_id
+
+    done_id = _ended_order(device)
+    order("done", "--id", done_id, "--reason", "First")
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        order("done", "--id", done_id, "--reason", "Again")
+    status, payload = route(
+        device, "done", {"order_id": done_id, "reason": "Again"}
+    )
+    assert status == 400
+    assert payload["error"] == str(exc.value).removeprefix("agent: ")
+    assert payload["error"] == f"order {done_id} is already done"
 
 
 def test_the_served_page_carries_the_table_of_its_routes(

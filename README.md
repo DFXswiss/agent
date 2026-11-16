@@ -186,7 +186,7 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
-agent order submit|list|show|events|wait|ack|reply|override|cancel|report  # local orders for the coordinator; coordinator.json "orders": true
+agent order submit|list|show|events|wait|ack|reply|override|cancel|done|report  # local orders for the coordinator; coordinator.json "orders": true
 agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package

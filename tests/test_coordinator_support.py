@@ -231,6 +231,18 @@ def seed_order_task(
     return store.row("task", order_id)
 
 
+# ``seed_order_task`` checkpoints of open orders that are not waiting for an answer.
+OPEN_ORDER_SEEDS = {
+    "queued": {"phase": "queued"},
+    "running": {"phase": "implement", "pr_number": 42},
+    "ready": {
+        "phase": "await_merge",
+        "pr_number": 42,
+        "evidence": {"ready_head": "a" * 40},
+    },
+}
+
+
 def submit_order(
     store,
     worker,
