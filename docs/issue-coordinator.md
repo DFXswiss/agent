@@ -71,8 +71,9 @@ issue count fails that owner's discovery loudly instead of silently accepting
 an incomplete result set. An explicit `repositories` entry wins for the same
 repository. At acceptance, an owner-scoped task pins the
 repository's current default branch and its publication route: direct push when
-the worker has push permission, otherwise `<worker-login>/<repository-name>`.
-A missing fork is requested once per persisted request (a crash before the
+the worker has push permission, otherwise the canonical `full_name` of the fork
+looked up as `<worker-login>/<repository-name>`. A lookup without a usable
+`full_name` fails. A missing fork is requested once per persisted request (a crash before the
 request is recorded repeats it). If it is not yet visible, acceptance stays in
 the same phase and the worker's `poll_seconds` loop retries; after 300 seconds the
 coordinator publishes a blocker. An existing fork with another parent is

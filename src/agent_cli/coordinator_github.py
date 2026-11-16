@@ -61,7 +61,7 @@ from .coordinator_common import (
     target_repo,
     text,
 )
-from .coordinator_config import RepositoryConfig, WorkerConfig, validate_base
+from .coordinator_config import RepositoryConfig, WorkerConfig, _repo, validate_base
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     execute_github,
@@ -374,8 +374,12 @@ def _fork_repository(
     create_if_missing: bool = True,
     before_create: Callable[[], None] | None = None,
     after_create: Callable[[], None] | None = None,
-) -> bool:
-    """Check the publication fork once, optionally requesting it when absent."""
+) -> str | None:
+    """Return the fork's canonical owner/name, or None when it is not visible yet.
+
+    The lookup address may be a renamed fork's old name. GitHub still returns
+    that repository, and its own ``full_name`` is the name later pull requests use.
+    """
     lookup = ["gh", "api", f"repos/{publication_repo}"]
     completed = runner(lookup)
     if completed.returncode != 0:
@@ -396,7 +400,7 @@ def _fork_repository(
                     raise CoordinatorError(redact(detail))
             if after_create is not None:
                 after_create()
-        return False
+        return None
     try:
         data = json.loads((completed.stdout or "").strip())
     except json.JSONDecodeError as exc:
@@ -405,7 +409,12 @@ def _fork_repository(
     parent_name = parent.get("full_name") if isinstance(parent, dict) else None
     if not isinstance(parent_name, str) or parent_name.casefold() != repo.casefold():
         raise CoordinatorError("publication fork has a different parent repository")
-    return True
+    try:
+        # Same owner/name rule as configured repositories. A missing or malformed
+        # full_name must not fall back to the lookup address: that address can be a redirect.
+        return _repo(data.get("full_name") if isinstance(data, dict) else None)
+    except StoreError as exc:
+        raise CoordinatorError("fork lookup returned no usable full_name") from exc
 
 
 def _owner_repository_config(
@@ -428,16 +437,18 @@ def _owner_repository_config(
         raise CoordinatorError("push permission lookup returned neither true nor false")
     publication = repo
     if not can_push:
-        publication = f"{login}/{repo.split('/', 1)[1]}"
-        if not _fork_repository(
+        derived = f"{login}/{repo.split('/', 1)[1]}"
+        canonical = _fork_repository(
             runner,
             repo=repo,
-            publication_repo=publication,
+            publication_repo=derived,
             create_if_missing=not fork_request_done,
             before_create=before_fork_create,
             after_create=after_fork_create,
-        ):
+        )
+        if canonical is None:
             return None
+        publication = canonical
     return RepositoryConfig(
         repo=repo,
         base=base,

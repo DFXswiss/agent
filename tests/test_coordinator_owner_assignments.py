@@ -443,7 +443,10 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
             lookups += 1
             if lookups == 1:
                 return Completed(1, "", "not found")
-            return Completed(0, json.dumps({"parent": {"full_name": "Example/project"}}), "")
+            return Completed(0, json.dumps({
+                "full_name": "worker-bot/project",
+                "parent": {"full_name": "Example/project"},
+            }), "")
         if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
             posts += 1
             return Completed(0, "{}", "")
@@ -472,6 +475,208 @@ def test_wrong_parent_fork_is_blocked():
         _fork_repository(
             runner, repo="Example/project", publication_repo="worker-bot/project",
         )
+
+
+def test_renamed_fork_with_a_different_parent_is_refused():
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({
+            "full_name": "worker-bot/other-name",
+            "parent": {"full_name": "Other/project"},
+        }), "")
+
+    with pytest.raises(
+        CoordinatorError, match="publication fork has a different parent repository"
+    ):
+        _fork_repository(
+            runner, repo="Example/project", publication_repo="worker-bot/project",
+        )
+
+
+def test_fork_lookup_returns_the_canonical_full_name():
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({
+            "full_name": "worker-bot/other-name",
+            "parent": {"full_name": "Example/name"},
+        }), "")
+
+    assert _fork_repository(
+        runner, repo="Example/name", publication_repo="worker-bot/name",
+    ) == "worker-bot/other-name"
+
+
+def test_unchanged_fork_name_stays_the_lookup_full_name():
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({
+            "full_name": "worker-bot/project",
+            "parent": {"full_name": "Example/project"},
+        }), "")
+
+    assert _fork_repository(
+        runner, repo="Example/project", publication_repo="worker-bot/project",
+    ) == "worker-bot/project"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"parent": {"full_name": "Example/project"}},
+        {"full_name": None, "parent": {"full_name": "Example/project"}},
+        {"full_name": "", "parent": {"full_name": "Example/project"}},
+        {"full_name": " ", "parent": {"full_name": "Example/project"}},
+        {"full_name": "worker-bot", "parent": {"full_name": "Example/project"}},
+        {"full_name": "worker-bot/project\n", "parent": {"full_name": "Example/project"}},
+        {"full_name": False, "parent": {"full_name": "Example/project"}},
+    ],
+)
+def test_fork_lookup_without_a_usable_full_name_fails(body):
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps(body), "")
+
+    with pytest.raises(CoordinatorError, match="no usable full_name"):
+        _fork_repository(
+            runner, repo="Example/project", publication_repo="worker-bot/project",
+        )
+
+
+def test_owner_route_does_not_substitute_the_derived_fork_name(tmp_path):
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_check_argv=("/operator/check",),
+        owner_readiness_argv=("/operator/ready",),
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[-2:] == ["--jq", ".default_branch"]:
+            return Completed(0, "main", "")
+        if argv == ["gh", "api", "repos/Example/project"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == ["gh", "api", "repos/worker-bot/project"]:
+            return Completed(0, json.dumps({"parent": {"full_name": "Example/project"}}), "")
+        raise AssertionError(argv)
+
+    with pytest.raises(CoordinatorError, match="no usable full_name"):
+        _owner_repository_config(
+            worker, runner, repo="Example/project", login="worker-bot",
+        )
+
+
+class CanonicalForkGh(FakeGh):
+    """Owner-scoped fork lookup plus the git transport checkout already uses."""
+
+    def __init__(self, full_name: str) -> None:
+        super().__init__()
+        self.full_name = full_name
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> Completed:
+        self.calls.append(list(argv))
+        if argv[-2:] == ["--jq", ".default_branch"] and "repos/Example/name" in argv:
+            return Completed(0, "develop\n", "")
+        if argv == ["gh", "api", "repos/Example/name"]:
+            return Completed(0, json.dumps({"permissions": {"push": False}}), "")
+        if argv == ["gh", "api", "repos/worker-bot/name"]:
+            return Completed(0, json.dumps({
+                "full_name": self.full_name,
+                "parent": {"full_name": "Example/name"},
+            }), "")
+        return super().__call__(argv)
+
+
+@pytest.mark.parametrize("full_name", ["worker-bot/other-name", "worker-bot/name"])
+def test_fork_full_name_is_pinned_through_accept_remote_and_draft(
+    monkeypatch, tmp_path, full_name
+):
+    from agent_cli import coordinator_git
+    from agent_cli.coordinator_git import phase_checkout
+
+    task_id = "11111111-1111-4111-8111-111111111111"
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_check_argv=("/operator/check",),
+        owner_readiness_argv=("/operator/ready",),
+    )
+    store.write("task", "insert", task_id, {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "open",
+        "title": "Pin the publication fork",
+        "repo": "Example/name",
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {"coordinator": {
+            "phase": "accept",
+            "source": {"repo": "Example/name", "number": 7, "owner_scoped": True},
+        }},
+    })
+    fake = CanonicalForkGh(full_name)
+    patch_account_runners(monkeypatch, fake)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.verify_issue_assigned",
+        lambda *_a, **_k: {"state": "open"},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.gh_list",
+        lambda *_a, **_k: [{
+            "id": 70,
+            "event": "assigned",
+            "assignee": {"login": "worker-bot"},
+            "actor": {"login": "human-owner", "type": "User"},
+            "created_at": "2026-01-01T00:00:00Z",
+        }],
+    )
+    monkeypatch.setattr("agent_cli.coordinator_github.set_checklist", lambda *_a, **_k: None)
+
+    def finish(store_arg, _runner, *, activity_ids):
+        for activity_id in activity_ids:
+            row = store_arg.row("activity", activity_id)
+            assert row is not None
+            stored = {key: value for key, value in row.items() if not str(key).startswith("_")}
+            stored["execution_status"] = "done"
+            store_arg.write("activity", "update", activity_id, stored)
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_github.execute_github", finish)
+
+    accepted = phase_accept(store, worker, store.row("task", task_id), fake)
+    assert accepted[0].startswith("acceptance published")
+    assert ["gh", "api", "repos/worker-bot/name"] in fake.calls
+    phase_checkout(store, worker, store.row("task", task_id), fake)
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    source = checkpoint["source"]
+    assert source["publication_repo"] == full_name
+    assert source["repository_config"]["publication_repo"] == full_name
+    assert checkpoint["publication_repo"] == full_name
+    assert fake.remotes["publication"] == f"https://github.com/{full_name}.git"
+    pull = {
+        "state": "open",
+        "draft": True,
+        "user": {"login": "worker-bot"},
+        "base": {"ref": "develop", "repo": {"full_name": "Example/name"}},
+        "head": {
+            "ref": checkpoint["branch"],
+            "sha": "a" * 40,
+            "repo": {"full_name": full_name},
+        },
+    }
+    monkeypatch.setattr(coordinator_git, "gh_json", lambda *_a, **_k: pull)
+    verified = coordinator_git._verify_draft(
+        store,
+        worker,
+        fake,
+        "Example/name",
+        9,
+        coordinator_git.repo_cfg(worker, "Example/name", saved),
+        checkpoint["branch"],
+    )
+    assert verified is pull
+    store.close()
 
 
 def test_fork_creation_does_not_wait_or_repeat_request():
