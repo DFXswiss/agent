@@ -5037,6 +5037,9 @@ def cmd_knock(args: list[str]) -> None:
         # Not-before times per Claude account; the usage tick stays the only clock.
         claude_pace: dict[str, float] = {}
         scan_claude_paced = functools.partial(scan_claude_usage, pace=claude_pace)
+        from .coordinator import shared_github_runner
+
+        github_runner = shared_github_runner(run_argv, home=store.home)
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
                 try:
@@ -5059,7 +5062,7 @@ def cmd_knock(args: list[str]) -> None:
                     for scan_accounts in (scan_openrouter_usage, scan_claude_paced):
                         _print_account_usage(scan_accounts, store)
                 try:
-                    created, skipped = scan_merged(store, run_argv)
+                    created, skipped = scan_merged(store, github_runner)
                     for activity_id in created:
                         print(f"pr.merged {activity_id}")
                     if skipped:
@@ -5082,7 +5085,7 @@ def cmd_knock(args: list[str]) -> None:
                 from .mail_act import scan_mail
 
                 try:
-                    for line in scan_github(store, run_argv):
+                    for line in scan_github(store, github_runner):
                         print(line)
                 except StoreError as exc:
                     print(f"github pending error: {exc}", file=sys.stderr)
@@ -5105,7 +5108,7 @@ def cmd_knock(args: list[str]) -> None:
                 from .error_fix_act import scan_error_fix
 
                 try:
-                    for line in scan_error_fix(store, run_argv):
+                    for line in scan_error_fix(store, github_runner):
                         print(line)
                 except StoreError as exc:
                     print(f"error.fix error: {exc}", file=sys.stderr)

@@ -1447,8 +1447,8 @@ def gh_json(runner: Runner, argv: list[str]) -> Any:
         raise CoordinatorError("invalid JSON from command") from exc
 
 
-def gh_list(runner: Runner, argv: list[str]) -> list[Any]:
-    data = gh_json(runner, argv)
+def json_list(data: Any) -> list[Any]:
+    """One GitHub JSON page, or the flattened pages of a ``--slurp`` array."""
     if isinstance(data, list):
         if data and all(isinstance(item, list) for item in data):
             flat: list[Any] = []
@@ -1457,6 +1457,10 @@ def gh_list(runner: Runner, argv: list[str]) -> list[Any]:
             return flat
         return data
     raise CoordinatorError("expected JSON array")
+
+
+def gh_list(runner: Runner, argv: list[str]) -> list[Any]:
+    return json_list(gh_json(runner, argv))
 
 
 def repository_push_permission(runner: Runner, repo: str) -> bool | None:

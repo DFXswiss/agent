@@ -283,8 +283,10 @@ for worker in workers.values():
   `lane_execution` accepts only `this-device-is-lane-host`: the local harness's
   lane starter starts the coordinator on the external lane host. The Agent
   coordinator does not SSH, mirror, or copy a lane from a work device.
-- Successful GitHub login verification is cached within one tick, for at most
-  `poll_seconds` per account.
+- Successful `gh api user` login verification is shared on the device for at
+  most 15 minutes per GitHub account. Coordinator workers and the knock child
+  reuse that result across ticks. An authentication error drops it, and the
+  next check calls GitHub again.
 - Waiting phases are `queued`, `ask`, `blocked`, `await_merge`, `await_ready`,
   and `await_second_review`; `ci` waits while its last observation is pending.
   A task also waits while its execution binding is blocked, an earlier lane
@@ -364,7 +366,19 @@ a head, and a failed check produces a new commit that invalidates an earlier
 pair.
 
 1. **Discover** explicit repositories and approved owners for open issues assigned to the
-   configured GitHub login (`gh api --paginate --slurp`). For every approved
+   configured GitHub login (`gh api --paginate --slurp`). Assigned-issue
+   discovery for one login and repository runs once per `poll_seconds` on the
+   device and is shared by every worker of that login. After the first response
+   the request sends the stored ETag as `If-None-Match`. An unchanged listing is
+   an HTTP 304, which GitHub does not count against the primary REST limit of
+   5000 requests per hour. With `poll_seconds` 30 and three repositories, that
+   shared discovery is 360 requests per hour for the login, however many idle
+   workers use the account. `gh api user` is shared by those workers and by the
+   knock child for at most 15 minutes per account, which is 4 successful checks
+   per hour, and it runs again after an authentication error. Busy workers,
+   order pickup, and the `poll_seconds` pause between ticks stay unchanged.
+   This is the idle discovery and login budget, not the cost of a busy worker
+   pushing or commenting. Owner search is not shared. For every approved
    owner, discovery first reads `users/<owner>` to distinguish an organization
    from a user, then performs that owner's own
    `search/issues?q=is:issue+is:open+assignee:<login>+archived:false+org:<owner>&per_page=100`
