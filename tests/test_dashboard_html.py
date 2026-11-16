@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -667,9 +668,12 @@ def test_pull_request_url_shows_as_its_number() -> None:
     source = re.search(r"const pull = /(.+?)/\.exec\(value\.slice\(GITHUB\.length\)\);", cell).group(1)
     pull = re.compile(source.replace("\\/", "/"))
     assert pull.search("OWNER/NAME/pull/3").group(1) == "3"
+    assert pull.search("OWNER/NAME/pull/3/").group(1) == "3"
     for rest in (
         "OWNER/NAME/pull/3#issuecomment-1",
         "OWNER/NAME/pull/3/files",
+        "OWNER/NAME/pull/3//",
+        "OWNER/NAME/pull/3/#issuecomment-1",
         "OWNER/NAME/issues/3",
         "OWNER/NAME",
     ):
@@ -707,11 +711,55 @@ def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> Non
         'attributes: value => (isTimestamp(value) ? ` title="${esc(value)}"` : "") }];'
     ) in columns
     cell = top_level_function(code, "elapsedCell")
-    assert "isTimestamp(value) ? esc(elapsedText(value, Date.now())) : orderCell(value)" in cell
+    assert "if (isTimestamp(value)) return esc(elapsedText(value, Date.now()));" in cell
+    # An empty string shows the placeholder orderCell shows for a missing value.
+    assert 'return orderCell(value === "" ? null : value);' in cell
+    assert 'if (value === null || value === undefined) return "—";' in top_level_function(
+        code, "orderCell"
+    )
     elapsed = top_level_function(code, "elapsedText")
     for unit in ('" s"', '" min"', '" h"', '" d"'):
         assert unit in elapsed
     assert "setInterval(ordersTick, 2000);" in code
+
+
+def test_a_timestamp_without_a_zone_counts_as_utc() -> None:
+    code = orders_script()
+    # Every parse of a timestamp goes through timestampMs.
+    assert "(now - timestampMs(timestamp))" in top_level_function(code, "elapsedText")
+    assert (
+        'typeof value === "string" && !Number.isNaN(timestampMs(value))'
+        in top_level_function(code, "isTimestamp")
+    )
+    for name in ("elapsedText", "isTimestamp", "elapsedCell"):
+        assert "Date.parse(" not in top_level_function(code, name), name
+    parse = top_level_function(code, "timestampMs")
+    assert (
+        "return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);"
+        in parse
+    )
+    zoneless = re.compile(
+        re.search(r"const zoneless = /(.+?)/\.exec\(value\);", parse).group(1)
+    )
+    for value, utc in (
+        ("2026-11-14T08:09:10", "2026-11-14T08:09:10Z"),
+        ("2026-11-14T08:09", "2026-11-14T08:09Z"),
+        ("2026-11-14T08:09:10.123", "2026-11-14T08:09:10.123Z"),
+        ("2026-11-14 08:09:10", "2026-11-14T08:09:10Z"),
+    ):
+        match = zoneless.search(value)
+        assert match, value
+        assert f"{match.group(1)}T{match.group(2)}Z" == utc
+    for value in (
+        "2026-11-14T08:09:10Z",
+        "2026-11-14T08:09:10.123Z",
+        "2026-11-14T08:09:10+02:00",
+        "2026-11-14T08:09:10-0500",
+        "2026-11-14",
+        "not a time",
+        "",
+    ):
+        assert not zoneless.search(value), value
 
 
 NODE = shutil.which("node")
@@ -736,6 +784,7 @@ def page_behaviour() -> dict:
         top_level_function(code, name)
         for name in (
             "orderCell",
+            "timestampMs",
             "elapsedText",
             "isTimestamp",
             "elapsedCell",
@@ -844,6 +893,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   out.noneLeft = focused.splice(0);
 
   out.pr = orderCell("https://github.com/OWNER/NAME/pull/3");
+  out.prSlash = orderCell("https://github.com/OWNER/NAME/pull/3/");
+  out.prFiles = orderCell("https://github.com/OWNER/NAME/pull/3/files");
   out.comment = orderCell("https://github.com/OWNER/NAME/pull/3#issuecomment-1");
   out.repo = orderRowsHtml("repo", "OWNER/NAME");
   out.noSlash = orderRowsHtml("repo", "plain");
@@ -853,8 +904,19 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   const at = Date.parse("2026-11-14T00:00:00Z");
   out.elapsed = [45, 300, 7200, 259200, -5].map(seconds => elapsedText("2026-11-14T00:00:00Z", at + seconds * 1000));
   out.badTime = elapsedCell("not a time");
+  out.missingTimes = ["", null, undefined].map(elapsedCell);
+  out.emptyTimeRow = orderRowsHtml("updated_at", "");
+  out.offset = new Date(at).getTimezoneOffset();
+  out.parsed = [
+    "2026-11-14T00:00:00", "2026-11-14T00:00", "2026-11-14T00:00:00.000", "2026-11-14 00:00:00",
+    "2026-11-14T00:00:00Z", "2026-11-14T09:00:00+09:00",
+  ].map(value => timestampMs(value) - at);
+  out.zoneless = elapsedText("2026-11-14T00:00:00", at + 7200 * 1000);
   const updated = new Date(Date.now() - 300000).toISOString();
   out.updated = updated;
+  // The same instant without its zone designator.
+  out.zonelessUpdated = updated.slice(0, 19);
+  out.zonelessRow = orderRowsHtml("updated_at", out.zonelessUpdated);
   out.table = orderTableHtml(
     [{ order_id: UUID, state: "running", repo: "OWNER/NAME", pr_url: "https://github.com/OWNER/NAME/pull/3", updated_at: updated }],
     ["order_id", "state", "repo", "pr_url", "updated_at"],
@@ -869,6 +931,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
         text=True,
         timeout=60,
         check=False,
+        # A zone away from UTC, so that a timestamp read as local time shows.
+        env={**os.environ, "TZ": "Asia/Tokyo"},
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
@@ -917,6 +981,14 @@ def test_page_behaviour_in_node() -> None:
         '<a href="https://github.com/OWNER/NAME/pull/3" target="_blank" rel="noopener" '
         'title="https://github.com/OWNER/NAME/pull/3">#3</a>'
     )
+    assert out["prSlash"] == (
+        '<a href="https://github.com/OWNER/NAME/pull/3/" target="_blank" rel="noopener" '
+        'title="https://github.com/OWNER/NAME/pull/3/">#3</a>'
+    )
+    assert out["prFiles"] == (
+        '<a href="https://github.com/OWNER/NAME/pull/3/files" target="_blank" '
+        'rel="noopener">https://github.com/OWNER/NAME/pull/3/files</a>'
+    )
     assert out["comment"] == (
         '<a href="https://github.com/OWNER/NAME/pull/3#issuecomment-1" target="_blank" '
         'rel="noopener">https://github.com/OWNER/NAME/pull/3#issuecomment-1</a>'
@@ -934,6 +1006,16 @@ def test_page_behaviour_in_node() -> None:
     assert out["elapsed"] == ["45 s", "5 min", "2 h", "3 d", "0 s"]
     assert out["badTime"] == "not a time"
     assert out["badTimeRow"] == "<tr><th>updated_before</th><td>not a time</td></tr>"
+    # A missing or empty timestamp shows the placeholder, never an empty cell.
+    assert out["missingTimes"] == ["—", "—", "—"]
+    assert out["emptyTimeRow"] == "<tr><th>updated_before</th><td>—</td></tr>"
+    # The harness runs away from UTC; a timestamp without a zone still counts as UTC.
+    assert out["offset"] != 0
+    assert out["parsed"] == [0, 0, 0, 0, 0, 0]
+    assert out["zoneless"] == "2 h"
+    assert out["zonelessRow"] == (
+        f'<tr><th>updated_before</th><td title="{out["zonelessUpdated"]}">5 min</td></tr>'
+    )
 
     table = out["table"]
     head = re.findall(r"<th>(.*?)</th>", table)

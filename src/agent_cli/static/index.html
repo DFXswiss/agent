@@ -302,16 +302,24 @@ function orderCell(value) {
   if (value === null || value === undefined) return "—";
   if (typeof value === "object") return jsonHtml(value);
   if (typeof value === "string" && value.startsWith(GITHUB)) {
-    const pull = /^[^/]+\/[^/]+\/pull\/([0-9]+)$/.exec(value.slice(GITHUB.length));
+    const pull = /^[^/]+\/[^/]+\/pull\/([0-9]+)\/?$/.exec(value.slice(GITHUB.length));
     if (pull) return `<a href="${esc(value)}" target="_blank" rel="noopener" title="${esc(value)}">#${esc(pull[1])}</a>`;
     return `<a href="${esc(value)}" target="_blank" rel="noopener">${esc(value)}</a>`;
   }
   return idOrText(value);
 }
 
+// Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
+// date-time without a zone designator, which the browser would read as local
+// time, is read as UTC.
+function timestampMs(value) {
+  const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
+  return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
+}
+
 // Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
 function elapsedText(timestamp, now) {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 1000));
+  const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
   if (seconds < 60) return seconds + " s";
   if (seconds < 3600) return Math.floor(seconds / 60) + " min";
   if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
@@ -319,11 +327,14 @@ function elapsedText(timestamp, now) {
 }
 
 function isTimestamp(value) {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+  return typeof value === "string" && !Number.isNaN(timestampMs(value));
 }
 
+// The elapsed time of a timestamp. Any other value shows as orderCell shows it,
+// and an empty string as a missing value ("—"), so the cell is never empty.
 function elapsedCell(value) {
-  return isTimestamp(value) ? esc(elapsedText(value, Date.now())) : orderCell(value);
+  if (isTimestamp(value)) return esc(elapsedText(value, Date.now()));
+  return orderCell(value === "" ? null : value);
 }
 
 // OWNER (index 0) or NAME (index 1) of a repository value OWNER/NAME.
