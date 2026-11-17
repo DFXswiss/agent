@@ -446,7 +446,7 @@ agent sync [--follow]
 agent restore
 agent ping send|list|ack
 agent assign --no-deviation --agent LOGIN --repo OWNER/NAME --title TEXT (--body TEXT|--body-file PATH)
-agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
+agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service; macOS --install reloads a running LaunchAgent and leaves it loaded
 agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
@@ -779,6 +779,15 @@ the workflow is enabled on a deployment:
   the daemon's worker set require a daemon restart. It does not start the legacy
   `agent watch assigned --follow`. Legacy dispatch and `supervise` refuse
   sessions selected for the coordinator.
+- On macOS, `agent daemon --install` (and `agent init`, which installs the
+  service) reloads a running LaunchAgent without leaving it unloaded. After
+  `launchctl bootout gui/<uid>/swiss.dfx.agent` it waits, bounded at 30 seconds,
+  until launchd no longer knows the service, then runs `launchctl bootstrap` on
+  the new plist. A bootstrap that fails because the previous instance is still
+  being removed is retried within that bound. Install then requires the service
+  to be loaded with a running process; otherwise it exits non-zero with the
+  launchctl output and the observed service state. A service that was not loaded
+  is installed directly. The Linux systemd enable path is unchanged.
 - `agent init --no-service` creates the same local store and identity without
   installing a user service, so a headless host's system supervisor can run the
   unchanged `agent daemon` process with the printed argv and environment. It is

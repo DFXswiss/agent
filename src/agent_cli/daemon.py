@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import plistlib
+import re
 import shlex
 import signal
 import subprocess
@@ -13,7 +14,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from xml.parsers.expat import ExpatError
 
 from .runtime import Completed, run_argv as _default_run_argv
@@ -23,6 +24,17 @@ LOCK_NAME = "daemon.lock"
 SERVICE_LABEL = "swiss.dfx.agent"
 SYNC_RESTART_LIMIT = 10
 SYNC_RESTART_WINDOW_S = 60.0
+# launchctl bootout returns before launchd drops the service. Bootstrap in that
+# window fails or is removed again, and the agent stays unloaded.
+LAUNCHD_RELOAD_BOUND_S = 30.0
+LAUNCHD_RELOAD_POLL_S = 0.2
+_LAUNCHD_STILL_REMOVING = (
+    "input/output error",
+    "operation already in progress",
+    "file exists",
+    "still being removed",
+)
+_LAUNCHD_PID_RE = re.compile(r"(?m)^\s*pid\s*=\s*([1-9][0-9]*)\s*$")
 
 
 def agent_argv() -> list[str]:
@@ -456,14 +468,171 @@ def service_extra_env(*, existing_pg_bin: str | None = None) -> dict[str, str]:
     return env
 
 
+def _launchctl_detail(completed: Completed, fallback: str) -> str:
+    text = completed.stderr.strip()
+    if text == "":
+        text = completed.stdout.strip()
+    if text == "":
+        return fallback
+    return text
+
+
+def _launchd_absent(completed: Completed) -> bool:
+    """True when launchctl print says this domain no longer has the service."""
+    return completed.returncode != 0 and _already_unloaded(completed.stderr, completed.stdout)
+
+
+def _running_pid(completed: Completed) -> int | None:
+    if completed.returncode != 0:
+        return None
+    match = _LAUNCHD_PID_RE.search(f"{completed.stdout}\n{completed.stderr}")
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _observed_service_state(completed: Completed) -> str:
+    if _launchd_absent(completed):
+        return "not loaded"
+    if completed.returncode != 0:
+        return "print failed"
+    pid = _running_pid(completed)
+    if pid is None:
+        return "loaded without a running process"
+    return f"running pid={pid}"
+
+
+def _raise_launchd_failure(detail: str, observed: Completed) -> NoReturn:
+    raw_parts = [observed.stdout.strip(), observed.stderr.strip()]
+    raw = "\n".join(part for part in raw_parts if part)
+    message = f"{detail.strip()}\nobserved service state: {_observed_service_state(observed)}"
+    if raw and raw not in message:
+        message = f"{message}\n{raw}"
+    raise StoreError(message)
+
+
+def _bootstrap_still_removing(completed: Completed) -> bool:
+    if completed.returncode == 0:
+        return False
+    text = f"{completed.stderr}\n{completed.stdout}".lower()
+    return any(needle in text for needle in _LAUNCHD_STILL_REMOVING)
+
+
+def _verify_failure_detail(bootstrap: Completed | None) -> str:
+    prefix = "launchctl bootstrap did not leave the service loaded with a running process"
+    if bootstrap is None:
+        return prefix
+    output = _launchctl_detail(bootstrap, "")
+    if output == "":
+        return prefix
+    return f"{prefix}\n{output}"
+
+
+def _reload_darwin_service(
+    *,
+    runner: Callable[[list[str]], Completed],
+    domain: str,
+    label: str,
+    path: Path,
+    now_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None],
+) -> None:
+    """Leave gui/<uid>/swiss.dfx.agent loaded with a running process.
+
+    bootout returns before launchd removes the service. This waits, bounded by
+    LAUNCHD_RELOAD_BOUND_S, until print no longer knows it, then bootstraps.
+    A bootstrap that fails because the previous instance is still being removed
+    is retried inside that same bound. The command fails with the launchctl
+    output and the observed service state instead of leaving the service unloaded.
+    """
+    deadline = now_fn() + LAUNCHD_RELOAD_BOUND_S
+    bootout = _runner_result(runner(["launchctl", "bootout", label]))
+    bootout_problem = ""
+    if bootout.returncode != 0 and not _already_unloaded(bootout.stderr, bootout.stdout):
+        bootout_problem = _launchctl_detail(bootout, "launchctl bootout failed")
+    last_bootstrap: Completed | None = None
+
+    def remaining() -> float:
+        return deadline - now_fn()
+
+    def print_service() -> Completed:
+        return _runner_result(runner(["launchctl", "print", label]))
+
+    def wait_until_absent() -> Completed:
+        while True:
+            observed = print_service()
+            if _launchd_absent(observed):
+                return observed
+            if observed.returncode != 0:
+                _raise_launchd_failure(
+                    _launchctl_detail(observed, "launchctl print failed"),
+                    observed,
+                )
+            if remaining() <= 0:
+                if last_bootstrap is not None:
+                    detail = _launchctl_detail(last_bootstrap, "launchctl bootstrap failed")
+                elif bootout_problem != "":
+                    detail = bootout_problem
+                else:
+                    detail = f"launchd still knows {label} after bootout"
+                _raise_launchd_failure(detail, observed)
+            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+
+    while True:
+        observed = wait_until_absent()
+        if remaining() <= 0:
+            detail = "reload bound elapsed before launchctl bootstrap"
+            if last_bootstrap is not None:
+                detail = _launchctl_detail(last_bootstrap, detail)
+            _raise_launchd_failure(detail, observed)
+        last_bootstrap = _runner_result(
+            runner(["launchctl", "bootstrap", domain, str(path)])
+        )
+        if last_bootstrap.returncode != 0:
+            detail = _launchctl_detail(last_bootstrap, "launchctl bootstrap failed")
+            if not _bootstrap_still_removing(last_bootstrap) or remaining() <= 0:
+                _raise_launchd_failure(detail, print_service())
+            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+            continue
+        while True:
+            observed = print_service()
+            if _running_pid(observed) is not None:
+                return
+            if _launchd_absent(observed):
+                if remaining() <= 0:
+                    _raise_launchd_failure(
+                        _verify_failure_detail(last_bootstrap),
+                        observed,
+                    )
+                sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+                break
+            if observed.returncode != 0:
+                _raise_launchd_failure(
+                    _launchctl_detail(observed, "launchctl print failed"),
+                    observed,
+                )
+            if remaining() <= 0:
+                _raise_launchd_failure(
+                    _verify_failure_detail(last_bootstrap),
+                    observed,
+                )
+            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+
+
 def install_and_start_service(
     *,
     home: Path,
     program: list[str],
     platform: str | None = None,
     run_argv: Callable[[list[str]], Completed] | None = None,
+    monotonic: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> None:
-    """Write the user service unit and start it (skipped under pytest)."""
+    """Write the user service unit and start it.
+
+    Under pytest the launchctl/systemctl calls are skipped unless the caller
+    passes run_argv, so the unit file can be asserted without a user service.
+    """
     plat = sys.platform if platform is None else platform
     path = service_path(plat, home)
     kept = kept_service_agent_pg_bin(home, plat)
@@ -475,18 +644,21 @@ def install_and_start_service(
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    if os.environ.get("PYTEST_CURRENT_TEST"):
+    if run_argv is None and os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    runner = run_argv or _default_run_argv
+    runner = _default_run_argv if run_argv is None else run_argv
     if plat == "darwin":
         uid = os.getuid()
         domain = f"gui/{uid}"
         label = f"{domain}/{SERVICE_LABEL}"
-        runner(["launchctl", "bootout", label])
-        completed = _runner_result(runner(["launchctl", "bootstrap", domain, str(path)]))
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "launchctl bootstrap failed").strip()
-            raise StoreError(detail)
+        _reload_darwin_service(
+            runner=runner,
+            domain=domain,
+            label=label,
+            path=path,
+            now_fn=time.monotonic if monotonic is None else monotonic,
+            sleep_fn=time.sleep if sleep is None else sleep,
+        )
         return
     if plat == "linux":
         for argv in (
