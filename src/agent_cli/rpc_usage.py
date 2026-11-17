@@ -122,8 +122,7 @@ def _stop(process: Any) -> None:
 
 
 def _close(stream: Any) -> None:
-    if stream is None:
-        return
+    # Started with stdin=PIPE and stdout=PIPE, so both streams always exist.
     try:
         stream.close()
     except BrokenPipeError:

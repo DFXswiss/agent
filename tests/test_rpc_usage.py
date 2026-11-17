@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import itertools
 import json
 import queue
@@ -13,7 +14,7 @@ from typing import Any
 import pytest
 
 from agent_cli import rpc_usage
-from agent_cli.drivers import DriverSpec, role_clear_env
+from agent_cli.drivers import DriverSpec, UsageAccountFile, role_clear_env
 from agent_cli.rpc_usage import (
     load_rpc_account,
     read_rpc_result,
@@ -22,7 +23,7 @@ from agent_cli.rpc_usage import (
     scan_rpc_usage,
 )
 from agent_cli.store import Store, StoreError
-from agent_cli.usage import AccountUsageError, AuthStale
+from agent_cli.usage import AccountUsageError, AuthStale, read_account_identity
 from driver_fixtures import (
     RPC_ACCOUNT_FILE,
     RPC_DRIVER_ID,
@@ -367,6 +368,226 @@ def test_a_driver_without_an_rpc_adapter_is_refused(tmp_path: Path) -> None:
         )
 
 
+def test_an_rpc_driver_without_home_env_is_refused_before_the_start(tmp_path: Path) -> None:
+    # drivers.json refuses this combination; a spec built in code must fail too.
+    driver = dataclasses.replace(SPEC, home_env=None)
+    popen = rpc_server({"result": result()})
+    with pytest.raises(StoreError) as info:
+        read_rpc_result(driver, str(tmp_path / "seat"), clear_env=CLEAR, popen=popen)
+    assert str(info.value) == f"{RPC_DRIVER_ID} rpc usage requires home_env"
+    assert popen.calls == []
+    with pytest.raises(StoreError, match="rpc usage requires home_env"):
+        rpc_child_env(driver, str(tmp_path / "seat"), CLEAR, {})
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        PermissionError(13, "Permission denied", "tool-r"),
+        OSError(8, "Exec format error", "tool-r"),
+        ValueError("embedded null byte"),
+    ],
+)
+def test_a_program_that_cannot_start_is_an_error(tmp_path: Path, error: Exception) -> None:
+    def failing(argv: list[str], **_kwargs: Any) -> Any:
+        raise error
+
+    with pytest.raises(StoreError) as info:
+        read(tmp_path / "seat", failing)
+    assert str(info.value) == f"{RPC_LABEL} could not be started"
+    assert info.value.__context__ is None
+
+
+class _ProcessPopen(FakePopen):
+    """A ``FakePopen`` whose process is built by ``make``."""
+
+    def __init__(self, respond: Responder, make: Callable[[Responder], FakeProcess]) -> None:
+        super().__init__(respond)
+        self.make = make
+
+    def __call__(self, argv: list[str], **kwargs: Any) -> FakeProcess:
+        self.calls.append((argv, kwargs))
+        self.process = self.make(self.respond)
+        return self.process
+
+
+def _answering(respond_result: dict[str, Any]) -> Responder:
+    return rpc_server({"result": respond_result}).respond
+
+
+def _silent(_message: dict[str, Any]) -> list[str]:
+    return []
+
+
+class _FailingStdout(FakeStdout):
+    """An output pipe whose first read fails."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def readline(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            UnicodeDecodeError("utf-8", b"\xff" + ACCESS.encode(), 0, 1, "invalid start byte"),
+            f"{RPC_LABEL} output is not valid UTF-8",
+        ),
+        (OSError(5, "Input/output error"), f"{RPC_LABEL} output could not be read"),
+        (ValueError("I/O operation on closed file."), f"{RPC_LABEL} output could not be read"),
+    ],
+)
+def test_unreadable_output_is_an_error(tmp_path: Path, error: Exception, message: str) -> None:
+    def make(respond: Responder) -> FakeProcess:
+        process = FakeProcess(respond)
+        process.stdout = _FailingStdout(error)
+        return process
+
+    popen = _ProcessPopen(_silent, make)
+    with pytest.raises(StoreError) as info:
+        read(tmp_path / "seat", popen)
+    assert str(info.value) == message
+    assert ACCESS not in str(info.value)
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    assert popen.process is not None and popen.process.terminated
+
+
+class _StuckProcess(FakeProcess):
+    """A server that ignores the termination request until it is killed."""
+
+    def __init__(self, respond: Responder) -> None:
+        super().__init__(respond)
+        self.waits: list[float | None] = []
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self.stdout.end()
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self.waits.append(timeout)
+        if timeout is not None and not self.killed:
+            raise subprocess.TimeoutExpired(["tool-r", "serve-rpc"], timeout)
+        return self.returncode
+
+
+def test_a_server_that_ignores_termination_is_killed(tmp_path: Path) -> None:
+    popen = _ProcessPopen(_answering(result()), _StuckProcess)
+    assert read(tmp_path / "seat", popen) == result()
+    process = popen.process
+    assert isinstance(process, _StuckProcess)
+    assert process.terminated and process.killed
+    assert process.waits == [rpc_usage._STOP_SECONDS, None]
+    assert process.stdin.closed and process.stdout.closed
+
+
+class _ExitedStdin(FakeStdin):
+    """The input of a server that has exited: writing and closing fail."""
+
+    def write(self, text: str) -> int:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def close(self) -> None:
+        self.closed = True
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+class _ClosedStdin(FakeStdin):
+    """An input pipe that is already closed when the requests are flushed."""
+
+    def flush(self) -> None:
+        raise ValueError("I/O operation on closed file.")
+
+
+@pytest.mark.parametrize("stdin", [_ExitedStdin, _ClosedStdin])
+def test_a_server_that_does_not_take_the_requests_is_an_error(
+    tmp_path: Path, stdin: Callable[[FakeProcess], FakeStdin]
+) -> None:
+    def make(respond: Responder) -> FakeProcess:
+        process = FakeProcess(respond)
+        process.stdin = stdin(process)
+        process.exit(1)
+        return process
+
+    popen = _ProcessPopen(_silent, make)
+    with pytest.raises(StoreError) as info:
+        read(tmp_path / "seat", popen)
+    assert str(info.value) == f"{RPC_LABEL} closed its input"
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    process = popen.process
+    assert process is not None
+    assert process.received == []
+    # Already exited: not terminated again; the failing close stays quiet.
+    assert not process.terminated
+    assert process.stdin.closed and process.stdout.closed
+
+
+def test_a_server_whose_answer_closes_its_input_still_returns_the_result(
+    tmp_path: Path,
+) -> None:
+    class _AnsweredThenGone(FakeStdin):
+        def close(self) -> None:
+            self.closed = True
+            raise BrokenPipeError(32, "Broken pipe")
+
+    def make(respond: Responder) -> FakeProcess:
+        process = FakeProcess(respond)
+        process.stdin = _AnsweredThenGone(process)
+        return process
+
+    popen = _ProcessPopen(_answering(result()), make)
+    assert read(tmp_path / "seat", popen) == result()
+    assert popen.process is not None and popen.process.stdin.closed
+
+
+def test_waiting_for_the_answer_continues_until_the_deadline(tmp_path: Path) -> None:
+    calls: list[float] = []
+    ticks = itertools.chain([0.0, 29.95], itertools.repeat(31.0))
+
+    def clock() -> float:
+        calls.append(next(ticks))
+        return calls[-1]
+
+    # The server never writes: the first wait of 0.05 s ends empty, the next
+    # look at the clock is past the deadline.
+    popen = FakePopen(_silent)
+    with pytest.raises(StoreError) as info:
+        read(tmp_path / "seat", popen, clock=clock)
+    assert str(info.value) == f"{RPC_LABEL} timed out after 30 s"
+    assert calls == [0.0, 29.95, 31.0]
+    assert popen.process is not None and popen.process.terminated
+
+
+@pytest.mark.parametrize(
+    ("error", "detail"),
+    [
+        ("internal failure", ""),
+        (None, ""),
+        ({}, ""),
+        ({"code": True, "message": "\x1b\n\t"}, ""),
+        ({"code": "-32603", "message": "denied"}, ": denied"),
+        ({"code": -32603}, ": -32603"),
+        ({"code": -32603, "message": 5}, ": -32603"),
+        ({"code": 7, "message": "x" * 300}, ": 7 " + "x" * 200),
+    ],
+)
+def test_error_answer_details_are_short_and_single_line(
+    tmp_path: Path, error: Any, detail: str
+) -> None:
+    popen = rpc_server({"error": error})
+    with pytest.raises(StoreError) as info:
+        read(tmp_path / "seat", popen)
+    assert str(info.value) == f"{RPC_LABEL} {RPC_METHOD} failed{detail}"
+
+
 # --- Identity -------------------------------------------------------------------
 
 
@@ -448,6 +669,33 @@ def test_malformed_account_file_is_an_error_without_its_content(
     assert not isinstance(info.value, AuthStale)
     assert ACCESS not in str(info.value)
     assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("account_file", "message"),
+    [
+        # drivers.json sets jwt_field and jwt_claim together; a spec built in
+        # code without the claim must not read the token.
+        (
+            UsageAccountFile(file=RPC_ACCOUNT_FILE, object_key="tokens", jwt_field="id_token"),
+            f"{RPC_LABEL} account file has no JWT identity configured",
+        ),
+        (
+            UsageAccountFile(file=RPC_ACCOUNT_FILE, object_key="tokens"),
+            f"{RPC_LABEL} account file has no identity field configured",
+        ),
+    ],
+)
+def test_account_file_without_a_configured_identity_is_an_error(
+    tmp_path: Path, account_file: UsageAccountFile, message: str
+) -> None:
+    write_auth(tmp_path / "seat")
+    path = tmp_path / "seat" / RPC_ACCOUNT_FILE
+    with pytest.raises(StoreError) as info:
+        read_account_identity(RPC_LABEL, account_file, path, "log in with tool-r first")
+    assert str(info.value) == message
+    assert not isinstance(info.value, AuthStale)
+    assert ACCESS not in str(info.value)
 
 
 # --- Snapshot -------------------------------------------------------------------
@@ -564,6 +812,14 @@ def test_snapshot_rejects_malformed_values(raw: dict[str, Any], message: str) ->
     with pytest.raises(StoreError, match=message) as info:
         snapshot(raw)
     assert str(info.value).startswith(RPC_LABEL)
+
+
+@pytest.mark.parametrize("raw", [[result()], None, "limits"])
+def test_snapshot_refuses_a_result_that_is_not_an_object(raw: Any) -> None:
+    # A configured reader may hand over any JSON value.
+    with pytest.raises(StoreError) as info:
+        snapshot(raw)
+    assert str(info.value) == f"{RPC_LABEL} result is not an object"
 
 
 # --- Scan -----------------------------------------------------------------------
