@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -5198,3 +5199,284 @@ def test_cli_lane_refuses_bad_arguments_before_launch(
         run(argv)
     captured = capsys.readouterr()
     assert message in f"{exc.value.code}{captured.err}{captured.out}"
+
+
+def test_launch_refuses_an_unknown_role_before_reading_configuration() -> None:
+    with pytest.raises(SystemExit, match="role must be"):
+        launch(
+            role="reviewer-pro",
+            vendor="driver-a",
+            spec_file="/tmp/spec.md",
+            cwd="/tmp",
+        )
+
+
+def test_launch_refuses_a_binding_for_another_provider(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    spec = _placeholder_home(tmp_path)
+    selected = load_ai_accounts(tmp_path).for_lane(
+        PLACEHOLDER_SESSION, "implementer", "driver-b", require_execution=False
+    )
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on a binding mismatch")
+
+    with pytest.raises(
+        SystemExit, match="lane binding provider does not match requested vendor"
+    ):
+        _placeholder_launch(
+            tmp_path,
+            spec,
+            "driver-a",
+            runner=boom,
+            tmux=False,
+            binding=selected,
+        )
+
+
+def test_launch_refuses_an_empty_spec_file(tmp_path: Path) -> None:
+    spec = _placeholder_home(tmp_path)
+    spec.write_text("   \n", encoding="utf-8")
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on an empty spec")
+
+    with pytest.raises(SystemExit, match="spec-file is empty"):
+        _placeholder_launch(
+            tmp_path, spec, "driver-a", role="implementer", runner=boom, tmux=False
+        )
+
+
+def test_launch_delegate_read_only_lane_writes_only_its_output_file(
+    tmp_path: Path,
+) -> None:
+    """A read-only delegated lane has no worktree write-back, only its output file."""
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    seen: list[list[str]] = []
+    stdins: list[str | None] = []
+    profiles: list[Path] = []
+    outputs: list[Path] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        stdins.append(stdin_text)
+        reads = [
+            argv[index + 1]
+            for index, value in enumerate(argv[:-1])
+            if value == "--read"
+        ]
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        output = Path(argv[argv.index("--last-message") + 1])
+        outputs.append(output)
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = _placeholder_launch(
+        tmp_path,
+        spec,
+        "driver-b",
+        role="reviewer",
+        runner=fake,
+        tmux=True,
+    )
+
+    assert result.status == "complete"
+    assert result.tmux_session is None
+    assert stdins and stdins[0] is not None
+    argv = seen[0]
+    # The whole prefixed argv is wrapped once more with the GitHub-clearing
+    # env command; the operator command follows it.
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    operator = argv[len(prefix) + 1 :]
+    assert operator[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(tmp_path.resolve())
+    reads = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--read"
+    ]
+    assert str(spec.resolve()) in reads
+    assert "/operator/path/tool-b" in reads
+    assert str(profiles[0]) in reads
+    write_backs = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--write-back"
+    ]
+    assert write_backs == [str(outputs[0])]
+    assert not profiles[0].exists()
+    assert not outputs[0].exists()
+
+
+def test_launch_delegate_prefix_failure_cleans_the_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import lane as lane_module
+
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    profiles: list[Path] = []
+
+    def fail(
+        execution: LaneExecution,
+        argv: list[str],
+        *,
+        workdir: str,
+        reads: tuple[str, ...] = (),
+        write_backs: tuple[str, ...] = (),
+    ) -> list[str]:
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        raise RuntimeError("operator prefix failed")
+
+    monkeypatch.setattr(lane_module, "delegated_lane_argv", fail)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start after a prefix failure")
+
+    with pytest.raises(RuntimeError, match="operator prefix failed"):
+        _placeholder_launch(
+            tmp_path, spec, "driver-a", role="implementer", runner=boom, tmux=False
+        )
+    assert profiles and not profiles[0].exists()
+
+
+def test_launch_tmux_wrap_failure_without_a_profile_reraises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+
+    def fail(inner: list[str], *, name: str, cwd: str) -> list[str]:
+        raise RuntimeError("tmux wrap failed")
+
+    monkeypatch.setattr("agent_cli.lane.tmux_wrap_argv", fail)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start after a wrap failure")
+
+    with pytest.raises(RuntimeError, match="tmux wrap failed"):
+        _placeholder_launch(
+            tmp_path,
+            spec,
+            "driver-a",
+            role="implementer",
+            runner=boom,
+            dry_run=True,
+            tmux=True,
+        )
+
+
+def test_launch_delegate_dry_run_cleans_the_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import lane as lane_module
+
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    real = lane_module.delegated_lane_argv
+    profiles: list[Path] = []
+
+    def record(
+        execution: LaneExecution,
+        argv: list[str],
+        *,
+        workdir: str,
+        reads: tuple[str, ...] = (),
+        write_backs: tuple[str, ...] = (),
+    ) -> list[str]:
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        return real(
+            execution,
+            argv,
+            workdir=workdir,
+            reads=reads,
+            write_backs=write_backs,
+        )
+
+    monkeypatch.setattr(lane_module, "delegated_lane_argv", record)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on a dry run")
+
+    result = _placeholder_launch(
+        tmp_path,
+        spec,
+        "driver-a",
+        role="implementer",
+        runner=boom,
+        dry_run=True,
+        tmux=True,
+    )
+
+    assert result.returncode == 0
+    assert result.status == ""
+    assert result.argv[result.argv.index("--workdir") + 1] == str(
+        tmp_path.resolve()
+    )
+    assert profiles and not profiles[0].exists()
+
+
+def test_launch_tmux_argv_without_a_command_separator_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.lane.tmux_wrap_argv",
+        lambda inner, *, name, cwd: list(inner),
+    )
+    with pytest.raises(SystemExit, match="tmux argv missing command separator"):
+        _placeholder_launch(tmp_path, spec, "driver-a", role="implementer", tmux=True)
+
+
+def test_launch_tmux_without_a_session_name_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.lane.lane_tmux_name", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.lane.tmux_wrap_argv",
+        lambda inner, *, name, cwd: ["tmux", "new-session", "--", *inner],
+    )
+    with pytest.raises(SystemExit, match="tmux session name missing"):
+        _placeholder_launch(tmp_path, spec, "driver-a", role="implementer", tmux=True)
