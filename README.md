@@ -107,10 +107,24 @@ Assignment and reply writes accept an optional lowercase UUID `request_id`. User
 
 Node.js is required for the dashboard and session page tests.
 
+PostgreSQL 16 (or later) is required for the team record tests. They read the connection string of
+a superuser on a throwaway local test server from `AGENT_CORE_TEST_POSTGRES`; each test creates its
+own database and roles with random names and drops them at the end. Without the variable the record
+tests fail; they are never skipped. The server must accept password logins over TCP on a loopback
+address or `localhost`. For example, with a throwaway container:
+
 ```bash
+docker run -d --rm --name agent-core-test-postgres -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:16
+export AGENT_CORE_TEST_POSTGRES=postgresql://postgres:postgres@127.0.0.1:5432/postgres
 pip install -e ".[test]"
 pytest
 ```
+
+CI runs the same tests against a `postgres:16` service container.
+
+`python -m agent_core.record migrate` applies the schema of the team record (RECORD-PROTOCOL.md
+section 11.4). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE`; the hub
+does not use the record database yet.
 
 ## License
 
