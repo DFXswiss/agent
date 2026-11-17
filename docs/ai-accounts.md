@@ -573,7 +573,10 @@ first, because a new lane's usage shows up in the snapshots only after the
 next poll; among members with equally many running lanes the least-loaded one
 wins, and on a tie the earlier member in the list. Without an eligible member
 the lane does not start: the error `Role <role> has no usable pool account
-(<account>: <reason>; ...)` names every member and its reason.
+(<account>: <reason>; ...)` names every member and its reason. The parallel
+PR review lanes are the exception: like every other preparation failure there,
+it is published only as `PR review lane preparation failed` (see
+[the coordinator](issue-coordinator.md)).
 
 The launched process is isolated to the chosen account like a single-account
 role (its `config_dir`, see [Process isolation prefix](#process-isolation-prefix)).

@@ -30,6 +30,9 @@ coordinator.
 null/empty `workers` enables no worker. Operator-supplied worker keys are
 existing session IDs, bound explicitly in `github-accounts.json` and
 `ai-accounts.json`; the coordinator does not select accounts or roles for them.
+The one exception is a role that names an account pool: the coordinator chooses
+one member account of that role each time it starts a lane (see
+[Account pools](ai-accounts.md#account-pools)).
 
 Each configured worker explicitly names `workspace_root`, `reply_logins`,
 `poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
