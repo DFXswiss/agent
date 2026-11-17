@@ -632,7 +632,7 @@ def draft_pr_body(
             ):
                 raise CoordinatorError("task DE summary is missing")
             german = redact(summary_de.strip(), limit=800).rstrip(". ")
-            if not german:
+            if not german or german.casefold() == title.casefold():
                 raise CoordinatorError("task DE summary is missing")
             de_line = f"Entwurf für Auftrag {short}: {german}."
         visible = (

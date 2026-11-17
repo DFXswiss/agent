@@ -414,6 +414,13 @@ def test_draft_body_for_an_order() -> None:
         draft_pr_body(order_source(OID), summary_de="  ")
     with pytest.raises(CoordinatorError, match="task DE summary is missing"):
         draft_pr_body(order_source(OID), summary_de="Zeile\nZwei.")
+    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
+        draft_pr_body(order_source(OID), summary_de="Add a widget.")
+    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
+        draft_pr_body(
+            order_source(OID, title="Add a widget."),
+            summary_de="add a widget",
+        )
 
 
 def test_refresh_draft_body_updates_an_order_draft(
@@ -445,6 +452,11 @@ def test_refresh_draft_body_updates_an_order_draft(
         "Authentifizierungsfehler zu melden."
     )
     assert "Add a widget" not in german
+    task["change_summary_de"] = "Add a widget."
+    save_task(store, task)
+    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
+        refresh_draft_body(store, worker, task, fake)
+    assert "Add a widget" not in fake.pr["body"].split("DE:\n", 1)[1]
 
 
 def test_review_context_uses_the_order_text(
