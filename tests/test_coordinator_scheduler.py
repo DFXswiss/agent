@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -557,7 +558,7 @@ def test_discovery_runs_when_every_task_waits(
 
 
 @pytest.mark.no_pg
-def test_login_cache_serves_the_second_identical_verification() -> None:
+def test_login_cache_serves_the_second_identical_verification(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     result = Completed(0, "worker-bot", "")
 
@@ -565,7 +566,7 @@ def test_login_cache_serves_the_second_identical_verification() -> None:
         calls.append(argv)
         return result
 
-    cached = login_cached(base, max_age_seconds=30)
+    cached = login_cached(base, max_age_seconds=30, cache_dir=tmp_path)
     first = ["env", "GH_CONFIG_DIR=/a", "gh", "api", "user", "--jq", ".login"]
     second = ["env", "GH_CONFIG_DIR=/b", "gh", "api", "user", "--jq", ".login"]
     other = ["env", "GH_CONFIG_DIR=/a", "gh", "api", "user"]
@@ -580,7 +581,7 @@ def test_login_cache_serves_the_second_identical_verification() -> None:
 
 
 @pytest.mark.no_pg
-def test_login_cache_does_not_keep_a_failure() -> None:
+def test_login_cache_does_not_keep_a_failure(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     result = Completed(1, "", "failed")
 
@@ -588,7 +589,7 @@ def test_login_cache_does_not_keep_a_failure() -> None:
         calls.append(argv)
         return result
 
-    cached = login_cached(base, max_age_seconds=30)
+    cached = login_cached(base, max_age_seconds=30, cache_dir=tmp_path)
     argv = ["env", "GH_CONFIG_DIR=/a", "gh", "api", "user", "--jq", ".login"]
     assert cached(argv) is result
     assert cached(argv) is result
@@ -596,16 +597,16 @@ def test_login_cache_does_not_keep_a_failure() -> None:
 
 
 @pytest.mark.no_pg
-def test_login_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_login_cache_expires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
     clock = {"now": 0.0}
-    monkeypatch.setattr("agent_cli.coordinator.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("agent_cli.github_request_share.wall_time", lambda: clock["now"])
 
     def base(argv: list[str]) -> Completed:
         calls.append(argv)
         return Completed(0, "worker-bot", "")
 
-    cached = login_cached(base, max_age_seconds=30)
+    cached = login_cached(base, max_age_seconds=30, cache_dir=tmp_path)
     argv = ["env", "GH_CONFIG_DIR=/a", "gh", "api", "user", "--jq", ".login"]
     cached(argv)
     clock["now"] = 30.0

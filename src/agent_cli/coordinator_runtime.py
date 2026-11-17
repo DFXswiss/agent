@@ -59,7 +59,6 @@ from .coordinator_common import (
     coord,
     coordinator_env,
     gh_json,
-    gh_list,
     harden_grok_write_argv,
     infra_failure,
     is_order,
@@ -83,6 +82,7 @@ from .coordinator_common import (
     task_text_reference,
     write_task_text,
 )
+from .github_request_share import shared_assigned_issues
 from .coordinator_config import RepositoryConfig, WorkerConfig, resolve_round_limit
 from .coordinator_a38 import (
     A38ReportCheckpointConflict,
@@ -807,15 +807,12 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
     explicit_names = {repo.casefold() for repo in worker.repositories}
     for repo, repo_cfg_item in worker.repositories.items():
         try:
-            issues = gh_list(
+            issues = shared_assigned_issues(
+                store.home,
                 scoped_runner,
-                [
-                    "gh",
-                    "api",
-                    "--paginate",
-                    "--slurp",
-                    f"repos/{repo}/issues?assignee={login}&state=open&per_page=100",
-                ],
+                repo=repo,
+                login=login,
+                poll_seconds=worker.poll_seconds,
             )
         except CoordinatorError as exc:
             lines.append(f"discover {repo}: {redact(str(exc))}")

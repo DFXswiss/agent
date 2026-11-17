@@ -7,8 +7,8 @@ lane starts, or merge. See DESIGN.md §§19.1, 19.7 and docs/issue-coordinator.m
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .coordinator_config import WorkerConfig
@@ -21,6 +21,11 @@ from .coordinator_runtime import (
 )
 from .runtime import Completed, run_argv
 from .coordinator_exec import process_scope, run_bounded
+from .github_request_share import (
+    authentication_failure,
+    cached_account_login,
+    note_authentication_failure,
+)
 from .store import Store, StoreError
 
 Runner = Callable[[list[str]], Completed]
@@ -28,28 +33,41 @@ LaneRunner = Callable[[list[str], str | None], Any]
 
 LOCK_PREFIX = "coordinator-worker:"
 _LOGIN_ARGV_TAIL = ["gh", "api", "user", "--jq", ".login"]
+# Reuse of one successful gh api user check on this device. This is not
+# CLAUDE_USAGE_POLL_SECONDS, which only spaces Claude subscription usage reads.
+LOGIN_REUSE_SECONDS = 15 * 60
 
 
-def login_cached(runner: Runner, *, max_age_seconds: int) -> Runner:
-    """Cache the successful login verification of each account for one tick."""
-    cache: dict[tuple[str, ...], tuple[float, Completed]] = {}
+def login_cached(runner: Runner, *, max_age_seconds: int, cache_dir: Path) -> Runner:
+    """Reuse one successful ``gh api user`` verification per GitHub account.
+
+    The caller chooses the bound. Workers and the knock child pass
+    ``LOGIN_REUSE_SECONDS``. An authentication error drops the saved
+    verification so the next check calls GitHub. A hit in this process returns
+    the same ``Completed``; other processes read ``cache_dir``.
+    """
+    memory: dict[str, tuple[float, Completed]] = {}
 
     def cached(argv: list[str]) -> Completed:
         if argv[-5:] != _LOGIN_ARGV_TAIL:
-            return runner(argv)
-        key = tuple(argv)
-        now = time.monotonic()
-        hit = cache.get(key)
-        if hit is not None and now - hit[0] <= max_age_seconds:
-            return hit[1]
-        result = runner(argv)
-        if result.returncode == 0:
-            cache[key] = (now, result)
-        else:
-            cache.pop(key, None)
-        return result
+            result = runner(argv)
+            if authentication_failure(result):
+                note_authentication_failure(cache_dir, argv, memory)
+            return result
+        return cached_account_login(
+            runner,
+            argv,
+            home=cache_dir,
+            max_age_seconds=max_age_seconds,
+            memory=memory,
+        )
 
     return cached
+
+
+def shared_github_runner(runner: Runner, *, home: Path) -> Runner:
+    """Share ``gh api user`` across the workers and the knock child on one device."""
+    return login_cached(runner, max_age_seconds=LOGIN_REUSE_SECONDS, cache_dir=home)
 
 
 def tick(
@@ -69,7 +87,7 @@ def tick(
     observations: list[str] = []
     if runner is run_argv:
         runner = lambda argv: run_bounded(argv, timeout=worker.check_timeout)
-    runner = login_cached(runner, max_age_seconds=worker.poll_seconds)
+    runner = shared_github_runner(runner, home=store.home)
     try:
         with process_scope(), store.exclusive(lock_key):
             try:
@@ -100,6 +118,8 @@ def tick(
 
 
 __all__ = [
+    "LOGIN_REUSE_SECONDS",
     "login_cached",
+    "shared_github_runner",
     "tick",
 ]
