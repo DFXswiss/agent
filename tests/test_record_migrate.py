@@ -499,6 +499,9 @@ def another_role(db: RecordDatabase) -> Iterator[str]:
                     sql.Identifier(db.name), sql.Identifier(db.owner_role)
                 )
             )
+            # A `role = <name>` setting of the owner role names this role only as text, so it
+            # would outlive the role; remove it here rather than rely on the fixture.
+            admin.execute(sql.SQL("ALTER ROLE {} RESET role").format(sql.Identifier(db.owner_role)))
             admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(name)))
             admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(name)))
 
@@ -532,6 +535,10 @@ def test_migrate_checks_the_login_role_not_a_role_set_for_it(record_db: RecordDa
 def test_migrate_checks_the_login_role_not_a_role_set_through_pgoptions(
     record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Two defences stop this case: the empty `options` keeps PGOPTIONS from the session, and
+    # `SET ROLE NONE` with the check of `session_user` would refuse it even if it got through.
+    # This test therefore passes without either one alone; the test below proves the empty
+    # `options` on its own.
     with another_role(record_db) as other:
         superuser_owner_acting_as(record_db, other)
         # Only around the run, so that the administrator's connections never see the variable.
@@ -543,7 +550,8 @@ def test_migrate_checks_the_login_role_not_a_role_set_through_pgoptions(
 
 
 def test_pgoptions_does_not_reach_the_session(record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A parameter the server does not know ends the connection at login if it reaches the server.
+    # The only test that depends on the empty `options` of connection.py: a parameter the server
+    # does not know ends the connection at login if it reaches the server.
     with monkeypatch.context() as patched:
         patched.setenv("PGOPTIONS", "-c t_no_such_parameter=1")
         result = run_migrate(record_db.migrate_env())
@@ -570,6 +578,69 @@ def test_migrate_acts_as_the_owner_role_when_a_role_is_set_for_it(record_db: Rec
         assert ("record", owner) in state["schemas"]
         assert {row[2] for row in state["relations"]} == {owner}
         assert state["functions"] == [("refuse_change", owner, "plpgsql", "trigger")]
+
+
+SHADOW = "t_shadow"
+
+
+def shadow_catalog(db: RecordDatabase, where: str) -> None:
+    """A schema with a `pg_roles` that shows no superuser and an `octet_length(bytea)` that is
+    always 64, put before `pg_catalog` in the `search_path` of the owner role or of the database.
+
+    A run that resolves a name through such a search path would let a superuser owner pass step
+    `owner` and would bind the checks of section 11.3 to the shadow function.
+    """
+    with db.admin() as admin:
+        admin.execute(f"CREATE SCHEMA {SHADOW}")
+        admin.execute(f"GRANT USAGE ON SCHEMA {SHADOW} TO PUBLIC")
+        admin.execute(
+            f"CREATE VIEW {SHADOW}.pg_roles AS"
+            " SELECT rolname, false AS rolsuper, oid FROM pg_catalog.pg_roles"
+        )
+        admin.execute(f"GRANT SELECT ON {SHADOW}.pg_roles TO PUBLIC")
+        admin.execute(
+            f"CREATE FUNCTION {SHADOW}.octet_length(bytea) RETURNS integer"
+            " LANGUAGE sql IMMUTABLE AS 'SELECT 64'"
+        )
+        target = (
+            sql.SQL("ROLE {}").format(sql.Identifier(db.owner_role))
+            if where == "role"
+            else sql.SQL("DATABASE {}").format(sql.Identifier(db.name))
+        )
+        admin.execute(
+            sql.SQL("ALTER {} SET search_path = {}, pg_catalog").format(target, sql.Identifier(SHADOW))
+        )
+
+
+@pytest.mark.parametrize("where", ["role", "database"])
+def test_migrate_checks_the_real_catalog_not_one_on_the_search_path(
+    record_db: RecordDatabase, where: str
+) -> None:
+    shadow_catalog(record_db, where)
+    with record_db.admin() as admin:
+        admin.execute(sql.SQL("ALTER ROLE {} SUPERUSER").format(sql.Identifier(record_db.owner_role)))
+    assert run_migrate(record_db.migrate_env()) == ("failed owner", 1)
+    assert not schema_exists(record_db)
+
+
+@pytest.mark.parametrize("where", ["role", "database"])
+def test_the_checks_of_section_11_3_use_pg_catalog_whatever_the_search_path(
+    record_db: RecordDatabase, where: str
+) -> None:
+    shadow_catalog(record_db, where)
+    migrated(record_db)
+    with connect(record_db.writer_url) as writer:
+        with pytest.raises(psycopg.Error) as refused:
+            insert_event(writer, signature=bytes(63))
+        assert refused.value.sqlstate == "23514"
+    with record_db.admin() as admin:
+        # No object of the record depends on a function of the shadow schema.
+        assert admin.execute(
+            "SELECT count(*) FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_proc p ON p.oid = d.refobjid"
+            " WHERE d.refclassid = 'pg_catalog.pg_proc'::regclass"
+            " AND p.pronamespace = %s::regnamespace",
+            (SHADOW,),
+        ).fetchone() == (0,)
 
 
 def test_migrate_fails_for_an_unknown_schema_version(record_db: RecordDatabase) -> None:
@@ -1091,12 +1162,18 @@ def test_the_command_prints_no_part_of_a_database_error(record_db: RecordDatabas
         },
     )
     assert (refused.stdout, refused.stderr, refused.returncode) == ("failed owner\n", "", 1)
-    # A failure inside step `migrate`: the schema cannot be applied for a writer role that does
-    # not exist.
+    # A statement of section 11.3 that the server refuses inside step `migrate`: without CREATE on
+    # its database the owner cannot create the schema, and the server's message names the
+    # database.
     with record_db.admin() as admin:
-        admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(record_db.writer_role)))
+        admin.execute(
+            sql.SQL("REVOKE CREATE ON DATABASE {} FROM {}").format(
+                sql.Identifier(record_db.name), sql.Identifier(record_db.owner_role)
+            )
+        )
     failed = run_cli(["migrate"], record_db.migrate_env())
     assert (failed.stdout, failed.stderr, failed.returncode) == ("failed migrate\n", "", 1)
+    assert not schema_exists(record_db)
     outputs = (refused.stdout, refused.stderr, failed.stdout, failed.stderr)
     assert_no_secret(record_db, *outputs)
     for output in outputs:

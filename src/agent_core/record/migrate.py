@@ -77,19 +77,38 @@ $$""",
     "INSERT INTO record.schema_version (version, applied_at) VALUES ({version}, now())",
 )
 
+# The first statements of every run, before any other statement. A setting of the owner role or
+# the database is applied at login and can change what the run checks and creates:
+# - `role` makes the session act as another role; `SET ROLE NONE` drops it, and step `owner`
+#   checks the login role (`session_user`).
+# - `search_path` can put a schema with a shadow of `pg_roles`, of a function or of an operator
+#   before `pg_catalog`, which would let a superuser owner pass step `owner` or bind a check of
+#   section 11.3 to another function. The run searches only `pg_catalog`, and `pg_temp` last, so
+#   that a temporary object never shadows one of `pg_catalog`; the schema statements name
+#   `record.` in full.
+# The run also passes `options` empty (connection.py), so PGOPTIONS sets no parameter, and sets
+# READ COMMITTED itself (step `migrate`). Section 11.4 does not describe these four behaviours.
+SESSION_STATEMENTS = (
+    "SET ROLE NONE",
+    "SET search_path = pg_catalog, pg_temp",
+)
+
 # Step `owner`, checked for the role named in the owner's connection string: the session logged
-# in as that role, and that role is no superuser and owns the database. `session_user` is the
-# login role; `current_user` can differ from it at login through a `role` setting of the role or
-# the database, which is why the session first drops any such role with `SET ROLE NONE`.
+# in as that role, and that role is no superuser and owns the database. Every catalog object is
+# named with its schema as well, in addition to the `search_path` above.
 _OWNER_CHECK = """
-SELECT session_user = r.rolname, r.rolsuper, d.datdba = r.oid
-FROM pg_roles r JOIN pg_database d ON d.datname = current_database()
-WHERE r.rolname = %s
+SELECT session_user OPERATOR(pg_catalog.=) r.rolname, r.rolsuper, d.datdba OPERATOR(pg_catalog.=) r.oid
+FROM pg_catalog.pg_roles r
+JOIN pg_catalog.pg_database d ON d.datname OPERATOR(pg_catalog.=) pg_catalog.current_database()
+WHERE r.rolname OPERATOR(pg_catalog.=) %s
 """
 
 # Step `migrate`, before the schema is applied: the writer role exists as a role of its own. The
-# pseudo-role PUBLIC has no row in `pg_roles`, so nothing is ever granted to PUBLIC.
-_WRITER_EXISTS = "SELECT count(*) FROM pg_roles WHERE rolname = %s"
+# pseudo-role PUBLIC has no row in `pg_roles`, so nothing is ever granted to PUBLIC. A GRANT to a
+# missing role would fail as well; this check keeps the refusal explicit.
+_WRITER_EXISTS = (
+    "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles WHERE rolname OPERATOR(pg_catalog.=) %s"
+)
 
 
 class _UnknownVersion(Exception):
@@ -137,9 +156,10 @@ def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
     step = STEP_OWNER
     try:
         with owner.connect(autocommit=True) as connection:
-            # The run acts as the owner role it connected with, never as a role that a `role`
-            # setting of the role or the database switched to at login.
-            connection.execute("SET ROLE NONE")
+            # The run acts as the owner role it connected with and reads the real catalog, never
+            # a role or a search path that a setting of the role or the database gave at login.
+            for statement in SESSION_STATEMENTS:
+                connection.execute(statement)
             is_login_role, superuser, owns_database = connection.execute(
                 _OWNER_CHECK, (owner.role,)
             ).fetchone()
@@ -152,11 +172,11 @@ def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
                 # concurrent run committed in the meantime.
                 connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 connection.execute(
-                    "SELECT set_config('lock_timeout', %s, true)", (f"{LOCK_TIMEOUT_MS}ms",)
+                    "SELECT pg_catalog.set_config('lock_timeout', %s, true)", (f"{LOCK_TIMEOUT_MS}ms",)
                 )
-                connection.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
+                connection.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
                 exists = connection.execute(
-                    "SELECT to_regclass('record.schema_version') IS NOT NULL"
+                    "SELECT pg_catalog.to_regclass('record.schema_version') IS NOT NULL"
                 ).fetchone()
                 if not exists[0]:
                     _check_writer_exists(connection, writer.role)

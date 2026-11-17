@@ -67,36 +67,42 @@ class RecordRefusal(Exception):
 
 @dataclass(frozen=True)
 class Change:
-    """One change of an event: the field and its old and new value (None is `-`)."""
+    """One change of an event: the field and its old and new value (None is `-`).
 
-    field: str
+    Section 13 keeps field names and values out of every log line, so the `repr` shows none.
+    """
+
+    field: str = dataclass_field(repr=False)
     old: bytes | None = dataclass_field(repr=False)
     new: bytes | None = dataclass_field(repr=False)
 
 
 @dataclass(frozen=True)
 class Event:
-    """A parsed event text. `text` is the signed bytes; `event_hash` is section 4.4."""
+    """A parsed event text. `text` is the signed bytes; `event_hash` is section 4.4.
+
+    Of the parts of an event, section 13 allows only key ids in a log line, so the `repr` shows
+    only `actor_key_id`.
+    """
 
     text: bytes = dataclass_field(repr=False)
-    event_hash: str
-    # Section 13 keeps event ids and object ids out of every log line, so the `repr` hides them.
+    event_hash: str = dataclass_field(repr=False)
     event_id: str = dataclass_field(repr=False)
-    object_type: str
+    object_type: str = dataclass_field(repr=False)
     object_id: str = dataclass_field(repr=False)
     actor_key_id: str
-    signed_at: int
-    prev_hash: str
+    signed_at: int = dataclass_field(repr=False)
+    prev_hash: str = dataclass_field(repr=False)
     key_certificate: bytes | None = dataclass_field(repr=False)
     changes: tuple[Change, ...] = dataclass_field(repr=False)
 
 
 @dataclass(frozen=True)
 class ChainHead:
-    """The last accepted event of one key (section 4.5)."""
+    """The last accepted event of one key (section 4.5); like `Event`, its `repr` shows no part."""
 
-    event_hash: str
-    signed_at: int
+    event_hash: str = dataclass_field(repr=False)
+    signed_at: int = dataclass_field(repr=False)
 
 
 def valid_uuid(value: object) -> bool:
@@ -209,10 +215,13 @@ def build_event_text(
     """The event text of section 4.2 with the changes in field order; `event_invalid` if it breaks a rule.
 
     An argument of the wrong type, such as a `signed_at` that is no `int` or lies outside the
-    range of a time, is a broken rule as well.
+    range of a time, or `changes` that is not iterable, is a broken rule as well.
     """
     invalid = RecordRefusal(ERROR_EVENT_INVALID)
-    given = list(changes)
+    try:
+        given = list(changes)
+    except TypeError:
+        raise invalid from None
     texts = (event_id, object_type, object_id, actor_key_id, prev_hash)
     if not all(isinstance(text, str) for text in texts):
         raise invalid

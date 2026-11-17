@@ -523,6 +523,8 @@ BUILD_ARGUMENTS = {
         ("actor_key_id", None),
         ("prev_hash", None),
         ("changes", ["title"]),
+        ("changes", None),
+        ("changes", 5),
         ("changes", [Change(1, None, b"a")]),  # type: ignore[arg-type]
         ("changes", [Change("title", None, "Fix login")]),  # type: ignore[arg-type]
         ("changes", [Change("title", "-", b"a")]),  # type: ignore[arg-type]
@@ -543,6 +545,8 @@ BUILD_ARGUMENTS = {
         "actor_key_id None",
         "prev_hash None",
         "a change that is text",
+        "changes None",
+        "changes int",
         "a field that is an int",
         "a new value that is text",
         "an old value that is text",
@@ -582,6 +586,15 @@ def test_no_record_content_in_a_repr_or_a_refusal() -> None:
     # Section 13: no event id and no object id.
     assert EVENT_ID not in shown
     assert OBJECT_ID not in shown
+    # Section 13: no field name, and of the parts of an event only the key id.
+    for name in ("kind", "team", "title"):
+        assert name not in shown
+    assert repr(event) == f"Event(actor_key_id={ACTOR!r})"
+    assert repr(event.changes[0]) == "Change()"
+    head = chain_head(event)
+    assert repr(head) == "ChainHead()"
+    for hidden in (EXAMPLE_1_HASH, "2026", str(event.signed_at), "task"):
+        assert hidden not in repr(event) + repr(head)
     assert str(RecordRefusal("event_invalid")) == "event_invalid"
 
 
