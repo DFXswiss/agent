@@ -2040,9 +2040,13 @@ def test_failed_configuration_blocker_post_is_retried(monkeypatch, tmp_path):
 
 
 def _patch_current_models(monkeypatch, models):
+    # Like AIAccounts, an absent separate implementer falls back to slot first.
     monkeypatch.setattr(
         "agent_cli.coordinator_github.load_ai_accounts",
-        lambda *_a, **_k: SimpleNamespace(models=SimpleNamespace(as_dict=lambda: dict(models))),
+        lambda *_a, **_k: SimpleNamespace(
+            models=SimpleNamespace(as_dict=lambda: dict(models)),
+            implementer=models.get("first"),
+        ),
     )
 
 
