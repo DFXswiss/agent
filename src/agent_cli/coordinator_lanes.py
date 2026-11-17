@@ -37,6 +37,7 @@ from .coordinator_common import (
     is_order,
     is_sha,
     parse_change_summaries,
+    parse_pr_body,
     parse_model_result,
     parse_surface_list,
     prompt_prohibitions,
@@ -423,11 +424,25 @@ def implementer_replay_fields(
         )
         if safe_surfaces is None:
             raise CoordinatorError("implementer checkpoint redaction is not schema-safe")
+    safe_pr_body: str | None = None
+    proposed_body = parse_pr_body(stdout)
+    if proposed_body is not None:
+        safe_pr_body = parse_pr_body(
+            "PR_BODY_BEGIN\n"
+            + _redact_coordinator_lane_text(
+                proposed_body,
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+                limit=None,
+            )
+            + "\nPR_BODY_END\n"
+        )
     return {
         "summary_en": safe_summaries[0] if safe_summaries is not None else None,
         "summary_de": safe_summaries[1] if safe_summaries is not None else None,
         "reused_lines": safe_surfaces[0] if safe_surfaces is not None else None,
         "added_lines": safe_surfaces[1] if safe_surfaces is not None else None,
+        "pr_body": safe_pr_body,
     }
 
 

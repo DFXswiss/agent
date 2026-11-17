@@ -485,6 +485,12 @@ pair.
    implementer result that lacks summaries or its
    reused and added list is not retried. Pull-request review-pair preparation
    failure is not retried.
+   The implementer may end a completed result with the pull-request
+     description between a line `PR_BODY_BEGIN` and a line `PR_BODY_END`. The
+     script removes HTML comments, redacts the text like the summaries, and
+     publishes it as the visible draft body, followed by the reused and added
+     list when one exists. A round without the block keeps the published
+     description. The model never edits GitHub and never asks a human to.
    A `no-change` result that adds no commit, on a task that already holds both
    summaries from an earlier round (and, when `REVIEW.md` exists at the base, a
    reused and added list), keeps them and closes its round like `done`; it
@@ -735,8 +741,8 @@ pair.
    both review pairs and CI return to pending and run on the new head. Recorded
    overrides and skips remain. An open remedy outcome retries under
    `lane_retries` with its backoff. Only a final remedy blocker blocks the
-   order. It posts a pull-request status comment of kind `conflict` and a
-   `question` event for `pr_mergeable`, offering `reply` and `cancel`.
+   order. It records a `question` event for `pr_mergeable`, offering `reply`
+   and `cancel`.
 
    A reply measures mergeability again and starts resolution again while the
    conflict remains. At most `max_attempts` resolutions start between two human
@@ -1129,9 +1135,11 @@ Reply, override and cancel on a done order fail with `order UUID is already
 done`.
 
 Wherever this document says a blocker or question is published on the issue,
-an order publishes it on its pull request. Before the draft exists it is only
-an order event. Once the draft exists, authorized comments from
-`reply_logins` also resume the order.
+an order records it only as an order event, before and after the draft exists.
+The coordinator posts no question, blocker or status comment on the pull
+request of an order, and a pull-request comment does not resume an order. An
+implementer question of an order (`RESULT: ask`) becomes a `question` event
+directly.
 
 An event's `answers` are `ack` for `ready`, `failed`, and `cancelled`. A
 `question` or `blocked` event offers `reply` unless the failed check allows only

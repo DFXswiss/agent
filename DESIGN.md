@@ -733,10 +733,12 @@ hostnames belong in the deployment configuration, not this public repository.
    and blockers, when needed, are communicated through GitHub by the script;
    GitHub replies return through the script. The user need not operate a terminal
    or a separate dashboard to manage the assigned issue.
-   Questions and blockers of an order go to its order events and, once the
-   draft exists, to pull-request comments. Answers return through `agent order
-   reply`, `agent order override`, `agent order cancel`, `agent order done`, or
-   an authorized pull-request comment.
+   Questions and blockers of an order go only to its order events, never to
+   pull-request comments. Answers return through `agent order reply`,
+   `agent order override`, `agent order cancel`, `agent order done`, or the
+   orders view of the dashboard. The implementer supplies the pull-request
+   description between a line `PR_BODY_BEGIN` and a line `PR_BODY_END`; the
+   script publishes it on the draft.
    When the lane has no further work, it returns to the script; it does not
    monitor GitHub or wait for CI. The script observes subsequent events and
    informs a lane when further work is useful.

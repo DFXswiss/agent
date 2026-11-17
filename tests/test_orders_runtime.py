@@ -20,6 +20,7 @@ from agent_cli.coordinator_common import (
     coord,
     is_order,
     order_id,
+    parse_pr_body,
     save_task,
     source_kind,
     source_label,
@@ -39,7 +40,12 @@ from agent_cli.coordinator_github import (
     pin_owner_repository,
     publish_blocker,
 )
-from agent_cli.coordinator_lanes import _post_issue_status, phase_pr_gates, write_review_context
+from agent_cli.coordinator_lanes import (
+    _post_issue_status,
+    implementer_replay_fields,
+    phase_pr_gates,
+    write_review_context,
+)
 from agent_cli.coordinator_orders import (
     CANCEL_CLOSE_BODY,
     acknowledge_event,
@@ -239,7 +245,7 @@ def test_comment_target() -> None:
     order = {"id": OID, "repo": "example/project", "payload": {"coordinator": {"source": order_source(OID)}}}
     assert comment_target(order) is None
     order["payload"]["coordinator"]["pr_number"] = 42
-    assert comment_target(order) == ("example/project", 42, "pr")
+    assert comment_target(order) is None
     with pytest.raises(KeyError):
         comment_target({"payload": {"coordinator": {"source": {"repo": "example/project"}}}})
 
@@ -287,26 +293,25 @@ def test_order_blocker_without_draft_is_local_only(
     assert "question_activity_id" not in coord(store.row("task", OID))
 
 
-def test_order_blocker_is_posted_on_the_pull_request(
+def test_order_blocker_with_draft_is_local_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store, worker, fake = prepare(tmp_path, monkeypatch)
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
     task = seed_order_task(
         store, worker, OID, phase="blocked", resume_phase="ci", pr_number=42
     )
-    lines = publish_blocker(store, worker, task, fake, "stop", reply_checkpoint=True)
-    assert lines[-1] == "blocker published on example/project#42"
-    rows = comment_posts(store)
-    assert len(rows) == 1
-    assert rows[0]["payload"]["target"] == "pr"
-    assert rows[0]["payload"]["number"] == 42
-    assert rows[0]["execution_status"] == "done"
-    assert len(fake.pr_comments) == 1 and "Blocked: stop" in fake.pr_comments[0]["body"]
-    assert fake.comments == []
-    assert coord(store.row("task", OID))["question_activity_id"] == rows[0]["id"]
+
+    def fail(_argv):
+        pytest.fail("runner must not be called")
+
+    assert publish_blocker(
+        store, worker, task, fail, "stop", reply_checkpoint=True
+    ) == ["blocked: stop", f"blocker recorded for order {OID}"]
+    assert comment_posts(store) == []
+    assert "question_activity_id" not in coord(store.row("task", OID))
 
 
-def test_pull_request_comment_reply_resumes_an_order(
+def test_pull_request_comment_does_not_resume_an_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = prepare(tmp_path, monkeypatch)
@@ -318,13 +323,12 @@ def test_pull_request_comment_reply_resumes_an_order(
         {"id": 101, "body": "Go on.", "user": {"login": "human-owner"}}
     )
     assert phase_read_replies(store, worker, store.row("task", OID), fake) == [
-        "consumed 1 authorized reply(ies); resuming ci"
+        f"waiting for order reply on {OID}"
     ]
     c = coord(store.row("task", OID))
-    assert c["phase"] == "ci"
-    assert c["authorized_replies"] == ["Go on."]
-    assert c["replies_consumed_through"] == 101
-    assert "resume_phase" not in c
+    assert c["phase"] == "blocked" and c["resume_phase"] == "ci"
+    assert not c.get("authorized_replies")
+    assert "replies_consumed_through" not in c
 
 
 def test_order_without_draft_waits_for_an_order_reply(
@@ -413,6 +417,165 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
+
+
+@pytest.mark.no_pg
+def test_parse_pr_body() -> None:
+    stdout = (
+        "STATUS: complete\nRESULT: done\nSUMMARY_EN: Done.\nSUMMARY_DE: Erledigt.\n"
+        "PR_BODY_BEGIN\nEN:\nPause the stack.\n<!-- PR-GUARD:A38:v1 -->\n\n"
+        "DE:\nStack pausieren.\nPR_BODY_END\n"
+    )
+    assert parse_pr_body(stdout) == "EN:\nPause the stack.\n\n\nDE:\nStack pausieren."
+    assert parse_pr_body("STATUS: complete\nRESULT: done\n") is None
+    assert parse_pr_body("PR_BODY_BEGIN\n\nPR_BODY_END\n") is None
+    assert parse_pr_body("PR_BODY_BEGIN\ntext\n") is None
+    assert parse_pr_body("PR_BODY_END\ntext\nPR_BODY_BEGIN\n") is None
+    twice = "PR_BODY_BEGIN\na\nPR_BODY_END\nPR_BODY_BEGIN\nb\nPR_BODY_END\n"
+    assert parse_pr_body(twice) is None
+    assert parse_pr_body("PR_BODY_BEGIN\n<!-- open\nPR_BODY_END\n") is None
+    long = "PR_BODY_BEGIN\n" + "x" * 20_001 + "\nPR_BODY_END\n"
+    assert parse_pr_body(long) is None
+
+
+@pytest.mark.no_pg
+def test_replay_fields_keep_a_redacted_pr_body() -> None:
+    stdout = (
+        "STATUS: complete\nRESULT: done\nSUMMARY_EN: Done.\nSUMMARY_DE: Erledigt.\n"
+        "PR_BODY_BEGIN\nEN:\nSee /work/tree/src/a.py for the change.\nPR_BODY_END\n"
+    )
+    fields = implementer_replay_fields(
+        stdout,
+        config_dir=None,
+        path_replacements=(("/work/tree", "<worktree>"),),
+    )
+    assert fields["pr_body"] == "EN:\nSee <worktree>/src/a.py for the change."
+    assert implementer_replay_fields(
+        "STATUS: complete\nRESULT: done\n", config_dir=None, path_replacements=()
+    )["pr_body"] is None
+
+
+@pytest.mark.no_pg
+def test_draft_body_uses_the_implementer_description() -> None:
+    body = draft_pr_body(order_source(OID), description="EN:\nPause the stack.")
+    assert body.startswith("EN:\nPause the stack.")
+    assert "Draft for order" not in body
+    listed = draft_pr_body(
+        order_source(OID),
+        ["`src/pay.ts:40` existing gift invoice"],
+        ["`src/habit.ts:12` member habit route"],
+        "EN:\nPause the stack.",
+    )
+    assert listed.startswith("EN:\nPause the stack.\n\n<details>")
+    assert "existing gift invoice" in listed and "member habit route" in listed
+
+
+def test_refresh_draft_body_posts_the_implementer_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    task["pr_body"] = "EN:\nPause the stack.\n\nDE:\nStack pausieren."
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted pull-request description on example/project#42"
+    ]
+    assert fake.pr["body"].startswith("EN:\nPause the stack.")
+    assert "Draft for order" not in fake.pr["body"]
+
+
+def test_description_without_draft_waits_for_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement")
+    task["pr_body"] = "EN:\nPause the stack."
+
+    def fail(_argv):
+        pytest.fail("runner must not be called")
+
+    assert refresh_draft_body(store, worker, task, fail) == []
+
+
+@pytest.mark.parametrize(
+    ("prior", "proposed", "published"),
+    [
+        (None, "EN:\nPause the stack.", "EN:\nPause the stack."),
+        ("EN:\nEarlier text.", None, "EN:\nEarlier text."),
+    ],
+    ids=("proposed", "kept"),
+)
+def test_completed_round_publishes_the_implementer_description(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prior: str | None,
+    proposed: str | None,
+    published: str,
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        coordinator_runtime, "review_rules_bound", lambda *_a, **_k: False
+    )
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    task["current_round"] = 1
+    if prior is not None:
+        task["pr_body"] = prior
+    save_task(store, task)
+    store.write(
+        "agent",
+        "insert",
+        "implementer-1",
+        {
+            "id": "implementer-1",
+            "session_id": worker.session_id,
+            "task_id": OID,
+            "round": 1,
+            "role": "implementer",
+            "vendor": "grok",
+            "provider": "grok",
+            "model": "grok-model",
+            "prompt": "Implement the order.",
+            "status": "done",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:01:00Z",
+            "note": "STATUS: complete\nRESULT: done\n",
+        },
+    )
+    for key, status in (
+        ("session_registered", "ja"),
+        ("spec_written", "ja"),
+        ("implementer_done", "pending"),
+    ):
+        row_id = f"{OID}-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            row_id,
+            {"id": row_id, "task_id": OID, "key": key, "status": status},
+        )
+    _apply_implementer_outcome(
+        store,
+        worker,
+        store.row("task", OID),
+        fake,
+        round_num=1,
+        tr=round_row(store, OID),
+        status="complete",
+        model_result="done",
+        stdout="STATUS: complete\nRESULT: done\n",
+        replay={
+            "summary_en": "Pause the stack.",
+            "summary_de": "Stack pausieren.",
+            "reused_lines": None,
+            "added_lines": None,
+            "pr_body": proposed,
+        },
+        sha=None,
+        draft_lines=[],
+    )
+    assert store.row("task", OID)["pr_body"] == published
+    assert fake.pr["body"].startswith(published)
+    assert fake.pr_comments == [] and comment_posts(store) == []
 
 
 def test_review_context_uses_the_order_text(
@@ -605,16 +768,20 @@ def test_order_recovery_commit_uses_the_order_message(
     assert messages == ["Implement the order."]
 
 
-def test_order_question_is_posted_on_the_pull_request(
+def test_order_question_with_draft_is_an_order_event_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store, worker, fake = prepare(tmp_path, monkeypatch)
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
     task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+
+    def fail(_argv):
+        pytest.fail("runner must not be called")
+
     lines = _apply_implementer_outcome(
         store,
         worker,
         task,
-        fake,
+        fail,
         round_num=1,
         tr=round_row(store, OID),
         status="complete",
@@ -624,16 +791,19 @@ def test_order_question_is_posted_on_the_pull_request(
         sha=None,
         draft_lines=[],
     )
-    assert lines == ["ask posted on example/project#42"]
+    assert lines == [f"ask recorded for order {OID}"]
     c = coord(store.row("task", OID))
     assert c["phase"] == "ask" and c["resume_phase"] == "implement"
     assert c["question_text"] == "Which behavior is required?"
-    rows = comment_posts(store)
-    assert c["question_activity_id"] == rows[0]["id"]
-    assert rows[0]["payload"]["target"] == "pr"
-    assert rows[0]["payload"]["number"] == 42
-    assert "Question:\nWhich behavior is required?" in fake.pr_comments[0]["body"]
+    assert "question_activity_id" not in c
+    assert comment_posts(store) == []
     assert store.row("task_round", "round-1")["implementer_verdict"] == "blocked"
+    reconcile_order_events(store, worker, store.row("task", OID))
+    questions = [
+        row for row in own_order_events(store) if row["payload"]["kind"] == "question"
+    ]
+    assert len(questions) == 1
+    assert "Which behavior is required?" in questions[0]["payload"]["digest"]
 
 
 def test_issue_question_is_unchanged(
@@ -662,7 +832,7 @@ def test_issue_question_is_unchanged(
     assert "question_text" not in coord(store.row("task", TID))
 
 
-def test_order_question_without_draft_is_kept_pending(
+def test_order_question_without_draft_is_an_order_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, _fake = prepare(tmp_path, monkeypatch)
@@ -685,38 +855,31 @@ def test_order_question_without_draft_is_kept_pending(
         sha=None,
         draft_lines=[],
     )
-    assert lines == [
-        "blocked: Failed to publish implementer question: question has no comment target",
-        f"blocker recorded for order {OID}",
-    ]
+    assert lines == [f"ask recorded for order {OID}"]
     c = coord(store.row("task", OID))
-    assert c["phase"] == "blocked" and c["resume_phase"] == "implement"
-    assert c["pending_question"] == "Which behavior is required?"
-    assert c["blocker"] == "ask publish failed: question has no comment target"
+    assert c["phase"] == "ask" and c["resume_phase"] == "implement"
+    assert c["question_text"] == "Which behavior is required?"
+    assert "pending_question" not in c and "blocker" not in c
     assert comment_posts(store) == []
 
 
-def test_order_status_goes_to_the_pull_request(
+def test_order_status_has_no_comment_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = prepare(tmp_path, monkeypatch)
-    task = seed_order_task(store, worker, OID, phase="tests", pr_number=42)
-    activity_id = _post_issue_status(
-        store, worker, fake, task, "Blocked: lane interrupted.", "uncertain-lane"
-    )
-    row = store.row("activity", activity_id)
-    assert row["payload"]["target"] == "pr" and row["payload"]["number"] == 42
-    assert len(fake.pr_comments) == 1
-    second = seed_order_task(store, worker, OID2, phase="tests")
-    with pytest.raises(CoordinatorError, match="status has no comment target"):
-        _post_issue_status(
-            store,
-            worker,
-            fake,
-            second,
-            "Blocked: lane interrupted.",
-            "uncertain-lane",
-        )
+    with_draft = seed_order_task(store, worker, OID, phase="tests", pr_number=42)
+    without_draft = seed_order_task(store, worker, OID2, phase="tests")
+    for task in (with_draft, without_draft):
+        with pytest.raises(CoordinatorError, match="status has no comment target"):
+            _post_issue_status(
+                store,
+                worker,
+                fake,
+                task,
+                "Blocked: lane interrupted.",
+                "uncertain-lane",
+            )
+    assert fake.pr_comments == [] and comment_posts(store) == []
 
 
 @pytest.mark.no_pg
@@ -944,7 +1107,7 @@ def test_owner_a38_order_still_requires_the_quality_gate(
     assert calls == []
 
 
-def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
+def test_incomplete_review_blocker_of_an_order_stays_in_the_agent_system(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = prepare(tmp_path, monkeypatch)
@@ -1032,15 +1195,11 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
     assert c["phase"] == "blocked"
     assert c["resume_phase"] == "pr_gates_grok"
     assert c["blocker_publish_kind"] == "provider-incomplete"
-    qid = c["question_activity_id"]
-    row = store.row("activity", qid)
-    assert row["payload"]["number"] == 42
-    assert row["payload"]["target"] == "pr"
-    assert row["execution_status"] == "done"
-    assert c["blocker_activity_id"] == qid
-    assert len(fake.pr_comments) == 1
-    assert fake.comments == []
-    assert "blocker published on example/project#42" in lines
+    assert "question_activity_id" not in c
+    assert "blocker_activity_id" not in c
+    assert fake.pr_comments == [] and fake.comments == []
+    assert comment_posts(store) == []
+    assert not any("blocker published" in line for line in lines)
     reviewers = [
         row
         for row in store.rows("agent")
@@ -2672,7 +2831,7 @@ def test_local_reply_resumes_like_a_comment_reply(
     store.close()
 
 
-def test_local_reply_waits_for_the_blocker_publication(
+def test_local_reply_needs_no_blocker_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake, lane = prepare_orders(tmp_path, monkeypatch)
@@ -2693,13 +2852,10 @@ def test_local_reply_waits_for_the_blocker_publication(
         store, worker, OID, "reply", body="try again", answers=event_id
     )
     coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
-    assert store.row("activity", intent_id)["execution_status"] == "pending"
-    assert checkpoint(store, OID)["phase"] == "blocked"
-    assert checkpoint(store, OID)["blocker_activity_id"]
-    assert len(fake.pr_comments) == 1
-    coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
     assert checkpoint(store, OID)["phase"] == "pr_gates_grok"
     assert store.row("activity", intent_id)["execution_status"] == "done"
+    assert "blocker_activity_id" not in checkpoint(store, OID)
+    assert fake.pr_comments == []
     assert fake.launched == []
     store.close()
 
