@@ -41,3 +41,7 @@ The rule [Complete test coverage is mandatory](CONTRIBUTING.md#complete-test-cov
 - A function the pull request adds or changes is not fully covered, line and branch, by the tests of the same pull request.
 - The pull request lowers `fail_under` in `pyproject.toml`, or the floor value of its measured total (the total minus 0.1, rounded down to one decimal) is above `fail_under` and `fail_under` is not raised to it.
 - A test offered as coverage replaces the function it claims to cover, or calls an external service instead of a mock.
+
+## Dashboard screenshots
+
+A pull request that changes what a dashboard page shows — `src/agent_cli/static/*.html`, or the data the dashboard routes return to it — and does not commit the affected baselines under `e2e/screenshots/baseline/` is a defect, as is a new page or visual variant without its test and baseline ([Visual regression tests (Playwright)](CONTRIBUTING.md#visual-regression-tests-playwright)). A baseline that changed without a change to the page or its data is a defect too. The screenshots are a review aid, not a gate: a baseline that does not match a page the pull request did not touch is not a defect.
