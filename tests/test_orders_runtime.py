@@ -472,6 +472,88 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Add a widget" not in replaced
 
 
+_GERMAN_SENTENCE = (
+    "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
+    "statt dies als Authentifizierungsfehler zu melden."
+)
+_ENGLISH_TITLE_IN_DE = (
+    "EN:\nDraft for order 11111111: Add a widget.\n\n"
+    "DE:\nEntwurf für Auftrag 11111111: Wait for the GitHub rate limit reset "
+    "instead of reporting an authentication failure.\n\n"
+)
+
+
+def test_refresh_replaces_a_published_order_description_without_a_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    fake.pr["body"] = _ENGLISH_TITLE_IN_DE
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "replaced draft description on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert "Wait for the GitHub" not in published.split("DE:\n", 1)[1]
+    assert "Add a widget" not in published.split("DE:\n", 1)[1]
+    edits = len(fake.pr_edits)
+    assert refresh_draft_body(store, worker, task, fake) == []
+    assert len(fake.pr_edits) == edits
+    assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
+
+
+class _StalePrBody(FakeGh):
+    """A pull-request edit that reports success and leaves the published body."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.edit_calls = 0
+
+    def __call__(self, argv: list[str]) -> Completed:
+        command = list(argv)
+        if command and command[0] == "env" and "gh" in command:
+            command = command[command.index("gh") :]
+        if command[:3] == ["gh", "pr", "edit"]:
+            self.edit_calls += 1
+            return Completed(0, self.pr["url"], "")
+        return super().__call__(argv)
+
+
+def test_refresh_rejects_a_published_description_that_stays_english(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
+    stale = _StalePrBody()
+    patch_account_runners(monkeypatch, stale)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    stale.pr["body"] = _ENGLISH_TITLE_IN_DE
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    save_task(store, task)
+    for _ in range(2):
+        with pytest.raises(
+            CoordinatorError,
+            match="published description DE line is not the stored German sentence",
+        ) as raised:
+            refresh_draft_body(store, worker, task, stale)
+        assert "Wait for the GitHub" not in str(raised.value)
+        assert _GERMAN_SENTENCE not in str(raised.value)
+    assert stale.edit_calls == 2
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ):
+        refresh_draft_body(store, worker, task, stale)
+    assert stale.edit_calls == 2
+    assert stale.pr["body"] == _ENGLISH_TITLE_IN_DE
+
+
 def test_review_context_uses_the_order_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -587,6 +669,7 @@ def test_order_implement_prompt_and_commit_message(
         return None
 
     monkeypatch.setattr("agent_cli.coordinator_runtime.stage_sign_commit_if_changes", sign)
+    fake.pr["body"] = _ENGLISH_TITLE_IN_DE
     phase_implement(
         store,
         worker,
@@ -597,6 +680,13 @@ def test_order_implement_prompt_and_commit_message(
         ),
     )
     assert messages == ["Implement the order."]
+    saved = store.row("task", OID)
+    assert saved["change_summary_de"] == "Widget-Initialisierung korrigiert."
+    published = fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert published == (
+        "Entwurf für Auftrag 11111111: Widget-Initialisierung korrigiert."
+    )
+    assert "Add a widget" not in fake.pr["body"].split("DE:\n", 1)[1]
     prompt = control_dir(worker, OID) / "implementer-grok.md"
     body = prompt.read_text(encoding="utf-8")
     assert f"Source order: {OID}" in body

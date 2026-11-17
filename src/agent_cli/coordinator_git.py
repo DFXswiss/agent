@@ -656,22 +656,118 @@ def draft_pr_body(
     )
 
 
+def _description_de_line(body: str) -> str | None:
+    if "DE:\n" not in body:
+        return None
+    return body.split("DE:\n", 1)[1].split("\n", 1)[0]
+
+
+def _order_de_has_sentence(source: dict[str, Any], body: str) -> bool:
+    if source.get("kind") != ORDER_KIND:
+        return False
+    short = str(source.get("order_id") or "")[:8]
+    line = _description_de_line(body)
+    return line is not None and line != f"Entwurf für Auftrag {short}."
+
+
+def _stored_de_summary(task: dict[str, Any], *, has_lists: bool) -> str | None:
+    raw = task.get("change_summary_de")
+    if not isinstance(raw, str) or not raw.strip() or "\n" in raw:
+        if has_lists and raw is not None:
+            from .coordinator_a38 import _summary
+
+            return _summary(task, "de")
+        return None
+    from .coordinator_a38 import _summary
+
+    return _summary(task, "de")
+
+
+def _published_de_error() -> CoordinatorError:
+    return CoordinatorError(
+        "published description DE line is not the stored German sentence"
+    )
+
+
+def _published_pr_body(
+    store: Store,
+    worker: WorkerConfig,
+    runner: Runner,
+    target: str,
+    number: int,
+) -> str | None:
+    """Read the published pull request body."""
+    viewed = gh_json(
+        scoped(store, worker.session_id, runner),
+        ["gh", "pr", "view", str(number), "--repo", target, "--json", "body"],
+    )
+    if not isinstance(viewed, dict):
+        raise _published_de_error()
+    if "body" not in viewed or viewed.get("body") is None:
+        return None
+    raw = viewed.get("body")
+    if not isinstance(raw, str):
+        raise _published_de_error()
+    return raw
+
+
+def _published_description_matches(live: str | None, wanted: str) -> bool:
+    if live is None:
+        return False
+    wanted_de = _description_de_line(wanted)
+    if wanted_de is None or _description_de_line(live) != wanted_de:
+        return False
+    if "\nReused:\n" in wanted and "\nReused:\n" not in live:
+        return False
+    return True
+
+
+def _done_pr_body_posts(
+    store: Store, *, body: str, number: int, target: str
+) -> int:
+    count = 0
+    for row in store.rows("activity"):
+        if row.get("type") != "pr.body" or row.get("execution_status") != "done":
+            continue
+        payload = row.get("payload")
+        if (
+            isinstance(payload, dict)
+            and payload.get("body") == body
+            and payload.get("number") == number
+            and payload.get("repo") == target
+        ):
+            count += 1
+    return count
+
+
 def refresh_draft_body(
     store: Store,
     worker: WorkerConfig,
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Post the implementer's reused and added list. The script calls GitHub, not the model.
+    """Replace a draft description from the stored German sentence. The script calls GitHub.
 
-    An order with a German change summary puts that sentence in the DE block.
+    An order whose stored sentence is German text, and not the English title,
+    replaces an already published description with that sentence even when the
+    reused and added list is absent. The published description is read back;
+    its DE line has to be that sentence.
     """
     c = coord(task)
     reused = task.get("reused_lines")
     added = task.get("added_lines")
-    if not isinstance(reused, list) or not isinstance(added, list) or not reused or not added:
-        return []
+    has_lists = (
+        isinstance(reused, list)
+        and isinstance(added, list)
+        and bool(reused)
+        and bool(added)
+    )
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    summary_de = _stored_de_summary(task, has_lists=has_lists)
+    if summary_de is None and not has_lists:
+        return []
+    if not has_lists and source.get("kind") != ORDER_KIND:
+        return []
     if not isinstance(source.get("repo"), str) or (
         source.get("number") is None and source.get("kind") != ORDER_KIND
     ):
@@ -679,19 +775,32 @@ def refresh_draft_body(
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
     if number is None or target == "":
-        raise CoordinatorError("reused and added list has no draft to update")
-    summary_de = None
-    if task.get("change_summary_de") is not None:
-        from .coordinator_a38 import _summary
-
-        summary_de = _summary(task, "de")
+        if has_lists:
+            raise CoordinatorError("reused and added list has no draft to update")
+        return []
     body = draft_pr_body(
         source,
-        [str(line) for line in reused],
-        [str(line) for line in added],
+        [str(line) for line in reused] if has_lists else None,
+        [str(line) for line in added] if has_lists else None,
         summary_de,
     )
-    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
+    if not has_lists and not _order_de_has_sentence(source, body):
+        return []
+    posted = f"posted reused and added list on {target}#{number}"
+    replaced = f"replaced draft description on {target}#{number}"
+    live = _published_pr_body(store, worker, runner, target, number)
+    if _published_description_matches(live, body):
+        return [posted] if has_lists else []
+    # A done pr.body row with this body is not run again. A live description
+    # that still differs needs a new id, and two finished posts that did not
+    # stick stop further edits.
+    done_posts = _done_pr_body_posts(store, body=body, number=number, target=target)
+    if done_posts >= 2:
+        raise _published_de_error()
+    key = f"coordinator-pr-body:{task['id']}:{body}"
+    if done_posts:
+        key = f"{key}:{done_posts}"
+    activity_id = str(uuid5(NAMESPACE_URL, key))
     queue_activity(
         store,
         activity_id=activity_id,
@@ -703,7 +812,10 @@ def refresh_draft_body(
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
         raise CoordinatorError("pr.body did not update the draft")
-    return [f"posted reused and added list on {target}#{number}"]
+    published = _published_pr_body(store, worker, runner, target, number)
+    if not _published_description_matches(published, body):
+        raise _published_de_error()
+    return [posted] if has_lists else [replaced]
 
 
 def ensure_draft(
@@ -748,7 +860,13 @@ def ensure_draft(
         c['published_head'] = sha
         c.pop('pending_published_head', None)
         save_task(store, task)
-        return [f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}"]
+        replaced = (
+            refresh_draft_body(store, worker, task, runner) if is_order(task) else []
+        )
+        return [
+            f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}",
+            *replaced,
+        ]
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)

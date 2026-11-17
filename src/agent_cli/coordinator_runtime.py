@@ -1802,8 +1802,9 @@ def _apply_implementer_outcome(
     if listed is not None:
         committed_task["reused_lines"] = listed[0]
         committed_task["added_lines"] = listed[1]
-    if rules_bound:
+    if rules_bound or is_order(committed_task):
         refresh_draft_body(store, worker, committed_task, runner)
+    if rules_bound:
         committed_c.pop("surface_list_held", None)
     committed_tr["implementer_verdict"] = "done"
     committed_task["state"] = "reviewing"
