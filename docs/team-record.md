@@ -216,8 +216,9 @@ attributed to it.
 
 ## 5. Everyone authenticates, every time
 
-- **There is no anonymous access.** The website, the API, sync, pairing, the health check and
-  release queries all need a valid signature from a registered key, or a signed-in passkey
+- **There is no anonymous access, with one exception:** opening an invite link, which is
+  authenticated by the single-use value in the link and can only hand in one public key. The
+  website, the API, sync, pairing, the health check and release queries all need a valid signature from a registered key, or a signed-in passkey
   session. Without one you get nothing, not even a count or a status.
 - **The hub checks every request itself.** No outside service is asked at sign-in or on a
   write.
@@ -320,7 +321,7 @@ Every question about history can be answered from the chain alone:
 | What exactly? | `changes`: each field with old and new value |
 | When? | `signed_at` (writer) and `received_at` (hub) |
 | Is it genuine? | The signature, checked against the registered public key |
-| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them |
+| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them; the newest events of a key can be held back unnoticed only until a later event of that key or the next published fingerprint covers them |
 
 Unlike an ordinary audit log, nobody has to trust that the log was kept honestly. Anyone with
 the public keys can check it.
@@ -348,7 +349,8 @@ of one pull request.
 2. **Claim it:** write an event that sets you as assignee and the status to `in progress`.
    Everyone sees immediately that you are on it.
 3. **Fix it** in the affected repository, through the normal pull-request process.
-4. **Link the pull request** to the issue. When it is merged, the issue is set to `merged`
+4. **Link the pull request** to the issue. When every linked pull request is merged or
+   closed and at least one is merged into the default branch, the issue is set to `merged`
    automatically.
 5. **Confirm it:** once the change is rolled out to production and you have checked it there,
    confirm that. The issue is then `done`, with the pull request as its fix reference
@@ -364,7 +366,7 @@ If two people try to claim the same issue at the same moment, the second claim i
 - The record is stored in **PostgreSQL**. The hub connects with a database role that may only
   add and read events, never change or delete them, so the no-delete rule holds even if the
   hub's code had a bug. The agent-session data keeps its own, separate database.
-- There are three copies, one of them off-site. A restore is tested regularly, and a restored
+- There are three copies, one of them off-site. A restore is tested, and a restored
   record is checked completely (every signature, every `prev_hash` and the running
   fingerprint) before the hub serves it.
 - At a fixed interval the hub publishes its current running fingerprint, signed with its own

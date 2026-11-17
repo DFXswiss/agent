@@ -113,14 +113,15 @@ sequenceDiagram
     X->>H: Result and pull request
 ```
 
-- Orders on one executor run one after another.
+- Orders on one executor are queued per worker, as local orders are today.
 - When several answers arrive, the executor accepts the first valid one and refuses the rest.
 - If the hub is unreachable, the executor keeps working on what it accepted and keeps
   recording. Everything is synced afterwards without a gap.
 - Handing over is the normal way and stays voluntary. A session on your controller may do the
   work itself.
-- Logging in to an executor directly stays possible as an override. It is recorded like
-  everything else (section 8).
+- Logging in to an executor directly stays possible as an override. A login to the account
+  that runs sessions is recorded like everything else; for an administrator login see
+  section 8.
 
 ## 6. Why a device believes a command
 
@@ -168,13 +169,16 @@ repositories, until when. Their device checks it and writes it into its allow li
 device to stop obeying it. On the hub's word a device may obey less, never more.
 
 **What this protects against.** Someone who takes over the hub can delay, drop or read
-commands. They cannot create a command signed by a device key, and they cannot change whom a
-device obeys.
+commands. They cannot create a command signed by a device key, and they cannot make a device
+obey anyone new. With false notices that a key was revoked they can make a device obey less,
+until you confirm the keys again.
 
 **What stays a risk.** The website's code is delivered by the hub. A hub that was taken over
 could show you one command and sign another while you sign in or are signed in, in your name.
-A certificate obtained that way works for at most one working day, and it never reaches an
-allow list. After a break-in into the hub, every passkey used during it is revoked. The session key's
+A certificate obtained that way can be used for at most one working day, at a time the
+attacker chooses, until your passkey is revoked; it never reaches an allow list. A passkey
+created through an invite during a break-in can be the attacker's. After a break-in into the
+hub, every passkey used or created during it is revoked. The session key's
 short life and a published hash of the website reduce the risk. They do not remove it. A command
 can always be issued from a controller device instead, whose program does not come from the
 hub.
@@ -225,7 +229,8 @@ there.
 - **Your controller may work outside.** You may start an AI session on your controller that
   does not use this system. It is then not recorded and not visible.
 - A session log can contain a password or a name that appeared on the screen by mistake. Such
-  a value may be **masked** afterwards, also inside typed text. Who masked what, when and why
+  a value may be **masked** afterwards, also inside typed text, by the owner of the device
+  that recorded it, confirmed on one of their controller devices. Who masked what, when and why
   is recorded. Who sent a command, an answer or a decision, to which target and when, and what
   was decided, can never be masked.
 
@@ -276,7 +281,7 @@ recorded under that key.
 The website can be installed on a phone as an app. It notifies you when a session has a
 question or an order ends, and you answer with a tap.
 
-Notifications use standard Web Push. The phone maker's push service transports them; they are
+Notifications use standard Web Push. The browser vendor's push service transports them; they are
 encrypted for your browser, so the push service cannot read them. When you answer on one
 device, the notification disappears on your others, where the phone allows it. Notifications
 keep arriving after your sign-in has expired; to answer, you sign in.
@@ -310,7 +315,7 @@ Each step is its own pull request and follows the steps of the
 | Step | What | Status |
 |---|---|---|
 | 1 | Device keys with levels and inventory; the allow list on the device | not started |
-| 2 | Sign-in session key; grants | not started |
+| 2 | Checking the session key's certificate on the device; grants | not started |
 | 3 | Tasks, log entries, repository registry, one-time import | not started |
 | 4 | Orders and questions through the hub | not started |
 | 5 | Session log, recording of direct logins, masking, full session view | not started |
@@ -347,7 +352,9 @@ No. It is the normal way, and it stays your choice.
 Only if you signed a grant for exactly that. Everyone can watch.
 
 **Can I still log in to my executor directly?**
-Yes. It is recorded like everything else on an executor.
+Yes. A login to the account that runs sessions is recorded like everything else on an
+executor. A local administrator login is not recorded as a session, but every change it makes
+to the allow list, the device key or the recording software leaves a signed entry (section 8).
 
 **Is everything I do on my laptop recorded?**
 Only sessions that use this system. A session you start outside it on your controller is
@@ -362,10 +369,11 @@ Executors keep working on what they accepted and keep recording. You can still s
 the device itself. Everything syncs afterwards.
 
 **What if someone breaks into the hub?**
-They can read, delay and drop, hold back the notice that a key was revoked, and create broker
-keys up to the limit of the central account. They cannot sign as a device and cannot change
-whom a device obeys. While you sign in or are signed in, a changed website could get a
-command signed in your name (section 6, What stays a risk).
+They can read, delay and drop, hold back or fake the notice that a key was revoked, and create
+broker keys up to the limit of the central account. They cannot sign as a device and cannot
+make a device obey anyone new. While you sign in or are signed in, a changed website could get
+a session key certified in your name, usable for one working day at a time the attacker
+chooses until your passkey is revoked (section 6, What stays a risk).
 
 **Where did the issues and the lists go?**
 They were imported once. The old place points to the hub and is no longer edited.
