@@ -54,6 +54,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     assess_pull,
     check_workflows_against_policy,
     event_should_ignore,
+    fetch_merge_base,
     fetch_pull,
     find_tool_attribution,
     list_workflow_paths,
@@ -76,6 +77,8 @@ BASE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BASE2 = "cccccccccccccccccccccccccccccccccccccccc"
 # Immutable tip of the trusted default branch used to locate pr-guard.json.
 DEFAULT_TIP = "dddddddddddddddddddddddddddddddddddddddd"
+# Merge-base commit for the stale-branch approval tests.
+MERGE_BASE = "ffffffffffffffffffffffffffffffffffffffff"
 REPO = "example/public-app"
 AUTHOR_ID = 1001
 BOT_ID = GITHUB_ACTIONS_BOT_ID
@@ -268,6 +271,8 @@ class FakeAPI:
         self._comment_seq = 10
         self._status_seq = 50
         self.mutate_head_on_publish: str | None = None
+        # Merge-base sha returned by the compare route; None keeps a 404.
+        self.merge_base: str | None = None
         self.open_pulls: list[int] = [1]
         self.commit_pulls: list = []
         self.head_pulls: list = []
@@ -381,6 +386,13 @@ class FakeAPI:
             if record is not None:
                 return 200, record, {}
 
+        if (
+            method_u == "GET"
+            and path_only == f"/repos/{REPO}/compare/{BASE}...{HEAD}"
+        ):
+            if self.merge_base is not None:
+                return 200, {"merge_base_commit": {"sha": self.merge_base}}, {}
+            return 404, {"message": "Not Found"}, {}
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1":
             return 200, self.pull, {}
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/commits":
@@ -4134,6 +4146,240 @@ def _git_blob_sha(raw: bytes) -> str:
     return hashlib.sha1(
         b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
     ).hexdigest()
+
+
+class A38MergeBaseApprovalTests(unittest.TestCase):
+    def test_stale_branch_base_only_workflow_change_needs_no_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/test.yml"
+        wf = _workflow_yaml(["pytest"])
+        fake.files[(HEAD, path)] = wf
+        fake.files[(MERGE_BASE, path)] = wf
+        fake.files[(BASE, path)] = wf + b"\n# base change\n"
+        fake.tree_paths[MERGE_BASE] = [path]
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(
+            any("bytes changed" in reason for reason in result.reasons),
+            msg=result.reasons,
+        )
+        self.assertIsNone(a38_guard.build_approval_comment(result))
+
+    def test_pull_request_workflow_change_on_stale_branch_needs_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/test.yml"
+        wf = _workflow_yaml(["pytest"])
+        fake.files[(MERGE_BASE, path)] = wf
+        fake.files[(BASE, path)] = wf
+        fake.files[(HEAD, path)] = wf + b"\n# pull request change\n"
+        fake.tree_paths[MERGE_BASE] = [path]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"{path} bytes changed vs base" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_both_sides_changing_the_workflow_needs_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/test.yml"
+        wf = _workflow_yaml(["pytest"])
+        fake.files[(MERGE_BASE, path)] = wf
+        fake.files[(BASE, path)] = wf + b"\n# base change\n"
+        fake.files[(HEAD, path)] = wf + b"\n# pull request change\n"
+        fake.tree_paths[MERGE_BASE] = [path]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"{path} bytes changed vs base" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_workflow_added_by_pull_request_needs_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/extra.yml"
+        fake.files[(HEAD, path)] = _workflow_yaml(["pytest"])
+        fake.tree_paths[HEAD] = list(fake.tree_paths[HEAD]) + [path]
+        fake.tree_paths[MERGE_BASE] = []
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"{path} bytes changed vs base" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_workflow_deleted_by_pull_request_needs_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/test.yml"
+        fake.files[(MERGE_BASE, path)] = _workflow_yaml(["pytest"])
+        fake.tree_paths[MERGE_BASE] = [path]
+        fake.tree_paths[HEAD] = [
+            item for item in fake.tree_paths[HEAD] if item != path
+        ]
+        fake.files.pop((HEAD, path), None)
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"{path} bytes changed vs base" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_unknown_merge_base_keeps_strict_base_comparison(self) -> None:
+        fake = FakeAPI()
+        # No compare route answer: fetch_merge_base returns None.
+        path = ".github/workflows/test.yml"
+        wf = _workflow_yaml(["pytest"])
+        fake.files[(HEAD, path)] = wf
+        fake.files[(BASE, path)] = wf + b"\n# base change\n"
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"{path} bytes changed vs base" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_pr_guard_config_changed_only_on_base_needs_no_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/pr-guard.json"
+        head_config = json.dumps(_pr_guard_config()).encode()
+        base_config = json.dumps(_pr_guard_config(default="exclude")).encode()
+        fake.files[(HEAD, path)] = head_config
+        fake.files[(MERGE_BASE, path)] = head_config
+        fake.files[(BASE, path)] = base_config
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(
+            any("pr-guard.json bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_pr_guard_config_changed_by_pull_request_needs_approval(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/pr-guard.json"
+        base_config = json.dumps(_pr_guard_config()).encode()
+        head_config = json.dumps(
+            _pr_guard_config(enforce=["integration"])
+        ).encode()
+        fake.files[(HEAD, path)] = head_config
+        fake.files[(MERGE_BASE, path)] = base_config
+        fake.files[(BASE, path)] = base_config
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any("pr-guard.json bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_fetch_merge_base_returns_sha(self) -> None:
+        urls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return 200, {"merge_base_commit": {"sha": MERGE_BASE}}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        self.assertEqual(fetch_merge_base(api, REPO, BASE, HEAD), MERGE_BASE)
+        self.assertEqual(len(urls), 1)
+        self.assertIn(f"/compare/{BASE}...{HEAD}", urls[0])
+
+    def test_fetch_merge_base_returns_none_for_404_and_422(self) -> None:
+        for status in (404, 422):
+            with self.subTest(status=status):
+                def request_fn(
+                    method: str,
+                    url: str,
+                    body: bytes | None = None,
+                    *,
+                    _status: int = status,
+                ) -> tuple[int, Any, dict[str, str]]:
+                    return _status, {"message": "unavailable"}, {}
+
+                api = GitHubApi(
+                    "t", request_fn=request_fn, sleep_fn=lambda _s: None
+                )
+                self.assertIsNone(fetch_merge_base(api, REPO, BASE, HEAD))
+
+    def test_fetch_merge_base_raises_on_other_status(self) -> None:
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            return 500, {"message": "boom"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(GuardError):
+            fetch_merge_base(api, REPO, BASE, HEAD)
+
+    def test_fetch_merge_base_raises_on_malformed_sha(self) -> None:
+        for payload in (
+            {},
+            {"merge_base_commit": {}},
+            {"merge_base_commit": {"sha": "not-a-sha"}},
+        ):
+            with self.subTest(payload=payload):
+                def request_fn(
+                    method: str,
+                    url: str,
+                    body: bytes | None = None,
+                    *,
+                    _payload: Any = payload,
+                ) -> tuple[int, Any, dict[str, str]]:
+                    return 200, _payload, {}
+
+                api = GitHubApi(
+                    "t", request_fn=request_fn, sleep_fn=lambda _s: None
+                )
+                with self.assertRaises(GuardError):
+                    fetch_merge_base(api, REPO, BASE, HEAD)
+
+    def test_fetch_merge_base_equal_shas_skips_the_request(self) -> None:
+        urls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return 404, {"message": "Not Found"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        self.assertEqual(fetch_merge_base(api, REPO, BASE, BASE), BASE)
+        self.assertEqual(urls, [])
+
+    def test_merge_base_tree_is_not_read_when_no_workflow_differs(self) -> None:
+        fake = FakeAPI()
+        fake.merge_base = MERGE_BASE
+        path = ".github/workflows/test.yml"
+        fake.files[(MERGE_BASE, path)] = _workflow_yaml(["pytest"])
+        fake.tree_paths[MERGE_BASE] = [path]
+        fake.files[(HEAD, ".github/pr-guard.json")] = json.dumps(
+            _pr_guard_config()
+        ).encode()
+        fake.files[(MERGE_BASE, ".github/pr-guard.json")] = json.dumps(
+            _pr_guard_config()
+        ).encode()
+        fake.files[(BASE, ".github/pr-guard.json")] = json.dumps(
+            _pr_guard_config(default="exclude")
+        ).encode()
+        urls: list[str] = []
+        orig = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return orig(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any(f"/compare/{BASE}...{HEAD}" in url for url in urls),
+            msg=urls,
+        )
+        self.assertFalse(
+            any(f"/git/trees/{MERGE_BASE}" in url for url in urls),
+            msg=urls,
+        )
 
 
 class A38WorkflowInventoryTests(unittest.TestCase):
