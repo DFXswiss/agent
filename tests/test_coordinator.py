@@ -21879,6 +21879,129 @@ def test_run_prepared_pr_reviewer_without_capture_paths_uses_plain_run_bounded(
     assert profiles and not profiles[0].exists()
 
 
+def _assert_delegated_lane_argv(
+    argv: list[str],
+    prepared: dict[str, Any],
+    *,
+    profile_dir: str,
+) -> None:
+    """Assert the operator prefix, workdir, reads and write-backs of one lane."""
+    assert argv[0] == "/opt/operator/run-lane"
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(prepared["worktree"])
+    reads = _delegate_flag_values(argv, "--read")
+    assert reads == [
+        str(prepared["worktree"]),
+        *prepared["read_dirs"],
+        str(prepared["spec_file"]),
+        str(prepared["config_dir"]),
+        profile_dir,
+    ]
+    assert _delegate_flag_values(argv, "--write-back") == [
+        str(prepared["output_file"])
+    ]
+
+
+def test_run_prepared_delegate_pr_reviewer_survives_through_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delegate mode keeps the durable capture files of a surviving reviewer."""
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e3"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/opt/operator/run-lane"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    seen: list[list[str]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert kwargs["survive_stop"] is True
+        seen.append(list(argv))
+        profiles.append(Path(prepared["profile_dir"]))
+        assert profiles[-1].is_dir()
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    _assert_delegated_lane_argv(
+        seen[0], prepared, profile_dir=str(prepared["profile_dir"])
+    )
+    assert profiles and not profiles[0].exists()
+
+
+def test_run_prepared_delegate_reviewer_without_capture_paths_uses_plain_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The non-surviving delegate branch hands a temporary profile to the operator."""
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e4"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/opt/operator/run-lane"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-logic",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    for key in ("stdout_path", "stderr_path", "status_path", "pid_path", "profile_dir"):
+        prepared.pop(key)
+    seen: list[list[str]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert "survive_stop" not in kwargs
+        seen.append(list(argv))
+        reads = _delegate_flag_values(argv, "--read")
+        profiles.append(
+            next(
+                Path(value)
+                for value in reads
+                if Path(value).name.startswith("agent-lane-empty-gh-")
+            )
+        )
+        assert profiles[-1].is_dir()
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    _assert_delegated_lane_argv(
+        seen[0], prepared, profile_dir=str(profiles[0])
+    )
+    assert profiles and not profiles[0].exists()
+
+
 def test_run_prepared_non_store_system_exit_leaves_the_lane_running(
     tmp_path: Path,
 ) -> None:
