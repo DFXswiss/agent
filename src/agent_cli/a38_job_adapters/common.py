@@ -993,7 +993,7 @@ class JobRuntime:
         self.env["PATH"] = entry + os.pathsep + current
 
     def _agent_node_major_bin(self, major: int) -> Path:
-        from .main import home
+        from ..main import home
 
         return home() / "a38-node" / str(major) / "bin"
 
