@@ -981,6 +981,14 @@ Order states are derived, not stored: `queued`, `running`, `waiting`, `ready`,
 others. Order state `merged` is derived from task state `done`. It is not the
 spine task state `merged` of §19.5. Only `agent task close-from-pr` writes that
 spine state, and that command refuses coordinator tasks.
+An order shows `running` only while a lane or check job of that order is
+running, or while the next step of its current phase is runnable because none
+of that step's checks is recorded as `nein`. It shows `waiting` when that next
+step is held by a check recorded as `nein`, including while the stored phase
+is still the resumed phase and the question has not been raised again.
+`agent order list`, `agent order show`, and the dashboard then name that
+check, for example `waiting implement (round_budget)`. Phases `ask` and
+`blocked` also show `waiting`.
 
 The script writes one `order.event` at `accepted`, `draft-opened`, `question`,
 `blocked`, `resumed`, `ready`, `merged`, `done`, `failed`, and `cancelled`. Its

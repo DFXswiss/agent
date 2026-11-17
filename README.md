@@ -216,6 +216,14 @@ A worker with `"orders": true` also accepts orders submitted on the device with
 `agent order submit` or in the dashboard. A front end learns about questions
 and results through `agent order wait` or `agent order events`; the coordinator
 does not depend on any front end.
+An order shows `running` only while a lane or check job of that order is
+running, or while the next step of its current phase is runnable because none
+of that step's checks is recorded as `nein`. It shows `waiting` when that next
+step is held by a check recorded as `nein`, including while the stored phase
+is still the resumed phase and the question has not been raised again.
+`agent order list`, `agent order show`, and the dashboard then name that
+check, for example `waiting implement (round_budget)`. Phases `ask` and
+`blocked` also show `waiting`.
 Idle workers on one device share GitHub requests for one login. Assigned-issue
 discovery runs once per repository per `poll_seconds`. When the stored listing
 is one page and shorter than `per_page`, the next request sends that page's

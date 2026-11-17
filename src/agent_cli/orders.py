@@ -90,6 +90,15 @@ def _render_submit(result: dict[str, Any]) -> list[str]:
     return [f"order {result['order_id']}"]
 
 
+def _phase_text(item: dict[str, Any]) -> str:
+    """Phase, with the holding check in parentheses while the order is waiting."""
+    phase = str(item["phase"])
+    hold = item["holding_check"]
+    if not isinstance(hold, str) or hold == "":
+        return phase
+    return f"{phase} ({hold})"
+
+
 def _render_list(result: dict[str, Any]) -> list[str]:
     if not result["orders"]:
         return ["order list none"]
@@ -98,7 +107,7 @@ def _render_list(result: dict[str, Any]) -> list[str]:
             (
                 str(item["order_id"]),
                 str(item["state"]),
-                str(item["phase"]),
+                _phase_text(item),
                 f"r{item['round']}",
                 str(item["repo"]),
                 str(item["pr_url"] or "-"),
@@ -112,7 +121,7 @@ def _render_list(result: dict[str, Any]) -> list[str]:
 def _render_show(result: dict[str, Any]) -> list[str]:
     lines = [
         f"order {result['order_id']}",
-        f"state {result['state']} phase {result['phase']} round {result['round']}",
+        f"state {result['state']} phase {_phase_text(result)} round {result['round']}",
         f"repo {result['repo']} base {result['base'] or '-'}",
         f"pr {result['pr_url'] or '-'}",
         f"head {result['head'] or '-'}",

@@ -363,7 +363,7 @@ def _a38_report(store: Store, c: dict[str, Any], head: str) -> dict[str, Any] | 
 def build_order_report(store: Store, task: dict[str, Any]) -> dict[str, Any]:
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
-    summary = order_summary(task)
+    summary = order_summary(store, task)
     head = str(c.get("head_sha") or "")
     pin = round_limit_view(c) or {}
     runs = review_runs(store, task)

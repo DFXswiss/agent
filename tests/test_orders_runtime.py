@@ -73,6 +73,8 @@ from agent_cli.coordinator_runtime import (
     phase_implement,
     refresh_execution_binding,
 )
+from agent_cli.order_ops import op_list, op_show, order_summary
+from agent_cli.orders import _render_list, _render_show
 from agent_cli.preconditions import CHECKS
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
@@ -1206,7 +1208,7 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
     ],
 )
 def test_order_state(task: dict, expected: str) -> None:
-    assert order_state(task) == expected
+    assert order_state(task, None) == expected
 
 
 @pytest.mark.no_pg
@@ -1328,7 +1330,7 @@ def test_create_order_task_writes_one_queued_row(
     assert source["body_sha256"] == hashlib.sha256(text_path.read_bytes()).hexdigest()
     assert store.rows("checklist_item") == []
     assert store.rows("activity") == []
-    assert order_state(task) == "queued"
+    assert order_state(task, None) == "queued"
     store.close()
 
 
@@ -1545,7 +1547,7 @@ def test_unreadable_repository_blocks_the_order_with_the_reason(
     assert c["phase"] == "blocked"
     assert c["resume_phase"] == "accept"
     assert "unhandled" in c["blocker"]
-    assert order_state(store.row("task", order["id"])) == "waiting"
+    assert order_state(store.row("task", order["id"]), None) == "waiting"
     events = [
         row["payload"]
         for row in own_order_events(store)
@@ -1779,7 +1781,7 @@ def test_queued_order_is_promoted_and_accepted(
             "checklist_item", registry_row_id(order["id"], key)
         )["status"] == "ja"
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
-    assert order_state(saved) == "running"
+    assert order_state(saved, None) == "running"
     store.close()
 
 
@@ -1939,6 +1941,262 @@ def test_order_runs_to_implement_without_issue_calls(
     )
     assert "check" not in fake.launched
     assert "implementer" not in fake.launched
+    store.close()
+
+
+def test_nein_check_waits_unless_a_lane_or_check_job_is_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store, worker, OID, phase="implement", pr_number=42
+    )
+    record_check(
+        store,
+        task,
+        CHECKS["round_budget"],
+        CheckValue("nein", "round 11 exceeds the limit of 10"),
+        action="implement",
+    )
+    save_task(store, task)
+
+    def holding() -> str | None:
+        return order_summary(store, task)["holding_check"]
+
+    assert order_state(task, store) == "waiting"
+    assert holding() == "round_budget"
+    listed = _render_list(op_list(store, store.home))
+    assert "waiting  implement (round_budget)" in listed[0]
+    shown = op_show(store, store.home, order_id=OID)
+    assert shown["state"] == "waiting"
+    assert shown["phase"] == "implement"
+    assert shown["holding_check"] == "round_budget"
+    assert (
+        _render_show(shown)[1]
+        == f"state waiting phase implement (round_budget) round {shown['round']}"
+    )
+
+    coord(task)["lane_wait"] = True
+    assert order_state(task, store) == "running"
+    assert holding() is None
+    del coord(task)["lane_wait"]
+
+    coord(task)["remedies"] = {"pr_mergeable": {"state": "running"}}
+    assert order_state(task, store) == "running"
+    assert holding() is None
+    del coord(task)["remedies"]
+
+    store.write(
+        "agent",
+        "insert",
+        "agent-working",
+        {
+            "id": "agent-working",
+            "session_id": task["session_id"],
+            "task_id": task["id"],
+            "round": 11,
+            "role": "implementer",
+            "vendor": "grok",
+            "provider": "grok",
+            "model": "grok-model",
+            "prompt": "spec",
+            "head_sha": "a" * 40,
+            "dimension": None,
+            "stage": None,
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+        },
+    )
+    assert order_state(task, store) == "running"
+    assert holding() is None
+    working = store.row("agent", "agent-working")
+    working["status"] = "done"
+    store.write(
+        "agent",
+        "update",
+        "agent-working",
+        {key: value for key, value in working.items() if not key.startswith("_")},
+    )
+    assert order_state(task, store) == "waiting"
+    assert holding() == "round_budget"
+
+    coord(task)["phase"] = "ask"
+    coord(task)["resume_phase"] = "implement"
+    assert order_state(task, store) == "waiting"
+    assert order_summary(store, task)["phase"] == "ask"
+    assert holding() == "round_budget"
+    store.close()
+
+
+def test_failed_round_budget_question_shows_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailQuestionOnce(FakeGh):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed_questions = 0
+
+        def __call__(self, argv: list[str]) -> Completed:
+            if (
+                argv[:3] == ["gh", "pr", "comment"]
+                and self.failed_questions == 0
+                and "--body" in argv
+                and "Round limit reached" in argv[argv.index("--body") + 1]
+            ):
+                self.failed_questions += 1
+                return Completed(1, "", "publish failed")
+            return super().__call__(argv)
+
+    fake = FailQuestionOnce()
+    store, worker, fake, lane = prepare_orders(
+        tmp_path, monkeypatch, fake=fake
+    )
+    fake.issues = []
+    fake.model_outputs["reviewer"] = (
+        "STATUS: complete\nRESULT: rejected\nfix the widget\n"
+    )
+    order = submit_order(store, worker, max_rounds=1)
+    order_id = order["id"]
+
+    def tick_until(target: str, limit: int = 12) -> None:
+        seen: list[str] = []
+        for _ in range(limit):
+            phase = checkpoint(store, order_id)["phase"]
+            seen.append(phase)
+            if phase == target:
+                return
+            if phase == "implement":
+                fake.dirty = True
+            if phase == "publish_draft":
+                fake.commits_ahead = True
+            run_tick(store, worker, fake, lane)
+        seen.append(checkpoint(store, order_id)["phase"])
+        pytest.fail(f"phase {target} not reached; saw {seen}")
+
+    tick_until("implement")
+    assert checkpoint(store, order_id)["phase"] == "implement"
+    fake.dirty = True
+    run_tick(store, worker, fake, lane)
+    tick_until("implement")
+    assert store.row("task", order_id)["current_round"] == 2
+
+    run_tick(store, worker, fake, lane)
+    saved = store.row("task", order_id)
+    blocked = coord(saved)
+    budget = store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )
+    live = store.row(
+        "checklist_item", registry_row_id(order_id, "no_live_lane")
+    )
+    assert blocked["phase"] == "blocked"
+    assert blocked["resume_phase"] == "implement"
+    assert "not verified published" in blocked["blocker"]
+    assert budget["status"] == "nein"
+    assert "exceeds the limit" in budget["evidence"]
+    assert live["status"] == "ja"
+    question = blocked.get("round_limit_question")
+    assert isinstance(question, dict)
+    assert question.get("raised") is not True
+    assert fake.failed_questions == 1
+    assert order_state(saved, store) == "waiting"
+    assert not any(
+        row.get("task_id") == order_id and row.get("status") == "working"
+        for row in store.rows("agent")
+    )
+
+    event_id = blocked["order"]["checkpoint"]["event_id"]
+    insert_order_intent(
+        store,
+        worker,
+        order_id,
+        "reply",
+        body="A reply before the question is raised.",
+        answers=event_id,
+    )
+    resumed = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    )
+    assert any("resuming implement" in line for line in resumed)
+    saved = store.row("task", order_id)
+    resumed_checkpoint = coord(saved)
+    assert resumed_checkpoint["phase"] == "implement"
+    assert "resume_phase" not in resumed_checkpoint
+    budget = store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )
+    assert budget["status"] == "nein"
+    assert order_state(saved, store) == "waiting"
+    assert order_state(saved, store) != "running"
+    listed = op_list(store, store.home)
+    assert listed["orders"][0]["holding_check"] == "round_budget"
+    assert listed["orders"][0]["state"] == "waiting"
+    assert listed["orders"][0]["phase"] == "implement"
+    assert "waiting  implement (round_budget)" in _render_list(listed)[0]
+    shown = op_show(store, store.home, order_id=order_id)
+    assert shown["holding_check"] == "round_budget"
+    assert (
+        _render_show(shown)[1]
+        == f"state waiting phase implement (round_budget) round {shown['round']}"
+    )
+
+    run_tick(store, worker, fake, lane)
+    saved = store.row("task", order_id)
+    asked = coord(saved)
+    assert asked["phase"] == "ask"
+    assert asked["resume_phase"] == "implement"
+    assert asked["failed_check"] == "round_budget"
+    assert asked["round_limit_question"]["raised"] is True
+    budget = store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )
+    assert budget["status"] == "nein"
+    assert order_state(saved, store) == "waiting"
+    shown = op_show(store, store.home, order_id=order_id)
+    assert shown["phase"] == "ask"
+    assert shown["holding_check"] == "round_budget"
+    assert (
+        _render_show(shown)[1]
+        == f"state waiting phase ask (round_budget) round {shown['round']}"
+    )
+
+    grant_event = asked["order"]["checkpoint"]["event_id"]
+    insert_order_intent(
+        store,
+        worker,
+        order_id,
+        "reply",
+        body="Grant another round.",
+        answers=grant_event,
+    )
+    granted = coordinator_runtime.advance_one(
+        store, worker, runner=fake, lane_runner=lane
+    )
+    assert any("resuming implement" in line for line in granted)
+    saved = store.row("task", order_id)
+    assert coord(saved)["phase"] == "implement"
+    assert store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )["status"] == "nein"
+    assert order_state(saved, store) == "waiting"
+
+    fake.dirty = True
+    run_tick(store, worker, fake, lane)
+    saved = store.row("task", order_id)
+    budget = store.row(
+        "checklist_item", registry_row_id(order_id, "round_budget")
+    )
+    assert budget["status"] == "ja"
+    assert "round_limit_question" not in coord(saved)
+    assert order_state(saved, store) == "running"
+    assert order_summary(store, saved)["holding_check"] is None
+    shown = op_show(store, store.home, order_id=order_id)
+    assert shown["state"] == "running"
+    assert shown["holding_check"] is None
+    assert "(round_budget)" not in _render_show(shown)[1]
+    assert "(round_budget)" not in _render_list(op_list(store, store.home))[0]
     store.close()
 
 
@@ -2254,7 +2512,7 @@ def test_failed_acceptance_blocks_with_a_resumable_checkpoint(
     assert c["blocker"]
     assert "accepted_at" not in c
     assert "repository_config" not in c["source"]
-    assert order_state(store.row("task", order["id"])) == "waiting"
+    assert order_state(store.row("task", order["id"]), None) == "waiting"
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
     store.close()
 
@@ -2521,7 +2779,7 @@ def test_binding_blocker_is_a_blocked_event(
         binding_blocker=text,
         blocker="old text",
     )
-    assert order_state(task) == "waiting"
+    assert order_state(task, None) == "waiting"
     reconcile_order_events(store, worker, task)
     event = _events_for(store, OID)[0]["payload"]
     assert event["digest"] == f"Blocked: {text}"
@@ -3045,7 +3303,7 @@ def test_cancel_closes_the_draft_and_fails_the_order(
     assert coord(task)["phase"] == "blocked"
     assert coord(task)["failed_kind"] == "cancelled"
     assert coord(task)["blocker"] == "not needed"
-    assert order_state(task) == "cancelled"
+    assert order_state(task, None) == "cancelled"
     cancelled = [
         row
         for row in _events_for(store, OID)
@@ -3071,7 +3329,7 @@ def test_order_answers_are_consumed_after_orders_are_switched_off(
     )
     assert lines == [f"order cancelled {OID}"]
     assert store.row("activity", intent_id)["execution_status"] == "done"
-    assert order_state(store.row("task", OID)) == "cancelled"
+    assert order_state(store.row("task", OID), None) == "cancelled"
     assert fake.launched == []
     store.close()
 
@@ -3381,7 +3639,7 @@ def test_done_ends_an_open_order_without_any_command(
 ) -> None:
     store, worker, fake, _lane = prepare_orders(tmp_path, monkeypatch)
     event_id = _open_order(store, worker, state)
-    assert order_state(store.row("task", OID)) == state
+    assert order_state(store.row("task", OID), None) == state
     assert [row["payload"]["kind"] for row in _events_for(store, OID)] == events
     intent_id = insert_order_intent(
         store, worker, OID, "done", reason="Delivered by hand", answers=event_id
@@ -3394,7 +3652,7 @@ def test_done_ends_an_open_order_without_any_command(
     assert lines == [f"order done {OID}"]
     task = store.row("task", OID)
     c = coord(task)
-    assert order_state(task) == "done"
+    assert order_state(task, None) == "done"
     assert task["state"] == "failed"
     assert task["current_round"] == 0
     assert c["phase"] == "blocked"
@@ -3449,7 +3707,7 @@ def test_done_answer_of_an_ended_order_marks_it_done(
         store, worker, runner=_no_command, lane_runner=_no_lane
     ) == [f"order done {OID}"]
     task = store.row("task", OID)
-    assert order_state(task) == "done"
+    assert order_state(task, None) == "done"
     assert coord(task)["failed_kind"] == "cancelled"
     assert coord(task)["blocker"] == "not needed"
     assert coord(task)["marked_done"]["intent_id"] == intent_id

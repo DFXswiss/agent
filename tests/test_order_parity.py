@@ -784,7 +784,7 @@ def _done_effect(device, order_id: str, intent_id: str) -> dict:
         and row["payload"].get("order_id") == order_id
     ]
     return {
-        "state": order_state(task),
+        "state": order_state(task, None),
         "task_state": task["state"],
         "failed_kind": coord(task).get("failed_kind"),
         "marked": marked,
