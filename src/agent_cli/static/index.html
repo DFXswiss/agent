@@ -30,7 +30,7 @@
     #order-detail textarea { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
     a.button { display: inline-block; padding: 6px 12px; background: #efeae0; border: 1px solid #c9c0ad; color: #1a1a1a; text-decoration: none; }
     a.button:hover { background: #e6dfd0; }
-    #orders td, #order-events td, #order-detail td { overflow-wrap: anywhere; }
+    #orders td, #order-detail td { overflow-wrap: anywhere; }
     nav { display: flex; flex-wrap: wrap; gap: 14px; margin: 22px 0 8px; }
     button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
     button.copy-id.copied { color: #060; }
@@ -73,13 +73,6 @@
     <p id="od-err" class="failed" hidden></p>
   </div>
 
-  <h2>Order events</h2>
-  <div class="control-form">
-    <label><input type="checkbox" id="ev-wake" /> wake only</label>
-    <label><input type="checkbox" id="ev-unacked" /> unacknowledged</label>
-  </div>
-  <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
-
   <nav id="section-nav">
     <a href="/usage">Subscriptions</a>
     <a href="/sessions">Sessions</a>
@@ -90,6 +83,7 @@
     <a href="/gates">Review gates</a>
     <a href="/work">Open work</a>
     <a href="/pings">Pings</a>
+    <a href="/events">Order events</a>
   </nav>
 
   <p id="err" class="failed" hidden></p>
@@ -254,7 +248,7 @@
 const ORDER_VIEW = {
   "submit": {"mode":"write","method":"POST","path":"/api/orders/submit","params":[{"name":"repo","flag":"--repo","kind":"line","required":true},{"name":"title","flag":"--title","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true},{"name":"base","flag":"--base","kind":"line","required":false},{"name":"worker","flag":"--worker","kind":"line","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"skip_checks","flag":"--skip-check","kind":"skips","required":false},{"name":"max_rounds","flag":"--max-rounds","kind":"int","required":false}],"fields":["order_id","repo","state","worker","round_limit","skipped_checks"],"nested":{"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"]}},
   "list": {"mode":"read","method":"GET","path":"/api/orders/list","params":[{"name":"open_only","flag":"--open","kind":"bool","required":false}],"fields":["orders"],"nested":{"orders":["order_id","state","phase","round","repo","title","pr_url","head","updated_at"]}},
-  "show": {"mode":"read","method":"GET","path":"/api/orders/show","params":[{"name":"order_id","flag":"--id","kind":"line","required":true}],"fields":["order_id","state","phase","round","repo","base","title","pr_url","head","last_event","checkpoint","last_intent","action","checks","overridable_checks","round_limit","skipped_checks","assessment"],"nested":{"last_event":["id","seq","kind","at","acked"],"checkpoint":["event_id","seq","kind","check","acked","answers"],"last_intent":["id","kind","status","error","at"],"checks":["key","status","source","evidence"],"overridable_checks":["key","status"],"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"],"assessment":["result","reasoning","approach","limit","rounds","at"]}},
+  "show": {"mode":"read","method":"GET","path":"/api/orders/show","params":[{"name":"order_id","flag":"--id","kind":"line","required":true}],"fields":["order_id","state","phase","round","repo","base","title","pr_url","head","last_event","checkpoint","last_intent","action","checks","overridable_checks","round_limit","skipped_checks","assessment"],"nested":{"last_event":["id","seq","kind","at","acked"],"checkpoint":["event_id","seq","kind","check","acked","answers","digest","opinion"],"last_intent":["id","kind","status","error","at"],"checks":["key","status","source","evidence"],"overridable_checks":["key","status"],"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"],"assessment":["result","reasoning","approach","limit","rounds","at"]}},
   "events": {"mode":"read","method":"GET","path":"/api/orders/events","params":[{"name":"after","flag":"--after","kind":"int","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"wake_only","flag":"--wake-only","kind":"bool","required":false},{"name":"unacked","flag":"--unacked","kind":"bool","required":false}],"fields":["cursor","events"],"nested":{"events":["id","seq","order_id","kind","wake","digest","pr_url","phase","round","check","failed_kind","notify_session","at","acked","answers","opinion"]}},
   "ack": {"mode":"write","method":"POST","path":"/api/orders/ack","params":[{"name":"event_id","flag":"--event","kind":"line","required":true}],"fields":["event","acked"],"nested":{}},
   "reply": {"mode":"write","method":"POST","path":"/api/orders/reply","params":[{"name":"order_id","flag":"--id","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true}],"fields":["intent","order_id"],"nested":{}},
@@ -268,7 +262,6 @@ const ORDER_VIEW = {
 let selectedOrderId = null;
 let orderSchema = null;
 let ordersLiveNote = "";
-let ordersStickyNote = "";
 let orderLiveError = "";
 let orderStickyError = "";
 const GITHUB = "https://github.com/";
@@ -399,7 +392,10 @@ function renderOrderObject(container, obj, name) {
     } else if (keys && value !== null && typeof value === "object") {
       const rows = [];
       const subsections = [];
-      for (const key of keys) {
+      const shownKeys = field === "checkpoint"
+        ? keys.filter(key => key !== "digest" && key !== "opinion")
+        : keys;
+      for (const key of shownKeys) {
         const nestedKeys = view.nested[field + "." + key];
         if (nestedKeys && Array.isArray(value[key])) {
           subsections.push(`<h3>${esc(field + "." + key)}</h3><table>${orderTableHtml(value[key], nestedKeys)}</table>`);
@@ -417,7 +413,7 @@ function renderOrderObject(container, obj, name) {
 
 function showOrderNotes() {
   const note = document.getElementById("orders-note");
-  const noteText = ordersStickyNote || ordersLiveNote;
+  const noteText = ordersLiveNote;
   note.textContent = noteText;
   note.hidden = noteText === "";
   const error = document.getElementById("od-err");
@@ -454,23 +450,6 @@ async function ordersTick() {
     if (!failure) failure = e.message;
   }
 
-  try {
-    const page = await orderCall("events", {
-      wake_only: document.getElementById("ev-wake").checked,
-      unacked: document.getElementById("ev-unacked").checked,
-    });
-    renderOrderTable(
-      document.getElementById("order-events"),
-      page.events,
-      ORDER_VIEW.events.nested.events,
-      row => row.wake === true && row.acked === false
-        ? `<button type="button" data-event="${esc(row.id)}">Acknowledge</button>`
-        : "",
-    );
-  } catch (e) {
-    if (!failure) failure = e.message;
-  }
-
   ordersLiveNote = failure || (orderSchema && orderSchema.enabled !== true
     ? "Orders are not enabled on this device."
     : "");
@@ -482,42 +461,29 @@ async function ordersTick() {
       if (selectedOrderId === id) {
         renderOrderObject(document.getElementById("od-body"), shown, "show");
         const cp = shown.checkpoint;
-        if (cp !== null) {
-          const page = await orderCall("events", { after: cp.seq - 1 });
-          if (selectedOrderId === id) {
-            const ev = page.events.find(item => item.id === cp.event_id);
-            const digest = ev && ev.digest ? ev.digest : "";
-            const question = document.getElementById("od-question");
-            question.textContent = digest;
-            question.hidden = digest === "";
-            if (ev && ev.opinion !== null && typeof ev.opinion === "object") {
-              const rows = Object.keys(ev.opinion).map(key => orderRowsHtml(key, ev.opinion[key])).join("");
-              setHtml(document.getElementById("od-opinion"), `<table><tbody>${rows}</tbody></table>`);
-            } else {
-              setHtml(document.getElementById("od-opinion"), "");
-            }
-          }
+        const question = document.getElementById("od-question");
+        const digest = cp !== null && cp.digest ? cp.digest : "";
+        question.textContent = digest;
+        question.hidden = digest === "";
+        if (cp !== null && cp.opinion !== null && typeof cp.opinion === "object") {
+          const rows = Object.keys(cp.opinion).map(key => orderRowsHtml(key, cp.opinion[key])).join("");
+          setHtml(document.getElementById("od-opinion"), `<table><tbody>${rows}</tbody></table>`);
         } else {
-          const question = document.getElementById("od-question");
-          question.textContent = "";
-          question.hidden = true;
           setHtml(document.getElementById("od-opinion"), "");
         }
-        if (selectedOrderId === id) {
-          const answers = cp === null ? [] : cp.answers;
-          document.getElementById("od-reply").disabled = cp === null || !answers.includes("reply");
-          document.getElementById("od-cancel").disabled = cp === null
-            ? ["merged", "done", "failed", "cancelled"].includes(shown.state)
-            : !answers.includes("cancel");
-          document.getElementById("od-done").disabled = ["merged", "done"].includes(shown.state);
-          document.getElementById("od-override").disabled = shown.overridable_checks.length === 0;
-          const select = document.getElementById("od-override-check");
-          const keep = select.value;
-          const options = shown.overridable_checks.map(item => `<option value="${esc(item.key)}">${esc(item.key)} (${esc(item.status)})</option>`).join("");
-          setHtml(select, options);
-          if (keep !== "") select.value = keep;
-          orderLiveError = "";
-        }
+        const answers = cp === null ? [] : cp.answers;
+        document.getElementById("od-reply").disabled = cp === null || !answers.includes("reply");
+        document.getElementById("od-cancel").disabled = cp === null
+          ? ["merged", "done", "failed", "cancelled"].includes(shown.state)
+          : !answers.includes("cancel");
+        document.getElementById("od-done").disabled = ["merged", "done"].includes(shown.state);
+        document.getElementById("od-override").disabled = shown.overridable_checks.length === 0;
+        const select = document.getElementById("od-override-check");
+        const keep = select.value;
+        const options = shown.overridable_checks.map(item => `<option value="${esc(item.key)}">${esc(item.key)} (${esc(item.status)})</option>`).join("");
+        setHtml(select, options);
+        if (keep !== "") select.value = keep;
+        orderLiveError = "";
       }
     } catch (e) {
       if (selectedOrderId === id) orderLiveError = e.message;
@@ -555,21 +521,6 @@ document.getElementById("orders").addEventListener("click", event => {
   const row = event.target.closest("tr.order-row");
   if (row) selectOrder(row.dataset.id);
 });
-
-document.getElementById("order-events").addEventListener("click", async event => {
-  const button = event.target.closest("button[data-event]");
-  if (!button) return;
-  try {
-    await orderCall("ack", { event_id: button.dataset.event });
-    ordersStickyNote = "";
-  } catch (e) {
-    ordersStickyNote = e.message;
-  }
-  ordersTick();
-});
-
-document.getElementById("ev-wake").addEventListener("change", ordersTick);
-document.getElementById("ev-unacked").addEventListener("change", ordersTick);
 
 document.getElementById("od-reply").addEventListener("click", async event => {
   const id = selectedOrderId;

@@ -28,6 +28,7 @@
     .control-form button { padding: 6px 12px; cursor: pointer; }
     .watch-note { color: #555; margin-top: 10px; }
     nav { display: flex; flex-wrap: wrap; gap: 14px; margin: 22px 0 8px; }
+    #order-events td { overflow-wrap: anywhere; }
     .dashboard-section[hidden] { display: none; }
     button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
     button.copy-id.copied { color: #060; }
@@ -50,6 +51,7 @@
     <a href="/gates">Review gates</a>
     <a href="/work">Open work</a>
     <a href="/pings">Pings</a>
+    <a href="/events">Order events</a>
   </nav>
 
   <section class="dashboard-section" data-section="usage">
@@ -101,6 +103,16 @@
   <section class="dashboard-section" data-section="pings">
     <h2>Pings</h2>
     <table id="pings"><thead><tr><th>From</th><th>To</th><th>Kind</th><th>Acked</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section class="dashboard-section" data-section="events">
+    <h2>Order events</h2>
+    <p id="events-note" class="watch-note" hidden></p>
+    <div class="control-form">
+      <label><input type="checkbox" id="ev-wake" /> wake only</label>
+      <label><input type="checkbox" id="ev-unacked" /> unacknowledged</label>
+    </div>
+    <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
   </section>
 
   <p id="err" class="failed" hidden></p>
@@ -475,6 +487,120 @@
     }
     tick();
     setInterval(tick, 2000);
+
+    const GITHUB = "https://github.com/";
+    const ORDER_VIEW = {
+      "events": {"mode":"read","method":"GET","path":"/api/orders/events","params":[{"name":"after","flag":"--after","kind":"int","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"wake_only","flag":"--wake-only","kind":"bool","required":false},{"name":"unacked","flag":"--unacked","kind":"bool","required":false}],"fields":["cursor","events"],"nested":{"events":["id","seq","order_id","kind","wake","digest","pr_url","phase","round","check","failed_kind","notify_session","at","acked","answers","opinion"]}},
+      "ack": {"mode":"write","method":"POST","path":"/api/orders/ack","params":[{"name":"event_id","flag":"--event","kind":"line","required":true}],"fields":["event","acked"],"nested":{}}
+    };
+    let eventsLiveNote = "";
+    let eventsStickyNote = "";
+
+    async function orderCall(name, params) {
+      const op = ORDER_VIEW[name];
+      let url = op.path;
+      const init = { method: op.method };
+      if (op.method === "GET") {
+        const query = new URLSearchParams();
+        for (const [key, value] of Object.entries(params || {})) {
+          if (value === null || value === undefined || value === "" || value === false) continue;
+          query.set(key, value === true ? "1" : String(value));
+        }
+        const text = query.toString();
+        if (text) url += "?" + text;
+      } else {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify(params || {});
+      }
+      const res = await fetch(url, init);
+      let j = null;
+      try { j = await res.json(); } catch (_) {}
+      if (!res.ok || !j || j.ok !== true) throw new Error((j && j.error) || "HTTP " + res.status);
+      return j.result;
+    }
+
+    function orderCell(value) {
+      if (value === null || value === undefined) return "—";
+      if (typeof value === "object") return jsonHtml(value);
+      if (typeof value === "string" && value.startsWith(GITHUB)) {
+        const pull = /^[^/]+\/[^/]+\/pull\/([0-9]+)\/?$/.exec(value.slice(GITHUB.length));
+        if (pull) return `<a href="${esc(value)}" target="_blank" rel="noopener" title="${esc(value)}">#${esc(pull[1])}</a>`;
+        return `<a href="${esc(value)}" target="_blank" rel="noopener">${esc(value)}</a>`;
+      }
+      return idOrText(value);
+    }
+
+    function orderColumns(field) {
+      return [{ field, label: field, cell: orderCell }];
+    }
+
+    function orderTd(column, value) {
+      const attributes = column.attributes ? column.attributes(value) : "";
+      return `<td${attributes}>${column.cell(value)}</td>`;
+    }
+
+    function orderTableHtml(rows, fields, actions) {
+      const columns = fields.flatMap(orderColumns);
+      const actionHead = actions ? "<th></th>" : "";
+      const head = columns.map(column => `<th>${esc(column.label)}</th>`).join("") + actionHead;
+      const count = columns.length + (actions ? 1 : 0);
+      const body = rows.map(row => {
+        const cells = columns.map(column => orderTd(column, row[column.field])).join("");
+        return `<tr>${cells}${actions ? `<td>${actions(row)}</td>` : ""}</tr>`;
+      }).join("") || empty(count);
+      return `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`;
+    }
+
+    function renderOrderTable(table, rows, fields, actions) {
+      setHtml(table, orderTableHtml(rows, fields, actions));
+    }
+
+    function showEventsNote() {
+      const note = document.getElementById("events-note");
+      const noteText = eventsStickyNote || eventsLiveNote;
+      note.textContent = noteText;
+      note.hidden = noteText === "";
+    }
+
+    async function eventsTick() {
+      let failure = "";
+      try {
+        const page = await orderCall("events", {
+          wake_only: document.getElementById("ev-wake").checked,
+          unacked: document.getElementById("ev-unacked").checked,
+        });
+        renderOrderTable(
+          document.getElementById("order-events"),
+          page.events,
+          ORDER_VIEW.events.nested.events,
+          row => row.wake === true && row.acked === false
+            ? `<button type="button" data-event="${esc(row.id)}">Acknowledge</button>`
+            : "",
+        );
+      } catch (e) {
+        if (!failure) failure = e.message;
+      }
+      eventsLiveNote = failure;
+      showEventsNote();
+    }
+
+    if (section === "events") {
+      document.getElementById("order-events").addEventListener("click", async event => {
+        const button = event.target.closest("button[data-event]");
+        if (!button) return;
+        try {
+          await orderCall("ack", { event_id: button.dataset.event });
+          eventsStickyNote = "";
+        } catch (e) {
+          eventsStickyNote = e.message;
+        }
+        eventsTick();
+      });
+      document.getElementById("ev-wake").addEventListener("change", eventsTick);
+      document.getElementById("ev-unacked").addEventListener("change", eventsTick);
+      eventsTick();
+      setInterval(eventsTick, 2000);
+    }
   </script>
 </body>
 </html>

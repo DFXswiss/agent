@@ -597,24 +597,40 @@ def draft_pr_body(
     source: dict[str, Any],
     reused: list[str] | None = None,
     added: list[str] | None = None,
+    summary_en: object = None,
+    summary_de: object = None,
 ) -> str:
-    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list.
+
+    Stored change summaries are the visible sentences. An order draft without
+    them keeps the English line and omits DE: the English title is not a
+    German sentence. One language without the other is an error.
+    """
     details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
-    if source.get("kind") == ORDER_KIND:
-        short = str(source.get("order_id") or "")[:8]
-        title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
-        visible = (
-            f"EN:\nDraft for order {short}: {title}.\n\n"
-            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
-        )
+    if summary_en is None and summary_de is None:
+        if source.get("kind") == ORDER_KIND:
+            short = str(source.get("order_id") or "")[:8]
+            title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+            visible = f"EN:\nDraft for order {short}: {title}.\n\n"
+        else:
+            visible = (
+                f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+                f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+            )
     else:
+        from .coordinator_a38 import _summary
+
+        stored = {
+            "change_summary_en": summary_en,
+            "change_summary_de": summary_de,
+        }
         visible = (
-            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+            f"EN:\n{_summary(stored, 'en')}\n\n"
+            f"DE:\n{_summary(stored, 'de')}\n\n"
         )
     if not details:
         return visible
@@ -646,8 +662,119 @@ def refresh_draft_body(
     target = target_repo(task)
     if number is None or target == "":
         raise CoordinatorError("reused and added list has no draft to update")
-    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    body = draft_pr_body(
+        source,
+        [str(line) for line in reused],
+        [str(line) for line in added],
+        task.get("change_summary_en"),
+        task.get("change_summary_de"),
+    )
+    _post_pull_request_body(store, worker, task, runner, target, number, body)
+    return [f"posted reused and added list on {target}#{number}"]
+
+
+def _stored_summaries(task: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Both stored sentences, or neither. One language is not a visible summary."""
+    summary_en = task.get("change_summary_en")
+    summary_de = task.get("change_summary_de")
+    if (
+        isinstance(summary_en, str)
+        and summary_en.strip()
+        and "\n" not in summary_en
+        and isinstance(summary_de, str)
+        and summary_de.strip()
+        and "\n" not in summary_de
+    ):
+        return summary_en, summary_de
+    return None, None
+
+
+def replace_existing_order_draft_body(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Replace the body of an order draft that is already open.
+
+    A push keeps the previous visible text until this runs. An order draft
+    opened before stored summaries existed can still show the English title
+    under DE:. Refresh replaces that text when a reused list is present.
+    Without that list the visible sentences are posted alone. A pr.body row
+    already marked done does not count until the live body matches.
+    """
+    c = coord(task)
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    if source.get("kind") != ORDER_KIND:
+        return []
+    reused = task.get("reused_lines")
+    added = task.get("added_lines")
+    if isinstance(reused, list) and reused and isinstance(added, list) and added:
+        return refresh_draft_body(store, worker, task, runner)
+    summary_en, summary_de = _stored_summaries(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    target = target_repo(task)
+    if number is None or target == "":
+        return []
+    body = draft_pr_body(source, None, None, summary_en, summary_de)
+    _post_pull_request_body(store, worker, task, runner, target, number, body)
+    return [f"replaced order draft body on {target}#{number}"]
+
+
+def _pull_request_body(
+    store: Store,
+    worker: WorkerConfig,
+    runner: Runner,
+    target: str,
+    number: int,
+) -> str | None:
+    """The live pull-request body, or None when that view has no body field.
+
+    This is the same `gh pr view --json body` read the review uses. A missing
+    field is not an empty body, and a done pr.body row is not this read.
+    """
+    viewed = gh_json(
+        scoped(store, worker.session_id, runner),
+        ["gh", "pr", "view", str(number), "--repo", target, "--json", "body"],
+    )
+    if not isinstance(viewed, dict):
+        raise CoordinatorError("Draft lookup did not return a pull request")
+    body = viewed.get("body")
+    if body is None:
+        return None
+    if not isinstance(body, str):
+        raise CoordinatorError("Draft lookup did not return a pull request")
+    return body
+
+
+def _post_pull_request_body(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    target: str,
+    number: int,
+    body: str,
+) -> None:
+    """Replace the draft body and require the live text to be that body.
+
+    The first pr.body id stays the body text. When that row is already done
+    and the live text is different, a second id carries the live text so the
+    done row cannot hide it.
+    """
+    live = _pull_request_body(store, worker, runner, target, number)
+    if live == body:
+        return
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
+    existing = store.row("activity", activity_id)
+    if existing is not None and existing.get("execution_status") == "done":
+        suffix = "missing" if live is None else live
+        activity_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"coordinator-pr-body:{task['id']}:{body}:live:{suffix}",
+            )
+        )
     queue_activity(
         store,
         activity_id=activity_id,
@@ -659,7 +786,9 @@ def refresh_draft_body(
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
         raise CoordinatorError("pr.body did not update the draft")
-    return [f"posted reused and added list on {target}#{number}"]
+    confirmed = _pull_request_body(store, worker, runner, target, number)
+    if confirmed != body:
+        raise CoordinatorError("pr.body did not update the draft")
 
 
 def ensure_draft(
@@ -704,7 +833,8 @@ def ensure_draft(
         c['published_head'] = sha
         c.pop('pending_published_head', None)
         save_task(store, task)
-        return [f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}"]
+        posted = replace_existing_order_draft_body(store, worker, task, runner)
+        return [f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}", *posted]
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)

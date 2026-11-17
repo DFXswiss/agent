@@ -1077,7 +1077,9 @@ agent order report --id UUID [--json]
 `show` prints state, phase, round, pull request, head, last event, pending
 checkpoint, last answer and its fate, the current action's checks, overridable
 checks, round limit and origin, and submit-time skips. It never prints raw lane
-output. `wait` polls the local store at `poll_seconds`; it exits 0 with events
+output. With `--json` the pending checkpoint also carries that event's
+`digest` and `opinion`, beside `event_id`, `seq`, `kind`, `check`, `acked`
+and `answers`. The text form does not print `digest` or `opinion`. `wait` polls the local store at `poll_seconds`; it exits 0 with events
 and 3 on timeout.
 
 Order states are derived: `queued`, `running`, `waiting`, `ready`, `merged`,
@@ -1296,9 +1298,12 @@ and `GET /api/orders/schema` returns `enabled`, `skippable`, and `operations`.
 Every route under `/api/orders/` accepts only `Host` equal to
 `127.0.0.1:<port>` or `localhost:<port>`, with any port. A present, nonempty
 `Origin` must equal `http://` plus that Host. Otherwise it returns 403 and
-`cross-origin request refused`. `wait` has no dashboard route; the dashboard
-polls `events`. The new-order form lives on its own page, `/orders/new`; the
-main page (`/`) keeps the order table, detail and events and links to it.
+`cross-origin request refused`. `wait` has no dashboard route; `/events`
+polls `events`. The new-order form lives on its own page, `/orders/new`. The
+main page (`/`) keeps the order table and detail and links to that form and
+to `/events`, where the events list, the wake-only and unacknowledged filters
+and Acknowledge live. The order detail reads the open question and its
+assessment from `digest` and `opinion` on the show checkpoint.
 
 ## Model output protocol
 
