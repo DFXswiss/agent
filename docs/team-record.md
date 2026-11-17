@@ -144,6 +144,10 @@ sequenceDiagram
 
 - There is no password and no code by mail.
 - You may register several passkeys, for example one on your laptop and one on your phone.
+- Your first passkey starts with an **invite link** from an administrator. It works once and
+  expires soon. You open it and create the passkey; the hub receives only its public part. It
+  counts once that public key was added to the keys file by pull request, after the
+  administrator compared its fingerprint with you.
 - The private part stays with you. Your platform may sync a passkey between your own devices
   (decided on 2026-11-17).
 - The passkey is asked once, at sign-in. It then certifies a session key in your browser that

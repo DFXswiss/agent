@@ -1372,7 +1372,7 @@ This revision records the decision of 2026-11-17 to store the team record in Pos
 
 This revision records the decisions of 2026-11-17 that passkeys may be synced, that reading at the network edge is accepted, and what done and released mean (§24.11). It also gives every key its own chain of events, so that a writer can sign while the hub is unreachable (§24.3).
 
-This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision.
+This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also adds invite links for a staff member's first passkey (§24.2).
 
 ## 24. Team record and key identity (decided, not implemented)
 
@@ -1415,7 +1415,7 @@ There are three kinds of principal:
 Rules for all principals:
 
 - No GitHub OAuth, no password, no mailbox code and no outside identity provider decides who someone is. GitHub stays the home of code and pull requests (§24.5); it is not an identity source for the record.
-- **Every request is authenticated.** The hub has no anonymous endpoint: website, API, sync, pairing, health and release queries all require a valid signature by a registered key (or a signed-in passkey session). A request without one gets no data, not even a count or a status.
+- **Every request is authenticated.** The hub has no anonymous endpoint, with the one exception of opening an invite link (below): website, API, sync, pairing, health and release queries all require a valid signature by a registered key (or a signed-in passkey session). A request without one gets no data, not even a count or a status.
 - **No access gate in front of the hub.** The network edge provides the tunnel, TLS, protection against overload and rate limits, and filters that do not identify anyone (address or country rules). It runs no login of its own: no edge access policy, no mailbox code, no edge service token. The hub's own check is the only authentication.
 - The edge terminates TLS and can read content in transit. That is accepted (decided on 2026-11-17). It cannot forge a request or an answer, because both are signed (§24.2), and it cannot replay one, because both carry a nonce and a time.
 - The edge access gate is removed only together with the release that enforces the hub's own authentication on every request, never before.
@@ -1427,6 +1427,12 @@ Rules for all principals:
 Staff members:
 
 - A staff member may register several passkeys (for example laptop and phone).
+- **Invite link for the first passkey** (decided on 2026-11-17). A staff member whose key has the scope `keys:invite` (an administrator) creates an invite link for one handle. The link works once and expires after a short time that the administrator sets. Whoever opens it creates a passkey in their browser; the hub receives only the public key and shows it to the administrator with its fingerprint.
+  - The invite registers nothing by itself. The passkey counts only after a pull request has added that public key to the keys file. Before merging, the administrator compares the fingerprint with the invited person over a channel other than the link, so that an intercepted link cannot register a stranger's key.
+  - Creating an invite is an event in the team record, signed by the administrator. The hub authors no event for the key it receives (§24.3); the key enters the history through its pull request. An unused or expired invite leaves no key behind.
+  - The request that opens an invite link is the one request without a registered key: the single-use value in the link authenticates it, and it can do nothing but hand in one public key.
+  - The first administrator's key enters the keys file by a pull request made by hand; there is no invite before that.
+  - A further passkey of a person who already has one needs no invite: they sign in and hand in the new public key, which also counts only after its pull request.
 - A passkey is never exported to the hub or to a website. The platform may sync a passkey between a person's own devices (decided on 2026-11-17); the team accepts that the platform's sync then protects that passkey. Sign-in and every write are still verified by the hub alone.
 
 Agents:
@@ -1623,7 +1629,7 @@ A command reaches a device only when the hub accepts the sender's key, and it ru
 **The allow list.** It is the device's counterpart of an SSH `authorized_keys` file. Each entry names the public key, whom it belongs to, what it may do, for which repositories where that applies, and until when. A key that is not in the file can do nothing on this device, whatever the hub says.
 
 - **The first entries are set by hand on the device.** When a device is connected, the owner confirms on the device itself the fingerprint of each passkey and each controller device key to be listed, with what it may do. Keys delivered by the hub are only proposals and become entries only after that local confirmation.
-- **A later change is never signed by a session key.** An entry is added, changed or removed only by a statement signed with a controller device key of the owner that is already in the file, after the owner confirmed it in the client on that controller device, or by hand on the device. The website and the API offer the change as a request; it takes effect only with that signature. A website that a taken-over hub delivers can therefore not change whom a device obeys.
+- **A later change is never signed by a session key** (decided on 2026-11-17). An entry is added, changed or removed only by a statement signed with a controller device key of the owner that is already in the file, after the owner confirmed it in the client on that controller device, or by hand on the device. The website and the API offer the change as a request; it takes effect only with that signature. A website that a taken-over hub delivers can therefore not change whom a device obeys.
 - The hub and the keys file alone cannot add an entry.
 - **Sessions cannot reach the file.** The allow list and the device key belong to an operating-system account that differs from the account running sessions, orders and direct logins, and neither is readable or writable from that account. "By hand on the device" means a local administrator action outside every recorded session. No grant, order or typed input can reach the allow list or the device key.
 - An executor key is never listed as a sender of commands.
@@ -1759,7 +1765,7 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 
 | Event | What happens |
 |---|---|
-| A staff member joins | Their passkeys enter the keys file by pull request. They connect their devices (next row). |
+| A staff member joins | An administrator sends them an invite link; they create their passkey with it, and a pull request adds its public key to the keys file (§24.2). They connect their devices (next row). |
 | A new device | A new key is created on it. A pull request adds it to the keys file with its owner and level. The owner confirms the first entries of its allow list by hand on the device (§25.6). |
 | A staff member leaves | A pull request revokes their keys; the hub refuses them from then on and tells every device to stop obeying them (§25.6). Their devices are retired or connected again by hand for a new owner. Events they signed stay valid and attributed (§24.2). |
 | A device is lost or retired | A pull request revokes its key. The owner disables its broker key (§25.13). The owner ends its open orders and withdraws their unanswered questions with a signed event; a withdrawn question blocks no release query (§24.11). Its history stays in the hub. |

@@ -278,7 +278,7 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 
 | Event | What happens |
 |---|---|
-| You join | Your passkeys are added by pull request. You connect your devices. |
+| You join | An administrator sends you an invite link. You open it and create your passkey; it counts once its public key was added by pull request. Then you connect your devices. |
 | You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
 | You leave | Your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
 | A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |
