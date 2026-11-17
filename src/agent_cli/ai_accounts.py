@@ -5,7 +5,9 @@ Operators supply ``$AGENT_HOME/ai-accounts.json`` and, next to it,
 models, implementer, lanes and usage selections name. Installation creates no
 accounts, roles, selections or drivers. Credentials stay in each account's
 driver configuration directory; this manifest stores only directory paths.
-Static launch sites resolve these bindings before invoking a driver.
+Static launch sites resolve these bindings before invoking a driver. A role
+that names an account pool (``accounts``) is resolved to one member only by a
+coordinator lane start (see ``account_pool``).
 """
 
 from __future__ import annotations
@@ -80,6 +82,8 @@ REMOTE_LANE_EXECUTION_ERROR = (
     f'{LANE_EXECUTION_ERROR}; lane_execution mode "remote" is not supported'
 )
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
+# A role names exactly one of ``account`` and ``accounts`` (an account pool).
+ROLE_KEYS = frozenset({"account", "accounts", "model", "access"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
 READ_ONLY_WORKFLOW_KINDS = frozenset(
@@ -218,11 +222,29 @@ class AIAccount:
 
 
 @dataclass(frozen=True)
+class AIAccountPool(AIAccount):
+    """The account of a pool role before a lane start has chosen a member.
+
+    ``name`` and ``config_dir`` are empty: no process may run on it.
+    ``provider`` is the provider every member shares, and ``members`` names
+    the pool's accounts in configuration order. Only a coordinator lane start
+    chooses a member (``account_pool.select_lane_account``).
+    """
+
+    members: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AIRole:
     name: str
     account: AIAccount
     model: str
     access: str
+
+    @property
+    def is_pool(self) -> bool:
+        """True while the role still names its account pool, not one account."""
+        return isinstance(self.account, AIAccountPool)
 
     def env_prefix(self, drivers: Mapping[str, DriverSpec]) -> list[str]:
         """Return an ``env`` argv prefix that isolates driver configuration.
@@ -233,7 +255,15 @@ class AIRole:
         ``config_dir``. Does not mutate ``os.environ``. This is process
         configuration isolation, not a sandbox or a claim that the driver CLI
         is already authenticated.
+
+        A pool role is refused: its account is chosen when a coordinator lane
+        starts, and only that resolved role may launch a process.
         """
+        if self.is_pool:
+            raise AccountError(
+                f"Role {self.name} names an account pool; only a coordinator lane "
+                "start chooses its account"
+            )
         argv = ["env"]
         for key in role_clear_env(drivers):
             argv.extend(["-u", key])
@@ -387,6 +417,10 @@ class AIAccounts:
             self.require_lane_execution()
         return selected
 
+    def pool_members(self, role: AIRole) -> tuple[AIAccount, ...]:
+        """The accounts of a pool role in configuration order; ``()`` otherwise."""
+        return tuple(self.accounts[name] for name in _pool_member_names(role))
+
     def for_session(self, session_id: str) -> AIRole:
         binding = self.sessions.get(session_id)
         if binding is None:
@@ -483,16 +517,27 @@ def load_ai_accounts(
     roles: dict[str, AIRole] = {}
     for name, entry in roles_raw.items():
         _text(name, "role name")
-        if not isinstance(entry, dict) or set(entry) - {"account", "model", "access"}:
+        if not isinstance(entry, dict) or set(entry) - ROLE_KEYS:
             raise AccountError(f"Invalid role fields for {name}")
-        account_name = _text(entry.get("account"), "role account")
-        if account_name not in accounts:
-            raise AccountError(f"Role {name} references an unknown account")
+        if ("account" in entry) == ("accounts" in entry):
+            raise AccountError(
+                f"Role {name} must name exactly one of account and accounts"
+            )
+        role_account: AIAccount
+        if "account" in entry:
+            account_name = _text(entry.get("account"), "role account")
+            if account_name not in accounts:
+                raise AccountError(f"Role {name} references an unknown account")
+            role_account = accounts[account_name]
+        else:
+            role_account = _role_pool(
+                name, entry.get("accounts"), accounts, driver_configuration
+            )
         model = _text(entry.get("model"), "model")
         access = _text(entry.get("access"), "access")
         if access not in ACCESS_VALUES:
             raise AccountError(f"Invalid access for role {name}")
-        roles[name] = AIRole(name, accounts[account_name], model, access)
+        roles[name] = AIRole(name, role_account, model, access)
 
     device_lanes_raw = raw.get("lanes")
     if device_lanes_raw is None:
@@ -520,6 +565,13 @@ def load_ai_accounts(
             if interactive not in roles:
                 raise AccountError(
                     f"Session {session_id} interactive references an unknown role"
+                )
+            if roles[interactive].is_pool:
+                # An account pool serves coordinator lanes only; an interactive
+                # session and its usage reads need one fixed account.
+                raise AccountError(
+                    f"Session {session_id} interactive role {interactive} names an "
+                    "account pool; an interactive role must name one account"
                 )
         lanes_raw = entry.get("lanes")
         if lanes_raw is None:
@@ -583,6 +635,15 @@ def load_ai_accounts(
             raise AccountError(f"usage_accounts contains duplicate account {account_name}")
         usage_accounts.append(account_name)
     keepalive_seconds = _parse_token_keepalive(raw.get("token_keepalive"))
+    for role in roles.values():
+        # Selection reads each member's polled window usage, so a member that
+        # is not polled could never be chosen correctly.
+        for member in _pool_member_names(role):
+            if member not in usage_accounts:
+                raise AccountError(
+                    f"Role {role.name} pool account {member} is not listed in "
+                    "usage_accounts; a pool member's usage must be polled"
+                )
     return AIAccounts(
         accounts=accounts,
         roles=roles,
@@ -632,6 +693,45 @@ def _parse_token_keepalive(value: Any) -> int | None:
             f"{KEEPALIVE_MIN_MINUTES} to {KEEPALIVE_MAX_MINUTES}"
         )
     return minutes * 60
+def _role_pool(
+    role: str,
+    value: Any,
+    accounts: Mapping[str, AIAccount],
+    config: DriverConfiguration,
+) -> AIAccountPool:
+    """Validate a role's ``accounts`` list into its unselected pool account.
+
+    At least two distinct configured accounts of one provider whose driver has
+    a ``windows`` usage adapter: selection compares their window usage.
+    """
+    if not isinstance(value, list) or len(value) < 2:
+        raise AccountError(
+            f"Role {role} accounts must be a list of at least two account names"
+        )
+    members: list[str] = []
+    for item in value:
+        member = _text(item, f"role {role} accounts entry")
+        if member not in accounts:
+            raise AccountError(f"Role {role} references an unknown account {member}")
+        if member in members:
+            raise AccountError(f"Role {role} accounts lists account {member} twice")
+        members.append(member)
+    providers = sorted({accounts[member].provider for member in members})
+    if len(providers) != 1:
+        raise AccountError(
+            f"Role {role} accounts must all use one provider, found "
+            f"{', '.join(providers)}"
+        )
+    provider = providers[0]
+    _require_usage(config, provider, "windows", f"Role {role} account pool")
+    return AIAccountPool(
+        name="", provider=provider, config_dir="", members=tuple(members)
+    )
+
+
+def _pool_member_names(role: AIRole) -> tuple[str, ...]:
+    account = role.account
+    return account.members if isinstance(account, AIAccountPool) else ()
 
 
 def _parse_lane_execution(value: Any) -> LaneExecution | None:

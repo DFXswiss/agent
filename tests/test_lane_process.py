@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -43,7 +44,10 @@ from test_coordinator_support import (
     write_accounts,
 )
 from driver_fixtures import (
+    WINDOWS_ACCOUNT_FILE,
     accounts_document,
+    driver_document,
+    windows_usage,
     write_accounts as write_placeholder_accounts,
     write_drivers,
 )
@@ -1659,3 +1663,224 @@ def test_lane_refuses_a_worktree_inside_the_key_directory(
             lane_runner=lambda argv, stdin: Completed(0, "", ""),
         )
     assert not [row for row in store.rows("agent") if row.get("task_id") == TID]
+
+
+POOL_ROLE = "pooled-writer"
+
+
+def _pool_lane_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_dirs: dict[str, str],
+    *,
+    pool: tuple[str, ...] = ("seat-1", "seat-2"),
+):
+    """``driver-c`` lanes whose implementer role pools ``pool``.
+
+    ``driver-c`` gets a windows usage adapter, and every account in
+    ``config_dirs`` is a polled ``driver-c`` account.
+    """
+    accounts = accounts_document()
+    for seat, config_dir in config_dirs.items():
+        accounts["accounts"][seat] = {"provider": "driver-c", "config_dir": config_dir}
+    accounts["usage_accounts"] = list(config_dirs)
+    accounts["roles"][POOL_ROLE] = {
+        "accounts": list(pool),
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    accounts["lanes"]["driver-c:implementer"] = POOL_ROLE
+    store, worker, task = _placeholder_lane_env(
+        tmp_path, monkeypatch, "driver-c", accounts=accounts
+    )
+    document = driver_document()
+    document["drivers"]["driver-c"]["usage"] = windows_usage()
+    write_drivers(store.home, document)
+    return store, worker, task
+
+
+def _write_pool_login(config_dir: Path, login: str) -> None:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / WINDOWS_ACCOUNT_FILE).write_text(
+        json.dumps({"loginAccount": {"emailAddress": login}}), encoding="utf-8"
+    )
+
+
+def _record_weekly_usage(store: Store, login: str, used: float) -> None:
+    activity_id = str(uuid.uuid4())
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": "usage-session",
+            "type": "usage.snapshot",
+            "payload": {
+                "vendor": "driver-c",
+                "provider": "driver-c",
+                "account_email": login,
+                "tier": None,
+                "windows": {
+                    "five_hour": None,
+                    "weekly": {
+                        "used_percent": used,
+                        "resets_at": "2999-01-01T00:00:00+00:00",
+                    },
+                    "weekly_models": [],
+                },
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+            },
+            "execution_status": "done",
+        },
+    )
+
+
+def _write_lane_capture(worker, agent_id: str, stdout: str) -> None:
+    paths = coordinator_lanes._lane_capture_paths(worker, TID, agent_id)
+    paths["stdout"].parent.mkdir(parents=True, exist_ok=True)
+    paths["stdout"].write_text(stdout, encoding="utf-8")
+    paths["stderr"].write_text("", encoding="utf-8")
+
+
+def test_lane_start_records_the_chosen_pool_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logins = tmp_path / "logins"
+    config_dirs = {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    store, worker, task = _pool_lane_env(tmp_path, monkeypatch, config_dirs)
+    for seat, used in (("seat-1", 60.0), ("seat-2", 20.0)):
+        _write_pool_login(logins / seat, f"{seat}@example.com")
+        _record_weekly_usage(store, f"{seat}@example.com", used)
+    seen: list[list[str]] = []
+
+    def lane(argv: list[str], _stdin: str | None) -> Completed:
+        seen.append(list(argv))
+        return Completed(0, _result_event("STATUS: complete\nRESULT: done"), "")
+
+    agent, result = launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="driver-c",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=lane,
+    )
+    assert result.status == "complete"
+    # The process ran isolated to the least-loaded member.
+    assert f"TOOL_C_CONFIG={config_dirs['seat-2']}" in seen[0]
+    assert f"TOOL_C_CONFIG={config_dirs['seat-1']}" not in seen[0]
+    saved = store.row("agent", agent["id"])
+    assert saved is not None
+    assert saved["account"] == "seat-2"
+    assert saved["account_choice"] == (
+        "account seat-2 chosen from the pool of role pooled-writer at load 20 % "
+        "with 0 running lanes"
+    )
+
+
+def test_lane_start_without_a_usable_pool_account_does_not_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logins = tmp_path / "logins"
+    config_dirs = {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    store, worker, task = _pool_lane_env(tmp_path, monkeypatch, config_dirs)
+    _write_pool_login(logins / "seat-2", "seat-2@example.com")
+    _record_weekly_usage(store, "seat-2@example.com", 100.0)
+    launches: list[list[str]] = []
+    with pytest.raises(CoordinatorError) as excinfo:
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-c",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=lambda argv, stdin: launches.append(argv) or Completed(0, "", ""),
+        )
+    assert str(excinfo.value) == (
+        "Role pooled-writer has no usable pool account "
+        "(seat-1: no login; seat-2: exhausted at 100 %)"
+    )
+    assert not launches
+    assert not [row for row in store.rows("agent") if row.get("task_id") == TID]
+
+
+def test_captured_pool_lane_uses_its_recorded_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No member has a login or a usage snapshot: choosing again would fail.
+    config_dirs = {seat: f"/operator/pool/{seat}" for seat in ("seat-1", "seat-2")}
+    store, worker, task = _pool_lane_env(tmp_path, monkeypatch, config_dirs)
+    working_row(store, worker, "agent-1", vendor="driver-c", account="seat-1")
+    _write_lane_capture(
+        worker,
+        "agent-1",
+        _result_event(
+            "read /operator/pool/seat-1/notes\nSTATUS: complete\nRESULT: done"
+        ),
+    )
+    row = store.row("agent", "agent-1")
+    assert row is not None
+    coordinator_lanes._finish_captured_lane(
+        store, worker, task, row, returncode=0, timed_out=False
+    )
+    saved = store.row("agent", "agent-1")
+    assert saved is not None and saved["status"] == "done"
+    outcome = coord(store.row("task", TID))["lane_outcome"]
+    # The recorded account's config_dir is the one hidden in the result.
+    assert "<config_dir>/notes" in outcome["stdout"]
+    assert "/operator/pool/seat-1" not in outcome["stdout"]
+
+
+def test_captured_lane_whose_account_left_the_pool_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dirs = {
+        seat: f"/operator/pool/{seat}" for seat in ("seat-1", "seat-2", "seat-3")
+    }
+    store, worker, task = _pool_lane_env(
+        tmp_path, monkeypatch, config_dirs, pool=("seat-2", "seat-3")
+    )
+    working_row(store, worker, "agent-1", vendor="driver-c", account="seat-1")
+    _write_lane_capture(
+        worker, "agent-1", _result_event("STATUS: complete\nRESULT: done")
+    )
+    row = store.row("agent", "agent-1")
+    assert row is not None
+    with pytest.raises(CoordinatorError) as excinfo:
+        coordinator_lanes._finish_captured_lane(
+            store, worker, task, row, returncode=0, timed_out=False
+        )
+    assert str(excinfo.value) == (
+        "Lane agent-1 ran on account seat-1, which is no longer in the pool of "
+        "role pooled-writer"
+    )
+    assert store.row("agent", "agent-1")["status"] == "working"
+
+
+def test_captured_pool_lane_without_a_recorded_account_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dirs = {seat: f"/operator/pool/{seat}" for seat in ("seat-1", "seat-2")}
+    store, worker, task = _pool_lane_env(tmp_path, monkeypatch, config_dirs)
+    # A lane record written before pools existed has no account field.
+    working_row(store, worker, "agent-1", vendor="driver-c")
+    _write_lane_capture(
+        worker, "agent-1", _result_event("STATUS: complete\nRESULT: done")
+    )
+    row = store.row("agent", "agent-1")
+    assert row is not None
+    with pytest.raises(CoordinatorError) as excinfo:
+        coordinator_lanes._finish_captured_lane(
+            store, worker, task, row, returncode=0, timed_out=False
+        )
+    assert str(excinfo.value) == (
+        "Lane agent-1 of pool role pooled-writer has no recorded account"
+    )
+    assert store.row("agent", "agent-1")["status"] == "working"

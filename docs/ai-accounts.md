@@ -491,9 +491,92 @@ Each account requires:
 
 Each role requires:
 
-- `account`: name of a configured account
+- exactly one of
+  - `account`: name of a configured account, or
+  - `accounts`: an [account pool](#account-pools), a list of at least two
+    distinct configured account names
 - `model`: explicit model id string (no default)
 - `access`: `read-only` or `workspace-write` (no default)
+
+A role with both keys or with neither is rejected with an error naming the
+role.
+
+### Account pools
+
+A role that names `accounts` uses a pool of subscriptions of one provider
+evenly instead of one subscription until it is exhausted. Nothing is pooled
+unless the operator writes the list; there is no built-in pool and no fallback
+account. Example (placeholder names):
+
+```json
+{
+  "accounts": {
+    "seat-1": {"provider": "driver-w", "config_dir": "/operator/path/seat-1"},
+    "seat-2": {"provider": "driver-w", "config_dir": "/operator/path/seat-2"}
+  },
+  "usage_accounts": ["seat-1", "seat-2"],
+  "roles": {
+    "pooled-builder": {
+      "accounts": ["seat-1", "seat-2"],
+      "model": "operator-selected-model",
+      "access": "workspace-write"
+    }
+  }
+}
+```
+
+The load rejects a pool whose members are unknown, listed twice, fewer than
+two, or of different providers; whose provider's driver has no `windows` usage
+adapter; or with a member that is not listed in `usage_accounts` (the error
+names the role and the account). A pool role cannot be a session's
+`interactive` role: an interactive session and its usage reads need one fixed
+account. The pool's members share the role's `model` and `access`, and lane
+slot provider checks use the members' common provider.
+
+Only a coordinator lane start chooses a pool member: the implementer and
+inner-reviewer lanes, the PR review lanes, the check lane, and each lane
+attempt of the conflicts worker. Every fresh start chooses at that moment, from
+local data only (no network request):
+
+1. Login: the member's identity from its `account_file`, as the window-usage
+   poll reads it. No login → not eligible (`no login`).
+2. Usage: the newest own `usage.snapshot` for that driver and login, with the
+   same match the poll uses (equal vendor, `account_email` equal without regard
+   to case). None → not eligible (`no usage snapshot`). The snapshot's
+   `fetched_at` age is not checked: a snapshot is stored only when a value
+   changed, so an old one is still current.
+3. Load: the largest `used_percent` of `windows.five_hour` and
+   `windows.weekly`. A `null` window counts 0 %, and so does a window whose
+   `resets_at` is at or before the start time, because it has reset since the
+   snapshot. `weekly_models` is not used: its names are display names that do
+   not map to role models. A load of 100 % or more → not eligible
+   (`exhausted at N %`).
+4. Running lanes: the agent rows of this device that are still `working` and
+   recorded this account.
+
+The eligible member with the smallest `(running lanes, load, position in
+accounts)` is chosen. Lanes started close together spread across the pool
+first, because a new lane's usage shows up in the snapshots only after the
+next poll; among members with equally many running lanes the least-loaded one
+wins, and on a tie the earlier member in the list. Without an eligible member
+the lane does not start: the error `Role <role> has no usable pool account
+(<account>: <reason>; ...)` names every member and its reason.
+
+The launched process is isolated to the chosen account like a single-account
+role (its `config_dir`, see [Process isolation prefix](#process-isolation-prefix)).
+The lane's agent row records the account name as `account` (every coordinator
+lane records it, also for a single-account role) and, for a pool, one line
+`account_choice` with the chosen account name, its load and its running lanes;
+neither holds a login identity or a credential. Every later step of the same
+lane (recovery after a restart, output capture, result evaluation) uses the
+recorded account and never chooses again. A recorded account that is no longer
+the role's account or no longer a member of its pool is an error for that lane.
+A lane recorded before pools existed has no `account`: a single-account role
+uses its account; a pool role is an error naming the lane. A conflicts-worker
+lane attempt finishes within one call and writes no agent row; it keeps its
+chosen account for the whole attempt. `agent lane` and the `agent run` lane
+launcher do not choose from a pool: a pool role is refused there when the
+process isolation prefix is built.
 
 The optional top-level `usage_session` selects an explicitly configured
 interactive session for automatic billing reads. The driver of its interactive
