@@ -16,14 +16,6 @@ The search is wider than this rule: it also covers a helper the caller does not 
 
 An existing element with a different job is not a substitute. The review names that element and the job it has.
 
-## Test coverage
-
-The rule [Complete test coverage is mandatory](CONTRIBUTING.md#complete-test-coverage-is-mandatory) is a hard requirement. Each of these is a defect:
-
-- A function the pull request adds or changes is not fully covered, line and branch, by the tests of the same pull request.
-- The pull request lowers `fail_under` in `pyproject.toml`, or raises the measured total without raising `fail_under` to it.
-- A test offered as coverage replaces the function it claims to cover, or calls an external service instead of a mock.
-
 ## Deviation
 
 Not using that existing element is a defect unless the pull request names the element and states the different job it has. "Cannot" alone, a missing reason, an empty reason, or "not relevant" is not a deviation. Setting the finding aside does not remove the defect.
@@ -41,3 +33,11 @@ Each pass lane is read-only. Its prompt contains this reminder: `Read CONTRIBUTI
 Quality judges the diff against these files, read at the base revision. Logic judges whether the diff is sound and complete, and whether it adds a second mechanism for a job these files say to reuse. A missing issue is not a defect.
 
 A missed reuse is a defect unless the pull request names the element and the different job, as the deviation section says. A hard requirement, or a contradiction of `CONTRIBUTING.md`, stays a defect even when the pull request discusses it. Zero defects means no such violation remains.
+
+## Test coverage
+
+The rule [Complete test coverage is mandatory](CONTRIBUTING.md#complete-test-coverage-is-mandatory) is a hard requirement. Each of these is a defect:
+
+- A function the pull request adds or changes is not fully covered, line and branch, by the tests of the same pull request.
+- The pull request lowers `fail_under` in `pyproject.toml`, or raises the measured total without raising `fail_under` to it.
+- A test offered as coverage replaces the function it claims to cover, or calls an external service instead of a mock.
