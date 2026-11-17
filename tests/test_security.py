@@ -37,6 +37,12 @@ def test_count_by_group_buckets_states() -> None:
     assert count_by_group(STATES, items) == SecurityCounts(open=3, in_progress=1, done=1)
 
 
+def test_count_by_group_rejects_unknown_group() -> None:
+    states = STATES + [{"id": "s-new", "group": "triage"}]
+    with pytest.raises(SecurityTrackerError, match="unknown state group"):
+        count_by_group(states, [{"state": "s-open"}, {"state": "s-new"}])
+
+
 def test_count_by_group_rejects_unknown_state() -> None:
     with pytest.raises(SecurityTrackerError):
         count_by_group(STATES, [{"state": "nope"}])
@@ -114,6 +120,16 @@ def test_plane_tracker_http_error() -> None:
         tracker.counts()
 
 
+def test_plane_tracker_rejects_non_object_rows() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/states/"):
+            return httpx.Response(200, json={"results": STATES})
+        return httpx.Response(200, json={"results": [{"id": "1", "state": "s-open"}, "junk"], "next_page_results": False})
+
+    with pytest.raises(SecurityTrackerError, match="malformed"):
+        _plane(handler).counts()
+
+
 def test_plane_tracker_missing_cursor() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/states/"):
@@ -181,3 +197,21 @@ def test_config_tracker_requires_https(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv(KEYS[2], "https://tracker.test/ui")
     with pytest.raises(ConfigError, match="https"):
         Config.from_env()
+
+
+def test_index_security_tile_follows_fetch_contract() -> None:
+    html = (Path(__file__).resolve().parents[1] / "src" / "agent_core" / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="kpi-security" hidden' in html
+    assert 'id="k-security"' in html
+    render_fn = html.split("async function render()", 1)[1].split("function kickState()", 1)[0]
+    assert "kickSecurity();" in render_fn
+    kick = html.split("function kickSecurity()", 1)[1].split("function kickPrs()", 1)[0]
+    assert kick.index("if (securityInflight) return securityInflight.p;") < kick.index('jsonGet("/api/security"')
+    assert kick.count("securityInflight.gen !== gen") == 2
+    abort_fn = html.split("function abortHubFetches()", 1)[1].split("function clearHubTables()", 1)[0]
+    assert "securityInflight = null" in abort_fn
+    assert "sec.ctl.abort()" in abort_fn
+    clear_fn = html.split("function clearHubTables()", 1)[1].split("function jsonGet", 1)[0]
+    assert "k-security" in clear_fn
+    assert "securityLoadedAt = 0" in clear_fn
+    assert 'getElementById("kpi-security").hidden = true' in clear_fn

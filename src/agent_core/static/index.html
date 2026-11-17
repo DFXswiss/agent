@@ -282,7 +282,8 @@
     let stateInflight = null;
     let stateGen = 0;
     let prsInflight = null;
-    let securityInflight = false;
+    let securityInflight = null;
+    let securityGen = 0;
     let securityLoadedAt = 0;
     const SECURITY_REFRESH_MS = 60000;
     let prsGen = 0;
@@ -314,9 +315,11 @@
       const s = stateInflight; stateInflight = null;
       const p = prsInflight; prsInflight = null;
       const u = usageInflight; usageInflight = null;
+      const sec = securityInflight; securityInflight = null;
       if (s) s.ctl.abort();
       if (p) p.ctl.abort();
       if (u) u.ctl.abort();
+      if (sec) sec.ctl.abort();
     }
 
     function abortAssignmentLoads() {
@@ -1077,26 +1080,38 @@
 
     // Count of open security issues from the team's tracker. Hidden when the hub has no tracker
     // or the viewer is on no team. Refreshes at most once a minute; the hub caches as well.
+    // Same contract as kickPrs: one request in flight, aborted on sign-out or login switch,
+    // and a stale generation never writes the tile.
     function kickSecurity() {
-      if (securityInflight || Date.now() - securityLoadedAt < SECURITY_REFRESH_MS) return;
-      securityInflight = true;
+      if (securityInflight) return securityInflight.p;
+      if (Date.now() - securityLoadedAt < SECURITY_REFRESH_MS) return null;
+      const securityCtl = new AbortController();
+      const gen = ++securityGen;
       const box = document.getElementById("kpi-security");
       const val = document.getElementById("k-security");
-      jsonGet("/api/security", new AbortController(), 25000).then(data => {
+      const p = jsonGet("/api/security", securityCtl, 25000);
+      securityInflight = { ctl: securityCtl, p, gen };
+      p.then(data => {
+        if (!securityInflight || securityInflight.gen !== gen) return;
         securityLoadedAt = Date.now();
+        securityInflight = null;
         if (!data.configured) { box.hidden = true; return; }
         box.hidden = false;
         const n = esc(data.open);
+        val.title = "";
         val.innerHTML = data.link
           ? `<a href="${esc(data.link)}" target="_blank" rel="noopener" title="${esc(data.in_progress)} in progress, ${esc(data.done)} done">${n}</a>`
           : n;
       }).catch(e => {
+        if (!securityInflight || securityInflight.gen !== gen) return;
         securityLoadedAt = Date.now();
+        securityInflight = null;
         if (String(e).includes("HTTP 403")) { box.hidden = true; return; }
         box.hidden = false;
         val.textContent = "–";
         val.title = e.name === "AbortError" ? "Timed out loading security issues." : String(e);
-      }).finally(() => { securityInflight = false; });
+      });
+      return p;
     }
 
     function kickPrs() {

@@ -14,13 +14,15 @@ PAGE_SIZE = 100
 MAX_PAGES = 50
 
 # Plane state groups: backlog and unstarted are open, started is in progress, completed is done.
-# Cancelled items are not vulnerabilities any more and are not counted.
+# Cancelled items are not vulnerabilities any more and are not counted. Any other group is an
+# error, so a new group can never silently lower the open count.
 _GROUP_BUCKET = {
     "backlog": "open",
     "unstarted": "open",
     "started": "in_progress",
     "completed": "done",
 }
+_UNCOUNTED_GROUPS = frozenset({"cancelled"})
 
 
 class SecurityTrackerError(ValueError):
@@ -54,9 +56,13 @@ def count_by_group(states: list[dict[str, Any]], items: list[dict[str, Any]]) ->
         state = item.get("state")
         if not isinstance(state, str) or state not in group_of:
             raise SecurityTrackerError("work item has an unknown state")
-        bucket = _GROUP_BUCKET.get(group_of[state])
-        if bucket is not None:
-            totals[bucket] += 1
+        group = group_of[state]
+        if group in _UNCOUNTED_GROUPS:
+            continue
+        bucket = _GROUP_BUCKET.get(group)
+        if bucket is None:
+            raise SecurityTrackerError(f"work item has an unknown state group: {group}")
+        totals[bucket] += 1
     return SecurityCounts(**totals)
 
 
@@ -86,7 +92,9 @@ class PlaneSecurityTracker(SecurityTracker):
         rows = body.get("results") if isinstance(body, dict) else body
         if not isinstance(rows, list):
             raise SecurityTrackerError("security tracker returned no results")
-        return [r for r in rows if isinstance(r, dict)]
+        if not all(isinstance(r, dict) for r in rows):
+            raise SecurityTrackerError("security tracker returned a malformed result")
+        return rows
 
     def _fetch(self) -> SecurityCounts:
         states = self._results(self._get("/states/"))
