@@ -1257,7 +1257,10 @@ database it is connected to. The writer holds `CONNECT` on this database (the re
 the grant of the migration, which also revokes `CONNECT` from `PUBLIC` there. The server is
 dedicated to the record (above), and step `writer` of the start (section 11.4) refuses a server
 whose `pg_database` lists any database other than the record database, `postgres`, `template0`
-and `template1`. Step `writer` also refuses a writer that can execute any `SECURITY DEFINER`
+and `template1`. That nothing is created in `postgres`, `template0` and `template1` is a
+deployment rule that the hub does not check: the start reads no catalog of those databases, and
+the writer can connect to `postgres` and `template1`, on which `PUBLIC` holds `CONNECT` by
+default, and call there every function that `PUBLIC` can execute. Step `writer` also refuses a writer that can execute any `SECURITY DEFINER`
 function of this database outside the schemas `pg_catalog` and `information_schema`, and refuses
 row-level security, a policy, a rule or a trigger other than the four of section 11.3 on the
 three record tables. That check examines the record database and sees the catalog only at start
@@ -1420,7 +1423,8 @@ failed verification.
    exactly the versions this code expects (in this version: exactly one row, version 1). A missing
    schema, a missing version or an unknown version fails this step. The hub never creates or
    changes the schema.
-3. `writer`: the server is dedicated to the record (section 11.2), the role has exactly the
+3. `writer`: the server holds no database besides the record database, `postgres`, `template0`
+   and `template1` (section 11.2), the role has exactly the
    writer rights of section 11.2 and nothing else, and no function of this database, row-level
    security, policy, rule or further trigger of section 11.2 can widen them or cut its reads
    short. The hub reads the catalog of the server and fails this step unless all of these hold:
@@ -1978,12 +1982,15 @@ the session advisory lock `pg_advisory_lock(742180004)` on the administrator con
 before it creates its first database until after it drops its last one, so that no two tests
 have databases at the same time; a test that uses two databases, such as an export from one and
 a `restore` into another, drops the first before the hub starts or `restore` runs against the
-second, except the test of a second user database below. Every other role that a test creates also gets a random name, except in the one
+second, except the tests of a second user database below. Every other role that a test creates also gets a random name, except in the one
 case of the identifier test below, which uses fixed names that are SQL keywords and holds the
 session advisory lock `pg_advisory_lock(742180003)` on the administrator connection while those
 roles and that database exist, so that parallel test sessions never collide on them. In CI, the workflow runs
 a `postgres:16` service container and sets the variable; locally, the developer runs a local
-PostgreSQL 16. When the variable is missing, the record tests fail with a message that names it;
+PostgreSQL 16. The test server holds no database besides `postgres`, `template0` and `template1`
+apart from the databases the tests create; `AGENT_CORE_TEST_POSTGRES` names the database
+`postgres`; the CI service container is started without a `POSTGRES_DB` other than `postgres`.
+When the variable is missing, the record tests fail with a message that names it;
 they are never skipped. Every endpoint case asserts the exact status, the exact body bytes and the
 hub signature, with a fixed clock.
 
@@ -2056,7 +2063,9 @@ The database and the start:
   `public`, a default privilege that names the writer, `CREATE` or `TEMPORARY` on the database
   (also through `PUBLIC`), `CREATE` on the schema
   `record` or on the schema `public`, `EXECUTE` on `record.refuse_change()` (also through
-  `PUBLIC`), ownership of a table, membership in the owner role, membership in each of the predefined roles
+  `PUBLIC`), ownership of a table, `CONNECT` granted to the writer by name on the database
+  `postgres`, ownership of a table in the database `postgres` (each created by the administrator
+  and removed at the end of the test), membership in the owner role, membership in each of the predefined roles
   `pg_execute_server_program`, `pg_write_server_files`, `pg_write_all_data` and
   `pg_read_all_data`, membership in a role that holds no right at all, `CREATEDB`, `CREATEROLE`,
   `BYPASSRLS`, `REPLICATION`, superuser; a right on the schema `record`, and each of `SELECT`,
@@ -2813,7 +2822,8 @@ confirms or changes each one.
     `PUBLIC` leaves no row in `pg_shdepend`. The start also refuses a writer that can execute a
     `SECURITY DEFINER` function of this database outside `pg_catalog` and `information_schema`,
     and row-level security, a policy, a rule or a fifth trigger on the record tables (decision
-    94); the server is dedicated to the record, and the start check enforces it (decision 100)
+    94); the start check enforces the list of databases (decision 100); that nothing is created
+    in `postgres`, `template0` and `template1` is a deployment rule that the hub does not check
     (§11.2, §11.4, §15, §16).
 36. The database is owned by the owner role, so that it can create the schema; the migration
     revokes every right of `PUBLIC` on the database, on the schema `record`, on its three tables
@@ -3092,8 +3102,9 @@ confirms or changes each one.
     definer function the writer can execute), the stricter is taken. The limit is accepted that
     the check sees the catalog only at start and in `restore`: such an object created while the
     hub runs is found at the next start, and its effect on stored rows by verification. The
-    check examines the functions of this database; the server is dedicated to the record, and
-    the start check enforces it (decision 100) (§11.2, §11.4, §14).
+    check examines the functions of this database; the start check enforces the list of
+    databases (decision 100); that nothing is created in `postgres`, `template0` and `template1`
+    is a deployment rule that the hub does not check (§11.2, §11.4, §14).
 95. Hub key ids are compared and sorted in byte order everywhere; every statement that sorts or
     compares them in the database uses `COLLATE "C"`, so that `export` writes checkpoint lines in
     the order that `verify` and `restore` require, whatever the collation of the database
@@ -3116,5 +3127,6 @@ confirms or changes each one.
     it holds only `postgres`, `template0` and `template1`, and nobody creates anything in those
     three; the deployment provides this, and step `writer` of the start, and so `restore`,
     refuses a server whose `pg_database` lists any other database (`record start failed
-    writer`, `refused writer_rights`); a test of the record holds the advisory lock 742180004
+    writer`, `refused writer_rights`); that nothing is created in `postgres`, `template0` and
+    `template1` is a deployment rule that the hub does not check; a test of the record holds the advisory lock 742180004
     while its databases exist (§11.2, §11.4, §12.3, §14, §16).
