@@ -61,6 +61,8 @@ The optional `agents` map declares GitHub logins operated by autonomous agents. 
 
 See [PROTOCOL.md](PROTOCOL.md).
 
+The wire format of the planned key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md); it is specified and not built yet.
+
 ## Control
 
 Anyone who can see a session may watch its live terminal on the website. Start, stop, type, and resize are allowed only when the session's origin device row exists, is not revoked, and its `github_login` either equals the signed-in actor or is an agent login that actor owns; the origin device must also have a control-ready WebSocket. The hub relays control and terminal bytes; it does not run processes and does not author session rows. Details are in [PROTOCOL.md](PROTOCOL.md).

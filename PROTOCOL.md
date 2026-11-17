@@ -2,6 +2,8 @@
 
 This document is the contract between the `agent` client and this hub.
 
+The planned key identity (signed requests, the keys file, hub-signed answers) is specified in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). It is not implemented; everything below stays in force.
+
 ## Identity
 
 Anyone may sign in with GitHub. Authorization is not the login; it is team membership.
