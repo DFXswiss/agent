@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -33,6 +34,8 @@ from agent_cli.drivers import (
 from agent_cli.errors import redact as redact_error
 from agent_cli.lane import (
     DELEGATED_GIT_METADATA_CHANGED,
+    DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE,
+    DELEGATED_GIT_METADATA_UNREADABLE,
     LANE_GITHUB_TOKEN_ENV,
     LaneResult,
     LaneUsage,
@@ -3276,6 +3279,438 @@ def test_launch_delegate_allows_tracked_file_write_back(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.status == "complete"
     assert (worktree / "tracked.txt").read_text(encoding="utf-8") == "changed\n"
+
+
+def test_launch_delegate_restores_replaced_gitfile_pointer(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = tmp_path / "git-store"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    dot_git = worktree / ".git"
+    original = f"gitdir: {gitdir}\n"
+    dot_git.write_text(original, encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        dot_git.write_text("gitdir: /somewhere/else\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_CHANGED in result.stderr
+    assert dot_git.is_file()
+    assert dot_git.read_text(encoding="utf-8") == original
+
+
+def test_launch_delegate_removes_created_absent_exclude(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    exclude = gitdir / "info" / "exclude"
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        exclude.parent.mkdir()
+        exclude.write_text("created by the lane\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_CHANGED in result.stderr
+    assert not exclude.exists()
+
+
+def test_launch_delegate_restores_head_replaced_by_directory(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    original = "ref: refs/heads/main\n"
+    head.write_text(original, encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        head.unlink()
+        head.mkdir()
+        (head / "nested").write_text("changed\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_CHANGED in result.stderr
+    assert head.is_file()
+    assert head.read_text(encoding="utf-8") == original
+
+
+def test_launch_delegate_reports_incomplete_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fail_write(self: Path, data: bytes) -> int:
+        raise OSError("write denied")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        head.unlink()
+        head.mkdir()
+        monkeypatch.setattr(Path, "write_bytes", fail_write)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE in result.stderr
+    assert not head.is_dir()
+
+
+def test_launch_delegate_refuses_unreadable_git_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    read_bytes = Path.read_bytes
+
+    def fail_read(self: Path) -> bytes:
+        if self == head:
+            raise PermissionError("denied")
+        return read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+    called = {"n": 0}
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        called["n"] += 1
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert called["n"] == 0
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_UNREADABLE in result.stderr
+
+
+def test_launch_delegate_succeeds_with_absent_protected_files(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = tmp_path / "git-store"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    # A linked worktree's gitdir has no config or info/exclude of its own.
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        (worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    assert result.status == "complete"
+    assert (worktree / "tracked.txt").read_text(encoding="utf-8") == "changed\n"
+    assert not (gitdir / "config").exists()
+    assert not (gitdir / "info" / "exclude").exists()
+
+
+def test_launch_delegate_reports_incomplete_hooks_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    hooks = gitdir / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    from agent_cli import lane as lane_module
+
+    real_hook_files = lane_module._git_hook_files
+    calls = {"n": 0}
+
+    def flaky_hook_files(path: Path) -> list[Path]:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise PermissionError("denied")
+        return real_hook_files(path)
+
+    monkeypatch.setattr("agent_cli.lane._git_hook_files", flaky_hook_files)
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert calls["n"] > 1
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE in result.stderr
+
+
+def test_launch_delegate_refuses_unreadable_hooks_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    hooks = gitdir / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def failing_walk(
+        top: str | os.PathLike[str],
+        onerror: Callable[[OSError], object] | None = None,
+        followlinks: bool = False,
+    ):
+        if onerror is not None:
+            onerror(PermissionError("denied"))
+        yield from ()
+
+    monkeypatch.setattr("agent_cli.lane.os.walk", failing_walk)
+    called = {"n": 0}
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        called["n"] += 1
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert called["n"] == 0
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_UNREADABLE in result.stderr
+
+
+def test_launch_delegate_hardens_the_provider_argv(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane", "--no-shell"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    assert argv[:2] == ["/opt/operator/run-lane", "--no-shell"]
+    provider = argv[argv.index("--") + 1 :]
+    assert "--no-shell" in provider
+    assert provider[-2:] == ["--deny", "Shell"]
+
+
+def test_launch_local_mode_keeps_the_provider_argv_unhardened(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    assert "--no-shell" not in seen[0]
+    assert "--deny" not in seen[0]
 
 
 def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) -> None:

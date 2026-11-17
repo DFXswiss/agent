@@ -6,6 +6,8 @@ import json
 import os
 import re
 import resource
+import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -20,6 +22,7 @@ from .drivers import (
     WRITE_READ_DIRS_REFUSED,
     LaneIO,
     credential_dir_overlap_error,
+    harden_write_argv,
     lane_argv,
     lane_io,
     lane_scrub_env,
@@ -170,29 +173,72 @@ def delegated_lane_argv(
 DELEGATED_GIT_METADATA_CHANGED = (
     "delegated implementer changed git metadata; snapshot restored"
 )
+DELEGATED_GIT_METADATA_UNREADABLE = (
+    "delegated implementer git metadata could not be read; lane not started"
+)
+DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE = (
+    "delegated implementer changed git metadata; restore incomplete"
+)
 _GIT_METADATA_FILES = ("HEAD", "config", os.path.join("info", "exclude"))
+_GIT_ABSENT = "absent"
+_GIT_DIRECTORY = "directory"
+_GIT_REGULAR_FILE = "file"
+_GIT_SYMLINK = "symlink"
+
+
+@dataclass(frozen=True)
+class GitMetadataEntry:
+    """One recorded path kind, with bytes for a file and a target for a symlink."""
+
+    kind: str
+    data: bytes | None = None
+    target: str | None = None
+
+
+_ABSENT_GIT_ENTRY = GitMetadataEntry(_GIT_ABSENT)
 
 
 @dataclass(frozen=True)
 class GitMetadataSnapshot:
     """Git metadata bytes an implementer write-back must not change."""
 
-    gitdir: str
+    worktree: str
+    gitdir: str | None
+    dot_git: GitMetadataEntry
     files: dict[str, bytes]
+    absent: frozenset[str]
     hooks: frozenset[str]
 
 
-def _git_metadata_dir(worktree: str) -> Path | None:
+def _git_entry(path: Path) -> GitMetadataEntry | None:
+    """The kind of one path, without following its own symlink; None when absent."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(mode):
+        return GitMetadataEntry(_GIT_SYMLINK, target=os.readlink(path))
+    if stat.S_ISDIR(mode):
+        return GitMetadataEntry(_GIT_DIRECTORY)
+    if stat.S_ISREG(mode):
+        return GitMetadataEntry(_GIT_REGULAR_FILE, data=path.read_bytes())
+    raise OSError(f"unsupported git metadata entry: {path}")
+
+
+def _git_metadata_dir(
+    dot_git: Path, entry: GitMetadataEntry | None
+) -> Path | None:
     """The worktree's gitdir, following a ``.git`` file pointer when present."""
-    dot_git = Path(worktree) / ".git"
+    if entry is None:
+        return None
     try:
         if dot_git.is_dir():
             return dot_git
         if not dot_git.is_file():
-            return None
+            raise OSError(f"git metadata directory is unavailable: {dot_git}")
         text = dot_git.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return None
+    except (OSError, UnicodeError) as exc:
+        raise OSError(f"git metadata directory could not be read: {dot_git}") from exc
     for line in text.splitlines():
         if not line.startswith("gitdir:"):
             continue
@@ -201,71 +247,167 @@ def _git_metadata_dir(worktree: str) -> Path | None:
             continue
         path = Path(target)
         return path if path.is_absolute() else dot_git.parent / path
-    return None
+    raise OSError(f"git metadata directory is missing: {dot_git}")
 
 
 def _git_hook_files(gitdir: Path) -> list[Path]:
     hooks = gitdir / "hooks"
-    if not hooks.is_dir():
+    entry = _git_entry(hooks)
+    if entry is None:
         return []
+    if entry.kind != _GIT_DIRECTORY:
+        raise OSError(f"git hooks directory is not a directory: {hooks}")
+
+    def raise_error(exc: OSError) -> None:
+        # os.walk otherwise skips a directory it cannot read; the guard must
+        # refuse an incomplete snapshot instead.
+        raise exc
+
+    files: list[Path] = []
     try:
-        return [path for path in sorted(hooks.rglob("*")) if path.is_file()]
-    except OSError:
-        return []
+        for root, _dirs, names in os.walk(
+            hooks, onerror=raise_error, followlinks=False
+        ):
+            for name in names:
+                path = Path(root) / name
+                if path.is_file():
+                    files.append(path)
+    except OSError as exc:
+        raise OSError(f"git hooks could not be read: {hooks}") from exc
+    return sorted(files)
 
 
-def snapshot_git_metadata(worktree: str) -> GitMetadataSnapshot | None:
-    """Capture the git metadata a delegated implementer must not change."""
-    gitdir = _git_metadata_dir(worktree)
-    if gitdir is None:
-        return None
+def snapshot_git_metadata(worktree: str) -> GitMetadataSnapshot:
+    """Capture the git metadata a delegated implementer must not change.
+
+    A protected path or hook that exists but cannot be read raises ``OSError``;
+    the caller refuses to start the lane rather than guarding incompletely.
+    """
+    root = Path(worktree)
+    dot_git = root / ".git"
+    dot_git_entry = _git_entry(dot_git)
+    gitdir = _git_metadata_dir(dot_git, dot_git_entry)
     files: dict[str, bytes] = {}
-    for relative in _GIT_METADATA_FILES:
-        path = gitdir / relative
-        try:
-            if path.is_file():
-                files[str(path)] = path.read_bytes()
-        except OSError:
-            continue
-    hooks: list[str] = []
-    for path in _git_hook_files(gitdir):
-        try:
+    absent: list[str] = []
+    hooks: frozenset[str] = frozenset()
+    if gitdir is not None:
+        for relative in _GIT_METADATA_FILES:
+            path = gitdir / relative
+            entry = _git_entry(path)
+            if entry is None:
+                absent.append(str(path))
+                continue
+            if entry.kind != _GIT_REGULAR_FILE or entry.data is None:
+                raise OSError(f"git metadata is not a regular file: {path}")
+            files[str(path)] = entry.data
+        hook_paths = _git_hook_files(gitdir)
+        for path in hook_paths:
             files[str(path)] = path.read_bytes()
-            hooks.append(str(path))
-        except OSError:
-            continue
-    return GitMetadataSnapshot(str(gitdir), files, frozenset(hooks))
+        hooks = frozenset(str(path) for path in hook_paths)
+    return GitMetadataSnapshot(
+        worktree=str(root),
+        gitdir=str(gitdir) if gitdir is not None else None,
+        dot_git=dot_git_entry or _ABSENT_GIT_ENTRY,
+        files=files,
+        absent=frozenset(absent),
+        hooks=hooks,
+    )
+
+
+def _remove_git_entry(path: Path) -> None:
+    """Remove whatever entry is at ``path``, if any."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(mode):
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _write_git_entry(path: Path, entry: GitMetadataEntry) -> None:
+    """Replace ``path`` with the recorded kind, whatever kind it is now."""
+    _remove_git_entry(path)
+    if entry.kind == _GIT_ABSENT:
+        return
+    if entry.kind == _GIT_DIRECTORY:
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if entry.kind == _GIT_SYMLINK:
+        os.symlink(entry.target or "", path)
+        return
+    path.write_bytes(entry.data or b"")
+
+
+def _git_entry_matches(
+    expected: GitMetadataEntry, actual: GitMetadataEntry
+) -> bool:
+    if expected.kind != actual.kind:
+        return False
+    if expected.kind == _GIT_REGULAR_FILE:
+        return expected.data == actual.data
+    if expected.kind == _GIT_SYMLINK:
+        return expected.target == actual.target
+    return True
 
 
 def restore_git_metadata(
     snapshot: GitMetadataSnapshot,
-) -> bool:
-    """Restore a changed metadata snapshot; return whether anything changed."""
-    gitdir = Path(snapshot.gitdir)
+) -> tuple[bool, bool]:
+    """Restore a changed snapshot; return whether it changed and fully restored."""
     changed = False
+    complete = True
+
+    def restore(path: Path, expected: GitMetadataEntry) -> None:
+        nonlocal changed, complete
+        try:
+            actual = _git_entry(path)
+        except OSError:
+            # A read error leaves the state unknown, so it is a mismatch.
+            actual = None
+        else:
+            # Absence is a recorded state: an unchanged absent path is no change.
+            if actual is None:
+                actual = _ABSENT_GIT_ENTRY
+        if actual is not None and _git_entry_matches(expected, actual):
+            return
+        changed = True
+        try:
+            _write_git_entry(path, expected)
+        except OSError:
+            complete = False
+
+    restore(Path(snapshot.worktree) / ".git", snapshot.dot_git)
     for path_text, data in snapshot.files.items():
-        path = Path(path_text)
+        restore(Path(path_text), GitMetadataEntry(_GIT_REGULAR_FILE, data=data))
+    for path_text in snapshot.absent:
+        restore(Path(path_text), _ABSENT_GIT_ENTRY)
+    if snapshot.gitdir is not None:
         try:
-            current: bytes | None = path.read_bytes()
+            current_hooks = _git_hook_files(Path(snapshot.gitdir))
         except OSError:
-            current = None
-        if current == data:
-            continue
-        changed = True
+            # Completeness cannot be established, so the guard fails the lane.
+            complete = False
+            changed = True
+            current_hooks = []
+        for path in current_hooks:
+            if str(path) in snapshot.hooks:
+                continue
+            changed = True
+            try:
+                path.unlink()
+            except OSError:
+                complete = False
+    if changed:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            current = snapshot_git_metadata(snapshot.worktree)
         except OSError:
-            continue
-    for path in _git_hook_files(gitdir):
-        if str(path) in snapshot.hooks:
-            continue
-        changed = True
-        try:
-            path.unlink()
-        except OSError:
-            continue
-    return changed
+            complete = False
+        else:
+            complete = complete and current == snapshot
+    return changed, complete
 
 
 def replace_path_roots(
@@ -495,11 +637,11 @@ def delegated_git_metadata_result(
     returncode: int,
     stderr: str,
     config_dir: str | None,
+    message: str = DELEGATED_GIT_METADATA_CHANGED,
     tmux_session: str | None = None,
     audit_stderr_when_empty: bool = False,
 ) -> LaneResult:
-    """Unavailable result for a delegated implementer that changed git metadata."""
-    message = DELEGATED_GIT_METADATA_CHANGED
+    """Unavailable result for a delegated implementer with unusable git metadata."""
     diagnostic = f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
     diagnostic = redact_diagnostic(diagnostic, config_dir=config_dir)
     return LaneResult(
@@ -947,6 +1089,10 @@ def launch(
     tmux_session: str | None = None
     try:
         if delegated:
+            if write:
+                # Harden the provider argv before the operator prefix, so a
+                # matching operator flag can never suppress a hardening group.
+                argv = harden_write_argv(argv, driver)
             write_backs: list[str] = []
             if lane_output_file is not None:
                 write_backs.append(lane_output_file)
@@ -1002,9 +1148,25 @@ def launch(
 
     # A delegated implementer writes back a worktree; its git metadata must not
     # change. The operator excludes .git, and this snapshot verifies that.
-    git_snapshot = snapshot_git_metadata(cwd) if delegated and write else None
     stdin_text: str | None = spec_text if io.stdin else None
     try:
+        git_snapshot: GitMetadataSnapshot | None = None
+        if delegated and write:
+            try:
+                git_snapshot = snapshot_git_metadata(cwd)
+            except OSError:
+                return delegated_git_metadata_result(
+                    role=role,
+                    vendor=vendor,
+                    model=selected.model,
+                    argv=argv,
+                    returncode=1,
+                    stderr="",
+                    config_dir=selected.account.config_dir,
+                    message=DELEGATED_GIT_METADATA_UNREADABLE,
+                    tmux_session=tmux_session,
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
+                )
         try:
             if runner is not None:
                 completed = runner(argv, None if tmux else stdin_text)
@@ -1022,35 +1184,49 @@ def launch(
         except Exception as exc:
             # A delegated implementer can change git metadata and then raise.
             # Restore it before the exception leaves this function.
-            if git_snapshot is not None and restore_git_metadata(git_snapshot):
-                return delegated_git_metadata_result(
-                    role=role,
-                    vendor=vendor,
-                    model=selected.model,
-                    argv=argv,
-                    returncode=1,
-                    stderr=str(exc),
-                    config_dir=selected.account.config_dir,
-                    tmux_session=tmux_session,
-                    audit_stderr_when_empty=io.audit_stderr_when_empty,
-                )
+            if git_snapshot is not None:
+                changed, complete = restore_git_metadata(git_snapshot)
+                if changed:
+                    return delegated_git_metadata_result(
+                        role=role,
+                        vendor=vendor,
+                        model=selected.model,
+                        argv=argv,
+                        returncode=1,
+                        stderr=str(exc),
+                        config_dir=selected.account.config_dir,
+                        message=(
+                            DELEGATED_GIT_METADATA_CHANGED
+                            if complete
+                            else DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE
+                        ),
+                        tmux_session=tmux_session,
+                        audit_stderr_when_empty=io.audit_stderr_when_empty,
+                    )
             raise
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")
 
-        if git_snapshot is not None and restore_git_metadata(git_snapshot):
-            return delegated_git_metadata_result(
-                role=role,
-                vendor=vendor,
-                model=selected.model,
-                argv=argv,
-                returncode=returncode,
-                stderr=stderr,
-                config_dir=selected.account.config_dir,
-                tmux_session=tmux_session,
-                audit_stderr_when_empty=io.audit_stderr_when_empty,
-            )
+        if git_snapshot is not None:
+            changed, complete = restore_git_metadata(git_snapshot)
+            if changed:
+                return delegated_git_metadata_result(
+                    role=role,
+                    vendor=vendor,
+                    model=selected.model,
+                    argv=argv,
+                    returncode=returncode,
+                    stderr=stderr,
+                    config_dir=selected.account.config_dir,
+                    message=(
+                        DELEGATED_GIT_METADATA_CHANGED
+                        if complete
+                        else DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE
+                    ),
+                    tmux_session=tmux_session,
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
+                )
 
         output_file_text = ""
         if lane_output_file is not None:

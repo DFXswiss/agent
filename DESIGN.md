@@ -909,10 +909,12 @@ for the login identity, decoding the identity claim of the ID token without a
 signature check when one is configured.
 Its `lane_execution` declaration is required for every vendor-lane start. It
 either marks the current device as a lane host, or names one operator argv that
-runs each headless model lane. The local harness's lane starter must start Agent
-on the external lane host; absence, invalid configuration, and the unsupported
-`remote` mode authorize no fallback. A `delegate` operator command does the copy
-and transport that Agent does not implement itself.
+runs each headless model lane. With `this-device-is-lane-host`, the local
+harness's lane starter must start Agent on the external lane host; with
+`delegate`, Agent runs the declared operator argv itself. Absence, invalid
+configuration, and the unsupported `remote` mode authorize no fallback. A
+`delegate` operator command does the copy and transport that Agent does not
+implement itself.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 Its required `models` block names the provider of model slot `first` and `second`, and
