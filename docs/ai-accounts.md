@@ -145,24 +145,10 @@ declaration satisfies its check, and that session stays local. Checks
 `this-device-is-lane-host`; `delegate` always takes the non-tmux path, and
 `--no-tmux` still does not choose the execution device.
 
-Before a delegated implementer writes back a workspace-write worktree, Agent
-snapshots the worktree's git metadata: the `.git` entry itself (an absent entry,
-a directory, the bytes of a regular file pointer, or a symlink target), `HEAD`, `config`,
-and `info/exclude` (their bytes or their absence), plus every regular file under
-`hooks/`. If a protected path exists but cannot be read, the lane is not started
-and the launch fails with
-`delegated implementer git metadata could not be read; lane not started`. After
-the process returns or raises, any added, changed, or removed entry restores the
-snapshot, including a protected path that was absent before and exists
-afterwards and an entry whose kind changed: a directory where `HEAD` was a file
-is removed and the file is rewritten. Agent then takes a new snapshot and
-compares it. A complete restore fails the lane with
-`delegated implementer changed git metadata; snapshot restored`; a restore that
-remains incomplete fails with
-`delegated implementer changed git metadata; restore incomplete`. A change to
-tracked files alone is a normal write-back. A coordinator restart that adopts a
-surviving delegated implementer lane has no snapshot, so the operator's `.git`
-exclusion is the protection in that case.
+Agent does not verify the worktree's git metadata after a delegated lane. The
+operator command must not write back `.git`, the gitdir, or anything under it
+(see the worktree write-back item in the operator contract). A delegate that
+changes git metadata breaks the checkout the coordinator commits from.
 
 Agent hashes the local object exactly as
 `{"mode": "this-device-is-lane-host"}`. A `delegate` declaration hashes
