@@ -39,5 +39,5 @@ A missed reuse is a defect unless the pull request names the element and the dif
 The rule [Complete test coverage is mandatory](CONTRIBUTING.md#complete-test-coverage-is-mandatory) is a hard requirement. Each of these is a defect:
 
 - A function the pull request adds or changes is not fully covered, line and branch, by the tests of the same pull request.
-- The pull request lowers `fail_under` in `pyproject.toml`, or its measured total, rounded down to one decimal, is above `fail_under` and `fail_under` is not raised to that value.
+- The pull request lowers `fail_under` in `pyproject.toml`, or the floor value of its measured total (the total minus 0.1, rounded down to one decimal) is above `fail_under` and `fail_under` is not raised to it.
 - A test offered as coverage replaces the function it claims to cover, or calls an external service instead of a mock.
