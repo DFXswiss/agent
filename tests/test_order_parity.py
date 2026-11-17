@@ -36,6 +36,7 @@ PAGE = (
     / "index.html"
 )
 NEW_ORDER_PAGE = PAGE.with_name("orders_new.html")
+SECTION_PAGE = PAGE.with_name("section.html")
 BEGIN, END = "/* ORDER_VIEW_BEGIN */", "/* ORDER_VIEW_END */"
 FORWARDED_HOST = "127.0.0.1:17845"
 OPINION = {
@@ -451,9 +452,11 @@ def test_every_parameter_is_a_command_line_flag() -> None:
 def test_the_page_calls_every_operation() -> None:
     html = PAGE.read_text(encoding="utf-8")
     subpage = NEW_ORDER_PAGE.read_text(encoding="utf-8")
+    section = SECTION_PAGE.read_text(encoding="utf-8")
     assert 'orderCall("submit"' not in html
     assert 'fetch("/api/orders/submit"' in subpage
     called = set(re.findall(r'orderCall\("([a-z_]+)"', html))
+    called |= set(re.findall(r'orderCall\("([a-z_]+)"', section))
     assert called | {"submit"} == set(page_view())
     assert called <= set(page_view())
 
