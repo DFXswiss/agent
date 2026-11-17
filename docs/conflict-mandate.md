@@ -69,7 +69,7 @@ between human decisions. Remedy start and success write no order event.
 | Runtime (`conflict_mandate.py`, `conflict_mandate_git.py`, `conflict_mandate_github.py`) | Implemented in this repository: discovery, mandate check, isolated worktree, rebase loop, lane verification, checks, push, and comments. |
 | CLI | `agent conflicts --session ID` runs one tick; `--follow` is the script-owned loop; `--dry-run` is read-only. |
 | GitHub and Git accounts | Taken only from the worker session's explicit `github-accounts.json` binding through the existing account runner. No ambient login or fallback. |
-| Model provider | The device implementer selection from `ai-accounts.json` must be a provider the lane launcher can start (`grok`, `claude`, or `openrouter`). Missing configuration, `codex`, and a provider without a lane adapter such as `deepseek` start no lane. The binding must be `workspace-write`. |
+| Model provider | The device implementer selection from `ai-accounts.json` must be a driver the lane launcher can start: one with a `lane` section in `drivers.json` and without `lane.may_run_commands: true`. Missing configuration, a driver that may run commands, and a record-only driver without a `lane` section start no lane. The binding must be `workspace-write`. |
 | Operator workspace, repositories, logins, checks, and timeouts | **Never installed automatically.** The operator adds them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
 | Universal sandbox / forced model isolation | **Not claimed.** The lane provider's process argv is the available hardening, not a universal sandbox. |
@@ -118,11 +118,16 @@ GitHub and Git use the worker session's configured account and require a git
 identity with signing configuration. The private key and trusted signer setup
 stay in that account executor, never in this file. The model lane uses the
 device's implementer selection from `ai-accounts.json`. The implementer
-provider must be one the lane launcher can start: `grok`, `claude`, or
-`openrouter`. `codex` is refused because it can run commands, and an
-implementer selection without a lane adapter, such as `deepseek`, is refused as
-well. The provider is resolved before discovery, so a refused provider starts
-no lane and performs no discovery, clone, GitHub read or write, or check run.
+provider must be one the lane launcher can start: a driver with a `lane`
+section in `drivers.json` ([docs/ai-accounts.md#drivers](ai-accounts.md#drivers)).
+A driver configured with `lane.may_run_commands: true` is refused because it can
+run commands (`<driver> is refused as implementer provider because it can run
+commands`), and an implementer selection without a lane adapter, a record-only
+driver without a `lane` section, is refused as well (`implementer provider
+<driver> is not supported by the lane launcher; expected one of: ...`). The
+implementer argv carries every `lane.write_hardening` group of the driver. The
+provider is resolved before discovery, so a refused provider starts no lane and
+performs no discovery, clone, GitHub read or write, or check run.
 
 ### Operator requirements
 

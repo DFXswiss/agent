@@ -38,6 +38,24 @@ def test_adopter_guide_is_the_checklist_not_a_second_engine() -> None:
     assert "a38.md#adopting-a38-in-a-repository" in guard_md
     assert "A38-POLICY-APPROVAL:v1" not in guard_md
     assert "if the default branch is `main`, list `main` in `a38.enforce`" in lowered
+    assert "`A38_ATTRIBUTION_PATTERNS`" in text
+    assert "a38-guard.md#attribution-patterns" in text
+
+
+def test_guard_docs_describe_attribution_patterns_generically() -> None:
+    root = Path(__file__).resolve().parents[1]
+    guard_md = (root / "docs" / "a38-guard.md").read_text(encoding="utf-8")
+    assert "\n## Attribution patterns\n" in guard_md
+    assert "attribution_patterns: ${{ vars.A38_ATTRIBUTION_PATTERNS }}" in guard_md
+    for key in ("tool_tokens", "session_headers", "noreply_emails"):
+        assert f'"{key}"' in guard_md
+    assert (
+        "AI attribution patterns are not configured: "
+        "set the dfx pr guard input attribution_patterns"
+    ) in guard_md
+    assert "AI attribution patterns are invalid: <detail>" in guard_md
+    example = (root / "examples" / "a38-guard.yml").read_text(encoding="utf-8")
+    assert "A38_ATTRIBUTION_PATTERNS" in example
 
 
 def test_example_guard_skips_own_comments_before_job_concurrency() -> None:

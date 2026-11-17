@@ -6,7 +6,7 @@ dfx pr guard explains a repository's centrally defined [A38 rules](a38.md), chec
 
 The adopting repository's file checklist (manifest, `pr-guard.json`, contributing pointer, and what not to copy) is in [Adopting A38 in a repository](a38.md#adopting-a38-in-a-repository). This section is only the guard workflow.
 
-Install the [example workflow](../examples/a38-guard.yml) on the target repository's default branch. Replace `USES_REF_PIN_ME` with a reviewed, published **full commit SHA** of this repository. The example is not deployable until that placeholder is replaced. Keep the guard's executable action pinned even when approving policy migrations. This revision requires two review comments before Ready. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. An adopter that still pins an older SHA keeps that older Ready rule until the pin moves to this revision.
+Install the [example workflow](../examples/a38-guard.yml) on the target repository's default branch. Replace `USES_REF_PIN_ME` with a reviewed, published **full commit SHA** of this repository. The example is not deployable until that placeholder is replaced. Keep the guard's executable action pinned even when approving policy migrations. This revision requires two review comments before Ready. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. An adopter that still pins an older SHA keeps that older Ready rule until the pin moves to this revision. From this revision on, the input `attribution_patterns` is required as well: set the Actions variable described in [Attribution patterns](#attribution-patterns) before the pin moves.
 
 The [composite action](../.github/actions/a38-guard/action.yml) uses pinned setup-python and PyYAML 6.0.2, and imports only the trusted action's sources through `github.action_path/../../../src`. Both Python steps run from the trusted action directory with safe-path mode (`python -P`), and replace inherited `PYTHONPATH` with the trusted source path, preventing consumer modules from shadowing the guard or its installer. It does not install dependencies or run scripts from the consumer checkout. Install the package's declared dependencies for standalone use; there is no fallback YAML parser.
 
@@ -44,6 +44,36 @@ agent pr-guard --repo OWNER/NAME --all-open
 ```
 
 Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and uses two job-level concurrency groups (`event` versus `sweep`) so PR events cannot starve all-open reconciliation. It skips the job for the guard's own marker comments before they enter either group. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents, trees and blobs, and a commit read by SHA when the answer is that commit, are cached within the API client, up to 256 entries; comments, reviews, permissions and PR snapshots are never cached.
+
+## Attribution patterns
+
+The guard fails a pull request whose title, body or commits carry AI tool attribution: a `Co-Authored-By` trailer whose display name names a configured tool or whose address is a configured noreply address, a session header, a `generated with …` banner that names a tool, or a commit author, committer or login that names a tool or uses a configured noreply address. This repository ships no tool names. The adopter supplies them through the action input `attribution_patterns`, which the [example workflow](../examples/a38-guard.yml) binds to the Actions variable `A38_ATTRIBUTION_PATTERNS`:
+
+```yaml
+attribution_patterns: ${{ vars.A38_ATTRIBUTION_PATTERNS }}
+```
+
+A repository or organization variable is maintained by administrators and is readable under `pull_request_target`; one organization variable can serve every adopter in the organization. The composite action passes the input to the guard as the environment variable `A38_ATTRIBUTION_PATTERNS`, and a standalone run (`agent pr-guard`) reads that same variable.
+
+The value is one JSON object with exactly these keys (placeholder values):
+
+```json
+{
+  "tool_tokens": ["tool-a", "tool-b"],
+  "session_headers": ["Tool-A-Session"],
+  "noreply_emails": ["noreply@tool-a.example"]
+}
+```
+
+| Key | Matched as |
+| --- | --- |
+| `tool_tokens` | Whole words, ignoring case, in co-author display names, in `generated with …` banners and in commit author names, committer names and logins. Mailbox domains are not matched. |
+| `session_headers` | A line that starts with the header followed by `:`, ignoring case and leading blanks. |
+| `noreply_emails` | A co-author address or a commit author or committer email equal to the entry, ignoring case. |
+
+Every key is required and holds a non-empty list of at most 50 strings. Each string has at most 100 characters and no whitespace. A token starts and ends with a letter, digit or underscore. A session header contains no `:`. An address contains `@`. Entries are literals, not regular expressions. Unknown keys are rejected.
+
+When the value is empty, missing or invalid, the guard never passes silently. For every pull request it assesses, the attribution scan is replaced by a hard-fail reason: `AI attribution patterns are not configured: set the dfx pr guard input attribution_patterns`, or `AI attribution patterns are invalid: <detail>`. That reason takes the same path as an attribution hit: `enforce` posts a failing status and Ready is never set, `observe` reports it as advisory, and the run exits 1. The comment tells maintainers what to configure, and each run also prints one `::error` annotation. Closed pull requests and excluded target branches are not scanned and stay unchanged. An adopter that keeps an older pin is unaffected until the pin moves.
 
 ## Trust and policy
 
@@ -484,7 +514,7 @@ The author's report comments are ordered by `created_at` and numeric comment ID.
 | Mode | Stable status context | Meaning |
 | --- | --- | --- |
 | `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR without `hard_fail` that is independently confirmed markdown-only (every changed path ends with `.md`, fail-closed): post enforce **success** (`pass: markdown-only change set; A38 report not required`) and keep the short `Draft instructions` greeting. Independently confirmed guard-docs drafts (markdown files and/or `.github/workflows/a38-guard.yml`, fail-closed, no `hard_fail`) post enforce **success** (`pass: guard-docs change set; A38 report not required`) and keep that same short greeting. Those successes are posted only when the review completion is valid. The waiver comment is only for a pull request that is not a draft. A missing or invalid review completion keeps the short draft greeting, publishes no new blocking status when none exists, replaces a leftover success with failure whose description starts with `review_fail:`, and leaves a leftover `hard_fail:` failure until the declaration is valid. The failure posted while the pull request is still Ready, before it returns to draft, uses the same prefix. That is not a pass. Other drafts publish no new blocking commit status when none exists. When the review completion is missing or invalid, a leftover success becomes failure whose description starts with `review_fail:`, and a leftover `hard_fail:` failure stays until the declaration is valid. When the review completion is valid, a leftover success stays and a leftover `review_fail:` is success-cleared the same way as `hard_fail:`. An ordinary `fail:` leftover is left unchanged. The guard does not post pending and does not invent a pass. See the `not_applicable` success-clear carve-out below, and the leftover success-clear when a prior `hard_fail:` or `review_fail:` failure remains on the same head (that leftover clear is for drafts that are not markdown-only or guard-docs, and only when the review completion is valid). Neither the omission nor the `review_fail:` replacement is a pass. The guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready **unless** a report waiver applies: write collaborator (author is a GitHub `User` with `write`/`maintain`/`admin` on the target), independently confirmed markdown-only, or independently confirmed guard-docs. Markdown-only and guard-docs do not hold Ready through red CI. Once Ready (`draft=false`): success for a valid author report, or for a report waiver; otherwise failure. Non-`User` actors, association strings, denied/404 permission lookups, and timeline 401/403/404 do not grant the write waiver. Policy/workflow/migration failures are never waived, except that guard-docs skips the bytes-changed line for `.github/workflows/a38-guard.yml` only. Separately, tool-attribution in the PR title, PR body, or a commit (`generated-with` banner, AI `Co-Authored-By` trailer, AI session header, AI author identity) sets `hard_fail` and exits 1 even on draft; an unscannable or missing commit message is fail-closed the same way. On `hard_fail` the blocking `A38 / report (<target>)` status is posted as `failure` on the PR head even on draft. |
-| `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. Unchanged on drafts. Tool-attribution and unscannable/missing commit-message `hard_fail` still exit 1. |
+| `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. Unchanged on drafts. Tool-attribution, missing or invalid [attribution patterns](#attribution-patterns), and unscannable/missing commit-message `hard_fail` still exit 1. |
 
 Configured `not_applicable` exclusions still publish success on the target enforce context to clear a wrong prior status, including on drafts; that success is not a test-pass claim.
 
@@ -558,4 +588,4 @@ python -m agent_cli.a38_guard reconcile --repo OWNER/NAME --all-open
 python -m agent_cli.a38_guard publish --repo OWNER/NAME --pr N --assessment-file FILE
 ```
 
-Event flags default to `GITHUB_EVENT_PATH` and `GITHUB_EVENT_NAME`. `--dry-run` performs reads and prints prospective JSON without mutations. `publish` re-assesses live evidence rather than trusting a previously saved verdict. Ordinary event runs publish using the configured token.
+Event flags default to `GITHUB_EVENT_PATH` and `GITHUB_EVENT_NAME`. `--dry-run` performs reads and prints prospective JSON without mutations. `publish` re-assesses live evidence rather than trusting a previously saved verdict. Ordinary event runs publish using the configured token. Every run reads the [attribution patterns](#attribution-patterns) from `A38_ATTRIBUTION_PATTERNS`.

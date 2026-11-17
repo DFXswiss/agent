@@ -1,5 +1,7 @@
 # Example consumer workflow for dfx pr guard.
-# Before rollout: replace USES_REF_PIN_ME with a pinned commit SHA of DFXswiss/agent.
+# Before rollout: replace USES_REF_PIN_ME with a pinned commit SHA of DFXswiss/agent,
+# and set the Actions variable A38_ATTRIBUTION_PATTERNS (docs/a38-guard.md,
+# section Attribution patterns).
 # Do not check out the pull-request head for this job.
 
 name: dfx pr guard
@@ -54,3 +56,4 @@ jobs:
           repository: ${{ github.repository }}
           pr: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pr || '' }}
           all_open: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open) }}
+          attribution_patterns: ${{ vars.A38_ATTRIBUTION_PATTERNS }}
