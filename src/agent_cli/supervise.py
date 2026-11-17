@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .a38_errors import RateLimitError
 from .grok_pane import grok_pane_is_working, grok_permission_prompt, strip_ansi
 from .telegram_act import TELEGRAM_IDLE_TICKS
 from .runtime import Completed, Runtime
@@ -218,39 +219,48 @@ def enqueue_assigned(
     existing = pending_repo_number(store, session_id, repo, number)
     if existing is not None:
         return existing
+    from .coordinator_runtime import remember_github_rate_limit
     from .github_accounts import load_accounts
 
     account = load_accounts(store.home).for_session(session_id)
-    runner = account.runner(runner)
     now = utcnow()
-    _ensure_assigned_session(store, session_id, now)
     url = f"https://github.com/{repo}/issues/{number}"
     title = ""
     body = ""
     assignee = ""
     try:
-        info = runner(
-            [
-                "gh",
-                "api",
-                f"repos/{repo}/issues/{number}",
-                "--jq",
-                "{title,body,html_url,assignee:.assignee.login}",
-            ]
-        )
-        if info.returncode == 0 and info.stdout.strip():
-            data = json.loads(info.stdout)
-            if isinstance(data, dict):
-                if isinstance(data.get("html_url"), str) and data["html_url"]:
-                    url = data["html_url"]
-                if isinstance(data.get("title"), str):
-                    title = data["title"]
-                if isinstance(data.get("body"), str):
-                    body = data["body"]
-                if isinstance(data.get("assignee"), str):
-                    assignee = data["assignee"]
-    except (OSError, json.JSONDecodeError):
-        pass
+        scoped = account.runner(runner)
+    except RateLimitError as exc:
+        # Authentication failure still propagates and does not create the session.
+        remember_github_rate_limit(store, exc)
+        _ensure_assigned_session(store, session_id, now)
+    else:
+        _ensure_assigned_session(store, session_id, now)
+        try:
+            info = scoped(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{repo}/issues/{number}",
+                    "--jq",
+                    "{title,body,html_url,assignee:.assignee.login}",
+                ]
+            )
+            if info.returncode == 0 and info.stdout.strip():
+                data = json.loads(info.stdout)
+                if isinstance(data, dict):
+                    if isinstance(data.get("html_url"), str) and data["html_url"]:
+                        url = data["html_url"]
+                    if isinstance(data.get("title"), str):
+                        title = data["title"]
+                    if isinstance(data.get("body"), str):
+                        body = data["body"]
+                    if isinstance(data.get("assignee"), str):
+                        assignee = data["assignee"]
+        except (OSError, json.JSONDecodeError):
+            pass
+        except RateLimitError as exc:
+            remember_github_rate_limit(store, exc)
     activity_id = str(uuid.uuid4())
     store.write(
         "activity",

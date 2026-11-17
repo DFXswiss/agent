@@ -590,9 +590,9 @@ def test_include_oserror_still_uses_the_rate_limit_probe(monkeypatch: pytest.Mon
 @pytest.mark.no_pg
 @pytest.mark.parametrize(
     ("resource", "expected"),
-    [(None, EPOCH + 3600), ("core", EPOCH + 60)],
+    [(None, EPOCH + 60), ("core", EPOCH + 60), ("search", EPOCH + 3600)],
 )
-def test_probe_does_not_end_on_an_earlier_other_pool(
+def test_probe_uses_the_named_pool_or_core(
     monkeypatch: pytest.MonkeyPatch, resource: str | None, expected: int
 ) -> None:
     monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
@@ -681,3 +681,192 @@ def test_rate_limit_stops_later_tasks_in_the_tick(
     assert store.row("task", _PARKED)["payload"]["coordinator"]["phase"] == "await_merge"
     assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "worker") == _stamp(EPOCH + 3600)
     assert _blocked_events(store) == []
+
+
+_GIT_IDENTITY = {
+    "name": "Worker Bot",
+    "email": "worker@example.com",
+    "signing_format": "ssh",
+    "signing_key": "/test/worker.key",
+}
+_SECONDARY_BARE = "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
+
+
+def _command(argv: list[str]) -> list[str]:
+    if "gh" in argv:
+        return _gh(argv)
+    return argv[argv.index("git") :]
+
+
+@pytest.mark.no_pg
+def test_headerless_core_does_not_wait_for_another_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    body = {
+        "resources": {
+            "search": {"remaining": 0, "reset": EPOCH + 3600},
+            "core": {"remaining": 20, "reset": EPOCH + 60},
+        },
+        "rate": {"remaining": 20, "reset": EPOCH + 60},
+    }
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        if cmd[:3] == ["gh", "api", "user"] and "--include" not in cmd:
+            return Completed(1, "", _PRIMARY)
+        if "--include" in cmd:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nX-RateLimit-Remaining: 0\n\n",
+                _PRIMARY,
+            )
+        assert cmd[:3] == ["gh", "api", "rate_limit"]
+        return Completed(0, json.dumps(body), "")
+
+    with pytest.raises(RateLimitError, match="reset time unavailable") as caught:
+        _account().runner(base)
+    _secret_absent(str(caught.value))
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("kind", ["pr", "git"])
+def test_secondary_without_headers_uses_rate_limit_include(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    calls: list[list[str]] = []
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _command(argv)
+        calls.append(cmd)
+        if cmd[:3] == ["gh", "api", "user"]:
+            return Completed(0, "worker-bot\n", "")
+        if cmd == ["gh", "api", "rate_limit", "--include"]:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n",
+                _SECONDARY_BARE,
+            )
+        if cmd[:3] == ["gh", "api", "rate_limit"]:
+            return Completed(1, "", _SECONDARY_BARE)
+        return Completed(1, "", _SECONDARY_BARE)
+
+    account = _account(git_identity=_GIT_IDENTITY)
+    scoped = account.runner(base)
+    with pytest.raises(RateLimitError) as caught:
+        if kind == "pr":
+            scoped(["gh", "pr", "view", "8", "--repo", "example/project"])
+        else:
+            scoped(["git", "status"])
+    assert str(caught.value) == _wait("worker", EPOCH + 120)
+    _secret_absent(str(caught.value))
+    assert calls[-2][:3] == ["gh", "api", "rate_limit"]
+    assert "--include" not in calls[-2]
+    assert calls[-1] == ["gh", "api", "rate_limit", "--include"]
+
+
+@pytest.mark.no_pg
+def test_merge_helpers_treat_rate_limit_as_unreadable() -> None:
+    from agent_cli.main import _live_merge_base, _merge_commit_first_parent
+
+    def runner(_argv: list[str]) -> Completed:
+        raise RateLimitError(_wait("worker", EPOCH + 15), retry_at=None, account="worker")
+
+    assert _live_merge_base(runner, "octo/app", "a" * 40, "b" * 40) is None
+    assert _merge_commit_first_parent(runner, "octo/app", "c" * 40) is None
+
+
+@pytest.mark.no_pg
+def test_main_reports_the_short_rate_limit_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli import main as main_mod
+
+    def boom(_args: list[str]) -> None:
+        raise RateLimitError(_wait("worker", EPOCH + 15), retry_at=None, account="worker")
+
+    monkeypatch.setitem(main_mod.COMMANDS, "status", boom)
+    with pytest.raises(SystemExit) as caught:
+        main_mod.main(["status"])
+    assert str(caught.value) == "agent: " + _wait("worker", EPOCH + 15)
+    assert "Authentication failed" not in str(caught.value)
+
+
+def test_bound_review_runner_dies_with_the_rate_limit_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.main import _bound_review_runner
+    from github_support import configure_accounts
+
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    store = Store(tmp_path)
+    configure_accounts(store.home, ["s1"])
+
+    def base(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        secret = "Authorization: Bearer ghp_secretvalue\n"
+        if "--include" in cmd:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 15\n\n",
+                _SECONDARY_BARE + secret,
+            )
+        return Completed(1, "", _SECONDARY_BARE + secret)
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", base)
+    with pytest.raises(SystemExit) as caught:
+        _bound_review_runner(store, {"session_id": "s1"})
+    text = str(caught.value)
+    assert text == "agent: " + _wait("test", EPOCH + 15)
+    assert "ghp_secretvalue" not in text
+    assert "Authentication failed" not in text
+
+
+def test_scan_github_remembers_and_does_not_call_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.github_act import scan_github
+    from github_support import configure_accounts
+
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    monkeypatch.setattr("agent_cli.coordinator_runtime.utcnow", lambda: _stamp(EPOCH))
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    configure_accounts(store.home, ["s1"])
+    store.write(
+        "activity",
+        "insert",
+        "act-1",
+        {
+            "id": "act-1",
+            "session_id": "s1",
+            "type": "pr.open",
+            "payload": {"repo": "example/project"},
+            "execution_status": "pending",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        calls.append(cmd)
+        if cmd[:3] != ["gh", "api", "user"]:
+            raise AssertionError(cmd)
+        if "--include" in cmd:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n",
+                _SECONDARY_BARE,
+            )
+        return Completed(1, "", _SECONDARY_BARE)
+
+    with pytest.raises(RateLimitError, match="resets at"):
+        scan_github(store, runner)
+    assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "test") == _stamp(EPOCH + 120)
+    assert store.row("activity", "act-1")["execution_status"] == "pending"
+    before = len(calls)
+    with pytest.raises(RateLimitError, match="resets at"):
+        scan_github(store, runner)
+    assert len(calls) == before
+    stored = json.dumps(store.row("activity", "act-1"))
+    assert "HTTP/2.0" not in stored
+    assert "Retry-After" not in stored

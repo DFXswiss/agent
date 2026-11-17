@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from .a38_errors import is_rate_limit_error
+from .a38_errors import RateLimitError, is_rate_limit_error
 from .coordinator_common import redact
 from .github_accounts import AccountError, load_accounts
 from .runtime import Completed
@@ -1147,6 +1147,11 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
         account = load_accounts(store.home).for_session(
             str(row.get("session_id") or "")
         )
+        from .coordinator_runtime import account_github_rate_limit
+
+        waiting = account_github_rate_limit(store, account.name)
+        if waiting is not None:
+            raise RateLimitError(waiting, retry_at=None, account=account.name)
         binding = {"account": account.name, "login": account.login.casefold()}
         if (
             row.get("execution_account") is not None
@@ -1232,6 +1237,9 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
             lines.append(execute(row))
         except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
             if is_rate_limit_error(exc):
+                from .coordinator_runtime import remember_github_rate_limit
+
+                remember_github_rate_limit(store, exc)
                 raise
             rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))

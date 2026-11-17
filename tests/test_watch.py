@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1187,6 +1188,169 @@ def test_scan_assigned_rejects_non_runner_session(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="runner"):
         scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+
+
+def _open_pr(row_id: str, number: int) -> dict:
+    return {
+        "id": row_id,
+        "session_id": "s1",
+        "type": "pr.open",
+        "payload": {},
+        "result": {
+            "repo": "dfxswiss/agent",
+            "number": number,
+            "url": f"https://github.com/dfxswiss/agent/pull/{number}",
+        },
+        "execution_status": "done",
+    }
+
+
+def test_scan_merged_stops_the_same_account_until_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_runtime import GITHUB_RATE_LIMIT_PREFIX
+
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: 1_700_000_000)
+    stamp = datetime.fromtimestamp(1_700_000_000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr("agent_cli.coordinator_runtime.utcnow", lambda: stamp)
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    store.write("activity", "insert", "open-1", _open_pr("open-1", 8))
+    store.write("activity", "insert", "open-2", _open_pr("open-2", 9))
+    configure_accounts(store.home, ["s1"])
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh") :]
+        calls.append(command)
+        if command[:3] != ["gh", "api", "user"]:
+            raise AssertionError(command)
+        if "--include" in command:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+            )
+        return Completed(1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)\n")
+
+    created, skipped = account_scan_merged(store, runner)
+    assert created == []
+    assert skipped == 2
+    assert calls == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "user", "--jq", ".login", "--include"],
+    ]
+    assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "test") is not None
+    stored = json.dumps(store.rows("activity"))
+    assert "Retry-After" not in stored
+    assert "HTTP/2.0" not in stored
+    created, skipped = account_scan_merged(store, runner)
+    assert created == []
+    assert skipped == 2
+    assert calls == [
+        ["gh", "api", "user", "--jq", ".login"],
+        ["gh", "api", "user", "--jq", ".login", "--include"],
+    ]
+
+
+def test_scan_assigned_rate_limited_login_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: 1_700_000_000)
+    store = Store(tmp_path)
+    _write_assigned_repos(tmp_path)
+    configure_accounts(store.home, ["assigned"])
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh") :]
+        calls.append(command)
+        if "--include" in command:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 45\n\n",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+            )
+        return Completed(1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)\n")
+
+    created, skipped = account_scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 1
+    assert all(command[:3] != ["gh", "issue", "list"] for command in calls)
+    stored = json.dumps(store.rows("activity") + [store.sync_get("assigned_watch_since")])
+    assert "Retry-After" not in stored
+    assert "HTTP/2.0" not in stored
+
+
+def test_scan_assigned_rate_limit_does_not_read_the_next_repo(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _write_assigned_repos(tmp_path, ["Owner/one", "Owner/two"])
+    configure_accounts(store.home, ["assigned"])
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh") :]
+        calls.append(command)
+        if command[:3] == ["gh", "api", "user"]:
+            return Completed(0, "alice\n", "")
+        if command[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                1,
+                "",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\nretry-after: 60\n",
+            )
+        raise AssertionError(command)
+
+    created, skipped = account_scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 2
+    listed = [command for command in calls if command[:3] == ["gh", "issue", "list"]]
+    assert len(listed) == 1
+    assert listed[0][listed[0].index("--repo") + 1] == "Owner/one"
+
+
+def test_scan_assigned_rate_limited_events_skip_the_line(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _write_assigned_repos(tmp_path)
+    configure_accounts(store.home, ["assigned"])
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh") :]
+        calls.append(command)
+        if command[:3] == ["gh", "api", "user"]:
+            return Completed(0, "alice\n", "")
+        if command[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {"number": 1, "title": "One", "url": "https://example/1", "body": ""},
+                        {"number": 2, "title": "Two", "url": "https://example/2", "body": ""},
+                    ]
+                ),
+                "",
+            )
+        if command[:2] == ["gh", "api"] and command[-1].endswith("/events"):
+            return Completed(
+                1,
+                "",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\nretry-after: 60\n",
+            )
+        raise AssertionError(command)
+
+    created, skipped = account_scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 2
+    events = [command for command in calls if command[-1].endswith("/events")]
+    assert len(events) == 1
+    assert events[0][-1].endswith("/issues/1/events")
+    stored = json.dumps(store.rows("activity"))
+    assert "retry-after" not in stored
 
 
 def test_dispatch_assigned_restarts_when_pane_down(tmp_path: Path) -> None:

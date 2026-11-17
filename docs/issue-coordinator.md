@@ -291,14 +291,22 @@ for worker in workers.values():
   later `gh` or `git` call raise a rate-limit error that names the account and
   the reset time. `gh` prints that failure as one line without response
   headers, so a failed `gh api` call is repeated once with `--include`.
-  `retry-after` and `x-ratelimit-reset` are read from that captured text, and
-  the text is not stored. `gh api rate_limit` (it does not count against the
-  limit) supplies a primary reset only when those headers still do not name a
-  time; it does not carry a secondary `retry-after`. The reset is the pool
-  named by `x-ratelimit-resource` when that header is present, otherwise the
-  latest exhausted pool, so an earlier unrelated pool cannot end the wait.
+  `retry-after` and `x-ratelimit-reset` are read from that captured `gh api`
+  text, and the text is not stored. `gh pr` and `git` have no `--include`
+  flag. `gh api rate_limit` (it does not count against the primary limit)
+  supplies the core reset when the failed call still does not name a time.
+  When a secondary limit rejects that probe, the probe is repeated once with
+  `--include` and its `retry-after` is used. The reset is the pool named by
+  `x-ratelimit-resource` when that header is present, otherwise the core pool,
+  so a different exhausted pool cannot extend the wait.
   The coordinator remembers that reset time, ends the current tick, and does
-  not call GitHub again before it. The task keeps its phase and its round.
+  not call GitHub again before it. Assignment watch and the knock loop read
+  that same stored reset and skip GitHub for the account until the time is
+  reached. A rate limit skips the current watch line instead of becoming an
+  authentication failure. Commands that do not catch it locally, and the
+  review-account binding, stop with that short rate-limit text. Supervise's
+  issue read and the merge-base helpers treat it as the same controlled stop
+  as a failed read. The task keeps its phase and its round.
   The coordinator does not publish a blocker and does not emit a `blocked`
   wake event. It tries the same phase again at or after the reset time. A
   real authentication failure, including HTTP 401, still raises

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_cli.runtime import Completed, PreflightRuntime, Runtime
 from agent_cli.store import Store
 from agent_cli.supervise import (
@@ -155,6 +157,74 @@ def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     assert row is not None
     assert row["payload"]["assignee"] == "octocat"
     assert row["payload"]["title"] == "t"
+
+
+def test_enqueue_rate_limited_issue_read_still_inserts(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+
+    def runner(argv: list[str]) -> Completed:
+        assert argv[:3] == ["gh", "api", "repos/octo/app/issues/3"]
+        return Completed(
+            1,
+            "",
+            "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
+            "retry-after: 30\n"
+            "Authorization: Bearer ghp_secretvalue\n",
+        )
+
+    aid = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    row = store.row("activity", aid)
+    assert row is not None
+    assert row["payload"]["title"] == ""
+    assert row["payload"]["mandate"] == "github-assignment"
+    stored = json.dumps(row)
+    assert "ghp_secretvalue" not in stored
+    assert "retry-after" not in stored
+    assert "Authentication failed" not in stored
+
+
+def test_enqueue_rate_limited_login_still_inserts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime, timezone
+
+    from agent_cli.coordinator_runtime import GITHUB_RATE_LIMIT_PREFIX
+
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: 1_700_000_000)
+    stamp = datetime.fromtimestamp(1_700_000_000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr("agent_cli.coordinator_runtime.utcnow", lambda: stamp)
+    store = Store(tmp_path)
+    _session(store)
+    configure_accounts(store.home, ["runner-1"])
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[argv.index("gh") :]
+        calls.append(command)
+        if "--include" in command:
+            return Completed(
+                1,
+                "HTTP/2.0 403 Forbidden\nRetry-After: 30\n\n",
+                "gh: You have exceeded a secondary rate limit. (HTTP 403)\n",
+            )
+        return Completed(
+            1,
+            "",
+            "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
+            "Authorization: Bearer ghp_secretvalue\n",
+        )
+
+    aid = account_enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    row = store.row("activity", aid)
+    assert row is not None
+    assert row["payload"]["title"] == ""
+    assert all(cmd[:3] != ["gh", "api", "repos/octo/app/issues/3"] for cmd in calls)
+    assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "test") is not None
+    stored = json.dumps(store.rows("activity"))
+    assert "ghp_secretvalue" not in stored
+    assert "HTTP/2.0" not in stored
+    assert "Authorization" not in stored
 
 
 def test_tick_commissions_then_asks_then_acks_yes(tmp_path: Path) -> None:

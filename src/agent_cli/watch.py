@@ -95,6 +95,18 @@ def _open_target(row: dict[str, Any]) -> tuple[str, int, str] | None:
     return repo, number, url
 
 
+def _remember_rate_limit(store: Store, exc: RateLimitError) -> None:
+    from .coordinator_runtime import remember_github_rate_limit
+
+    remember_github_rate_limit(store, exc)
+
+
+def _github_account_waiting(store: Store, account: str) -> bool:
+    from .coordinator_runtime import account_github_rate_limit
+
+    return account_github_rate_limit(store, account) is not None
+
+
 def scan_merged(
     store: Store,
     runner: Callable[[list[str]], Completed],
@@ -102,6 +114,7 @@ def scan_merged(
     """Insert pr.merged for owned pr.open rows whose GitHub PR is merged."""
     created: list[str] = []
     skipped = 0
+    limited_accounts: set[str] = set()
     for row in store.rows("activity"):
         if row.get("type") != "pr.open":
             continue
@@ -120,6 +133,13 @@ def scan_merged(
             from .github_accounts import AccountError, load_accounts
 
             account = load_accounts(store.home).for_session(session_id)
+        except (StoreError, json.JSONDecodeError):
+            skipped += 1
+            continue
+        if account.name in limited_accounts or _github_account_waiting(store, account.name):
+            skipped += 1
+            continue
+        try:
             binding = {"account": account.name, "login": account.login.casefold()}
             if row.get("execution_account") is not None and row["execution_account"] != binding:
                 raise AccountError("Activity account binding changed; refusing account switch")
@@ -137,7 +157,13 @@ def scan_merged(
                 ],
                 scoped_runner,
             )
-        except (StoreError, json.JSONDecodeError, RateLimitError):
+        except RateLimitError as exc:
+            _remember_rate_limit(store, exc)
+            if isinstance(exc.account, str) and exc.account != "":
+                limited_accounts.add(exc.account)
+            skipped += 1
+            continue
+        except (StoreError, json.JSONDecodeError):
             skipped += 1
             continue
         state = str(info.get("state") or "").upper()
@@ -328,7 +354,13 @@ def scan_assigned(
     from .github_accounts import load_accounts
 
     account = load_accounts(store.home).for_session(sid)
-    runner = account.runner(runner)
+    if _github_account_waiting(store, account.name):
+        return [], 1
+    try:
+        runner = account.runner(runner)
+    except RateLimitError as exc:
+        _remember_rate_limit(store, exc)
+        return [], 1
     login = account.login.casefold()
     cursor = store.sync_get("assigned_watch_since")
     if cursor is None:
@@ -340,29 +372,42 @@ def scan_assigned(
     created: list[str] = []
     skipped = 0
     found: list[dict[str, Any]] = []
+    rate_limited = False
     for repo in repos:
-        issues = _gh_list(
-            [
-                "gh",
-                "issue",
-                "list",
-                "--repo",
-                repo,
-                "--assignee",
-                login,
-                "--state",
-                "open",
-                "--limit",
-                str(ISSUE_LIST_LIMIT),
-                "--json",
-                "number,title,url,body",
-            ],
-            runner,
-        )
+        if rate_limited:
+            skipped += 1
+            continue
+        try:
+            issues = _gh_list(
+                [
+                    "gh",
+                    "issue",
+                    "list",
+                    "--repo",
+                    repo,
+                    "--assignee",
+                    login,
+                    "--state",
+                    "open",
+                    "--limit",
+                    str(ISSUE_LIST_LIMIT),
+                    "--json",
+                    "number,title,url,body",
+                ],
+                runner,
+            )
+        except RateLimitError as exc:
+            _remember_rate_limit(store, exc)
+            rate_limited = True
+            skipped += 1
+            continue
         if len(issues) >= ISSUE_LIST_LIMIT:
             skipped += 1
             continue
         for issue in issues:
+            if rate_limited:
+                skipped += 1
+                continue
             if not isinstance(issue, dict):
                 continue
             number = _issue_number(issue.get("number"))
@@ -378,6 +423,11 @@ def scan_assigned(
                     ],
                     runner,
                 )
+            except RateLimitError as exc:
+                _remember_rate_limit(store, exc)
+                rate_limited = True
+                skipped += 1
+                continue
             except StoreError:
                 skipped += 1
                 continue

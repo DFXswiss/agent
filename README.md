@@ -34,8 +34,11 @@ it. There is no default GitHub account or fallback to the host login on those
 paths. When GitHub exhausts that account's rate limit, the coordinator waits
 until the reset time and continues the same task phase by itself. A limit
 during a tick ends that tick, so GitHub is not called again before the reset.
-It does not report the limit as an authentication failure and it does not ask
-a person to unblock it. A real authentication failure still stops with no fallback.
+Assignment watch and the knock loop use that same stored reset and do not
+call GitHub again for the account before it. The limit is not reported as an
+authentication failure and it does not ask a person to unblock it. Other
+commands stop with the short rate-limit text. A real authentication failure
+still stops with no fallback.
 A38 visibility lookup likewise requires an explicitly configured
 `--github-session`, unless `--private` or `--public` supplies the report visibility.
 [AI accounts and roles](docs/ai-accounts.md) configure provider profiles, models,

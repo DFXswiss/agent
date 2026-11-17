@@ -60,6 +60,7 @@ from .coordinator_common import parse_model_result, redact as redact_secrets
 from .gate_order import latest_gates as durable_latest_gates
 from .gate_order import ordered_snapshot_gates
 from .github_act import _repo_ok
+from .a38_errors import RateLimitError
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
@@ -1629,7 +1630,7 @@ def cmd_small_change(args: list[str]) -> None:
         runner = _bound_review_runner(store, task)
         try:
             response = runner(["gh", "api", f"repos/{repo}/pulls/{number}"])
-        except AccountError as exc:
+        except (AccountError, RateLimitError) as exc:
             die(str(exc))
         if response.returncode != 0:
             die("pull request could not be read")
@@ -3743,7 +3744,7 @@ def _bound_review_runner(store: Store, task: dict) -> Any:
         return load_accounts(store.home).for_session(
             str(task.get("session_id") or "")
         ).runner(_exec_argv, require_git=False)
-    except AccountError as exc:
+    except (AccountError, RateLimitError) as exc:
         die(str(exc))
 
 
@@ -3762,7 +3763,7 @@ def _live_one_review(store: Store, task: dict) -> tuple[str, dict | None]:
     runner = _bound_review_runner(store, task)
     try:
         view = runner(["gh", "pr", "view", number, "--repo", repo, "--json", "author"])
-    except AccountError as exc:
+    except (AccountError, RateLimitError) as exc:
         die(str(exc))
     if view.returncode != 0:
         die("trusted review list could not be read")
@@ -3776,7 +3777,7 @@ def _live_one_review(store: Store, task: dict) -> tuple[str, dict | None]:
         return "", None
     try:
         config = fetch_trusted_pr_guard(runner, repo)
-    except AccountError as exc:
+    except (AccountError, RateLimitError) as exc:
         die(str(exc))
     except PrGuardLookupError:
         die("trusted review list could not be read")
@@ -3791,7 +3792,7 @@ def _live_merge_base(runner: Any, repo: str, base_sha: str, head_sha: str) -> st
         response = runner(
             ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}"]
         )
-    except AccountError:
+    except (AccountError, RateLimitError):
         return None
     if response.returncode != 0:
         return None
@@ -3809,7 +3810,7 @@ def _merge_commit_first_parent(runner: Any, repo: str, merge_sha: str) -> str | 
 
     try:
         response = runner(["gh", "api", f"repos/{repo}/commits/{merge_sha}"])
-    except AccountError:
+    except (AccountError, RateLimitError):
         return None
     if response.returncode != 0:
         return None
@@ -3860,7 +3861,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     runner = _bound_review_runner(store, task)
     try:
         response = runner(["gh", "api", f"repos/{repo}/pulls/{number}"])
-    except AccountError as exc:
+    except (AccountError, RateLimitError) as exc:
         die(str(exc))
     if response.returncode != 0:
         die("pull request merge evidence could not be read")
@@ -3959,7 +3960,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
     if reviewed_head != head_sha:
         try:
             commit = runner(["gh", "api", f"repos/{repo}/commits/{merge_commit_sha}"])
-        except AccountError as exc:
+        except (AccountError, RateLimitError) as exc:
             die(str(exc))
         if commit.returncode != 0:
             die("pre-merge base could not be read")
@@ -3978,7 +3979,7 @@ def _close_task_from_pr(store: Store, task: dict) -> None:
         ):
             try:
                 comparison = runner(["gh", "api", f"repos/{repo}/compare/{start}...{end}"])
-            except AccountError as exc:
+            except (AccountError, RateLimitError) as exc:
                 die(str(exc))
             if comparison.returncode != 0:
                 die("reviewed head ancestry could not be read")
@@ -4677,7 +4678,6 @@ def cmd_run(args: list[str]) -> None:
 def cmd_github(args: list[str]) -> None:
     if not args or args[0] != "pending":
         die("Usage: agent github pending")
-    from .a38_errors import RateLimitError
     from .github_act import scan_github
 
     store = open_store()
@@ -4688,8 +4688,6 @@ def cmd_github(args: list[str]) -> None:
             return
         for line in lines:
             print(line)
-    except RateLimitError as exc:
-        print(f"github pending error: {exc}", file=sys.stderr)
     finally:
         store.close()
 
@@ -5061,7 +5059,7 @@ def cmd_knock(args: list[str]) -> None:
                     # One scanner per provider; each reads only its own accounts.
                     for scan_accounts in (scan_openrouter_usage, scan_claude_paced):
                         _print_account_usage(scan_accounts, store)
-                from .a38_errors import RateLimitError
+                from .coordinator_runtime import remember_github_rate_limit
 
                 try:
                     created, skipped = scan_merged(store, run_argv)
@@ -5070,6 +5068,8 @@ def cmd_knock(args: list[str]) -> None:
                     if skipped:
                         print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
                 except (StoreError, RateLimitError) as exc:
+                    if isinstance(exc, RateLimitError):
+                        remember_github_rate_limit(store, exc)
                     print(f"pr.merged error: {exc}", file=sys.stderr)
                 hub_url = store.meta("hub_url")
                 hub_token = store.meta("device_token")
@@ -5090,6 +5090,8 @@ def cmd_knock(args: list[str]) -> None:
                     for line in scan_github(store, run_argv):
                         print(line)
                 except (StoreError, RateLimitError) as exc:
+                    if isinstance(exc, RateLimitError):
+                        remember_github_rate_limit(store, exc)
                     print(f"github pending error: {exc}", file=sys.stderr)
                 try:
                     for line in scan_mail(store, run_argv):
@@ -5653,7 +5655,7 @@ def main(argv: list[str] | None = None) -> None:
         die(f"unknown command: {cmd}")
     try:
         COMMANDS[cmd](args[1:])
-    except (StoreError, HubError) as exc:
+    except (StoreError, HubError, RateLimitError) as exc:
         die(str(exc))
     except PinnedModelSlotsError as exc:
         die(f"invalid models pinned on the task: {exc}")

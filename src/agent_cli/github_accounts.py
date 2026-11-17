@@ -483,13 +483,13 @@ def _named_rate_bucket(payload: dict[str, Any], resource: str) -> Any:
     return None
 
 
-def _reset_from_rate_limit_body(stdout: str, *, resource: str | None = None) -> datetime | None:
+def _reset_from_rate_limit_body(stdout: str, *, resource: str | None) -> datetime | None:
     """Reset of the pool that rejected the call.
 
     ``resource`` is ``x-ratelimit-resource`` when the failed response named its
-    pool. Without that name, the latest exhausted reset is used so an earlier
-    unrelated pool cannot end the wait first. This body has no secondary
-    ``retry-after``.
+    pool. Without that name, only the core pool (``rate``) is used. A header-less
+    ``gh`` or ``git`` call is a core call, and another exhausted pool must not
+    extend the wait. This body has no secondary ``retry-after``.
     """
     if not isinstance(stdout, str):
         return None
@@ -509,11 +509,11 @@ def _reset_from_rate_limit_body(stdout: str, *, resource: str | None = None) -> 
     if resource is not None and resource.strip() != "":
         take(_named_rate_bucket(payload, resource))
     else:
-        resources = payload.get("resources")
-        if isinstance(resources, dict):
-            for bucket in resources.values():
-                take(bucket)
         take(payload.get("rate"))
+        if not resets:
+            core = _named_rate_bucket(payload, "core")
+            if core is not payload.get("rate"):
+                take(core)
     if not resets:
         return None
     from .a38_guard import _rate_limit_deadline
@@ -567,6 +567,10 @@ def _raise_if_rate_limited(
     if not limited:
         return
     if reset_at is None and list(command[:3]) != ["gh", "api", "rate_limit"]:
+        # ``gh pr`` and ``git`` cannot take ``--include``. The rate_limit
+        # endpoint is exempt from the primary limit and, when a secondary
+        # limit rejects it, repeats once with ``--include`` so ``retry-after``
+        # is read here. That text is not returned to the caller or the store.
         try:
             probe = base([*account.command_prefix, *prefix, "gh", "api", "rate_limit"])
         except OSError:
@@ -575,6 +579,17 @@ def _raise_if_rate_limited(
             reset_at = _reset_from_rate_limit_body(
                 probe.stdout, resource=_response_resource(result)
             )
+        elif probe is not None and _needs_response_headers(probe):
+            try:
+                included = base(
+                    [*account.command_prefix, *prefix, "gh", "api", "rate_limit", "--include"]
+                )
+            except OSError:
+                included = None
+            if included is not None:
+                included_limited, included_reset = _rate_limit_clock(included)
+                if included_limited:
+                    reset_at = included_reset
     if reset_at is None:
         raise RateLimitError(
             f"GitHub rate limit exhausted for account {account.name}; reset time unavailable",
@@ -667,7 +682,10 @@ class Account:
             # Rate-limit text stays in this process. The raised error names only
             # the account and the reset time. A failed gh api line omits
             # response headers, so one repeat with --include is read here and
-            # is not returned to the caller or the store.
+            # is not returned to the caller or the store. gh pr and git have
+            # no --include flag. A secondary limit on those calls is read from
+            # gh api rate_limit, and from one --include repeat of that probe
+            # when the probe itself is rejected without a reset time.
             detected = result
             include = _gh_api_include_command(command)
             if include is not None and _needs_response_headers(result):

@@ -202,6 +202,33 @@ def remember_github_rate_limit(store: Store, exc: BaseException) -> str:
     return str(exc)
 
 
+def _account_rate_limit_at(store: Store, account: str, now: datetime) -> str | None:
+    """Wait line for one account. Same key as ``remember_github_rate_limit``."""
+    if not isinstance(account, str) or account == "":
+        return None
+    stored = store.sync_get(GITHUB_RATE_LIMIT_PREFIX + account)
+    if not isinstance(stored, str) or stored == "":
+        return None
+    reset = parse_utc_timestamp(stored)
+    if reset is None:
+        return None
+    if now < reset:
+        return f"GitHub rate limit exhausted for account {account}; resets at {stored}"
+    return None
+
+
+def account_github_rate_limit(store: Store, account: str) -> str | None:
+    """Wait line while this account's stored reset is still ahead.
+
+    Watch and knock have no coordinator worker. They read the same store key
+    instead of keeping a second clock. An unreadable stamp is not a reset time.
+    """
+    now = parse_utc_timestamp(utcnow())
+    if now is None:
+        raise RuntimeError("clock did not return a UTC timestamp")
+    return _account_rate_limit_at(store, account, now)
+
+
 def active_github_rate_limit(store: Store, worker: WorkerConfig) -> str | None:
     """Return the wait line while a configured account reset is still ahead.
 
@@ -223,14 +250,9 @@ def active_github_rate_limit(store: Store, worker: WorkerConfig) -> str | None:
     if now is None:
         raise RuntimeError("clock did not return a UTC timestamp")
     for name in names:
-        stored = store.sync_get(GITHUB_RATE_LIMIT_PREFIX + name)
-        if not isinstance(stored, str) or stored == "":
-            continue
-        reset = parse_utc_timestamp(stored)
-        if reset is None:
-            continue
-        if now < reset:
-            return f"GitHub rate limit exhausted for account {name}; resets at {stored}"
+        waiting = _account_rate_limit_at(store, name, now)
+        if waiting is not None:
+            return waiting
     return None
 
 
