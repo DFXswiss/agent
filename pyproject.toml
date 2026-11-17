@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.3.0"]
+test = ["pytest>=8.3.0", "coverage>=7.10.7"]
 
 [project.scripts]
 agent = "agent_cli.main:main"
@@ -33,3 +33,17 @@ agent_cli = ["static/*", "skills/**"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = ["no_pg: tests that must not start a PostgreSQL cluster"]
+
+[tool.coverage.run]
+source = ["agent_cli"]
+branch = true
+parallel = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+# Floor of the measured total line and branch coverage. It only moves up; see
+# CONTRIBUTING.md, "Complete test coverage is mandatory".
+fail_under = 0
+precision = 2
+show_missing = true
+skip_covered = true

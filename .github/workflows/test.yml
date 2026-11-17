@@ -30,4 +30,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[test]"
-      - run: pytest
+      - run: coverage run -m pytest
+      - run: coverage combine
+      - run: coverage report
