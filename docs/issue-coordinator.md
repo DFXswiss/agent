@@ -538,7 +538,10 @@ A record of a check lane is closed the same way, but closing it does not retry t
    the update. The pulls response alone does not count. `gh pr view` reads
    the published description afterwards and its `DE:`
    line has to be that sentence. A response that still shows the English
-   title is not accepted. A missing sentence, or a sentence that is only
+   title is not accepted, including when that line equals the text just
+   generated. The text stored in `change_summary_de` is the full German
+   sentence. The check reads the published description, not the request
+   that was sent. A missing sentence, or a sentence that is only
    the English title, does not leave that title in the published
    description: the read `DE:` line names the order and does not repeat it.
 6. **Tests** run only via script `check_argv` on the exact clean signed head

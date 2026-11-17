@@ -535,15 +535,26 @@ def test_refresh_replaces_a_published_english_title_without_a_german_sentence(
     assert "Add a widget" not in published.split("DE:\n", 1)[1]
     fake.pr["body"] = _ENGLISH_TITLE_IN_DE
     task["change_summary_de"] = "Add a widget."
+    coord(task)["lane_outcome"] = {
+        "role": "implementer",
+        "result": "done",
+        "applied": False,
+        "summary_de": _GERMAN_SENTENCE,
+    }
     save_task(store, task)
     assert refresh_draft_body(store, worker, task, fake) == [
         "replaced draft description on example/project#42"
     ]
     published = fake.pr["body"]
     de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
-    assert de_line == "Entwurf für Auftrag 11111111."
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
     assert "Wait for the GitHub" not in published.split("DE:\n", 1)[1]
-    assert store.row("task", OID)["change_summary_de"] == "Add a widget."
+    assert "Add a widget" not in published.split("DE:\n", 1)[1]
+    assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
 
 
 _ORDER_TITLE = (
