@@ -39,11 +39,12 @@ def _stamp(epoch: int) -> str:
 
 
 def _wait(account: str, epoch: int) -> str:
-    return f"GitHub rate limit exhausted for account {account}; resets at {_stamp(epoch)}"
+    when = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return f"GitHub API rate limited until {when.strftime('%H:%M')} UTC for account {account}"
 
 
 def _unavailable(account: str) -> str:
-    return f"GitHub rate limit exhausted for account {account}; reset time unavailable"
+    return f"GitHub API rate limited for account {account}"
 
 
 def _gh(argv: list[str]) -> list[str]:
@@ -173,7 +174,7 @@ def test_probe_oserror_is_not_an_authentication_failure() -> None:
             return Completed(1, "", _PRIMARY)
         raise OSError("rate_limit probe failed")
 
-    with pytest.raises(RateLimitError, match="reset time unavailable") as caught:
+    with pytest.raises(RateLimitError, match="GitHub API rate limited for account") as caught:
         _account().runner(base)
     assert "Cannot authenticate" not in str(caught.value)
     _secret_absent(str(caught.value))
@@ -191,7 +192,7 @@ def test_rate_limit_endpoint_is_not_probed_again() -> None:
         return Completed(1, "", _PRIMARY)
 
     scoped = _account().runner(base)
-    with pytest.raises(RateLimitError, match="reset time unavailable"):
+    with pytest.raises(RateLimitError, match="GitHub API rate limited for account"):
         scoped(["gh", "api", "rate_limit"])
     assert calls == [
         ["gh", "api", "user", "--jq", ".login"],
@@ -724,7 +725,7 @@ def test_headerless_core_does_not_wait_for_another_pool(
         assert cmd[:3] == ["gh", "api", "rate_limit"]
         return Completed(0, json.dumps(body), "")
 
-    with pytest.raises(RateLimitError, match="reset time unavailable") as caught:
+    with pytest.raises(RateLimitError, match="GitHub API rate limited for account") as caught:
         _account().runner(base)
     _secret_absent(str(caught.value))
 
@@ -870,7 +871,7 @@ def test_scan_github_remembers_and_does_not_call_again(
     assert "Retry-After" not in stored
     from agent_cli.coordinator_git import execute_github
 
-    with pytest.raises(RateLimitError, match="resets at") as caught:
+    with pytest.raises(RateLimitError, match="rate limited until") as caught:
         execute_github(store, runner, activity_ids=("act-1",))
     assert len(calls) == before
     assert store.row("activity", "act-1")["execution_status"] == "pending"

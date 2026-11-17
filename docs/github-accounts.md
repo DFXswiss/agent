@@ -59,9 +59,12 @@ GitHub token variables for the child process, does not change the process-wide
 environment, and does not switch the active account in another configuration
 directory. Authentication failure or a mismatch blocks the action; there is no
 fallback. A rate-limited `gh api user` check is not an authentication failure.
-The runner raises a distinct rate-limit error that names the account and the
-reset time, and a coordinating caller waits for that reset instead of switching
-accounts or reporting `Authentication failed`.
+The runner raises the guard's rate-limit error for that account. With a reset
+time the text is `GitHub API rate limited until HH:MM UTC for account <name>`.
+When the reset time cannot be read, the text is
+`GitHub API rate limited for account <name>` and no wait is stored. A coordinating
+caller waits for a known reset instead of switching accounts or reporting
+`Authentication failed`.
 Git operations use the selected account's credential helper and
 signing configuration. Before supported `fetch` / `push` / `pull` / `clone`
 forms, the runner asks Git for the effective remote URL via

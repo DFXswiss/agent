@@ -40,7 +40,10 @@ skips only that account's pending rows and still runs other accounts. The
 knock handler catches a rate-limit error only when one still escapes that
 scan. The limit is not reported as an
 authentication failure and it does not ask a person to unblock it. Other
-commands stop with the short rate-limit text. A real authentication failure
+commands stop with the guard's short rate-limit text
+(`GitHub API rate limited until HH:MM UTC for account <name>`, or
+`GitHub API rate limited for account <name>` when the reset time cannot be read).
+A real authentication failure
 still stops with no fallback.
 A38 visibility lookup likewise requires an explicitly configured
 `--github-session`, unless `--private` or `--public` supplies the report visibility.

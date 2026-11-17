@@ -3759,7 +3759,8 @@ def test_visibility_lookup_rate_limit_is_a_visible_error(tmp_path, monkeypatch):
         _resolve_private(tmp_path, None, run=runner, repository='example/app',
                          github_session='chosen', config_home=tmp_path)
     message = str(exc.value)
-    assert message.startswith('GitHub rate limit exhausted for account selected; resets at ')
+    assert message.startswith('GitHub API rate limited until ')
+    assert 'for account selected' in message
     assert 'HTTP/2.0' not in message
     assert 'Retry-After' not in message
     assert 'secondary' not in message

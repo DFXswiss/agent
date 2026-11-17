@@ -288,8 +288,11 @@ for worker in workers.values():
 - A GitHub response that exhausts the account's rate limit (a primary limit,
   HTTP 403 or 429 with a rate-limit response, or a secondary limit with
   `retry-after`) is not an authentication failure. The login check and every
-  later `gh` or `git` call raise a rate-limit error that names the account and
-  the reset time. `gh` prints that failure as one line without response
+  later `gh` or `git` call raise the guard's rate-limit error. With a reset
+  time the text is `GitHub API rate limited until HH:MM UTC for account <name>`.
+  When the headers and `gh api rate_limit` still do not name a time, the text
+  is `GitHub API rate limited for account <name>` and no wait is stored.
+  `gh` prints that failure as one line without response
   headers, so a failed `gh api` call is repeated once with `--include`.
   `retry-after` and `x-ratelimit-reset` are read from that captured `gh api`
   text, and the text is not stored. `gh pr` and `git` have no `--include`

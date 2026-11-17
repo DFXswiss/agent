@@ -195,10 +195,12 @@ def remember_github_rate_limit(store: Store, exc: BaseException) -> str:
         and isinstance(retry_at, datetime)
         and retry_at.tzinfo is not None
     ):
-        store.sync_set(
-            GITHUB_RATE_LIMIT_PREFIX + account,
-            retry_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+        from .a38_guard import _retry_at_text
+
+        stamp = _retry_at_text(retry_at.astimezone(timezone.utc))
+        if stamp is None or stamp == "":
+            raise RuntimeError("rate-limit reset did not format")
+        store.sync_set(GITHUB_RATE_LIMIT_PREFIX + account, stamp)
     return str(exc)
 
 
@@ -213,7 +215,9 @@ def _account_rate_limit_at(store: Store, account: str, now: datetime) -> str | N
     if reset is None:
         return None
     if now < reset:
-        return f"GitHub rate limit exhausted for account {account}; resets at {stored}"
+        from .a38_guard import _account_rate_limit_error
+
+        return str(_account_rate_limit_error(account, reset))
     return None
 
 

@@ -481,7 +481,7 @@ def _drain_enabled(
             if status == 404:
                 continue
             if _is_rate_limit_response(status, data, headers):
-                raise _rate_limit_error(status, reread_path, headers)
+                raise _rate_limit_error(status, reread_path, headers, account=None)
             if status in {401, 403}:
                 result["aborted"] = "forbidden"
                 return result

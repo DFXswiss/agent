@@ -14,12 +14,11 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .a38_errors import RateLimitError
 from .runtime import Completed
 from .store import StoreError
 
@@ -392,10 +391,6 @@ def _map_worktree_path(path: Path, mappings: tuple[tuple[str, str], ...]) -> str
     return mapped
 
 
-def _utc_stamp(when: datetime) -> str:
-    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _rate_limit_fields(completed: Completed) -> tuple[dict[str, str], list[int], str | None]:
     """Read status, rate-limit headers, and a message flag. Nothing is stored."""
     stderr = completed.stderr
@@ -590,18 +585,9 @@ def _raise_if_rate_limited(
                 included_limited, included_reset = _rate_limit_clock(included)
                 if included_limited:
                     reset_at = included_reset
-    if reset_at is None:
-        raise RateLimitError(
-            f"GitHub rate limit exhausted for account {account.name}; reset time unavailable",
-            retry_at=None,
-            account=account.name,
-        )
-    raise RateLimitError(
-        f"GitHub rate limit exhausted for account {account.name}; resets at {_utc_stamp(reset_at)}",
-        retry_at=reset_at,
-        retry_epoch=int(reset_at.timestamp()),
-        account=account.name,
-    )
+    from .a38_guard import _account_rate_limit_error
+
+    raise _account_rate_limit_error(account.name, reset_at)
 
 
 @dataclass(frozen=True)
@@ -679,8 +665,8 @@ class Account:
                     *network_config, *header_config, *git_args,
                 ]
             result = base([*self.command_prefix, *prefix, *command])
-            # Rate-limit text stays in this process. The raised error names only
-            # the account and the reset time. A failed gh api line omits
+            # Rate-limit text stays in this process. The raised error uses the
+            # guard rate-limit phrase and names the account. A failed gh api line omits
             # response headers, so one repeat with --include is read here and
             # is not returned to the caller or the store. gh pr and git have
             # no --include flag. A secondary limit on those calls is read from

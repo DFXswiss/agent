@@ -808,15 +808,54 @@ def _retry_at_text(retry_at: datetime | None) -> str | None:
     return retry_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _rate_limit_error(status: int, url: str, headers: Mapping[str, Any]) -> RateLimitError:
+def _rate_limit_error(
+    status: int,
+    url: str,
+    headers: Mapping[str, Any],
+    *,
+    account: str | None,
+) -> RateLimitError:
+    """One visible rate-limit error.
+
+    Without an account the text names the HTTP status and path, as the guard
+    always has. With an account the same phrase names that account. The lift
+    time still comes only from the headers.
+    """
     path = urllib.parse.urlparse(url).path or url
     retry_at, retry_epoch = _rate_limit_deadline(headers)
     phrase = _rate_limit_phrase(retry_at)
+    if account is None:
+        message = f"GitHub API {phrase} ({status}) for {path}"
+        named = None
+    else:
+        if account == "":
+            raise ValueError("rate-limit account is empty")
+        message = f"GitHub API {phrase} for account {account}"
+        named = account
     return RateLimitError(
-        f"GitHub API {phrase} ({status}) for {path}",
+        message,
         retry_at=retry_at,
         retry_epoch=retry_epoch,
+        account=named,
     )
+
+
+def _account_rate_limit_error(account: str, retry_at: datetime | None) -> RateLimitError:
+    """Account limit through ``_rate_limit_error``.
+
+    The lift time is passed as ``x-ratelimit-reset`` because the account runner
+    may have read it from ``gh api rate_limit`` rather than from the failed
+    response. Status and path are not part of the account message.
+    """
+    headers: dict[str, str] = {}
+    if retry_at is not None:
+        if retry_at.tzinfo is None:
+            raise ValueError("rate-limit reset is not timezone-aware")
+        headers = {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": str(int(retry_at.timestamp())),
+        }
+    return _rate_limit_error(403, "https://api.github.com/", headers, account=account)
 
 
 def _endpoint_family(url: str) -> str:
@@ -1129,7 +1168,7 @@ class GitHubApi:
                 continue
             self._note_pool(url, headers)
             if _is_primary_rate_limit(status, data, headers):
-                error = _rate_limit_error(status, url, headers)
+                error = _rate_limit_error(status, url, headers, account=None)
                 resource_present, resource = _header_ci(
                     headers, "x-ratelimit-resource"
                 )
@@ -1150,7 +1189,7 @@ class GitHubApi:
                 self._sleep(_rate_limit_sleep_s(headers, attempt))
                 continue
             if _is_rate_limit_response(status, data, headers):
-                self._rate_limit = _rate_limit_error(status, url, headers)
+                self._rate_limit = _rate_limit_error(status, url, headers, account=None)
                 raise self._rate_limit
             result = (status, data, headers)
             matching_commit = (

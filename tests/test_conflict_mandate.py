@@ -1450,8 +1450,11 @@ def test_rate_limit_waits_and_does_not_call_github_again(
             1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)\n"
         )
 
-    reset = datetime.fromtimestamp(epoch + 120, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    message = f"GitHub rate limit exhausted for account worker; resets at {reset}"
+    reset_at = datetime.fromtimestamp(epoch + 120, tz=timezone.utc)
+    message = (
+        "GitHub API rate limited until "
+        f"{reset_at.strftime('%H:%M')} UTC for account worker"
+    )
     lines = tick(store, worker(tmp_path), runner=runner)
     assert lines == [message]
     assert len(calls) == 2
