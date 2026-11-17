@@ -493,10 +493,12 @@ def _jobs(store: Store) -> list[dict]:
 def _requeue_into(store: Store, seen: list[Any] | None = None):
     """A `requeue` callback that persists the payload, as the command layer does."""
 
-    def requeue(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    def requeue(
+        row_id: str, row: dict[str, Any], payload: dict[str, Any]
+    ) -> bool:
         if seen is not None:
             seen.append((row, payload))
-        store.write("job", "update", row["id"], payload)
+        store.write("job", "update", row_id, payload)
         return True
 
     return requeue
@@ -1849,7 +1851,9 @@ def test_a_refused_requeue_leaves_the_thread_unread(
     store = Store(tmp_path)
     calls: list[list[str]] = []
 
-    def requeue(_row: dict[str, Any], _payload: dict[str, Any]) -> bool:
+    def requeue(
+        _row_id: str, _row: dict[str, Any], _payload: dict[str, Any]
+    ) -> bool:
         if outcome == "raise":
             raise RuntimeError("boom")
         return False

@@ -409,10 +409,20 @@ def _cmd_ingest(args: list[str]) -> None:
         requeued: list[str] = []
         skipped = 0
         try:
-            def requeue(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+            def requeue(
+                row_id: str, row: dict[str, Any], payload: dict[str, Any]
+            ) -> bool:
                 try:
                     return (
-                        _requeue_job(paths, store, row, payload, run_argv) is None
+                        _requeue_job(
+                            paths,
+                            store,
+                            row,
+                            payload,
+                            run_argv,
+                            expected_id=row_id,
+                        )
+                        is None
                     )
                 except Exception:
                     # A refused or raising re-queue leaves the thread unread so
@@ -901,24 +911,38 @@ def _requeue_job(
     row: dict[str, Any],
     payload: dict[str, Any],
     runner: Callable[[list[str]], Completed],
+    *,
+    expected_id: str,
 ) -> str | None:
     """Move one existing row to the queued `payload`, or say why not.
 
     Returns a problem text instead of exiting so `retry` and `ingest` can share
-    the exact sequence. The row's id must be a safe path component and the
-    payload must name the same id; a mismatch is refused before anything is
-    touched. A pending status activity of the attempt being replaced is retired
-    first; if that cannot be done, neither the row nor its evidence is touched. Only after a clean worktree removal are the previous attempt's
-    artefacts removed: a stale exit code would otherwise be read as the next
-    attempt's result. The single write is last, so a refused re-queue leaves
-    the row unchanged.
+    the exact sequence. `expected_id` is the key the caller looked the row up
+    under. The row's id must be a safe path component and must equal that key,
+    and the payload must name the same id; every mismatch is refused before
+    anything is touched. The stored row's id, not the lookup key, is what the
+    cleanup and the write would use as a path, so a row that was found under
+    one key but carries another id would remove and overwrite data belonging
+    to a different job.
+
+    A pending status activity of the attempt being replaced is retired first;
+    if that cannot be done, neither the row nor its evidence is touched. Only
+    after a clean worktree removal are the previous attempt's artefacts
+    removed: a stale exit code would otherwise be read as the next attempt's
+    result. The single write is last, so a refused re-queue leaves the row
+    unchanged.
     """
     from . import runner_status
 
     job_id = row.get("id")
     if not safe_job_id(job_id):
         return "job has no usable id"
-    if payload.get("id") != job_id:
+    if job_id != expected_id:
+        # The row was stored under another key. Its id names the files and the
+        # row that are written, so acting on it would reach a job the caller
+        # did not name.
+        return f"job {expected_id}: row id {job_id} does not match the lookup key"
+    if payload.get("id") != expected_id:
         # The payload names the row that is written after the cleanup. A
         # mismatch would remove files and a worktree for one id and then store
         # another, so nothing may be touched.
@@ -966,7 +990,9 @@ def _cmd_retry(args: list[str]) -> None:
                 die(
                     f"job {job_id} cannot be retried from state {row.get('state')}"
                 )
-            problem = _requeue_job(paths, store, row, payload, run_argv)
+            problem = _requeue_job(
+                paths, store, row, payload, run_argv, expected_id=job_id
+            )
             if problem is not None:
                 die(problem)
         finally:
