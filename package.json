@@ -1,0 +1,11 @@
+{
+  "name": "agent-dashboard-screenshots",
+  "private": true,
+  "description": "Playwright screenshot baselines of the local dashboard; a local review aid, not run in CI.",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}
