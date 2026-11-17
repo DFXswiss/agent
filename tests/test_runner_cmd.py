@@ -582,6 +582,122 @@ def test_ingest_prints_a_requeued_job(
         store.close()
 
 
+def test_ingest_rejects_an_unsafe_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="session id may contain only"):
+        cmd_runner(["ingest", "--session", "bad session"])
+
+    assert calls == []
+
+
+def test_ingest_stops_when_the_catalogue_object_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A JSON object whose `skills` member is not a list or mapping is readable
+    # JSON but not a catalogue this command can use.
+    home = tmp_path / "home"
+    _write_policy(home)
+    (home / "runner" / "skills-catalog.json").write_text(
+        json.dumps({"skills": "not a list"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="skills catalog is not readable"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+
+def test_ingest_skips_a_requeue_that_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A re-queue that fails must leave the row as it was and the thread unread,
+    # so the next pass tries again.
+    home = tmp_path / "home"
+    _write_policy(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    expected = job_id("owner/name", "7", "pr-review")
+    row = job_row(
+        session_id="session-0",
+        repo="owner/name",
+        ref="7",
+        job_type="pr-review",
+        actor="alice",
+        queue_type="pr-ready",
+        trigger="comment:owner/name:7:0",
+    )
+    row.update({"state": "failed", "attempts": 1})
+    store = Store(home)
+    try:
+        store.write("job", "insert", expected, row)
+    finally:
+        store.close()
+
+    base = _ingest_runner(
+        login="example-bot",
+        calls=[],
+        notifications=[
+            {
+                "id": "1001",
+                "repository": {"full_name": "owner/name"},
+                "subject": {"url": "https://api.github.com/repos/owner/name/issues/7"},
+            }
+        ],
+        comments=[
+            {
+                "id": 1,
+                "body": "@example-bot please review",
+                "user": {"login": "alice"},
+            }
+        ],
+    )
+
+    def run(argv: list[str]) -> Completed:
+        if " ".join(argv).endswith("worktree prune"):
+            raise RuntimeError("git unavailable")
+        return base(argv)
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", run)
+
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    captured = capsys.readouterr()
+    assert "job.queued none" in captured.out
+    assert "job.requeued" not in captured.out
+    assert "ingest skipped 1" in captured.err
+    store = Store(home)
+    try:
+        saved = store.row("job", expected)
+        assert saved is not None
+        assert saved["state"] == "failed"
+        assert saved["attempts"] == 1
+        assert saved["trigger"] == "comment:owner/name:7:0"
+    finally:
+        store.close()
+
+
+def test_a_held_lock_makes_ingest_report_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    state = home / "runner" / "state"
+    state.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with (state / "runner.lock").open("w") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        cmd_runner(["ingest", "--session", "session-1"])
+
+    assert "runner busy" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------- lock
 
 
@@ -1088,6 +1204,44 @@ def test_dispatch_preflight_names_an_ai_failure_with_a_fixed_prefix(
         cmd_runner(["dispatch"])
 
     assert "SECRET-AI-DIAGNOSTIC" not in capsys.readouterr().err
+
+
+def test_dispatch_preflight_refuses_an_unreadable_catalogue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_worker_files(home)
+    (home / "runner" / "skills-catalog.json").write_text(
+        json.dumps({"skills": 7}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="skills catalog is not readable"):
+        runner_cmd._worker_preflight(runner_paths(home / "runner"))
+
+
+def test_dispatch_preflight_accepts_a_policy_without_an_allow_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Admission treats a missing list as "admits nothing", so there is no
+    # allowed type for the preflight to reject.
+    home = tmp_path / "home"
+    _write_worker_files(home, job_types_allow=None)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    runner_cmd._worker_preflight(runner_paths(home / "runner"))
+
+
+def test_dispatch_preflight_accepts_an_empty_allow_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An empty list maps to no skill at all, so neither the worker nor the
+    # prompt-template requirement applies.
+    home = tmp_path / "home"
+    _write_worker_files(home, job_types_allow=[])
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    runner_cmd._worker_preflight(runner_paths(home / "runner"))
 
 
 def test_dispatch_uses_the_installed_worker_by_default(
@@ -1828,6 +1982,75 @@ def test_remove_job_worktree_prunes_when_the_path_is_already_absent(
 
 
 # ---------------------------------------------------------------------- retry
+
+
+@pytest.mark.parametrize("args", [["retry"], ["retry", "--help"]])
+def test_retry_refuses_a_missing_or_flag_like_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str]
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="Usage:"):
+        cmd_runner(args)
+
+    assert calls == []
+
+
+def test_a_held_lock_makes_retry_report_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    state = home / "runner" / "state"
+    state.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with (state / "runner.lock").open("w") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        cmd_runner(["retry", "job-1"])
+
+    assert "runner busy" in capsys.readouterr().out
+
+
+def test_retry_reports_a_missing_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="job missing-job is missing"):
+        cmd_runner(["retry", "missing-job"])
+
+
+def test_requeue_job_refuses_a_stored_row_without_a_usable_id(
+    tmp_path: Path,
+) -> None:
+    # `_requeue_job` is shared by retry and ingest and takes a row from the
+    # store. A row whose payload lost its id cannot name a worktree, so it is
+    # refused rather than writing a payload that no path can use.
+    home = tmp_path / "home"
+    paths = runner_paths(home / "runner")
+    store = Store(home)
+    try:
+        store.write("job", "insert", "job-without-id", {"state": "failed"})
+        row = store.row("job", "job-without-id")
+        assert row is not None
+        problem = runner_cmd._requeue_job(
+            paths,
+            store,
+            row,
+            {"id": "job-without-id", "state": "queued"},
+            lambda _argv: _completed(),
+        )
+        assert problem == "job has no usable id"
+        assert store.row("job", "job-without-id") == row
+    finally:
+        store.close()
 
 
 def test_retry_requeues_and_removes_the_previous_attempt(
@@ -2985,4 +3208,250 @@ def test_doctor_reports_a_missing_lane_execution_declaration(
     assert raised.value.code == 1
     out = capsys.readouterr().out
     assert "lane_execution is not configured" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_an_ai_configuration_that_cannot_be_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An unreadable account file leaves no AI object, but every other check
+    # still runs and is reported.
+    home = tmp_path / "home"
+    _healthy_runner_files(home)
+    (home / "ai-accounts.json").write_text("{", encoding="utf-8")
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: AI configuration is not usable" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_skips_the_catalogue_checks_when_it_cannot_read_the_catalogue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An unreadable catalogue is already reported; the skill mapping and the
+    # default cannot be judged from it, so no second, invented problem appears.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.skills_catalog.write_text("[", encoding="utf-8")
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: skills catalog" in out
+    assert "default_skill_on_mention is not a skill in the catalogue" not in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_does_not_require_a_prompt_when_no_allowed_skill_is_pr_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The template requirement follows the skill actually allowed; a catalogue
+    # entry that is not `pr-review` must not trigger it.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    # The template is absent, so a prompt check reached by mistake would add a
+    # second problem and fail the count assertion below.
+    (paths.prompts / "pr-review.md").unlink()
+    paths.policy.write_text(
+        json.dumps(
+            {
+                "expected_gh_user": "example-bot",
+                "job_types_allow": ["pr-ready"],
+                "default_skill_on_mention": "merge-conflict",
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.skills_catalog.write_text(
+        json.dumps(
+            {"skills": [{"id": "merge-conflict", "queue_type": "pr-ready"}]}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "job type merge-conflict has no worker" in out
+    assert "prompt template" not in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_missing_expected_login(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.policy.write_text(
+        json.dumps(
+            {
+                "job_types_allow": ["pr-ready"],
+                "default_skill_on_mention": "pr-review",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: policy expected_gh_user is missing" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_missing_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which",
+        lambda name: None if name == "ps" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: ps is not on PATH" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_runner_directory_that_cannot_be_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+    real_access = os.access
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.os.access",
+        lambda path, mode: False if Path(path) == paths.base else real_access(path, mode),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"doctor problem: runner directory {paths.base} is not writable" in out
+    )
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_login_check_that_cannot_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+
+    def fail(_argv: list[str]) -> Completed:
+        raise OSError("gh cannot run")
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", fail)
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: gh login check failed" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_login_that_does_not_match_the_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _healthy_runner_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "another-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        "doctor problem: gh is authenticated as another-bot, "
+        "policy expects example-bot" in out
+    )
     assert "doctor 1 problems" in out
