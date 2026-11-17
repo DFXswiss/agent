@@ -1347,11 +1347,11 @@ round limit and its assessment lane; the conflict remedy for orders; the A38
 model second review; the acceptance report; and the orders view of the local
 dashboard.
 
-This revision records the accepted concept for a team record with key identity (§24): signed append-only events for tasks, security issues and discussions, no third-party identity, no deletion, and a time axis. It is not implemented; §§2–12 stay in force until each part ships.
+This revision records the proposed concept for a team record with key identity (§24): signed append-only events for tasks, security issues and discussions, no third-party identity, no deletion, and a time axis. It is not implemented; §§2–12 stay in force until each part ships.
 
-## 24. Team record and key identity (accepted concept, not implemented)
+## 24. Team record and key identity (proposed concept, not implemented)
 
-Status: accepted direction, not built. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+Status: proposed direction under discussion, not built. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
 
 ### 24.1 Purpose
 
