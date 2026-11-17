@@ -44,7 +44,7 @@ SIGNATURE_BYTES = 64
 HUB_METHOD = "GET"
 WHOAMI_TARGET = "/api/key/whoami"
 RELEASE_PATH = "/api/key/release"
-RELEASE_FIELDS = frozenset({"repository", "pull_request", "released", "failed", "hub_key"})
+RELEASE_FIELDS = ("repository", "pull_request", "released", "failed", "hub_key")
 RELEASE_FAILURES = ("task_missing", "task_not_ready", "question_unanswered")
 MAX_PULL_REQUEST = 2147483647
 # Repository rule of the keys file: owner in the form of a handle, name of
@@ -622,14 +622,23 @@ def release_target(repository: str, number: int) -> str:
     return f"{RELEASE_PATH}?repository={repository.replace('/', '%2F')}&pull_request={number}"
 
 
+class _Members(list[tuple[str, Any]]):
+    """The members of one JSON object in the order written, repeated names included."""
+
+
 def _release_answer(body: bytes, repository: str, number: int, pin: HubPin) -> dict[str, Any]:
-    """The verified 200 answer when it has exactly the form of the hub's release answer for this query."""
+    """The verified 200 answer when it has exactly the form of the hub's release answer for this query.
+
+    The body is UTF-8 and one object with exactly the fields of the hub's answer,
+    each once and in the hub's order; a repeated name is refused, not resolved.
+    """
     try:
-        answer = json.loads(body)
+        members = json.loads(body.decode("utf-8"), object_pairs_hook=_Members)
     except (ValueError, RecursionError):
         raise KeyProtocolError(UNEXPECTED_FORM) from None
-    if not isinstance(answer, dict) or set(answer) != RELEASE_FIELDS:
+    if not isinstance(members, _Members) or tuple(name for name, _ in members) != RELEASE_FIELDS:
         raise KeyProtocolError(UNEXPECTED_FORM)
+    answer = dict(members)
     released = answer["released"]
     failed = answer["failed"]
     if (

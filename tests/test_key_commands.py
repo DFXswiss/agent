@@ -1342,6 +1342,19 @@ def release_body_without(field: str) -> bytes:
 
 
 MALFORMED_RELEASE_ANSWERS = (
+    # A repeated name is refused, not resolved to its last value.
+    b'{"repository":"example-org/example-repo","pull_request":42,"released":false,"released":true,'
+    b'"failed":null,"hub_key":"hub-test-1"}',
+    b'{"repository":"example-org/example-repo","pull_request":42,"released":true,"failed":"task_missing",'
+    b'"failed":null,"hub_key":"hub-test-1"}',
+    # The fields in another order than the hub writes them.
+    json.dumps(dict(reversed(list(RELEASED.items())))).encode("utf-8"),
+    # An array of pairs is not an object.
+    json.dumps([[name, value] for name, value in RELEASED.items()]).encode("utf-8"),
+    # Not UTF-8, or UTF-8 with a byte order mark.
+    json.dumps(RELEASED).encode("utf-16"),
+    json.dumps(RELEASED).encode("utf-32"),
+    b"\xef\xbb\xbf" + json.dumps(RELEASED).encode("utf-8"),
     *(release_body_without(field) for field in RELEASED),
     release_body(extra="x"),
     json.dumps({}).encode("utf-8"),
