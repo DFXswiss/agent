@@ -548,7 +548,7 @@ def test_production_app_ships_only_whoami_and_release(cfg: Config) -> None:
         store.close()
 
 
-# Section 10:each refusal of section 5 in its order
+# Section 10: each refusal of section 5 in its order
 
 
 def test_check_1_signature_missing(app: FastAPI) -> None:
@@ -651,7 +651,7 @@ def test_check_9_before_check_10(app: FastAPI) -> None:
     assert answer.json() == {"error": "scope_missing"}
 
 
-# Section 10:malformed requests refused at check 1, and gzip
+# Section 10: malformed requests refused at check 1, and gzip
 
 
 def _without(name: bytes) -> Wire:
@@ -795,7 +795,7 @@ def test_body_of_exactly_the_limit_is_accepted(app: FastAPI) -> None:
     assert_signed(coded, send(app, coded), 200, NOW)
 
 
-# Section 10:encoded paths
+# Section 10: encoded paths
 
 
 @pytest.mark.parametrize("raw_path", [b"/api/%6Bey/whoami", b"/api/key%2Fwhoami", b"/api/key/whoami"])
@@ -823,7 +823,7 @@ def test_question_mark_with_empty_query_is_refused_at_check_7(app: FastAPI) -> N
     assert_refused(send(app, wire), 401, "signature_invalid")
 
 
-# Section 10:signed 404, never 405 or a redirect
+# Section 10: signed 404, never 405 or a redirect
 
 
 @pytest.mark.parametrize(
@@ -859,7 +859,7 @@ def test_known_route_with_its_trailing_slash_is_found(app: FastAPI) -> None:
     assert_signed(wire, send(app, wire), 200, NOW)
 
 
-# Section 10:the time window
+# Section 10: the time window
 
 
 @pytest.mark.parametrize(("offset", "status"), [(-120, 200), (120, 200), (-121, 401), (121, 401)])
@@ -878,7 +878,7 @@ def test_hub_clock_moves_the_window(app: FastAPI, clock: FixedClock) -> None:
     assert_refused(send(app, build_wire(time_text=fmt(NOW))), 401, "time_skew")
 
 
-# Section 10:replay, parallel copies, the same nonce under two keys
+# Section 10: replay, parallel copies, the same nonce under two keys
 
 
 def test_replayed_request_is_refused(app: FastAPI) -> None:
@@ -922,7 +922,7 @@ def test_nonce_rows_older_than_ten_minutes_are_deleted(app: FastAPI, clock: Fixe
     assert store.query_one("SELECT 1 AS x FROM key_nonce WHERE nonce = ?", (first.nonce,)) is None
 
 
-# Section 10:signed for something else
+# Section 10: signed for something else
 
 
 @pytest.mark.parametrize(
@@ -948,7 +948,7 @@ def test_request_signed_for_something_else_is_refused(
     assert nonce_rows(app) == 0
 
 
-# Section 10:the host line
+# Section 10: the host line
 
 
 def test_host_line_from_uppercase_public_url_with_default_port(make_app: Callable[..., FastAPI]) -> None:
@@ -966,7 +966,7 @@ def test_host_line_keeps_a_port_that_is_not_the_default(make_app: Callable[..., 
     assert_refused(send(app, build_wire(host="hub.example.com")), 401, "signature_invalid")
 
 
-# Section 10:revoked and expired keys, a webauthn key used directly
+# Section 10: revoked and expired keys, a webauthn key used directly
 
 
 @pytest.mark.parametrize(
@@ -996,7 +996,7 @@ def test_webauthn_key_used_directly_is_refused(app: FastAPI) -> None:
     assert_refused(send(app, build_wire("staff-pass", seed=STRANGER_SEED)), 401, "key_kind_not_allowed")
 
 
-# Section 10:which answers are signed; existing endpoints are unchanged
+# Section 10: which answers are signed; existing endpoints are unchanged
 
 
 def test_no_hub_signature_on_any_refusal_at_checks_1_to_8(app: FastAPI) -> None:
@@ -1048,7 +1048,7 @@ def test_health_with_agent_headers_is_the_plain_health_answer(app: FastAPI) -> N
     assert_unsigned(answer)
 
 
-# Section 10:500 before and after check 8
+# Section 10: 500 before and after check 8
 
 
 def test_nonce_insert_failure_other_than_the_constraint_gives_unsigned_500(app: FastAPI) -> None:
@@ -1074,7 +1074,7 @@ def test_500_after_check_8_is_signed(app: FastAPI) -> None:
     assert answer.json() == {"error": "internal"}
 
 
-# Section 10:the start log line, the service log lines and no secret anywhere
+# Section 10: the start log line, the service log lines and no secret anywhere
 
 
 def test_start_log_line_names_the_hub_key_and_not_the_seed(

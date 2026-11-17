@@ -210,3 +210,10 @@ def test_public_url_without_a_host_is_refused(url: str) -> None:
     with pytest.raises(ConfigError) as caught:
         public_url_host(url)
     assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has no host"
+
+
+@pytest.mark.parametrize("url", ["https://hub..example", "https://" + "a" * 64 + ".example"])
+def test_public_url_with_an_invalid_host_name_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        public_url_host(url)
+    assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has an invalid host name"

@@ -305,6 +305,8 @@ def release_body(
     query: ReleaseQuery, released: bool, failed: str | None, hub_key_id: str
 ) -> dict[str, Any]:
     """The answer of GET /api/key/release (KEY-PROTOCOL.md section 8), fields in order."""
+    if not isinstance(released, bool):
+        raise ValueError("released must be a boolean")
     if released:
         if failed is not None:
             raise ValueError("a released pull request names no failed condition")

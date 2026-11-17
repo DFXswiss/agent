@@ -39,7 +39,7 @@ Open http://127.0.0.1:8787 and sign in.
 
 Every variable above is required. The process exits if one is missing.
 
-- `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed.
+- `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed. An international host name is written in its ASCII form (`xn--…`); otherwise the process exits.
 - `AGENT_CORE_KEYS` is the path of the keys file (`keys.yaml` next to `teams.yaml`).
 - `AGENT_CORE_SIGNING_KEY` is the 32-byte seed of the hub's Ed25519 signing key as 64 lowercase hex characters. It is a secret: every environment has its own seed, and the hub never logs or returns it.
 - `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters, starting and ending with a letter or digit). It is not a secret.

@@ -30,6 +30,7 @@ from agent_core.config import Config
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
 from agent_core.keys import SCOPE_HOLDERS
+from agent_core.signing import KeyRoutes
 from tests.conftest import HUB_KEY_ID
 from tests.test_signed_requests import (
     NOW,
@@ -385,14 +386,17 @@ def test_checks_1_to_7_refuse_as_on_whoami(app: FastAPI, target: str, case: str)
 @pytest.mark.parametrize("target", [WHOAMI, VALID])
 def test_check_8_replayed_query_is_refused(app: FastAPI, target: str) -> None:
     wire = guard(target)
-    assert_signed(wire, send(app, wire), 200, NOW)
+    first = send(app, wire)
+    assert_signed(wire, first, 200, NOW)
+    if target == VALID:
+        assert first.body == released_bytes(REPO, 42)
     assert_unsigned_error(send(app, wire), 401, "nonce_replayed")
     assert nonce_rows(app) == 1
 
 
 def test_replayed_invalid_query_is_refused_at_check_8(app: FastAPI) -> None:
     wire = guard(f"{RELEASE}?pull_request=0")
-    assert_signed(wire, send(app, wire), 400, NOW)
+    assert_signed_error(wire, send(app, wire), 400, "query_invalid")
     assert_unsigned_error(send(app, wire), 401, "nonce_replayed")
 
 
@@ -413,7 +417,13 @@ def test_one_log_line_per_service_request_without_the_query(
         guard(VALID, seed=STRANGER_SEED),
     ]
     answers = [send(app, wire) for wire in sent]
-    assert [answer.status for answer in answers] == [200, 400, 403, 403, 403, 401]
+    assert_signed(sent[0], answers[0], 200, NOW)
+    assert answers[0].body == released_bytes(REPO, 42)
+    assert_signed_error(sent[1], answers[1], 400, "query_invalid")
+    assert_signed_error(sent[2], answers[2], 403, "subject_not_allowed")
+    assert_signed_error(sent[3], answers[3], 403, "scope_missing")
+    assert_signed_error(sent[4], answers[4], 403, "scope_missing")
+    assert_unsigned_error(answers[5], 401, "signature_invalid")
     prefix = "uvicorn.error INFO key request "
     service_lines = [line[len(prefix):] for line in log_lines if line.startswith(prefix)]
     assert service_lines == [
@@ -510,9 +520,17 @@ def test_release_failures_are_the_three_conditions_in_order() -> None:
 
 @pytest.mark.parametrize(
     ("released", "failed"),
-    [(True, "task_missing"), (False, None), (False, "other"), (False, "")],
+    [
+        (True, "task_missing"),
+        (False, None),
+        (False, "other"),
+        (False, ""),
+        (1, None),
+        (0, "task_missing"),
+        (None, "task_missing"),
+    ],
 )
-def test_release_body_refuses_an_inconsistent_answer(released: bool, failed: str | None) -> None:
+def test_release_body_refuses_an_inconsistent_answer(released: Any, failed: str | None) -> None:
     with pytest.raises(ValueError):
         release_body(ReleaseQuery(REPO, 42), released, failed, "hub-1")
 
@@ -531,8 +549,6 @@ async def _no_handler(request: Any) -> tuple[int, dict[str, Any]]:
     ],
 )
 def test_key_routes_refuse_an_invalid_or_repeated_registration(method: str, path: str, message: str) -> None:
-    from agent_core.signing import KeyRoutes
-
     routes = KeyRoutes()
     routes.add("GET", "/api/key/release", _no_handler, scope=None, subject=None)
     with pytest.raises(ValueError) as caught:

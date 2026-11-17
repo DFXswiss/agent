@@ -7,7 +7,8 @@ specification for the first two build steps of the team record.
 **Status:** the hub side of the first build step and of the release query (the second build
 step) is implemented in this repository; the client commands of the first build step are in the
 client repository. The client command for the release query is specified in the client
-repository's next change. Everything listed under "Not built yet" is not implemented. The rules behind it are in
+repository's next change. Everything listed under "Not built yet" is not implemented. The rules
+behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
@@ -471,7 +472,8 @@ The hub, first build step:
   fractional seconds, with an offset instead of `Z` or with an impossible date (all refused at
   check 1)
 - the host line for a public URL with uppercase letters and with an explicit default port; a
-  public URL with user information, a query or a fragment is refused at start
+  public URL with user information, a query or a fragment, and one whose host name is not in
+  ASCII form, is refused at start
 - a revoked key, an expired key, a key whose `revoked` or `expires` time equals now (refused),
   and a key whose `revoked` time is in the future (accepted)
 - a `webauthn` key used directly

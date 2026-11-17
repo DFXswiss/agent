@@ -7,11 +7,10 @@ from fastapi.testclient import TestClient
 
 from agent_core.app import create_app
 from agent_core.config import Config
-from agent_core.db import Store
-
-from agent_core.db import utcnow
+from agent_core.db import Store, utcnow
+from agent_core.github import FakeGitHub
 from agent_core.tokens import issue
-from tests.conftest import FakeGitHub, pair_device, sign_in
+from tests.conftest import pair_device, sign_in
 
 
 def test_me_requires_login(hub: TestClient) -> None:
