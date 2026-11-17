@@ -681,12 +681,40 @@ def _order_de_has_sentence(source: dict[str, Any], body: str) -> bool:
     return line is not None and line != f"Entwurf für Auftrag {short}."
 
 
+def _english_title_keys(task: dict[str, Any]) -> set[str]:
+    """Casefolded order titles a DE line must not repeat.
+
+    The source title and the task title are both titles. A session prefix
+    before `` - `` is not part of the order title.
+    """
+    keys: set[str] = set()
+    source = coord(task).get("source")
+    source = source if isinstance(source, dict) else {}
+    for raw in (source.get("title"), task.get("title")):
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        text = redact(raw, limit=200).strip()
+        folded = text.rstrip(". ").casefold()
+        if folded:
+            keys.add(folded)
+        if " - " in text:
+            tail = text.split(" - ", 1)[1].strip().rstrip(". ").casefold()
+            if tail:
+                keys.add(tail)
+    return keys
+
+
+def _repeats_english_title(task: dict[str, Any], summary: str) -> bool:
+    text = redact(summary.strip(), limit=800).rstrip(". ")
+    return not text or text.casefold() in _english_title_keys(task)
+
+
 def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
     """German sentence from an implementer checkpoint that is not stored yet.
 
     The draft refresh runs before that sentence is saved on the task. The
-    checkpoint is the full sentence for this round. A stored summary, once
-    present, stays the one the description uses.
+    checkpoint is the full sentence for this round. A stored summary that
+    only repeats the English title does not hide this sentence.
     """
     outcome = coord(task).get("lane_outcome")
     if not isinstance(outcome, dict) or outcome.get("applied") is True:
@@ -703,8 +731,15 @@ def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
 
 def _stored_de_summary(task: dict[str, Any], *, has_lists: bool) -> str | None:
     raw = task.get("change_summary_de")
-    if not isinstance(raw, str) or not raw.strip() or "\n" in raw:
-        pending = _pending_implementer_summary(task)
+    pending = _pending_implementer_summary(task)
+    stored = raw if isinstance(raw, str) and raw.strip() and "\n" not in raw else None
+    # A stored copy of the English title is not the German sentence. The open
+    # implementer checkpoint is that sentence and replaces the title.
+    if stored is not None and _repeats_english_title(task, stored):
+        if pending is not None and not _repeats_english_title(task, pending):
+            return pending
+        return None
+    if stored is None:
         if pending is not None:
             return pending
         if has_lists and raw is not None:
@@ -802,13 +837,15 @@ def refresh_draft_body(
     """Replace a draft description from the stored German sentence. The script calls GitHub.
 
     An order uses the full stored German sentence, not the English title.
-    A sentence that is not stored yet is taken from the implementer
-    checkpoint. That sentence replaces an already published description
-    even when the reused and added list is absent, including a description
-    whose DE line cannot be read. A missing sentence, or a sentence that
-    is only the English title, still replaces a published description whose
-    DE line is that title. The published description is read back; its DE
-    line has to be the line just written.
+    A sentence that is not stored yet, and a stored sentence that only
+    repeats the English title, is taken from the implementer checkpoint.
+    That sentence replaces an already published description even when the
+    reused and added list is absent, including a description whose DE line
+    is the English title or cannot be read. A missing sentence, or a
+    sentence that is only the English title, still replaces a published
+    description whose DE line is that title. The published description is
+    read back with ``gh pr view``; its DE line has to be the line just
+    written.
     """
     c = coord(task)
     reused = task.get("reused_lines")
@@ -943,9 +980,7 @@ def ensure_draft(
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)
-    stored_de = task.get("change_summary_de")
-    if not isinstance(stored_de, str):
-        stored_de = _pending_implementer_summary(task)
+    stored_de = _stored_de_summary(task, has_lists=False)
     body = draft_pr_body(source, summary_de=stored_de)
     head = pr_head_ref(branch, target, publication)
     queue_activity(

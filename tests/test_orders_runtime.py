@@ -546,6 +546,90 @@ def test_refresh_replaces_a_published_english_title_without_a_german_sentence(
     assert store.row("task", OID)["change_summary_de"] == "Add a widget."
 
 
+_ORDER_TITLE = (
+    "Wait for the GitHub rate limit reset instead of reporting an "
+    "authentication failure"
+)
+
+
+def test_refresh_uses_the_checkpoint_sentence_when_the_stored_summary_is_the_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="implement",
+        pr_number=42,
+        title=_ORDER_TITLE,
+    )
+    fake.pr["body"] = (
+        f"EN:\nDraft for order 11111111: {_ORDER_TITLE}.\n\n"
+        f"DE:\nEntwurf für Auftrag 11111111: {_ORDER_TITLE}.\n\n"
+    )
+    task["change_summary_de"] = f"{_ORDER_TITLE}."
+    coord(task)["lane_outcome"] = {
+        "role": "implementer",
+        "result": "done",
+        "applied": False,
+        "summary_de": _GERMAN_SENTENCE,
+    }
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "replaced draft description on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert _ORDER_TITLE not in published.split("DE:\n", 1)[1]
+
+
+class _EchoPatchKeepsPublishedBody(FakeGh):
+    """The pulls response echoes the new description; the view stays old."""
+
+    def __call__(self, argv: list[str]) -> Completed:
+        command = list(argv)
+        if command and command[0] == "env" and "gh" in command:
+            command = command[command.index("gh") :]
+        if (
+            command[:2] == ["gh", "api"]
+            and "PATCH" in command
+            and "repos/example/project/pulls/42" in command
+        ):
+            body_arg = next(
+                (part[5:] for part in command if part.startswith("body=")),
+                None,
+            )
+            if body_arg is None:
+                return Completed(1, "", "pull body missing")
+            return Completed(0, json.dumps({"number": 42, "body": body_arg}), "")
+        return super().__call__(argv)
+
+
+def test_refresh_rejects_a_view_that_still_shows_the_english_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
+    echo = _EchoPatchKeepsPublishedBody()
+    patch_account_runners(monkeypatch, echo)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    echo.pr["body"] = _ENGLISH_TITLE_IN_DE
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    save_task(store, task)
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ) as raised:
+        refresh_draft_body(store, worker, task, echo)
+    assert "Wait for the GitHub" not in str(raised.value)
+    assert echo.pr["body"] == _ENGLISH_TITLE_IN_DE
+
+
 class _StalePrBody(FakeGh):
     """A pulls update that reports the previous description."""
 

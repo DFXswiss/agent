@@ -747,8 +747,9 @@ def _run_pr_body(store: Store, runner: Runner, row: dict[str, Any]) -> str:
 
     The update is the same ``gh api -f body=`` field a review post already
     uses. ``gh pr edit --body`` can exit 0 while the published description
-    stays unchanged. Done requires the pulls response body to be that
-    description. The body text is not copied into the error.
+    stays unchanged. The pulls response alone is not enough: done requires
+    ``gh pr view`` to show that description. The body text is not copied
+    into the error.
     """
     rid = str(row["id"])
     payload = row.get("payload")
@@ -782,6 +783,24 @@ def _run_pr_body(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             raise _GhError(PR_BODY_NOT_UPDATED)
         returned = updated.get("body")
         if not isinstance(returned, str) or not _published_body_matches(returned, body):
+            raise _GhError(PR_BODY_NOT_UPDATED)
+        viewed = _gh_json(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                repo,
+                "--json",
+                "body",
+            ],
+            runner,
+        )
+        if not isinstance(viewed, dict):
+            raise _GhError(PR_BODY_NOT_UPDATED)
+        live = viewed.get("body")
+        if not isinstance(live, str) or not _published_body_matches(live, body):
             raise _GhError(PR_BODY_NOT_UPDATED)
         _mark(
             store,
