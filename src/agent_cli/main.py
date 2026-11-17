@@ -6,6 +6,7 @@ import base64
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -2573,9 +2574,14 @@ def _usage_windows(
     provider = payload.get("provider") or payload.get("vendor")
 
     def percent(value: Any) -> float | None:
+        """A finite number, or ``None``; replicated data may hold any JSON number."""
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
+        return number if math.isfinite(number) else None
 
     def window(name: str, raw: Any) -> dict[str, Any] | None:
         if not isinstance(raw, dict):
@@ -2618,7 +2624,8 @@ def _usage_windows(
         reset = payload.get("limit_reset") if isinstance(payload.get("limit_reset"), str) else None
         used: float | None = None
         if limit and limit > 0 and remaining is not None:
-            used = round((limit - remaining) / limit * 100, 1)
+            ratio = (limit - remaining) / limit * 100
+            used = round(ratio, 1) if math.isfinite(ratio) else None
         resets_at = reset if _usage_time(reset) else None
         text = None
         if usage is not None:

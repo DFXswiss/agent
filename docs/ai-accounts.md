@@ -570,10 +570,10 @@ With several accounts a provider window shows the highest use among them.
 `detailed` opens every provider, `sort by used` orders providers by the
 headline percentage. The main page shows one summary line, for example
 `Claude 32% 5 d 19 h · Codex ⊗ · Grok 0% 3 d 4 h`, where a status shows as its
-icon with the word as its title. A listed account without any snapshot has the
-title `No usage: no paired device polls this login`, as in the table. The
-figures come only
-from stored `usage.snapshot` payloads and the inventory; `/api/state` delivers
+icon with the word as its title. On `/usage`, a listed account of a provider
+with a usage reader and without any snapshot shows `No usage: no paired device
+polls this login` on its name, as in the table. The figures come only from
+stored `usage.snapshot` payloads and the inventory; `/api/state` delivers
 them as `usage_overview`.
 
 Each session may include:

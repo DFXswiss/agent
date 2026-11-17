@@ -473,6 +473,28 @@ def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
     assert claude["recorded"] is None and claude["summary"] == "Claude 14%"
 
 
+def test_usage_overview_ignores_numbers_outside_the_float_range() -> None:
+    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    snapshot["windows"]["weekly"]["used_percent"] = 10**400
+    snapshot["windows"]["weekly_models"][0]["used_percent"] = float("inf")
+    router = _openrouter_body()
+    router["data"].update({"limit": 1e308, "limit_remaining": -1e308})
+    rows = _subscription_dashboard_rows(
+        (),
+        [
+            _recorded(snapshot),
+            _recorded(_openrouter_snapshot("router-a", router, "2026-11-17T09:00:00+00:00")),
+        ],
+    )
+    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
+    claude = overview["claude"]
+    assert [(w["name"], w["used_percent"]) for w in claude["windows"]] == [("Week", None), ("Week Fable", None)]
+    assert claude["used_percent"] is None and claude["status"] == "no data"
+    assert overview["openrouter"]["used_percent"] is None
+    assert overview["openrouter"]["summary"] == "OpenRouter $1.25 / $1e+308"
+    json.dumps(list(overview.values()), allow_nan=False)
+
+
 def test_usage_overview_markup() -> None:
     index = PAGE.read_text(encoding="utf-8")
     assert '<p>Subscriptions: <span id="usage-summary">—</span></p>' in index
@@ -530,12 +552,16 @@ console.log(JSON.stringify({{
         '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
         f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
     ) in closed
-    # A listed account without a snapshot carries the table's explanation as its title.
+    # A listed account without a snapshot carries the table's explanation on its
+    # name; its icon keeps the state word as title.
     no_data = state_icons(html)["no data"]
     assert (
-        '<span title="No usage: no paired device polls this login" aria-label="no data">'
+        '<span class="usage-line"><span title="No usage: no paired device polls this login">'
+        "seat-2@example.com</span><span></span>"
+        '<span title="no data" aria-label="no data">'
         f'<span class="state-icon" role="img" aria-label="no data">{no_data}&#xFE0E;</span></span>'
     ) in out["open"]
+    assert out["open"].count("No usage: no paired device polls this login") == 1
     assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
     # The browser renders the age of the raw timestamp with the shared elapsedText.
     assert '<span class="usage-muted" title="2026-11-17T09:56:00+00:00">recorded 4 min ago</span>' in closed
