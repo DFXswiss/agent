@@ -6,7 +6,8 @@ queued jobs (`dispatch`), runs one job inside its worktree (`work`), supervises
 and cleans up jobs (`supervise`, `prune`, `retry`), and reports on the queue and
 the configuration (`status`, `doctor`). The command group owns the external
 effects; the rules it applies live in the tested modules `jobs`, `ingest`,
-`dispatch`, `finalize`, `reap`, `queue`, `health` and `runner_worker`.
+`dispatch`, `finalize`, `reap`, `queue`, `health`, `runner_worker` and
+`runner_status`.
 
 The runner's own files live under `$AGENT_HOME/runner`, and every subcommand
 resolves those paths from that base, so moving `$AGENT_HOME` moves its
@@ -124,7 +125,26 @@ rather than choosing a commit. Stale `.exit` and `.transcript` files of queued
 jobs are removed first: a queued job has no live worker, and a leftover exit
 code would otherwise be read as the new attempt's result.
 
-Output: `job.started <job-id>` per job, or `job.started none`.
+Once the worktree exists and before the output baseline is read, dispatch posts
+one comment on the issue or pull request: `Working on this now: job <id>.`, with
+` (attempt N)` on a retry. The order is worktree → announcement → baseline. A
+baseline taken before the announcement would miss the bot's own comment, and the
+silent-failure check in `supervise` would count it as new output and pass every
+job. An
+announcement that cannot be posted does not stop the job; it is reported as
+`announce failed <job-id>` on standard error. The comment is a `comment.post`
+activity, never a direct `gh` call.
+
+The row records `pull_request` (whether the probe answered that the number is a
+pull request) and `announced` once the announcement ended `done`. Writing
+`announced` at once means a later baseline failure, which leaves the job
+queued, does not announce it again on the next pass. The deterministic activity
+id prevents a second comment even if that write itself fails.
+
+Output: `job.announced <job-id>` per delivered announcement, `job.started
+<job-id>` per job, or `job.started none`; an undelivered announcement is
+`announce failed <job-id>` on standard error. Neither line changes the exit
+status.
 
 ### `agent runner work`
 
@@ -203,10 +223,24 @@ worktrees and sessions left behind by killed workers. A row whose exit code is
 missing but whose session is alive is measured against the timeout and stall
 budgets; a row whose session has disappeared is recorded as crashed.
 
+A job that ends as failed gets one outcome comment describing how it ended:
+`agent_failed`, `timeout`, `stalled`, `crashed` or `workspace_failed`. A
+successful job gets none: its posted review is the output. The comment is a
+`comment.post` activity, never a direct `gh` call, and the timeout/stall
+sentence uses the same budget the watchdog applied. A row carries `reported`
+(`False` when the outcome comment is still owed, `True` after it is delivered)
+and `report_attempts`. A failed comment increments `report_attempts` and is
+retried on the next pass, up to five passes; after that the row is left alone.
+A row written before these fields existed has no `reported` key and is never
+reported. finalize marks a failed row `reported: False`; a done row is not
+marked.
+
 Output: `job.finalized <job-id>` (or `job.finalized none`),
-`worktree.removed <job-id>` and `session.killed <name>` per item, with failures
-reported as `reap failed <item>` on standard error. Any failed reap step makes
-the command exit with status 1 so a schedule notices.
+`worktree.removed <job-id>`, `session.killed <name>` and `job.reported
+<job-id>` per item, with failures reported as `reap failed <item>` and `report
+failed <job-id>` on standard error. Any failed reap step makes the command exit
+with status 1 so a schedule notices; a failed report does not change the exit
+status because the next pass retries it.
 
 This command is distinct from `agent supervise --session`, which watches one
 ledger session.
@@ -302,7 +336,6 @@ mention already queued by another device must not be inserted again.
   no worker. Dispatch refuses a policy that allows one, and the worker fails a
   queued one instead of guessing.
 - More prompt templates than `prompts/pr-review.md`.
-- GitHub announce and outcome comments for a job.
 - A schedule or service unit for the subcommands.
 - Container packaging.
 - Owner wildcards (`owner/*`) in `repos_allow` and job-type detection from the

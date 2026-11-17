@@ -22,7 +22,7 @@ import pytest
 
 import agent_cli.runner_cmd as runner_cmd
 import agent_cli.runner_worker as runner_worker
-from agent_cli import dispatch, github_act, lane
+from agent_cli import dispatch, github_accounts, github_act, lane
 from agent_cli.ingest import job_id, job_row
 from agent_cli.runtime import Completed
 from agent_cli.runner_cmd import (
@@ -566,6 +566,97 @@ def _dispatch_runner(
         raise AssertionError(argv)
 
     return run
+
+
+class _StatusAccount:
+    name = "test"
+    login = "example-bot"
+
+
+class _StatusAccounts:
+    def for_session(self, session_id: str) -> _StatusAccount:
+        if session_id != "s":
+            raise github_accounts.AccountError("no account for session")
+        return _StatusAccount()
+
+
+def _install_status_github(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agent_cli.github_accounts.load_accounts",
+        lambda _home: _StatusAccounts(),
+    )
+
+
+def _done_status_executor(seen: list[dict[str, Any]] | None = None) -> Any:
+    def execute(store: Store, _runner: Any, activity_id: str) -> str:
+        # The real executor takes the per-row lock and reads the account
+        # home from the store; a restricted job view has neither.
+        assert type(store) is Store
+        row = store.row("activity", activity_id)
+        assert isinstance(row, dict)
+        if seen is not None:
+            seen.append(row)
+        saved = {key: value for key, value in row.items() if not key.startswith("_")}
+        saved["execution_status"] = "done"
+        store.write("activity", "update", activity_id, saved)
+        return f"comment.post {activity_id} done"
+
+    return execute
+
+
+def _failed_status_row() -> dict[str, Any]:
+    row = _job_row()
+    row.update(
+        {
+            "state": "failed",
+            "outcome": "agent_failed",
+            "exit_code": 1,
+            "reported": False,
+            "pull_request": False,
+        }
+    )
+    return row
+
+
+def test_dispatch_posts_and_prints_one_announcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
+    _install_status_github(monkeypatch)
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "agent_cli.github_act.execute_activity", _done_status_executor(seen)
+    )
+
+    runner_cmd._cmd_dispatch([], wrapper="/bin/worker-under-test")
+
+    captured = capsys.readouterr()
+    assert f"job.announced {row['id']}" in captured.out
+    assert f"job.started {row['id']}" in captured.out
+    assert "announce failed" not in captured.err
+    assert len(seen) == 1
+    assert seen[0]["payload"]["body"].startswith("Working on this now: job")
+    assert seen[0]["payload"]["target"] == "issue"
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["announced"] is True
+        assert saved["pull_request"] is False
+    finally:
+        store.close()
 
 
 def test_dispatch_removes_stale_logs_before_starting(
@@ -1740,6 +1831,104 @@ def test_supervise_exits_one_when_a_reap_step_fails(
     # Reap failures are reported on standard error, like the other failures.
     assert "reap failed job-orphan" in captured.err
     assert "reap failed job-orphan" not in captured.out
+
+
+def _supervise_runner(calls: list[list[str]] | None = None) -> Any:
+    def run(argv: list[str]) -> Completed:
+        if calls is not None:
+            calls.append(list(argv))
+        joined = " ".join(argv)
+        if "api user" in joined:
+            return _completed(0, "example-bot\n")
+        if "list-sessions" in joined:
+            return _completed(0, "")
+        raise AssertionError(argv)
+
+    return run
+
+
+def test_supervise_reports_a_failed_job_and_prints_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner").mkdir(parents=True, exist_ok=True)
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _failed_status_row()
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _supervise_runner())
+    _install_status_github(monkeypatch)
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "agent_cli.github_act.execute_activity", _done_status_executor(seen)
+    )
+
+    cmd_runner(["supervise"])
+
+    captured = capsys.readouterr()
+    assert f"job.reported {row['id']}" in captured.out
+    assert "report failed" not in captured.err
+    assert len(seen) == 1
+    assert "exit code 1" in seen[0]["payload"]["body"]
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["reported"] is True
+    finally:
+        store.close()
+
+
+def test_a_failed_report_is_printed_without_changing_the_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {})
+    (home / "runner").mkdir(parents=True, exist_ok=True)
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _failed_status_row()
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _supervise_runner())
+    _install_status_github(monkeypatch)
+
+    def unfinished_execute(_store: Store, _runner: Any, _activity_id: str) -> str:
+        return "comment.post pending"
+
+    monkeypatch.setattr(
+        "agent_cli.github_act.execute_activity", unfinished_execute
+    )
+
+    # A failed report is retried on the next pass, so it must not turn the
+    # command into a failure a schedule would alert on.
+    cmd_runner(["supervise"])
+
+    captured = capsys.readouterr()
+    assert f"report failed {row['id']}" in captured.err
+    assert f"job.reported {row['id']}" not in captured.out
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["reported"] is False
+        assert saved["report_attempts"] == 1
+    finally:
+        store.close()
 
 
 def test_supervise_only_finalizes_this_devices_jobs(

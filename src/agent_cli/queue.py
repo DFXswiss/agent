@@ -176,10 +176,15 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     # same way it rejects a missing key, and the caller reads both with
     # .get(). Keeping the shape means a stored row carries no progress
     # keys at all until the first real measurement writes them.
+    #
+    # `report_attempts` is popped for the same reason: a retried job gets a
+    # fresh budget for outcome comments instead of inheriting the previous
+    # attempt's exhausted count.
     for key in (
         "progress_check_epoch",
         "progress_transcript_size",
         "progress_cpu_seconds",
+        "report_attempts",
     ):
         out.pop(key, None)
     return out

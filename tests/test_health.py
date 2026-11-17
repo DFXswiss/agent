@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_cli.finalize import _budget
+from agent_cli.finalize import budget
 from agent_cli.health import (
     agent_config_problems,
     runner_config_problems,
@@ -282,7 +282,7 @@ def test_runner_config_problems_reports_a_missing_clone_stall_minutes() -> None:
 
 
 def test_runner_config_problems_rejects_a_zero_budget() -> None:
-    # Strictly positive here, where _budget accepts zero at run time. The
+    # Strictly positive here, where budget accepts zero at run time. The
     # original is stricter in its check than in its runtime for these
     # fields and that asymmetry is deliberate.
     runner_config = {
@@ -307,7 +307,7 @@ def test_runner_config_problems_rejects_a_bool_budget() -> None:
 
 
 def test_runner_config_problems_reports_a_float_budget() -> None:
-    # The original's jq check admits a float, but _budget returns a budget
+    # The original's jq check admits a float, but budget returns a budget
     # only for an int, so a float would pass health and then skip every job
     # at run time. Health must not certify a config the supervisor cannot
     # run, so the laxer half of the original is not carried over.
@@ -419,7 +419,7 @@ def test_unresolved_skills_accepts_timeout_from_the_skill_and_deny_from_defaults
 
 
 def test_runner_config_problems_reports_a_malformed_per_skill_stall_override() -> None:
-    # _budget reads a skill's own stall_minutes and substitutes the default
+    # budget reads a skill's own stall_minutes and substitutes the default
     # only when the value is absent, so a present-but-broken override is
     # what the supervisor gets. Health has to reject it here or the job is
     # skipped at run time with nothing having complained.
@@ -532,7 +532,7 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
                 continue
             healthy.add(label)
             for field in ("timeout_minutes", "stall_minutes"):
-                assert _budget(runner_config, "pr-review", field) is not None, (
+                assert budget(runner_config, "pr-review", field) is not None, (
                     f"health passed but {field} does not resolve: {runner_config}"
                 )
         return healthy
@@ -562,7 +562,7 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
 
 def test_runner_config_problems_accepts_a_config_with_no_skills_table_at_all() -> None:
     # The skills table holds overrides. A config taking every budget from
-    # defaults omits it, and its budgets still resolve: _budget reads both
+    # defaults omits it, and its budgets still resolve: budget reads both
     # from defaults. So a missing table must read the same as an empty one,
     # or this check reports a problem in a configuration the supervisor is
     # running. (Whether a *catalogue* skill resolves is a separate question
@@ -575,9 +575,9 @@ def test_runner_config_problems_accepts_a_config_with_no_skills_table_at_all() -
         "clone_stall_minutes": 5,
     }
     assert runner_config_problems(runner_config) == []
-    # And it agrees with _budget on both budgets for that same config.
-    assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
-    assert _budget(runner_config, "pr-review", "stall_minutes") == 10
+    # And it agrees with budget on both budgets for that same config.
+    assert budget(runner_config, "pr-review", "timeout_minutes") == 60
+    assert budget(runner_config, "pr-review", "stall_minutes") == 10
 
 
 def test_runner_config_problems_reads_an_absent_skills_table_like_an_empty_one() -> None:

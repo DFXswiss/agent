@@ -25,7 +25,7 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
+def budget(runner_config: Any, job_type: str, key: str) -> int | None:
     """Return a non-negative int budget or None if missing or invalid (bool rejected).
 
     A skill without its own setting inherits the value from `defaults` —
@@ -219,7 +219,7 @@ def finalize_running(
                 # watchdog as well, so a job that has blown its limit would
                 # run forever over a setting that check does not need. The
                 # original orders it this way for the same reason.
-                timeout_minutes = _budget(runner_config, job_type, "timeout_minutes")
+                timeout_minutes = budget(runner_config, job_type, "timeout_minutes")
                 if timeout_minutes is None:
                     skipped += 1
                     continue
@@ -231,7 +231,7 @@ def finalize_running(
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "timeout"
                 else:
-                    stall_minutes = _budget(runner_config, job_type, "stall_minutes")
+                    stall_minutes = budget(runner_config, job_type, "stall_minutes")
                     if stall_minutes is None:
                         skipped += 1
                         continue
@@ -330,10 +330,11 @@ def finalize_running(
             runner(workspace.worktree_remove_argv(bare, worktree))
             runner(workspace.worktree_prune_argv(bare))
 
+        final_state = "done" if final_outcome == "success" else "failed"
         updated = _strip(row)
         updated.update(
             {
-                "state": "done" if final_outcome == "success" else "failed",
+                "state": final_state,
                 "outcome": final_outcome,
                 "exit_code": exit_code,
                 "done_kind": kind,
@@ -343,6 +344,10 @@ def finalize_running(
                 "updated_at": utcnow(),
             }
         )
+        if final_state == "failed":
+            # `supervise` posts the outcome comment for this row. A done row
+            # keeps no report marker: its posted review is the output.
+            updated["reported"] = False
         try:
             store.write("job", "update", job_id, updated)
             finalized.append(job_id)

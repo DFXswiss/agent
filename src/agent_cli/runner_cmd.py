@@ -465,6 +465,7 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
     command. A wrapper is only meaningful once the worker's configuration is
     present, so the preflight runs even when a wrapper was injected.
     """
+    from . import github_act, runner_status
     from .main import die, open_store
 
     paths = _runner_base()
@@ -483,10 +484,36 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
             return
         runner_config = load_json(paths.runner_config, "runner config")
         max_concurrent = _max_concurrent(runner_config)
+        # The announcement acts as the policy's login. Loading the policy here
+        # keeps the identity check close to the effect it guards.
+        policy = load_json(paths.policy, "policy")
+        login = expected_login(policy)
         _ensure_state_dirs(paths)
         store = open_store()
+        announced: list[str] = []
+        announce_failed: list[str] = []
         try:
             own = OwnJobs(store, work_root=paths.work)
+
+            def announce(row: dict[str, Any]) -> bool:
+                # The real store, not `own`: the executor needs its lock,
+                # its home and its activity rows, which the job view lacks.
+                done = runner_status.post_status(
+                    store,
+                    run_argv,
+                    row=row,
+                    kind="announce",
+                    body=runner_status.announce_body(row["id"], row["attempts"]),
+                    home=_agent_home(),
+                    expected_login=login,
+                    execute_activity=github_act.execute_activity,
+                )
+                if done:
+                    announced.append(str(row["id"]))
+                else:
+                    announce_failed.append(str(row["id"]))
+                return done
+
             # A queued job has, by definition, no live worker, so a leftover
             # exit file or transcript belongs to an earlier attempt. finalize
             # would read the old exit code as this attempt's result.
@@ -506,9 +533,16 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
                 work_root=str(paths.work),
                 wrapper=wrapper,
                 max_concurrent=max_concurrent,
+                announce=announce,
             )
         finally:
             store.close()
+    for job_id in announced:
+        print(f"job.announced {job_id}")
+    for job_id in announce_failed:
+        # An announcement that could not be posted does not stop the job, so
+        # this line is informational and the exit status stays unchanged.
+        print(f"announce failed {job_id}", file=sys.stderr)
     for job_id in started:
         print(f"job.started {job_id}")
     if not started:
@@ -586,6 +620,7 @@ def _cmd_supervise(args: list[str]) -> None:
     This is not `agent supervise --session`, which watches one ledger session;
     this supervises the runner's detached jobs.
     """
+    from . import github_act, runner_status
     from .main import open_store
 
     paths = _runner_base()
@@ -630,6 +665,17 @@ def _cmd_supervise(args: list[str]) -> None:
                 now_epoch=now,
                 session_prefix=dispatch.SESSION_PREFIX,
             )
+            # Report what the pass just finalized as well as older failures
+            # that still need their outcome comment.
+            reported, report_failed = runner_status.report_outcomes(
+                own,
+                store,
+                run_argv,
+                runner_config=runner_config,
+                home=_agent_home(),
+                expected_login=login,
+                execute_activity=github_act.execute_activity,
+            )
         finally:
             store.close()
     for job_id in finalized:
@@ -640,6 +686,12 @@ def _cmd_supervise(args: list[str]) -> None:
         print(f"worktree.removed {job_id}")
     for name in killed:
         print(f"session.killed {name}")
+    for job_id in reported:
+        print(f"job.reported {job_id}")
+    for job_id in report_failed:
+        # A failed report is retried on the next pass (up to
+        # MAX_REPORT_ATTEMPTS) and does not change the exit status.
+        print(f"report failed {job_id}", file=sys.stderr)
     for item in failed:
         print(f"reap failed {item}", file=sys.stderr)
     total_skipped = finalize_skipped + reap_skipped

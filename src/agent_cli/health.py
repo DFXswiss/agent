@@ -163,8 +163,8 @@ def _positive_budget(value: Any) -> bool:
     """True for an int strictly greater than zero (bool rejected).
 
     Int, not "number". The original tests jq's `type == "number"`, which
-    admits a float. The two budgets `_budget` resolves — `timeout_minutes`
-    and `stall_minutes` — are usable only as ints, because `_budget`
+    admits a float. The two budgets `budget` resolves — `timeout_minutes`
+    and `stall_minutes` — are usable only as ints, because `budget`
     returns a value only for an int: a float resolves to None and the job
     is skipped. Accepting a float would mean this check passing a
     configuration the supervisor cannot run, the exact failure this module
@@ -200,17 +200,17 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     is checked only when the skill actually carries one, because an absent
     one inherits the default that was already checked above.
 
-    The point of the per-skill rules is that every value `_budget` could
+    The point of the per-skill rules is that every value `budget` could
     resolve at run time has been checked here. Whatever it resolves — a
     skill's own override or the inherited default — this has already
     required it to be a positive whole number, so a config that passes
-    cannot then fail to produce a budget. Anything added to `_budget`'s
+    cannot then fail to produce a budget. Anything added to `budget`'s
     reads later needs a rule here too, or that property quietly lapses.
 
     Two deliberate differences from the original. It reports this whole
     block as a single message; this returns one per broken rule, because a
     caller that has to print them is better served naming the field. And
-    it requires *strictly* positive where `_budget` accepts zero at run
+    it requires *strictly* positive where `budget` accepts zero at run
     time — the original is likewise stricter in its check than in its
     runtime for these fields. That direction is the safe one: it rejects a
     config the runtime would have tolerated, rather than passing one the
@@ -235,7 +235,7 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     if skills is None:
         # The skills table holds overrides, so a config that takes every
         # budget from defaults does not need to carry one. Absent and empty
-        # take the same path through every consumer: `_budget` falls through
+        # take the same path through every consumer: `budget` falls through
         # to the defaults from both, and `unresolved_skills` leaves the
         # catalogue skill to resolve from defaults in both. Whether it then
         # resolves depends on those defaults, not on which of the two shapes

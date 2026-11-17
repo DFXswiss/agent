@@ -327,6 +327,15 @@ def test_retry_payload_resets_reported_and_announced_to_false() -> None:
     assert result["announced"] is False
 
 
+# A retried job gets a fresh budget for its outcome comment instead of
+# inheriting the previous attempt's exhausted count.
+def test_retry_payload_drops_report_attempts() -> None:
+    row = {"id": "job-1", "state": "failed", "report_attempts": 4}
+    result = retry_payload(row)
+    assert result is not None
+    assert "report_attempts" not in result
+
+
 # The original deletes these three keys while nulling the nine beside them,
 # and the port keeps that shape. Behaviour is the same either way — the stall
 # check rejects a None exactly as it rejects a missing key — so what this pins

@@ -3,10 +3,11 @@
 Phase 3 of porting the existing runner. Every external effect (store, runner)
 is injected; this module only decides the sequence and the payloads. The
 original runner fixed the order announcement → output baseline → started →
-worker start. The output baseline is captured here; the announcement remains
-for a later phase and must precede it. A baseline taken after the announcement
-would count the bot's own comment as new output and make the later
-silent-failure check pass every job.
+worker start. The announcement is injected as a callback and is called before
+the baseline is captured, so the baseline already holds the bot's own
+comment. Taken before the announcement, the baseline would miss that comment,
+the later silent-failure check would count it as new output, and every job
+would pass.
 
 The worktree holds the code the job is about: the pull-request head, checked
 out detached, for a pull-request job, and the default branch for an issue job.
@@ -79,11 +80,19 @@ def dispatch_queued(
     work_root: str,
     wrapper: str,
     max_concurrent: int,
+    announce: Callable[[dict[str, Any]], bool] | None = None,
 ) -> tuple[list[str], int]:
     """Start as many queued jobs as capacity allows.
 
     Returns (started_ids, skipped_count). A bad row or a failed runner call
     ends only that one job; the rest of the queue stays processable.
+
+    `announce` posts the "working on this" comment. It runs right after the
+    worktree exists and before the output baseline, and a failure or an
+    exception does not stop the job: the original runner started the work
+    regardless. The returned bool says whether the comment was delivered, so
+    the row can record that it was announced and a later pass does not post a
+    second one.
     """
     if not isinstance(max_concurrent, int) or isinstance(max_concurrent, bool) or max_concurrent < 1:
         raise ValueError("max_concurrent must be a positive int")
@@ -179,14 +188,46 @@ def dispatch_queued(
 
         if add.returncode != 0:
             updated = _strip(row)
-            updated.update({"state": "failed", "outcome": "workspace_failed", "finished": utcnow()})
+            updated.update(
+                {
+                    "state": "failed",
+                    "outcome": "workspace_failed",
+                    "finished": utcnow(),
+                    # `supervise` reports this failure, and the target is
+                    # already known from the probe.
+                    "pull_request": answer == "true",
+                    "reported": False,
+                }
+            )
             store.write("job", "update", job_id, updated)
             skipped += 1
             continue
 
-        # The announcement still belongs before this output baseline. Taking
-        # the baseline after announcing would count this instance's own comment
-        # as new output and make the later silent-failure check pass every job.
+        # The worktree exists now, so the row can record what the probe said
+        # and the announcement can be posted against the right target.
+        row["pull_request"] = answer == "true"
+
+        # The announcement must come before the output baseline, so the
+        # baseline already holds this instance's own comment. A baseline taken
+        # first would miss it, and the later silent-failure check would count
+        # the comment as new output and pass every job.
+        if announce is not None and row.get("announced") is not True:
+            try:
+                announced = announce(row)
+            except Exception:
+                # A broken announcement must not stop work the user asked for.
+                announced = False
+            if announced:
+                # Write at once: a later baseline failure leaves the job
+                # queued, and the next pass must not announce it again. If this
+                # write fails, carry on — the deterministic activity id already
+                # prevents a second comment.
+                row["announced"] = True
+                try:
+                    store.write("job", "update", job_id, _strip(row))
+                except Exception:
+                    pass
+
         completed = runner(outputs.baseline_argv(repo, ref))
         baseline_output_ids = None
         if completed.returncode == 0:
@@ -213,7 +254,14 @@ def dispatch_queued(
             runner(workspace.worktree_remove_argv(bare, worktree))
             runner(workspace.worktree_prune_argv(bare))
             updated = _strip(row)
-            updated.update({"state": "failed", "outcome": "crashed", "finished": utcnow()})
+            updated.update(
+                {
+                    "state": "failed",
+                    "outcome": "crashed",
+                    "finished": utcnow(),
+                    "reported": False,
+                }
+            )
             store.write("job", "update", job_id, updated)
             skipped += 1
             continue

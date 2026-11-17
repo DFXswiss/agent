@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.finalize import (
-    _budget,
+    budget,
     done_kind,
     finalize_running,
     judge,
@@ -379,6 +379,109 @@ def test_a_non_zero_exit_code_records_agent_failed_without_querying_outputs(tmp_
         assert saved["outcome"] == "agent_failed"
         assert saved["work_performed"] == "n_a"
         assert not any("graphql" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_a_failed_final_state_marks_the_row_for_an_outcome_report(
+    tmp_path: Path,
+) -> None:
+    # `supervise` posts the outcome comment for exactly these rows.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        _finalize(
+            store,
+            _runner(calls=calls),
+            exit_code_of=lambda jid: 1,
+            transcript_of=lambda jid: "",
+        )
+
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "failed"
+        assert saved["reported"] is False
+    finally:
+        store.close()
+
+
+def test_a_successful_final_state_keeps_no_report_marker(tmp_path: Path) -> None:
+    # A done job's posted review is its output, so no outcome comment is owed.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        _finalize(
+            store,
+            _runner(
+                calls=calls,
+                baseline_stdout=json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "issueOrPullRequest": {
+                                    "__typename": "PullRequest",
+                                    "comments": {"nodes": []},
+                                    "reviews": {
+                                        "nodes": [
+                                            {
+                                                "id": "C_new",
+                                                "author": {"login": "davidleomay"},
+                                                "createdAt": "2026-01-02T00:00:00Z",
+                                                "submittedAt": "2026-01-02T00:00:00Z",
+                                                "state": "APPROVED",
+                                            }
+                                        ]
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ),
+            ),
+            exit_code_of=lambda jid: 0,
+            transcript_of=lambda jid: "DONE review PR 7",
+        )
+
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "done"
+        assert "reported" not in saved
     finally:
         store.close()
 
@@ -1002,7 +1105,7 @@ def test_budget_falls_back_to_defaults_when_the_skill_has_no_setting() -> None:
     # one the original resolves both budgets through. Without it a
     # defaults-only configuration skips every running job forever.
     runner_config = {"defaults": {"timeout_minutes": 60}}
-    assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
+    assert budget(runner_config, "pr-review", "timeout_minutes") == 60
 
 
 def test_budget_prefers_the_skills_own_setting_over_defaults() -> None:
@@ -1010,7 +1113,7 @@ def test_budget_prefers_the_skills_own_setting_over_defaults() -> None:
         "skills": {"pr-review": {"timeout_minutes": 15}},
         "defaults": {"timeout_minutes": 60},
     }
-    assert _budget(runner_config, "pr-review", "timeout_minutes") == 15
+    assert budget(runner_config, "pr-review", "timeout_minutes") == 15
 
 
 def test_budget_does_not_substitute_defaults_for_a_malformed_skill_setting() -> None:
@@ -1020,7 +1123,7 @@ def test_budget_does_not_substitute_defaults_for_a_malformed_skill_setting() -> 
         "skills": {"pr-review": {"timeout_minutes": "soon"}},
         "defaults": {"timeout_minutes": 60},
     }
-    assert _budget(runner_config, "pr-review", "timeout_minutes") is None
+    assert budget(runner_config, "pr-review", "timeout_minutes") is None
 
 
 def test_defaults_only_runner_config_resolves_budgets_and_takes_a_stall_baseline(
