@@ -52,6 +52,7 @@ from .drivers import (
 from .lane import (
     LANE_MODEL_LIMIT,
     LaneResult,
+    delegated_lane_argv,
     finalize_lane_output,
     output_read_failure,
     redact_lane_text,
@@ -149,7 +150,7 @@ def run_check_lane(
         selected = ai.for_lane(
             worker.session_id, "check", vendor, require_execution=False
         )
-        ai.require_lane_execution()
+        execution = ai.require_lane_execution()
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
 
@@ -189,6 +190,7 @@ def run_check_lane(
     config_dir = selected.account.config_dir
     replacements = _coordinator_path_replacements(store, worker, task)
     lane_output: str | None = None
+    profile_context: tempfile.TemporaryDirectory[str] | None = None
     try:
         if io.output_file:
             try:
@@ -246,9 +248,28 @@ def run_check_lane(
         finalized = None
         result = None
         run_argv = argv
+        profile_dir: str | None = None
+        if execution.delegated:
+            # The empty GitHub profile's path is a delegated read.
+            profile_context = tempfile.TemporaryDirectory(
+                prefix="agent-lane-empty-gh-"
+            )
+            profile_dir = profile_context.name
         try:
             try:
-                with sanitized_lane_argv(argv) as run_argv:
+                with sanitized_lane_argv(argv, profile_dir=profile_dir) as run_argv:
+                    if execution.delegated:
+                        run_argv = delegated_lane_argv(
+                            execution,
+                            run_argv,
+                            workdir=str(cwd),
+                            reads=(
+                                str(spec_path),
+                                config_dir,
+                                profile_dir or "",
+                            ),
+                            write_backs=(lane_output,) if lane_output else (),
+                        )
                     if ctx.lane_runner is not None:
                         completed = ctx.lane_runner(run_argv, stdin_text)
                     else:
@@ -376,6 +397,8 @@ def run_check_lane(
                 Path(lane_output).unlink()
             except OSError:
                 pass
+        if profile_context is not None:
+            profile_context.cleanup()
 
 
 def parse_duplicate_result(text: str) -> tuple[str, int | None, str] | None:

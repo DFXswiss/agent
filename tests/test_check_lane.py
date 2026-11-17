@@ -502,6 +502,50 @@ def test_check_lane_runs_in_an_empty_directory(
     assert store.row("task", ORDER_ID) is not None
 
 
+def test_check_lane_delegate_prefixes_the_judgment_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _task, fake, ctx = setup(tmp_path, monkeypatch)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/operator/lane", "--flag"],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    ordinary = order_lane_runner(fake)
+    seen: list[list[str]] = []
+
+    def runner(argv, stdin=None):  # noqa: ANN001
+        seen.append(list(argv))
+        return ordinary(argv, stdin)
+
+    result = _resolve(replace(ctx, lane_runner=runner))
+    assert isinstance(result, CheckValue) and result.status == "ja"
+    argv = seen[0]
+    cwd = control_dir(worker, ORDER_ID) / "checks" / "duplicates_checked" / "cwd"
+    spec = control_dir(worker, ORDER_ID) / "check-duplicates_checked-driver-a.md"
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(cwd)
+    reads = [
+        argv[index + 1]
+        for index, item in enumerate(argv[:-1])
+        if item == "--read"
+    ]
+    assert str(spec) in reads
+    assert "/test/driver-a" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert [
+        argv[index + 1]
+        for index, item in enumerate(argv[:-1])
+        if item == "--write-back"
+    ] == []
+
+
 def test_check_lane_refuses_a_foreign_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
