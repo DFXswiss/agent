@@ -171,7 +171,9 @@ by ingest; for a pull-request job dispatch overwrites it with the commit it
 checked out, so a later mention compares the reviewed commit rather than the
 one ingest saw. An issue job keeps the value ingest stored.
 De-duplication uses the whole store, including rows written by other devices,
-so the same request is one job. A notification that led to a job is marked
+so the same request is one job. A request whose job id would exceed the
+job-id limit is skipped and left unread, and `doctor` reports a catalogue skill
+id that is too long to form a job id. A notification that led to a job is marked
 read, so a pruned job does
 not come back on the next pass by itself; a later mention makes the thread
 unread again and is evaluated afresh. A re-queue that cannot remove the
@@ -394,7 +396,8 @@ and reports every problem it can find rather than stopping at the first. It
 runs the three health checks and verifies `max_concurrent`. It requires the
 worker's model selection and `lane_execution` declaration and reports an
 allowed queue type that no catalogue skill carries, a catalogue skill with no
-worker, a catalogue skill id that is not lower-case, a
+worker, a catalogue skill id that is not lower-case without surrounding spaces,
+a catalogue skill id too long to form a job id, a
 `default_skill_on_mention` that names no catalogue skill, and a
 missing `prompts/pr-review.md` when an allowed queue type resolves to
 `pr-review`. It requires the binaries `gh`, `git`,

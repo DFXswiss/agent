@@ -36,6 +36,7 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
 # over the exact inputs is what makes the identity a key.
 _ID_SAFE = re.compile(r"[^a-z0-9]+")
 _DIGEST_LEN = 12
+_SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 
 
 def job_id(repo: str, ref: str, job_type: str) -> str:
@@ -53,6 +54,19 @@ def job_id(repo: str, ref: str, job_type: str) -> str:
     if not slug.strip("_"):
         raise ValueError("job_id produced an empty identity")
     return f"{slug}__{digest}"
+
+
+def safe_job_id(value: Any) -> bool:
+    """True when `value` may be used as a job id, and therefore as a path component.
+
+    Job ids become file names (`state/logs/<id>.exit`, `state/work/<id>`) and
+    worktree paths, but the store accepts any string as a row id. A row whose id
+    is `/tmp/x` or `../x` would make prune unlink a file outside the logs
+    directory, retry remove a path outside the work root, and dispatch create a
+    worktree outside it. Only a plain name is accepted: `.` and `/` are excluded,
+    so `.`/`..` and every path separator are impossible.
+    """
+    return isinstance(value, str) and _SAFE_JOB_ID.fullmatch(value) is not None
 
 
 def transition_allowed(old: str, new: str) -> bool:

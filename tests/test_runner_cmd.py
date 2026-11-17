@@ -3192,7 +3192,51 @@ def test_doctor_reports_a_non_canonical_catalogue_id(
 
     assert raised.value.code == 1
     out = capsys.readouterr().out
-    assert "doctor problem: skill id PR-Review is not lower-case" in out
+    assert (
+        "doctor problem: skill id PR-Review is not lower-case without "
+        "surrounding spaces"
+    ) in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_catalogue_id_too_long_to_form_a_job_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The longest legal repository plus a one-digit reference leaves only so
+    # much room in a job id. A skill id that does not fit would make ingest
+    # skip every request for it, so doctor reports the skill rather than
+    # calling the installation healthy.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    too_long = "x" * 42
+    paths.skills_catalog.write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {"id": "pr-review", "queue_type": "pr-ready"},
+                    {"id": too_long, "queue_type": "other"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert (
+        f"doctor problem: skill id {too_long} is too long to form a job id" in out
+    )
     assert "doctor 1 problems" in out
 
 
