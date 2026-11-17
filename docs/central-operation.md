@@ -78,58 +78,80 @@ member, its owner.
 | Executor | A work machine that sits in a corner and runs | Runs work it was given. Cannot give work to anyone. |
 | Controller | The machine you sit at | Everything an executor may do, and gives work to your executors |
 
-Every device has a **device id**, the identifier it keeps in its `device.json`, and a **name**,
-the one it has in the keys file. A device can have several entries there, its own key and one
-per program key; every one of them carries the device id and the same name, owner and team.
-The device id is how the check of the keys file tells which entries belong to one device. The
-hub's **device list** shows every device by its name, and the device's page on the hub lives
-at that path, for example `/example-device` (section 10). Because all teams on the hub share
-these paths:
+Every device has a **device id**, the identifier it keeps in its `device.json`. In the keys
+file a device has exactly one **device key** and one entry per program key, and every one of
+these entries carries the device id; that is how the check of the keys file tells which
+entries belong to one device. The device key's entry decides three things:
 
-- A name is unique on the whole hub, over all teams, not only on your team. Two names that
-  differ only in capital letters count as the same name.
-- A name is never given to a second device, not even after the first one is retired. A
-  retired device keeps its name and its page.
-- A name is written in lowercase, has 1 to 63 characters from `a` to `z`, `0` to `9` and `-`,
-  and begins with a letter or a digit.
+- **The name.** The id of a device key has the form `device-<name>`, and that name is the
+  device's name. The device key `device-example-device` belongs to the device
+  `example-device`, whose page on the hub is `/example-device` (section 10).
+- **The login.** The device works and syncs under the handle written in its device key's
+  entry. The hub accepts its sync only when it is signed by a key of that device.
+- **The owner.** That handle is the handle of a staff member, and that staff member owns the
+  device. This holds also for a device run by an autonomous agent: it works under its owner's
+  handle; the agent's own key on it is a program key.
+
+The hub's **device list** shows every device by its name, with its device id, owner and level.
+A device whose device key is revoked shows as retired, without a level. Because all teams on
+the hub share the paths of the device pages:
+
+- A name is unique on the whole hub, over all teams, not only on your team.
+- A name never changes and is never given to a second device, not even after the first one is
+  retired: an entry is never removed from the keys file (revoking only marks it), and its id
+  never changes. A retired device keeps its name and its page.
+- A name has 1 to 56 characters from `a` to `z`, `0` to `9` and `-`, and begins and ends with
+  a letter or a digit.
 - A name is never one of the paths the website itself uses, such as `api`, `auth`, `pair`,
   `sync`, the invite links or the website's own files. These are kept in one list in the hub's
   repository.
+- A name is public, because the keys file is public. It contains no personal data and no
+  internal hostname.
 
-The check of the keys file fails a pull request that breaks one of these rules. It also fails
-one in which entries with the same device id name different names, owners or teams, or in
-which one device has two keys of its own that are not revoked, so a key of another person or
-team cannot join your device by copying its name or its id. A pull request that adds a
-website path that is already the name of a device fails as well.
+The check of the keys file fails a pull request that breaks one of these rules. It compares
+the pull request with the base branch, so it also fails one that removes an entry, renames a
+device key, or changes the handle, device id or team of an existing entry, and one that gives
+a device a second device key or a key of another team. A pull request that adds a website
+path that is already the name of a device fails as well. One limit stays: the check cannot
+tell who holds the private key of a new program key added to your device; the review of that
+pull request has to. Such a key still cannot command your device, which obeys only its allow
+list (section 6).
+
+A device key is never replaced in place. A device whose key must be replaced, or that changes
+owner, is connected again as a new device with a new key, a new device id and a new name.
 
 The key of an external program, for example a guard on a CI runner, is not a device: it has
 no device id, is not in the device list and has no device page.
 
-A device tells the hub what it has, its **inventory**: which AI accounts and subscriptions are
-set up on it, which code-host accounts it can act as, which runtimes it offers, and everything
-else of its configuration and local state that its local dashboard shows and that is not in its
-session store. It reports names, states and times only, never a password or token.
+[team-record.md](team-record.md#the-keys-file) does not list the device id and the form
+`device-<name>` yet; it gets them in build step 1 (section 16). Until then DESIGN.md §25.3 is
+the rule.
 
-Devices always connect outward to the hub. No device opens a port.
+A device tells the hub what it has, its **inventory**: which AI accounts and subscriptions are
+set up on it, which code-host accounts it can act as, which runtimes it offers, everything
+else of its configuration and local state that its local dashboard shows and that is not in its
+session store, and how long its time window for commands is. It reports names, states and
+times only, never a password or token.
+
+Devices always connect outward to the hub. No device opens a port for it.
 
 ## 4. Who may do what
 
 | You | On your own devices | On a colleague's device |
 |---|---|---|
-| Read: tasks, sessions in full detail, logs, usage, device pages | Yes, row by row: a device page can leave out some rows, and a device that works under an agent's login only if you may see that login (below, section 10) | Yes, if you share a team, row by row (below) |
+| Read: tasks, sessions in full detail, logs, usage, device pages | Yes, row by row: a device page can leave out some rows (below, section 10) | Yes, if you may see your colleague's login, row by row (below) |
 | Write: submit orders, answer questions, type into a session, start and stop, and every other action of the device page | Yes, without restriction | Only with a grant your colleague signed |
 
 Everyone on your team can see what everyone else on it is working on. Nobody can interfere with a colleague's
 device unless that colleague allowed exactly that.
 
-"Your team" is checked for every single row, not for a whole page: you see a row only if you
-share a team with the login it comes from and with every person it names. If you share only
-one of a colleague's teams, their device page leaves out what comes from or names people of
-their other teams (section 10).
+You may see your own login and the login of every member of your teams. This is checked for
+every single row, not for a whole page: you see a row only if you may see the login it comes
+from and every person it names. If you share only one of a colleague's teams, their device
+page leaves out what comes from or names people of their other teams (section 10).
 
-A device run by an autonomous agent works under the agent's own login, not yours, even when
-you own it. You read it, and its device page, only if you may see that login. You can still
-send it work through the API (section 12).
+A device run by an autonomous agent is yours like any other device you own: it works under
+your login, and the agent's own key on it is one of its program keys (section 3).
 
 ## 5. Handing work over
 
@@ -297,53 +319,64 @@ The start page shows the whole team at once:
 
 Every number opens down to the single task, session or event. Values from other systems are
 shown with the time they were fetched; the hub only reads them. Every device in the overview
-links to its device page.
+links to its device page. The overview shows and counts only the devices whose login you may
+see, and only the rows you may see, by the same rules as the device page (Reading, below).
 
 **The device page.** `/<device name>` on the hub shows the same pages, the same sections, the
 same tables and the same sub-pages as the local dashboard of that device (`agent dashboard`)
 when you open it on the device itself, but every row only if you may see it (Reading, below).
-If you are signed in under the login the device works under, which for your own laptop is
-your login, you see what the local dashboard shows, apart from the few rows named below. For
+Every page also shows in its header the device's name, id, login and level, or that it is
+retired. If you are signed in under the login the device works under, that is if you are its
+owner, you see what the local dashboard shows, apart from the few rows named below. For
 `example-device`, the main page is `/example-device` and the Subscriptions page is
 `/example-device/usage`. The full view of a session (section 9) is not part of the device
 page; the page links to it.
 
-- **The hub never asks the device.** It shows the page only from what it already holds for
-  that device: the device's own records; the records of other devices that the hub delivered
-  to it, that is session mail to its sessions, the pings its login sent or received, and what
-  matched its subscriptions; and its inventory (section 3). Sync keeps these in step with the
-  device. Whatever the local dashboard shows that the hub does not hold yet is added to the
-  sync when the device pages are built (section 16).
+- **The hub never asks the device.** It shows the page only from four things it already holds
+  for that device: the device's own records; the records of other devices that the hub
+  delivered to it, that is session mail to its sessions, the pings its login sent or received,
+  and what matched its subscriptions; its inventory (section 3); and the hub's own state for
+  the device, that is its entry in the device list, the time of its last sync and the commands
+  sent to it with whether they were delivered, accepted or refused. To decide what you may see
+  and do, the hub also reads your key, the team file and the grants of the device's owner.
+  Sync keeps the device's records and inventory in step with the device. Whatever the local
+  dashboard shows that the hub does not hold yet is added to the sync when the device pages
+  are built (section 16).
 - **It works when the device is off.** You then see the state of the last sync and when that
-  was. Old data is never shown as current: a session that was working at the last sync shows
-  as "working at the last sync", not as working now.
+  was. Everything is shown as it was at the last sync, not as the device's state now: a
+  session that was working at the last sync shows as "working at the last sync". While the
+  device is connected, the page can be a sync behind the device.
 - **Reading** needs a sign-in with a passkey that may read. You can open the page of every
-  device whose login shares a team with you; for a device run by an autonomous agent that is
-  the agent's login, not its owner's. A device you may not see looks exactly like a device that
-  does not exist. An AI or a program reads the same data only through the API, with its own key
-  and only if that key may read; the key of an external program, for example on a CI runner,
-  never reads it. On the page, every row is checked against your own teams: a session, a mail,
-  a ping or a usage figure appears only if you share a team with the login it comes from and
-  with every person it names. What you may not see is also left out of every count and sum,
-  and the page does not say that something was left out.
-- **What even the device's own login does not see there.** A colleague outside your teams may
-  still send your session mail or a ping, and the local dashboard shows it. The device page
-  leaves such a row out, also for you. After a change of the teams it also leaves out the rows
-  you may no longer see.
+  device whose login you may see: your own devices, and the devices of the members of your
+  teams. A device you may not see gets exactly the same answer as a name that does not exist;
+  the device names themselves are public in the keys file. An AI or a program reads the same
+  data only through the API, with its own key and only if that key may read, and it sees what
+  the login of its own device may see; the key of an external program, for example on a CI
+  runner, never reads it. On the page, every row is checked against what you may see: a
+  session, a mail, a ping or a usage figure appears only if you may see the login it comes
+  from and every person it names. What you may not see is also left out of every count and
+  sum, and the page does not say that something was left out.
+- **What even the device's own login does not see there.** Someone you may not see may still
+  send your session mail or a ping, and the local dashboard shows it. The device page leaves
+  such a row out, also for you. After a change of the teams it also leaves out the rows you
+  may no longer see.
 - **Acting** is for the device's owner, and for a colleague only within a grant of the owner.
   Every action that a page of the local dashboard offers counts: submitting, acknowledging,
   answering, overriding, cancelling and marking orders done, and starting a session or an AI
   session, stopping it and typing into it. Changing the size of a terminal is not offered,
   because no page of the local dashboard offers it. An action on a row works only on a row of
-  the device itself that you may see; submitting an order needs no row and works from the
-  new-order page. An action from the page goes through the hub as a signed command, like an
-  order, and the device checks it itself (section 6). The page never talks to the device
-  directly, and it offers no action on a row that came from another device.
+  the device itself that you may see. Submitting an order needs no row; the page offers it on
+  the new-order page, and it is the same operation as submitting an order to that device in
+  any other way (section 5). An action from the page goes through the hub as a signed command,
+  like an order, and the device checks it itself (section 6). The page never talks to the
+  device directly, and it offers no action on a row that came from another device.
 - **An action for a device that is off** waits at the hub. Until the device accepts or refuses
   it, the page shows it as not yet accepted or refused and says whether the hub has delivered
-  it. The hub delivers it only within the device's time window for commands; after that the
-  page shows it as not delivered, or as delivered without an answer, until the device's answer
-  arrives with a later sync.
+  it. The hub delivers it only within the device's time window for commands, by the hub's
+  clock; the device itself decides by its own clock. After the window the page shows it as not
+  delivered, or as delivered without an answer, until the device's answer arrives with a later
+  sync. Whether it was delivered is the hub's own record and can be wrong after a failure of
+  the hub; the device's answer is what counts.
 
 ## 11. AI accounts and usage
 
@@ -380,10 +413,10 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 |---|---|
 | You join | The administrator sends you an invite link. You open it and create your passkey; it counts once its public key was added by pull request. Then you connect your devices. |
 | You add a passkey | The administrator sends you an invite link for it, as for your first one. After its pull request you add it to the allow lists of your devices from a controller device. |
-| You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
+| You add a device | A new key is created on it and added by pull request as its device key `device-<name>`, with your handle, its device id, your team and its level. On the device you confirm the keys it will obey. |
 | You leave | Your open orders are ended and your devices sync completely. Then your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
-| A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |
-| A device changes owner | It is connected again by hand as a new device with a new key, a new device id and a new name; the old key is revoked. |
+| A device is lost or retired | Its keys are revoked and its broker key disabled. The entries stay in the keys file, and the device stays in the device list as retired, with its name and its page. You end its open orders and withdraw their questions. Its history stays in the hub. A device whose device key must be replaced is retired and connected again as a new device. |
+| A device changes owner | It is connected again by hand as a new device with a new key, a new device id and a new name; its old keys are revoked and the old device shows as retired. |
 | A passkey is lost | A pull request revokes it, and your devices stop obeying it. You remove it from your devices from a controller device. |
 
 ## 15. What stays refused
@@ -402,7 +435,7 @@ Each step is its own pull request and follows the steps of the
 
 | Step | What | Status |
 |---|---|---|
-| 1 | Device keys with levels and inventory; device ids, device names and their check; the allow list on the device | not started |
+| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key; the allow list on the device; the device id in team-record.md | not started |
 | 2 | Checking the session key's certificate on the device; grants | not started |
 | 3 | Tasks, log entries, repository registry, one-time import | not started |
 | 4 | Orders and questions through the hub | not started |
@@ -419,10 +452,11 @@ Each step is its own pull request and follows the steps of the
 | **Hub** | The central service and its website |
 | **Device** | One machine with the client installed and its own key |
 | **Device id** | The identifier of one device, carried by every keys-file entry of that device |
-| **Device list** | The hub's list of every device, by name, with its owner and level; keys of external programs are not in it |
-| **Device name** | The name of a device in the hub's device list, unique on the whole hub and never given to a second device; also the path of its device page |
-| **Device's login** | The login a device works and syncs under; for a device run by an autonomous agent, the agent's own login |
-| **Inventory** | What one device reports about itself: accounts, runtimes and the other values its local dashboard shows that are not in its session store |
+| **Device key** | The one key of a device whose keys-file id is `device-<name>`; its entry fixes the device's name, login and owner |
+| **Device list** | The hub's list of every device, by name, with its device id, owner and level, or marked as retired; keys of external programs are not in it |
+| **Device name** | The `<name>` in the id `device-<name>` of the device key; unique on the whole hub, never changed and never given to a second device; public; also the path of its device page |
+| **Device's login** | The handle in the device key's entry, which is the handle of its owner; the device works and syncs under it, also when an autonomous agent runs it |
+| **Inventory** | What one device reports about itself: accounts, runtimes, the other values its local dashboard shows that are not in its session store, and the length of its time window for commands |
 | **Device page** | The page `/<device name>` on the hub that shows the pages of the device's local dashboard, every row only if the reader may see it |
 | **Owner** | The staff member a device belongs to |
 | **Executor** | A device that runs work it was given |
@@ -462,10 +496,11 @@ device and changing its allow list are confirmed on a device, not with the passk
 Yes, at `/<device name>`. It shows the state of the last sync and says when that was.
 
 **Who sees my device page?**
-Everyone who shares a team with the login your device works under, which for your own laptop
-is your login. Each of them sees only the rows that come from and name people they share a
-team with (section 10). Someone who shares no team with that login cannot tell that the page
-exists. A program reads it only through the API with a key that may read.
+Everyone who may see your login, that is you and the members of your teams, and who is signed
+in with a passkey that may read (`record:read`). Each of them sees only the rows whose login
+and named people they may see (section 10). Someone who may not see your login gets the same
+answer as for a name that does not exist; the device names themselves are public in the keys
+file. A program reads it only through the API with a key that may read.
 
 **What if the hub is down?**
 Executors keep working on what they accepted and keep recording. You can still submit work on
