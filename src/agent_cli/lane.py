@@ -1005,19 +1005,36 @@ def launch(
     git_snapshot = snapshot_git_metadata(cwd) if delegated and write else None
     stdin_text: str | None = spec_text if io.stdin else None
     try:
-        if runner is not None:
-            completed = runner(argv, None if tmux else stdin_text)
-        elif tmux:
-            if "--" not in argv:
-                raise SystemExit("tmux argv missing command separator")
-            if tmux_session is None:
-                raise SystemExit("tmux session name missing")
-            inner = argv[argv.index("--") + 1 :]
-            completed = _run_in_tmux(
-                inner, name=tmux_session, cwd=cwd, stdin_text=stdin_text
-            )
-        else:
-            completed = _default_runner(argv, stdin_text, cwd)
+        try:
+            if runner is not None:
+                completed = runner(argv, None if tmux else stdin_text)
+            elif tmux:
+                if "--" not in argv:
+                    raise SystemExit("tmux argv missing command separator")
+                if tmux_session is None:
+                    raise SystemExit("tmux session name missing")
+                inner = argv[argv.index("--") + 1 :]
+                completed = _run_in_tmux(
+                    inner, name=tmux_session, cwd=cwd, stdin_text=stdin_text
+                )
+            else:
+                completed = _default_runner(argv, stdin_text, cwd)
+        except Exception as exc:
+            # A delegated implementer can change git metadata and then raise.
+            # Restore it before the exception leaves this function.
+            if git_snapshot is not None and restore_git_metadata(git_snapshot):
+                return delegated_git_metadata_result(
+                    role=role,
+                    vendor=vendor,
+                    model=selected.model,
+                    argv=argv,
+                    returncode=1,
+                    stderr=str(exc),
+                    config_dir=selected.account.config_dir,
+                    tmux_session=tmux_session,
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
+                )
+            raise
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")

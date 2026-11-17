@@ -151,7 +151,9 @@ pointer), `HEAD`, `config`, and `info/exclude` when present, plus every regular
 file under `hooks/`. After the process returns, any added, changed, or removed
 entry restores the snapshot and fails the lane with
 `delegated implementer changed git metadata; snapshot restored`. A change to
-tracked files alone is a normal write-back.
+tracked files alone is a normal write-back. A coordinator restart that adopts a
+surviving delegated implementer lane has no snapshot, so the operator's `.git`
+exclusion is the protection in that case.
 
 Agent hashes the local object exactly as
 `{"mode": "this-device-is-lane-host"}`. A `delegate` declaration hashes
