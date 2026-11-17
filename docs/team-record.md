@@ -339,6 +339,9 @@ If two people try to claim the same issue at the same moment, the second claim i
 
 - The chain is the authoritative record and exists nowhere else, so its data class is
   **unique** (DESIGN.md §13).
+- The record is stored in **PostgreSQL**. The hub connects with a database role that may only
+  add and read events, never change or delete them, so the no-delete rule holds even if the
+  hub's code had a bug. The agent-session data keeps its own, separate database.
 - There are three copies, one of them off-site. A restore is tested regularly, and a restored
   chain is checked completely (every signature and every `prev_hash`) before the hub serves it.
 - At a fixed interval the hub publishes the fingerprint of the current end of the chain, signed
@@ -375,7 +378,7 @@ tests for every refusal path, not only the success path.
 |---|---|---|
 | 1 | Keys file with scopes, and signature checking in the hub | not started |
 | 2 | Release query for external programs, with a hub-signed answer | not started; needs open question 2 |
-| 3 | Event chain and the security-issue object | not started |
+| 3 | Event chain in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
 | 6 | Sign-in with passkeys instead of GitHub | not started; needs open question 1 |

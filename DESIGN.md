@@ -1368,6 +1368,8 @@ This revision records the proposed concept for a team record with key identity (
 
 This revision records the decision of 2026-11-17 to build the team record in agent-core and to use no outside tracker, and lists the questions still open in §24.
 
+This revision records the decision of 2026-11-17 to store the team record in PostgreSQL, with a database role that may only insert and read events (§24.8).
+
 ## 24. Team record and key identity (decided, not implemented)
 
 Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule.
@@ -1485,6 +1487,8 @@ Only registered keys read the record. Team scope follows §6. There is no public
 ### 24.8 Integrity and backup
 
 - The chain is the authoritative team record. Its data class is **unique** (§13); losing it loses history that exists nowhere else.
+- The team record is stored in **PostgreSQL** (decided on 2026-11-17). The session store (§§8–11) keeps its own database; this decision does not move it.
+- The database role the hub uses may only insert and read events; it has no right to update or delete them. The no-delete rule (§24.3) is enforced by the database, not only by the hub's code.
 - Three copies, one of them off-site, with a restore that is tested and verifies the whole chain (signatures and hashes) before the hub serves it.
 - The hub publishes the current chain head hash at a fixed interval, signed with its own key, so that a later rewrite of history is detectable from any earlier published head.
 
