@@ -597,24 +597,40 @@ def draft_pr_body(
     source: dict[str, Any],
     reused: list[str] | None = None,
     added: list[str] | None = None,
+    summary_en: object = None,
+    summary_de: object = None,
 ) -> str:
-    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list.
+
+    Stored change summaries are the visible sentences. An order draft without
+    them keeps the English line and omits DE: the English title is not a
+    German sentence. One language without the other is an error.
+    """
     details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
-    if source.get("kind") == ORDER_KIND:
-        short = str(source.get("order_id") or "")[:8]
-        title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
-        visible = (
-            f"EN:\nDraft for order {short}: {title}.\n\n"
-            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
-        )
+    if summary_en is None and summary_de is None:
+        if source.get("kind") == ORDER_KIND:
+            short = str(source.get("order_id") or "")[:8]
+            title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+            visible = f"EN:\nDraft for order {short}: {title}.\n\n"
+        else:
+            visible = (
+                f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+                f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+            )
     else:
+        from .coordinator_a38 import _summary
+
+        stored = {
+            "change_summary_en": summary_en,
+            "change_summary_de": summary_de,
+        }
         visible = (
-            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+            f"EN:\n{_summary(stored, 'en')}\n\n"
+            f"DE:\n{_summary(stored, 'de')}\n\n"
         )
     if not details:
         return visible
@@ -646,7 +662,13 @@ def refresh_draft_body(
     target = target_repo(task)
     if number is None or target == "":
         raise CoordinatorError("reused and added list has no draft to update")
-    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    body = draft_pr_body(
+        source,
+        [str(line) for line in reused],
+        [str(line) for line in added],
+        task.get("change_summary_en"),
+        task.get("change_summary_de"),
+    )
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
     queue_activity(
         store,
