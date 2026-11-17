@@ -4648,6 +4648,79 @@ def test_launch_refuses_a_binding_for_another_driver(tmp_path: Path) -> None:
         )
 
 
+def test_launch_accepts_a_binding_for_the_requested_driver(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    write_operator_ai_accounts(tmp_path)
+    binding = load_ai_accounts(tmp_path, defer_model_configuration=True).for_lane(
+        DEFAULT_SESSION, "reviewer", "driver-a", require_execution=False
+    )
+    result = launch(
+        role="reviewer",
+        vendor="driver-a",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(tmp_path),
+        dry_run=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+        binding=binding,
+    )
+    assert result.vendor == "driver-a"
+    assert result.model == binding.model
+
+
+def test_launch_write_lane_ignores_read_directories_for_a_driver_without_them(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    extra = tmp_path / "extra-read"
+    extra.mkdir()
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(tmp_path),
+        dry_run=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+        read_dirs=(str(extra),),
+    )
+    assert result.vendor == "driver-a"
+    assert not any(str(extra.resolve()) in arg for arg in result.argv)
+
+
+def test_launch_keeps_child_stderr_when_the_output_file_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.lane._run_in_tmux",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=2, stdout="pane text\n", stderr="child stderr\n"
+        ),
+    )
+    result = launch(
+        role="implementer",
+        vendor="driver-d",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(worktree),
+        tmux=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "child stderr" in result.stderr
+    assert "pane text" not in result.stderr
+
+
 def test_launch_refuses_an_empty_spec(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     with pytest.raises(SystemExit, match="spec-file is empty"):
