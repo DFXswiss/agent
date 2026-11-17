@@ -1588,7 +1588,10 @@ def test_create_order_task_requires_the_check_lane(
 @pytest.mark.parametrize(
     ("case", "message"),
     [
-        ("implementer", "separate implementer is not supported"),
+        (
+            "implementer",
+            "implementer provider driver-e is not supported by the lane launcher",
+        ),
         ("second", "only for A38 workers"),
     ],
 )
@@ -1610,6 +1613,36 @@ def test_create_order_task_applies_the_creation_refusals_of_issue_tasks(
         submit_order(store, worker)
     assert store.rows("task") == []
     assert text_files(worker) == []
+    store.close()
+
+
+def test_create_order_task_accepts_a_separate_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake, _lane = prepare_orders(tmp_path, monkeypatch)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    task = submit_order(store, worker)
+    assert task["models"] == {"first": "driver-a", "second": "driver-b"}
+    assert task["implementer"] == "driver-c"
+    assert coord(task)["execution_binding"] == execution_binding(
+        store, worker, "example/project"
+    )
     store.close()
 
 

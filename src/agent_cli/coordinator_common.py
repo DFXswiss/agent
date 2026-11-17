@@ -48,9 +48,28 @@ SLOT_LANE_KINDS = {
 }
 
 
-def required_lane_slots(models: ModelSlots) -> tuple[str, ...]:
-    """Lane slots (``vendor:kind``) a worker must bind for its configured models."""
+def required_lane_slots(
+    models: ModelSlots, implementer: str | None = None
+) -> tuple[str, ...]:
+    """Lane slots (``vendor:kind``) a worker must bind for its configured models.
+
+    A separate implementer binds its own ``implementer`` lane; the ``first``
+    slot keeps only its read-only review kinds, and the ``second`` slot is
+    unchanged.
+    """
     slots: list[str] = []
+    if implementer is not None and implementer != models.first:
+        slots.append(f"{implementer}:implementer")
+        slots.extend(
+            f"{models.first}:{kind}"
+            for kind in SLOT_LANE_KINDS["first"]
+            if kind != "implementer"
+        )
+        if models.second is not None:
+            slots.extend(
+                f"{models.second}:{kind}" for kind in SLOT_LANE_KINDS["second"]
+            )
+        return tuple(slots)
     for slot, kinds in SLOT_LANE_KINDS.items():
         vendor = models.for_slot(slot)
         if vendor is None:

@@ -131,8 +131,10 @@ the operator; they are distinct from the fixed workflow kinds (`implementer`,
 `reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, `check`) and from the
 driver ids that `drivers.json` configures. The `check` kind is
 read-only and is required for the provider of model slot `first` when a worker
-enables orders, through lane slot `<first>:check`. The implementer and first
-review roles of that worker must name one model. Those workflow kinds are
+enables orders, through lane slot `<first>:check`. For an order worker without
+a separate implementer, the implementer and first review roles must name one
+model; with a separate implementer, the first review roles name one model among
+themselves and the implementer may use another. Those workflow kinds are
 protocol capabilities used when resolving a lane slot, and drivers are operator
 configuration; neither is a preinstalled user role.
 
@@ -201,9 +203,14 @@ task's pin changes only through the explicit `agent task models` command below.
 The issue coordinator is the exception: its task slots are the device AI
 configuration pinned when the coordinator accepted the task, and
 `agent task models` refuses coordinator tasks.
-The coordinator also refuses a separate implementer at preflight, so setting one
-stops every coordinator tick, including for tasks it has already accepted, until
-`implementer` is removed or set to `models.first`. It hashes the device's `models` and `lane_execution` into each accepted
+The coordinator's implementer is the task's `implementer` pin when present,
+otherwise `models.first`, and its implementer lane runs on that provider. It
+refuses an implementer driver that `drivers.json` configures with
+`lane.may_run_commands: true`, and an implementer driver without a `lane`
+section. Because slot `first` only runs read-only review lanes, `models.first`
+may name a command-capable driver when a separate implementer is configured.
+It hashes the device's `models`, `lane_execution`, and the `implementer`
+selection only when it differs from `models.first` into each accepted
 task's execution binding: a later change stops the task with "task execution
 configuration changed" until the accepted configuration is restored. A task
 accepted before the current hash formula accepts the matching legacy formula
@@ -231,16 +238,24 @@ without a `lane` section), it deliberately uses the existing handoff path, names
 the pinned provider as the implementer, and creates no agent row. A pinned
 driver that `drivers.json` does not configure stops the command instead.
 
-The issue coordinator refuses a `models.first` driver that `drivers.json`
+The issue coordinator refuses an implementer driver that `drivers.json`
 configures with `lane.may_run_commands: true`: its implementer must not
 execute software, and such a driver's write lane cannot be kept from running
-commands. The error is `models.first = <driver> is not supported by the
-coordinator: driver <driver> is configured with may_run_commands, so its
-implementer lane cannot be restricted from running commands`. It also refuses a configured implementer
-that differs from `models.first`; separate implementers are not supported by
-the coordinator yet. `agent lane run` and `agent run` accept such a driver in
-`models.first`. A fixed setting that a lane must not take from the account's own
-CLI configuration belongs in the driver's `lane.argv` templates.
+commands. When the effective implementer is `models.first`, the error is
+`models.first = <driver> is not supported by the coordinator: driver <driver> is configured
+with may_run_commands, so its implementer lane cannot be restricted from
+running commands`. A separate implementer reports `implementer = <driver> is
+not supported by the coordinator: driver <driver> is configured with
+may_run_commands, so its implementer lane cannot be restricted from running
+commands`. It also refuses an implementer driver without a `lane` section,
+because the coordinator cannot launch it: `implementer provider <driver> is
+not supported by the lane launcher; expected one of: <drivers>`. `models.first`
+may name a command-capable driver when a separate implementer is configured,
+because slot `first` only runs the read-only `reviewer`, `pr-reviewer-quality`,
+`pr-reviewer-logic` and `check` lanes. `agent lane run` and `agent run` accept
+such a driver in `models.first`. A fixed setting that a lane must not take from
+the account's own CLI configuration belongs in the driver's `lane.argv`
+templates.
 
 What a lane may read and write is the driver's argv templates: `lane.argv.read`
 for a read-only lane, `lane.argv.write` for a write lane and the optional
@@ -978,10 +993,12 @@ and `credential_file`:
 Capabilities that follow from the lane section:
 
 - A driver with `may_run_commands: true` is refused by the issue coordinator as
-  `models.first`, whose driver is the coordinator's implementer, and by the
-  conflict worker as implementer (`<driver> is refused as implementer provider
-  because it can run commands`). `agent lane run` and `agent run` still start
-  it.
+  the effective implementer (the task's `implementer` pin when present,
+  otherwise `models.first`), and by the conflict worker as implementer
+  (`<driver> is refused as implementer provider because it can run commands`).
+  `models.first` may name such a driver when a separate implementer is
+  configured, because slot `first` only runs read-only lanes. `agent lane run`
+  and `agent run` still start it.
 - A driver without `argv.judgment` cannot run a check lane: `driver <driver> has
   no lane.argv.judgment; it cannot run a check lane`.
 - A driver without `read_dir_args` receives no extra read directory; one with
