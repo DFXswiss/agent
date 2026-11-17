@@ -1085,7 +1085,11 @@ What the network edge can do, in full:
   invite link with its token in the answer of section 5.1 and the token in the body of
   `POST /auth/invite/open`. With a token it read, it can open the invite before the invited
   person and register a key of its own; the invited person then gets `invite_used`. The
-  bootstrap link does not pass it (section 5.3).
+  bootstrap link itself does not pass it, but its token and its registration do when the
+  administrator opens it (section 5.3).
+- With the registration id and challenge it read in the answer of `POST /auth/invite/open`, it can
+  send a finish with a key of its own before the invited person; the invited person then gets
+  `registration_unknown` and sees no fingerprint.
 - It can drop or delay any request or answer. It cannot replay a signed request (check 8), nor a
   finish of a registration or a sign-in (R2, S2); a replayed begin gets `session_key_known` (B2).
 
@@ -1127,7 +1131,8 @@ delivered, the bundle every device writes into its local log before it runs a co
 9). These records show afterwards what was signed; they stop nothing while it happens. A key
 substituted at an invite gets only the scopes its keys-file entry is given by the reviewed pull
 request: the team scopes, or for a bootstrap invite also `keys:invite`. The visible sign is that
-the invited person gets `invite_used` when the edge opened the invite first, or that the invited
+the invited person gets `invite_used` when the edge opened the invite first, or
+`registration_unknown` when the edge finished the registration first, or that the invited
 person's own passkey later fails to sign in with `credential_unknown`. Nothing in this build step
 detects a changed page or a substituted key before that. The owner decides whether
 this is acceptable until the published hash of the website exists, or whether a later build step
@@ -1722,7 +1727,9 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     website shows are only as trustworthy as the connection that delivered them, and the network
     edge, like a hub that was taken over, can change them. Without changing anything the edge
     reads every invite link the hub hands out over HTTP and can open that invite before the
-    invited person, who then gets `invite_used`. An edge that changes the page code can
+    invited person, who then gets `invite_used`; with the registration id and challenge it read
+    in the answer of opening an invite it can finish that registration with a key of its own
+    before the invited person, who then gets `registration_unknown`. An edge that changes the page code can
     use the signed-in person's session key for as long as the page is open and the key is valid,
     within that session's rights; at a sign-in it can get a session key of its own certified,
     which it then holds within the same rights until that key expires, its session is ended or its
