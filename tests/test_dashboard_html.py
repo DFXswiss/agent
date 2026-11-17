@@ -368,9 +368,6 @@ def test_orders_view_markup() -> None:
         "od-report",
         "od-report-body",
         "od-err",
-        "ev-wake",
-        "ev-unacked",
-        "order-events",
     )
     for element_id in ids:
         assert html.count(f'id="{element_id}"') == 1
@@ -392,7 +389,7 @@ def test_orders_view_markup() -> None:
         assert html.count(f'id="{element_id}"') == 0
 
     assert "<h2>Orders</h2>" in html
-    assert "<h2>Order events</h2>" in html
+    assert "<h2>Order events</h2>" not in html
     assert html.count("New order") == 1
     assert 'href="/orders/new"' in html
     for text in (
@@ -402,9 +399,6 @@ def test_orders_view_markup() -> None:
         "Cancel order",
         "Mark done",
         "Load report",
-        "wake only",
-        "unacknowledged",
-        "Acknowledge",
         "Orders are not enabled on this device.",
     ):
         assert text in html
@@ -423,9 +417,8 @@ def test_orders_view_markup() -> None:
 
     device = html.index('<p>Device <code id="dev">')
     orders = html.index("<h2>Orders</h2>")
-    events = html.index("<h2>Order events</h2>")
     nav = html.index('id="section-nav"')
-    assert device < orders < events < nav
+    assert device < orders < nav
     for _, title, _ in MOVED_SECTIONS:
         assert f"<h2>{title}</h2>" not in html
     assert "session-row" not in html
@@ -495,10 +488,8 @@ def test_main_page_omits_moved_sections_and_links_to_their_subpages() -> None:
     assert 'id="session-detail"' not in html
     assert 'id="detail-controls"' not in html
     assert html.count('id="section-nav"') == 1
-
-    events = html.index("<h2>Order events</h2>")
-    nav = html.index('id="section-nav"')
-    assert events < nav
+    assert '<a href="/events">Order events</a>' in html
+    assert html.count('href="/events"') == 1
 
 
 def test_each_subpage_carries_its_section_and_a_way_back() -> None:
@@ -510,6 +501,43 @@ def test_each_subpage_carries_its_section_and_a_way_back() -> None:
         assert f'href="/{name}"' in html
     assert '<a href="/">Back to dashboard</a>' in html
     assert 'href="/usage"' in html
+    assert "setInterval(tick, 2000);" in html
+
+
+def test_order_events_page_keeps_the_table_and_the_detail_reads_the_checkpoint() -> None:
+    main = static_page("index.html")
+    code = orders_script()
+    assert 'orderCall("events"' not in code
+    assert 'orderCall("ack"' not in code
+    assert "/api/orders/events" not in code.split("/* ORDER_VIEW_END */", 1)[1]
+    assert 'const digest = cp !== null && cp.digest ? cp.digest : "";' in code
+    assert 'cp !== null && cp.opinion !== null && typeof cp.opinion === "object"' in code
+    assert 'getElementById("od-question")' in code
+    assert 'getElementById("od-opinion")' in code
+    assert 'key !== "digest" && key !== "opinion"' in code
+    assert "wake only" not in main
+    assert "unacknowledged" not in main
+    assert "Acknowledge" not in main
+
+    html = static_page("section.html")
+    assert 'data-section="events"' in html
+    assert "<h2>Order events</h2>" in html
+    assert html.count('id="order-events"') == 1
+    assert html.count('id="ev-wake"') == 1
+    assert html.count('id="ev-unacked"') == 1
+    assert html.count('id="events-note"') == 1
+    assert "wake only" in html
+    assert "unacknowledged" in html
+    assert ">Acknowledge</button>" in html
+    assert 'href="/events">Order events</a>' in html
+    assert html.count('href="/events"') == 1
+    assert 'orderCall("events"' in html
+    assert 'orderCall("ack"' in html
+    assert '"path":"/api/orders/events"' in html
+    assert '"path":"/api/orders/ack"' in html
+    assert "ORDER_VIEW.events.nested.events" in html
+    assert 'if (section === "events")' in html
+    assert "setInterval(eventsTick, 2000);" in html
     assert "setInterval(tick, 2000);" in html
 
 
@@ -704,7 +732,8 @@ def test_the_full_value_stays_the_key_for_lookups_and_calls() -> None:
     assert "postControl(s.id, " in section
     code = orders_script()
     assert "rows[i].dataset.id = listed.orders[i].order_id;" in code
-    assert 'data-event="${esc(row.id)}"' in code
+    assert 'data-event="${esc(row.id)}"' not in code
+    assert 'data-event="${esc(row.id)}"' in static_page("section.html")
     assert "selectOrder(row.dataset.id)" in code
     assert "order_id: id" in code
 

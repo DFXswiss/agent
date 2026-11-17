@@ -1162,11 +1162,15 @@ def test_show_prints_the_pending_checkpoint_even_when_acknowledged(device, capsy
     order_id = str(uuid.uuid4())
     _, event_id = blocked_order(device, order_id)
     order("show", "--id", order_id)
-    assert f"checkpoint 1 {event_id} blocked unacked answers reply,cancel" in capsys.readouterr().out
+    text = capsys.readouterr().out
+    assert f"checkpoint 1 {event_id} blocked unacked answers reply,cancel" in text
+    assert "Blocked:" not in text
     order("ack", "--event", event_id)
     capsys.readouterr()
     order("show", "--id", order_id)
-    assert f"checkpoint 1 {event_id} blocked acked answers reply,cancel" in capsys.readouterr().out
+    acked = capsys.readouterr().out
+    assert f"checkpoint 1 {event_id} blocked acked answers reply,cancel" in acked
+    assert "Blocked:" not in acked
     order("events", "--wake-only", "--unacked")
     assert capsys.readouterr().out.strip() == "order events none"
     order("show", "--id", order_id, "--json")
@@ -1178,7 +1182,15 @@ def test_show_prints_the_pending_checkpoint_even_when_acknowledged(device, capsy
         "check",
         "acked",
         "answers",
+        "digest",
+        "opinion",
     }
+    order("events", "--json")
+    listed = json.loads(capsys.readouterr().out)
+    event = next(item for item in listed["events"] if item["id"] == event_id)
+    assert result["checkpoint"]["digest"] == event["digest"]
+    assert result["checkpoint"]["opinion"] == event["opinion"]
+    assert result["checkpoint"]["digest"]
 
 
 def test_show_prints_the_last_answer(device, capsys) -> None:

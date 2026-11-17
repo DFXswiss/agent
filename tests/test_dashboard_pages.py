@@ -19,6 +19,7 @@ MOVED_SECTIONS = (
     ("gates", "Review gates", "gates"),
     ("work", "Open work", "work"),
     ("pings", "Pings", "pings"),
+    ("events", "Order events", "order-events"),
 )
 
 
@@ -46,6 +47,10 @@ def test_dashboard_serves_the_main_page_and_every_subpage(monkeypatch) -> None:
         assert content_type.startswith("text/html")
         main_page = raw.decode("utf-8")
         assert 'id="section-nav"' in main_page
+        assert "<h2>Order events</h2>" not in main_page
+        assert 'id="ev-wake"' not in main_page
+        assert 'id="ev-unacked"' not in main_page
+        assert 'orderCall("events"' not in main_page
         for name, _, table_id in MOVED_SECTIONS:
             assert f'id="{table_id}"' not in main_page
             assert f'href="/{name}"' in main_page
@@ -62,6 +67,16 @@ def test_dashboard_serves_the_main_page_and_every_subpage(monkeypatch) -> None:
             assert f'id="{table_id}"' in body
             assert f'data-section="{name}"' in body
             assert '<a href="/">Back to dashboard</a>' in body
+            assert 'href="/events"' in body
+            if name == "events":
+                assert "<h2>Order events</h2>" in body
+                assert 'id="ev-wake"' in body
+                assert 'id="ev-unacked"' in body
+                assert "wake only" in body
+                assert "unacknowledged" in body
+                assert "Acknowledge" in body
+                assert 'orderCall("events"' in body
+                assert 'orderCall("ack"' in body
 
         status, _, raw = _get(port, "/unknown")
         assert status == 404
