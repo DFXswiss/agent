@@ -535,8 +535,11 @@ slot provider checks use the members' common provider.
 
 Only a coordinator lane start chooses a pool member: the implementer and
 inner-reviewer lanes, the PR review lanes, the check lane, and each lane
-attempt of the conflicts worker. Every fresh start chooses at that moment, from
-local data only (no network request):
+attempt of the conflicts worker. `agent run` and `agent lane run` refuse a lane
+slot that resolves to a pool role with `Role <role> names an account pool; a
+pool account is chosen only when a coordinator lane starts`, before they write
+an agent row or check the account's `config_dir`. Every fresh coordinator start
+chooses at that moment, from local data only (no network request):
 
 1. Login: the member's identity from its `account_file`, as the window-usage
    poll reads it. No login → not eligible (`no login`).

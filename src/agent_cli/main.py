@@ -4953,6 +4953,9 @@ def cmd_run(args: list[str]) -> None:
                 selected_lane = ai.for_lane(
                     session_id, role, vendor, require_execution=False
                 )
+                # Only a coordinator lane start chooses a pool account; refuse
+                # before an agent row is written for this lane.
+                selected_lane.require_single_account()
                 ai.require_model_configuration()
                 ai.require_lane_execution()
                 working = _find_working_agent(

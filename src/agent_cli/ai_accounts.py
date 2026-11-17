@@ -84,6 +84,11 @@ REMOTE_LANE_EXECUTION_ERROR = (
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # A role names exactly one of ``account`` and ``accounts`` (an account pool).
 ROLE_KEYS = frozenset({"account", "accounts", "model", "access"})
+# Refusal of a pool role on any path other than a coordinator lane start.
+POOL_ROLE_NEEDS_COORDINATOR = (
+    "Role {role} names an account pool; a pool account is chosen only when a "
+    "coordinator lane starts"
+)
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
 READ_ONLY_WORKFLOW_KINDS = frozenset(
@@ -246,6 +251,16 @@ class AIRole:
         """True while the role still names its account pool, not one account."""
         return isinstance(self.account, AIAccountPool)
 
+    def require_single_account(self) -> None:
+        """Refuse a role that still names its account pool.
+
+        Only a coordinator lane start chooses a pool member; every other launch
+        path calls this right after resolving the role, before it records or
+        checks anything for the role's account.
+        """
+        if self.is_pool:
+            raise AccountError(POOL_ROLE_NEEDS_COORDINATOR.format(role=self.name))
+
     def env_prefix(self, drivers: Mapping[str, DriverSpec]) -> list[str]:
         """Return an ``env`` argv prefix that isolates driver configuration.
 
@@ -259,11 +274,7 @@ class AIRole:
         A pool role is refused: its account is chosen when a coordinator lane
         starts, and only that resolved role may launch a process.
         """
-        if self.is_pool:
-            raise AccountError(
-                f"Role {self.name} names an account pool; only a coordinator lane "
-                "start chooses its account"
-            )
+        self.require_single_account()
         argv = ["env"]
         for key in role_clear_env(drivers):
             argv.extend(["-u", key])

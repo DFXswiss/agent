@@ -17,8 +17,16 @@ from agent_cli.account_pool import (
     recorded_lane_role,
     select_lane_account,
 )
-from agent_cli.ai_accounts import AccountError, AIAccounts, load_ai_accounts
+from agent_cli.ai_accounts import (
+    POOL_ROLE_NEEDS_COORDINATOR,
+    AccountError,
+    AIAccounts,
+    load_ai_accounts,
+)
+from agent_cli.lane import launch
 from agent_cli.store import Store
+from test_cli import run
+from test_run import _agents, _bootstrap_implement
 from driver_fixtures import (
     WINDOWS_ACCOUNT_FILE,
     accounts_document,
@@ -347,3 +355,112 @@ def test_recorded_account_of_a_single_account_role(tmp_path: Path) -> None:
         recorded_lane_role(ai, single, "seat-1", lane="agent-1")
     with pytest.raises(AccountError, match="invalid recorded account"):
         recorded_lane_role(ai, single, 7, lane="agent-1")
+
+
+POOL_REFUSAL = POOL_ROLE_NEEDS_COORDINATOR.format(role=POOL_ROLE)
+
+
+def lane_spec(home: Path) -> Path:
+    spec = home / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    return spec
+
+
+@pytest.mark.no_pg
+def test_pool_role_refusal_is_one_message(tmp_path: Path) -> None:
+    ai = configure(tmp_path, tmp_path / "logins")
+    pooled = ai.roles[POOL_ROLE]
+    with pytest.raises(AccountError) as refused:
+        pooled.require_single_account()
+    assert str(refused.value) == (
+        "Role pooled names an account pool; a pool account is chosen only when "
+        "a coordinator lane starts"
+    )
+    # The process isolation prefix refuses a pool role with the same text.
+    with pytest.raises(AccountError) as prefix:
+        pooled.env_prefix(ai.drivers)
+    assert str(prefix.value) == POOL_REFUSAL
+    ai.roles["driver-c-writer"].require_single_account()
+
+
+@pytest.mark.no_pg
+def test_lane_launch_without_binding_refuses_a_pool_role_before_the_overlap_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure(tmp_path, tmp_path / "logins")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def overlap_not_reached(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the overlap check ran for a pool role")
+
+    monkeypatch.setattr("agent_cli.lane.credential_dir_overlap_error", overlap_not_reached)
+    with pytest.raises(SystemExit) as refused:
+        launch(
+            role="implementer",
+            vendor=POOL_DRIVER,
+            spec_file=str(lane_spec(tmp_path)),
+            cwd=str(work),
+            dry_run=True,
+            tmux=False,
+            config_home=tmp_path,
+            session_id="session-a",
+        )
+    assert str(refused.value) == POOL_REFUSAL
+
+
+@pytest.mark.no_pg
+def test_lane_launch_with_a_selected_binding_runs_on_that_member(
+    tmp_path: Path,
+) -> None:
+    logins = tmp_path / "logins"
+    ai = configure(tmp_path, logins)
+    work = tmp_path / "work"
+    work.mkdir()
+    # The binding a coordinator lane start or a recorded lane passes in.
+    binding = recorded_lane_role(ai, ai.roles[POOL_ROLE], "seat-2", lane="agent-1")
+    result = launch(
+        role="implementer",
+        vendor=POOL_DRIVER,
+        spec_file=str(lane_spec(tmp_path)),
+        cwd=str(work),
+        dry_run=True,
+        tmux=False,
+        config_home=tmp_path,
+        session_id="session-a",
+        binding=binding,
+    )
+    assert f"TOOL_P_CONFIG={logins / 'seat-2'}" in result.argv
+    assert "driver-p-model" in result.argv
+
+
+def test_agent_run_refuses_a_pool_role_without_an_agent_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure(tmp_path, tmp_path / "logins")
+    tid = _bootstrap_implement(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "implementer",
+            "--vendor", POOL_DRIVER, "--reason", "pooled implementer",
+        ],
+    )
+    capsys.readouterr()
+    agents_before = _agents(tmp_path, tid)
+
+    def no_launch(**kwargs: Any) -> None:
+        raise AssertionError(f"a pool role launched outside a coordinator: {kwargs}")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    with pytest.raises(SystemExit) as refused:
+        run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(lane_spec(tmp_path)),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+    assert str(refused.value) == POOL_REFUSAL
+    assert _agents(tmp_path, tid) == agents_before
+    assert not any(agent.get("role") == "implementer" for agent in _agents(tmp_path, tid))
