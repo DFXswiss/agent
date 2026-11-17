@@ -4,7 +4,8 @@ The repository ships no driver table and no driver default. The operator file
 ``$AGENT_HOME/drivers.json`` describes each driver: its executable and argument
 templates, how the spec and the output travel, its configuration-directory
 variable, the credential variables to scrub, capability flags, the usage
-adapter, the attribution display name and the terminal pane markers. This module
+adapter (with an optional login keep-alive run), the optional sign-in steps,
+the attribution display name and the terminal pane markers. This module
 validates that document strictly and builds argv from its templates. A missing
 or incomplete description fails loudly; nothing falls back to a built-in value.
 
@@ -54,6 +55,7 @@ DRIVER_KEYS = (
     "lane",
     "interactive",
     "usage",
+    "login",
 )
 LANE_KEYS = (
     "spec",
@@ -90,7 +92,24 @@ WINDOWS_USAGE_KEYS = (
     "fields",
     "window",
     "limits",
+    "keepalive",
 )
+# Every windows key is required except the optional keep-alive run.
+WINDOWS_USAGE_REQUIRED = tuple(key for key in WINDOWS_USAGE_KEYS if key != "keepalive")
+KEEPALIVE_KEYS = ("argv",)
+LOGIN_KEYS = (
+    "argv",
+    "status_argv",
+    "email_field",
+    "logged_in_field",
+    "subscription_field",
+    "logout_url",
+    "authorize_url_marker",
+    "magic_link_pattern",
+    "mail_from",
+)
+LOGIN_REQUIRED = tuple(key for key in LOGIN_KEYS if key != "subscription_field")
+LOGIN_PLACEHOLDERS = frozenset({"email"})
 USAGE_REQUEST_KEYS = ("name", "url", "headers")
 JSON_ENTRY_CREDENTIAL_KEYS = (
     "file",
@@ -395,6 +414,13 @@ class ProductFields:
 
 
 @dataclass(frozen=True)
+class UsageKeepalive:
+    """One minimal run of the driver's own tool that makes it renew its login."""
+
+    argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class UsageSpec:
     snapshot: str
     credential: UsageCredential
@@ -408,12 +434,34 @@ class UsageSpec:
     account_file: UsageAccountFile | None = None
     window: UsageWindowFields | None = None
     limits: UsageLimitFields | None = None
+    keepalive: UsageKeepalive | None = None
 
     def pointer(self, name: str) -> str:
         for key, value in self.fields:
             if key == name:
                 return value
         raise KeyError(name)
+
+
+@dataclass(frozen=True)
+class LoginSpec:
+    """How ``agent account-login`` drives the driver's own sign-in.
+
+    ``argv`` starts the tool's login with ``{email}``; ``status_argv`` prints
+    a JSON object whose ``email_field`` and ``logged_in_field`` (and optional
+    ``subscription_field``) report the login. The other keys describe the
+    browser and mailbox steps.
+    """
+
+    argv: tuple[str, ...]
+    status_argv: tuple[str, ...]
+    email_field: str
+    logged_in_field: str
+    logout_url: str
+    authorize_url_marker: str
+    magic_link_pattern: re.Pattern[str]
+    mail_from: str
+    subscription_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -426,6 +474,7 @@ class DriverSpec:
     lane: LaneSpec | None = None
     interactive: InteractiveSpec | None = None
     usage: UsageSpec | None = None
+    login: LoginSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -1055,10 +1104,62 @@ def _parse_limit_fields(raw: Any, path: str) -> UsageLimitFields:
     )
 
 
+def _command(value: Any, path: str) -> tuple[str, ...]:
+    """A non-empty argv of non-empty single-line strings without placeholders."""
+    items = _list(value, path, limit=ARGV_LIMIT)
+    return tuple(_line(item, f"{path}[{i}]") for i, item in enumerate(items))
+
+
+def _parse_keepalive(raw: Any, path: str) -> UsageKeepalive:
+    keepalive = _object(raw, path, KEEPALIVE_KEYS, KEEPALIVE_KEYS)
+    return UsageKeepalive(argv=_command(keepalive["argv"], f"{path}.argv"))
+
+
+def _parse_login(raw: Any, path: str) -> LoginSpec:
+    login = _object(raw, path, LOGIN_KEYS, LOGIN_REQUIRED)
+    argv = _template(
+        login["argv"], f"{path}.argv", allowed=LOGIN_PLACEHOLDERS, required=("email",)
+    )
+    if any(item == "" for item in argv):
+        _fail(f"{path}.argv must not contain an empty string")
+    pattern_text = _line(
+        login["magic_link_pattern"], f"{path}.magic_link_pattern", limit=REGEX_LIMIT
+    )
+    try:
+        pattern = re.compile(pattern_text)
+    except re.error:
+        _fail(f"{path}.magic_link_pattern is not a valid regular expression")
+    mail_from = _line(login["mail_from"], f"{path}.mail_from")
+    if '"' in mail_from or "\\" in mail_from:
+        # The value is sent as one quoted IMAP search string.
+        _fail(f"{path}.mail_from must not contain a double quote or a backslash")
+    subscription_field: str | None = None
+    if login.get("subscription_field") is not None:
+        subscription_field = _line(
+            login["subscription_field"], f"{path}.subscription_field"
+        )
+    return LoginSpec(
+        argv=argv,
+        status_argv=_command(login["status_argv"], f"{path}.status_argv"),
+        email_field=_line(login["email_field"], f"{path}.email_field"),
+        logged_in_field=_line(login["logged_in_field"], f"{path}.logged_in_field"),
+        logout_url=_https_url(login["logout_url"], f"{path}.logout_url"),
+        authorize_url_marker=_line(
+            login["authorize_url_marker"], f"{path}.authorize_url_marker"
+        ),
+        magic_link_pattern=pattern,
+        mail_from=mail_from,
+        subscription_field=subscription_field,
+    )
+
+
 def _parse_windows_usage(
     raw: dict[str, Any], path: str, home_default_dir: str | None
 ) -> UsageSpec:
-    usage = _object(raw, path, WINDOWS_USAGE_KEYS, WINDOWS_USAGE_KEYS)
+    usage = _object(raw, path, WINDOWS_USAGE_KEYS, WINDOWS_USAGE_REQUIRED)
+    keepalive: UsageKeepalive | None = None
+    if usage.get("keepalive") is not None:
+        keepalive = _parse_keepalive(usage["keepalive"], f"{path}.keepalive")
     credential = _parse_oauth_credential(usage["credential"], f"{path}.credential")
     requests = _parse_usage_requests(usage["requests"], f"{path}.requests")
     names = [request.name for request in requests]
@@ -1085,6 +1186,7 @@ def _parse_windows_usage(
         ),
         window=_parse_window_fields(usage["window"], f"{path}.window"),
         limits=_parse_limit_fields(usage["limits"], f"{path}.limits"),
+        keepalive=keepalive,
     )
 
 
@@ -1164,27 +1266,39 @@ def _parse_driver(driver_id: str, raw: Any) -> DriverSpec:
         if driver.get("home_default_dir") is not None
         else None
     )
+    credential_env = (
+        _env_names(driver["credential_env"], f"{path}.credential_env")
+        if driver.get("credential_env") is not None
+        else ()
+    )
+    interactive = (
+        _parse_interactive(driver["interactive"], f"{path}.interactive")
+        if driver.get("interactive") is not None
+        else None
+    )
+    usage = (
+        _parse_usage(driver["usage"], f"{path}.usage", home_default_dir)
+        if driver.get("usage") is not None
+        else None
+    )
+    if usage is not None and usage.keepalive is not None and home_env is None:
+        # The run must select the account's directory like a role prefix does.
+        _fail(f"{path}.usage.keepalive requires home_env")
+    login: LoginSpec | None = None
+    if driver.get("login") is not None:
+        login = _parse_login(driver["login"], f"{path}.login")
+        if home_env is None:
+            _fail(f"{path}.login requires home_env")
     return DriverSpec(
         id=driver_id,
         display_name=display_name,
         home_env=home_env,
         home_default_dir=home_default_dir,
-        credential_env=(
-            _env_names(driver["credential_env"], f"{path}.credential_env")
-            if driver.get("credential_env") is not None
-            else ()
-        ),
+        credential_env=credential_env,
         lane=lane,
-        interactive=(
-            _parse_interactive(driver["interactive"], f"{path}.interactive")
-            if driver.get("interactive") is not None
-            else None
-        ),
-        usage=(
-            _parse_usage(driver["usage"], f"{path}.usage", home_default_dir)
-            if driver.get("usage") is not None
-            else None
-        ),
+        interactive=interactive,
+        usage=usage,
+        login=login,
     )
 
 

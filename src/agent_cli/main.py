@@ -135,6 +135,7 @@ from .small_change import (
 )
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
+from .token_keepalive import KeepalivePace, keepalive_due
 from .usage import (
     AccountUsageError,
     AuthStale,
@@ -5436,6 +5437,45 @@ def _print_account_usage(
         print(f"usage.snapshot {activity_id}")
 
 
+def _print_keepalive(results: list[Any], *, show_fresh: bool) -> bool:
+    """Print keep-alive results; ``True`` when an account failed."""
+    from .token_keepalive import describe
+
+    failed = False
+    for result in results:
+        if result.action == "fresh" and not show_fresh:
+            continue
+        line = describe(result)
+        if result.action in ("error", "skipped"):
+            print(line, file=sys.stderr)
+            if result.action == "error":
+                failed = True
+        else:
+            print(line)
+    return failed
+
+
+def _token_keepalive_tick(agent_home: Path, pace: KeepalivePace) -> None:
+    """One daemon keep-alive pass; a failure never stops the usage tick.
+
+    ``pace`` holds the per-account not-before times across passes, so an
+    account that failed waits a growing time before its next refresh run.
+    """
+    # The keep-alive loads the manifest itself on its own five-minute clock; an
+    # unreadable manifest is reported as a keep-alive error.
+    from . import token_keepalive
+    from .ai_accounts import load_ai_accounts as load_manifest
+
+    try:
+        accounts = load_manifest(agent_home, defer_model_configuration=True)
+        if accounts.token_keepalive_seconds is None:
+            return
+        results = token_keepalive.keep_alive(accounts, agent_home=agent_home, pace=pace)
+        _print_keepalive(results, show_fresh=False)
+    except StoreError as exc:
+        print(f"{token_keepalive.OUTPUT_PREFIX} error: {exc}", file=sys.stderr)
+
+
 def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
@@ -5450,6 +5490,9 @@ def cmd_knock(args: list[str]) -> None:
         from .runtime import run_argv
 
         last_poll: float | None = None
+        last_keepalive: float | None = None
+        # Per-account keep-alive backoff after errors and short renewals.
+        keepalive_pace = KeepalivePace()
         # Not-before times per window-usage account; the usage tick stays the only clock.
         window_pace: dict[str, float] = {}
         scan_window_paced = functools.partial(scan_window_usage, pace=window_pace)
@@ -5466,6 +5509,10 @@ def cmd_knock(args: list[str]) -> None:
                     pass
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                # Before the account scanners, so a renewed token is read this tick.
+                if keepalive_due(last_keepalive, time.monotonic()):
+                    last_keepalive = time.monotonic()
+                    _token_keepalive_tick(store.home, keepalive_pace)
                 try:
                     usage_accounts = load_ai_accounts(
                         store.home, defer_model_configuration=True
@@ -5620,6 +5667,13 @@ def cmd_pg(args: list[str]) -> None:
     print(f"stopped {data_dir}")
 
 
+WATCH_USAGE = (
+    "Usage: agent watch "
+    "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|"
+    "token-keepalive|errors|error-fix"
+)
+
+
 def cmd_watch(args: list[str]) -> None:
     if not args or args[0] not in (
         "pr-merged",
@@ -5628,13 +5682,27 @@ def cmd_watch(args: list[str]) -> None:
         "session-usage",
         "account-usage",
         "window-usage",
+        "token-keepalive",
         "errors",
         "error-fix",
     ):
-        die(
-            "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|errors|error-fix"
-        )
+        die(WATCH_USAGE)
+    if args[0] == "token-keepalive":
+        # Needs only the manifest and the driver profiles, not the store.
+        if args[1:]:
+            die("Usage: agent watch token-keepalive")
+        from . import token_keepalive
+
+        accounts = load_ai_accounts(home(), defer_model_configuration=True)
+        if accounts.token_keepalive_seconds is None:
+            die("token_keepalive is not configured")
+        # A manual pass has no backoff; the profile lock still guards each refresh.
+        results = token_keepalive.keep_alive(accounts, agent_home=home(), pace=None)
+        if not results:
+            print(f"{token_keepalive.OUTPUT_PREFIX} none")
+        if _print_keepalive(results, show_fresh=True):
+            raise SystemExit(1)
+        return
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -5698,10 +5766,7 @@ def cmd_watch(args: list[str]) -> None:
 
             extra = args[1:]
             if extra not in ([], ["--follow"]):
-                die(
-                    "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|errors|error-fix"
-                )
+                die(WATCH_USAGE)
             follow = extra == ["--follow"]
             while True:
                 created, skipped = scan_assigned(store, run_argv, now=utcnow())
@@ -6007,6 +6072,45 @@ def cmd_order(args: list[str]) -> None:
     run_order_command(args)
 
 
+ACCOUNT_LOGIN_USAGE = "Usage: agent account-login ACCOUNT --email ADDRESS [--no-mailbox]"
+
+
+def cmd_account_login(args: list[str]) -> None:
+    """Sign one subscription into the profile of a configured account."""
+    account_name: str | None = None
+    email: str | None = None
+    no_mailbox = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--email" and email is None and index + 1 < len(args):
+            email = args[index + 1]
+            index += 2
+        elif arg == "--no-mailbox" and not no_mailbox:
+            no_mailbox = True
+            index += 1
+        elif not arg.startswith("-") and account_name is None:
+            account_name = arg
+            index += 1
+        else:
+            die(ACCOUNT_LOGIN_USAGE)
+    if account_name is None or email is None:
+        die(ACCOUNT_LOGIN_USAGE)
+    from . import account_login
+
+    accounts = load_ai_accounts(home(), defer_model_configuration=True)
+    account = accounts.accounts.get(account_name)
+    if account is None:
+        die(f"unknown AI account {account_name}")
+    account_login.login(
+        account,
+        email,
+        drivers=accounts.drivers,
+        agent_home=home(),
+        use_mailbox=not no_mailbox,
+    )
+
+
 def cmd_a38(args: list[str]) -> None:
     from .a38 import main as a38_main
 
@@ -6052,6 +6156,7 @@ COMMANDS = {
     "lane": cmd_lane,
     "models": cmd_models,
     "watch": cmd_watch,
+    "account-login": cmd_account_login,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
     "conflicts": cmd_conflicts,
@@ -6070,7 +6175,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|small-change|local-ci|a38|pr-guard|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|account-login|"
             "github|query|assign|subscribe|mail|supervise|coordinate|conflicts|order|runner> …"
         )
     cmd = args[0]

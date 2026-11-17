@@ -532,9 +532,11 @@ that is longer than the adapter's `poll_seconds`. Usage-account failures are
 reported and never stored as zero values.
 
 Each `windows` account uses the login of its `config_dir`; the operator logs in
-there with the driver's own tool, Agent never logs in, refreshes a token or
-reads the refresh token. `agent watch window-usage` records changed
-subscription usage from the adapter's configured requests as `usage.snapshot`:
+there with the driver's own tool, directly or through `agent account-login`
+(see [Signing in a subscription](#signing-in-a-subscription)), which drives
+that tool's own login. Agent never refreshes a token itself or reads the
+refresh token. `agent watch window-usage` records changed subscription usage
+from the adapter's configured requests as `usage.snapshot`:
 
 - Identity: the configured `account_file.file`, read for `account_file.object`
   and `account_file.field`. `account_file.default_name` names the file in the
@@ -550,7 +552,9 @@ subscription usage from the adapter's configured requests as `usage.snapshot`:
   and the renewal hint. `credential.expires_unit` is `epoch-ms`; when the
   subscription equals `multiplier.plan`, a match of its pattern in
   `multiplier.field` adds the captured value to the tier name.
-- A missing login or an expired token skips the account quietly; `agent watch
+- A missing login or an expired token skips the account quietly (the next
+  start of the driver's tool, or the optional
+  [token keep-alive](#token-keep-alive), renews the token); `agent watch
   window-usage` prints `usage.snapshot skipped <account>: <reason>`. Malformed
   files, a failed secret-store read without a credentials file, and request
   failures are reported as `usage.snapshot error: <account>: <reason>` and are
@@ -568,6 +572,153 @@ subscription usage from the adapter's configured requests as `usage.snapshot`:
   `used_percent` is absent, is `null`, not 0 %. `fetched_at` records the scan.
   A snapshot is stored only when a value other than `fetched_at` changed. The
   token is never stored or logged.
+
+## Token keep-alive
+
+Some driver tools renew their login's access token only while they run; Agent
+never renews a token itself. The token of a profile nobody uses therefore
+expires, and from then on the window usage poll skips that account. The
+optional top-level `token_keepalive` keeps those logins fresh:
+
+```json
+{
+  "token_keepalive": {"refresh_before_minutes": 30}
+}
+```
+
+- Missing or `null` is off, the default (DESIGN.md §19.8). Otherwise it is an
+  object with exactly `refresh_before_minutes`, an integer from 5 to 480;
+  anything else is rejected with an error naming `token_keepalive`.
+- It acts only on the accounts listed in `usage_accounts` whose driver has a
+  `windows` usage adapter; it has no account list of its own.
+- The refresh command is the driver's `usage.keepalive.argv` in `drivers.json`
+  (see [Usage keep-alive](#usage-keep-alive)). An account whose driver has no
+  such section cannot be kept alive and is skipped with `driver <driver> has no
+  usage.keepalive in drivers.json; it cannot be kept alive`.
+- For each of those accounts it reads the login's expiry from the same sources
+  as the window usage reader: the configured `credential.keychain` item of the
+  directory first (on its `platform`), then `<config_dir>/<credential.file>`,
+  using `credential.object`, `credential.expires_at` and
+  `credential.expires_unit`. When the login expires within
+  `refresh_before_minutes`, or has expired, it runs `usage.keepalive.argv` once
+  for that profile in a fresh temporary directory. The first element is looked
+  up on `PATH`. The child environment drops every variable a role prefix clears
+  (all configured `credential_env` and `home_env` variables, the network and CA
+  overrides) as well as `BROWSER`, then sets the driver's `home_env` to
+  `config_dir`. The tool then renews the login itself. Agent never calls a
+  token endpoint, never uses the refresh token and never reads, prints or
+  stores a token or the tool's answer.
+- A run counts as a renewal when the login's new expiry is later than the one
+  before the run and still in the future; otherwise it is the error `token not
+  renewed`. When the tool's token lifetime is not longer than
+  `refresh_before_minutes`, the renewal is reported as `token.keepalive
+  refreshed <account> until <UTC minute> (lifetime shorter than
+  refresh_before_minutes)`; choose a smaller `refresh_before_minutes`.
+- Each refresh holds an exclusive lock for the profile directory under
+  `$AGENT_HOME/token-keepalive/` (one file per directory). After taking it,
+  the expiry is read again, so a login another process renewed meanwhile is
+  reported as fresh. When the lock is taken (another keep-alive pass or a
+  running `agent account-login` for that profile), the account is skipped with
+  `refresh in progress`.
+- Cost: each renewal is one run of the configured command against that
+  subscription; choose a minimal request.
+- The device daemon checks at most every 5 minutes, on the usage tick and
+  before the account usage scanners, so a renewed token is read in the same
+  tick. It prints `token.keepalive refreshed <account> until <UTC minute>` to
+  stdout, and `token.keepalive skipped <account>: <reason>` and
+  `token.keepalive error: <account>: <reason>` to stderr; a fresh token prints
+  nothing. An error names the exit code and at most 200 characters of the
+  tool's redacted stderr. A failure of one account never stops the others or
+  the tick.
+- After an error the daemon leaves that account out (without output) for a
+  growing wait: 10 minutes, doubled after each further error in a row, at most
+  6 hours. A fresh or renewed login resets the wait. After a renewal whose
+  lifetime is within `refresh_before_minutes`, the daemon leaves the account
+  out until 10 minutes before the new expiry. These waits live in the daemon
+  process and start over when it restarts.
+- `agent watch token-keepalive` runs one pass immediately, without the
+  daemon's waits, prints one line per account (a fresh token as
+  `token.keepalive fresh <account> until <UTC minute>`), and exits 1 when an
+  account failed. Without the key it fails with
+  `token_keepalive is not configured`.
+- An account without a login is skipped with
+  `no login; run agent account-login`.
+- On a platform whose secret store locks outside the logged-in user session
+  (for example a keychain over SSH), the keep-alive must run in that session,
+  or the tool cannot save the renewed token.
+- A tool that renews a token from the GUI session may move a file login into
+  the secret-store item of that directory and delete the credentials file; the
+  usage reader already prefers that item. A tool that uses the same profile
+  over SSH (locked secret store) then finds no login. The driver's
+  `home_default_dir` profile is therefore never kept alive (it is reported as
+  `default profile is not kept alive`): dedicate a separate profile directory
+  to each subscription whose usage is polled.
+
+## Signing in a subscription
+
+`agent account-login ACCOUNT --email ADDRESS [--no-mailbox]` signs one
+subscription into the profile of the configured account `ACCOUNT`. The
+account's driver must have a `login` section in `drivers.json` (see
+[Login section](#login-section)); otherwise the command fails with `account
+<account> uses driver <driver>, which has no login section in drivers.json
+(docs/ai-accounts.md#drivers)`. It does every step a script may do; sign-in
+pages may block automated browsers, so the pages open in the user's normal
+browser through the operating system (`open` on macOS, `xdg-open` elsewhere)
+and the human clicks. For the whole sign-in the command holds the profile's
+[token keep-alive](#token-keep-alive) lock, so no keep-alive run writes the
+login at the same time; when the lock is taken it prints a note and waits for
+it. The steps:
+
+1. The command starts `login.argv` with `{email}` replaced by `ADDRESS` for
+   that profile (the same environment as the keep-alive run) in a private
+   temporary directory, on a pseudo-terminal whose output is discarded, and
+   catches the authorize URL through `BROWSER`. The URL must be `https://` and
+   contain `login.authorize_url_marker`.
+2. It puts the e-mail address on the clipboard (macOS only; elsewhere it prints
+   a note) and checks it.
+3. It opens `login.logout_url` and waits 5 seconds, so the authorize page
+   cannot belong to another account that is still signed in, then opens the
+   authorize URL.
+4. **Human:** paste the e-mail address if the field is empty and choose
+   "continue with e-mail".
+5. With a mailbox file, the command reads the sign-in e-mail over IMAP every 5
+   seconds for up to 10 minutes and opens its sign-in link once. Without one,
+   **human:** open the sign-in link from the e-mail.
+6. **Human:** choose "Authorize".
+7. The command waits up to 10 minutes for the login command to finish, then
+   runs `login.status_argv` for the profile. It succeeds only when that prints
+   a JSON object whose `login.logged_in_field` is `true` and whose
+   `login.email_field` is exactly `ADDRESS` (case-insensitive), and prints
+   `account.login ok <account> <address>`, followed by ` (<subscription>)` when
+   `login.subscription_field` is configured. Otherwise it fails with `signed in
+   as <found or nobody>, expected <address>`.
+
+The optional mailbox file is
+`$AGENT_HOME/account-login/<lower-case address>.json`, for example
+`account-login/seat-1@example.com.json`:
+
+```json
+{
+  "imap_host": "imap.example.com",
+  "imap_user": "seat-1@example.com",
+  "imap_password": "app-specific-password",
+  "imap_port": 993
+}
+```
+
+`imap_port` is optional (default 993). The file must have mode `0600` (no
+group or other permission) and must never be committed to a repository; a
+file with other keys, empty values or a wider mode is refused. The connection
+uses IMAPS with certificate verification and a 30 second socket timeout (a
+timeout is a failed check that is retried), opens `INBOX` read-only and reads
+at most the newest 10 messages whose sender matches `login.mail_from` and that
+were sent after the authorize page was opened. Each message is fetched only up
+to 1 MiB plus one byte; a message larger than 1 MiB is skipped without being
+parsed. In each message the first
+`https://` match of `login.magic_link_pattern` is the sign-in link. A missing
+file continues without the mailbox; `--no-mailbox` ignores an existing file.
+The sign-in link, tokens and the mailbox password are never printed, logged or
+stored.
 
 ## Subscription inventory
 
@@ -948,6 +1099,7 @@ or `_`, has at most 32 characters and is neither `first` nor `second`.
 | `lane` | Optional; how a headless lane runs. Without it the driver cannot fill a model slot or run a lane. |
 | `interactive` | Optional; how an interactive terminal session runs and how its pane is read. |
 | `usage` | Optional; the usage adapter for `usage_session` (`period`) or `usage_accounts` (`spend` or `windows`). |
+| `login` | Optional; how `agent account-login` drives the tool's own sign-in (see [Login section](#login-section)). Requires `home_env`. |
 
 ### Lane section
 
@@ -1059,6 +1211,7 @@ set by the usage adapter itself`).
 | `account_file` | Required by `windows`; `{file, object, field}` names the JSON file that holds the login identity. Optional `default_name` reads that file from the home directory for the driver's `home_default_dir`; `default_name` requires `home_default_dir`. |
 | `window` | Required by `windows`; `{used_percent, resets_at, round}` names the response fields of one window. `round` must be `minute`. |
 | `limits` | Required by `windows`; `{kind, weekly_all, weekly_model, used_percent, resets_at, scope, model, model_names}` names the limits list and its item fields. `model_names` is a list of display-name keys. |
+| `keepalive` | Optional, `windows` only; `{argv}` is the command the [token keep-alive](#token-keep-alive) runs to make the tool renew its login (see [Usage keep-alive](#usage-keep-alive)). Requires `home_env`. |
 
 For a `windows` adapter, `label`, `window.used_percent`, `window.resets_at`,
 `limits.kind`, `limits.weekly_all`, `limits.weekly_model`,
@@ -1120,6 +1273,79 @@ and exits 1 on an error. The lock keys are `usage.snapshot:<driver>` and
 `usage.snapshot:<driver>:<account>`. The dashboard tells the snapshot shapes
 apart by their fields: a spend snapshot names its `account`, and a windows
 snapshot names `account_email` and `windows`.
+
+### Usage keep-alive
+
+The optional `keepalive` key of a `windows` usage adapter names the command
+that the [token keep-alive](#token-keep-alive) runs for a profile whose login is
+close to expiry. A `spend` or `period` adapter refuses the key. The following
+placeholder fragment shows only the new key; the rest of the `windows` adapter
+is unchanged and omitted here:
+
+```json
+{
+  "drivers": {
+    "driver-c": {
+      "home_env": "TOOL_C_CONFIG",
+      "usage": {
+        "snapshot": "windows",
+        "keepalive": {
+          "argv": ["tool-c", "--print", "Reply with the single word: ok", "--model", "small-model"]
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `argv` | Required non-empty list of at most 200 non-empty single-line strings. The first element is the executable, looked up on `PATH`; there are no placeholders. |
+
+A driver with `usage.keepalive` must configure `home_env`, which the run sets
+to the account's `config_dir` (unless it is `home_default_dir`, whose profile is
+never kept alive).
+
+### Login section
+
+The optional `login` section describes the tool's own sign-in for
+`agent account-login` (see [Signing in a subscription](#signing-in-a-subscription)).
+Placeholder example:
+
+```json
+{
+  "drivers": {
+    "driver-c": {
+      "home_env": "TOOL_C_CONFIG",
+      "login": {
+        "argv": ["tool-c", "auth", "login", "--email", "{email}"],
+        "status_argv": ["tool-c", "auth", "status", "--json"],
+        "email_field": "email",
+        "logged_in_field": "loggedIn",
+        "subscription_field": "plan",
+        "logout_url": "https://sign-in.example.test/logout",
+        "authorize_url_marker": "redirect_uri=http%3A%2F%2Flocalhost",
+        "magic_link_pattern": "https://sign-in\\.example\\.test/magic-link#[A-Za-z0-9_:=+/-]+",
+        "mail_from": "sign-in.example.test"
+      }
+    }
+  }
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `argv` | Required argv template of the login command; uses `{email}` (the only placeholder) and has no empty element. |
+| `status_argv` | Required non-empty list of non-empty strings without placeholders; the command prints the login status as one JSON object. |
+| `email_field` | Required key of the status object that holds the signed-in address. |
+| `logged_in_field` | Required key of the status object that is `true` for a login. |
+| `subscription_field` | Optional key of the status object whose text the success line shows. |
+| `logout_url` | Required `https://` URL that signs the browser out before the authorize page opens. |
+| `authorize_url_marker` | Required text that the captured authorize URL must contain, for example its local redirect. |
+| `magic_link_pattern` | Required regular expression (at most 500 characters) of the sign-in link in the e-mail; only an `https://` match counts. |
+| `mail_from` | Required IMAP `FROM` search text; no double quote or backslash. |
+
+A driver with a `login` section must configure `home_env`.
 
 ### Recorded slot names
 
@@ -1198,6 +1424,11 @@ docs/ai-accounts.md#drivers)`, for example:
 - `drivers.<id>.home_env <VAR> is a network override that every lane clears`
 - `drivers.<id>.interactive.pane.working[0] is not a valid regular expression`
 - `drivers.<id>.usage.fields.tier must start with the name of a configured request`
+- `drivers.<id>.usage.keepalive.argv must be a list of 1 to 200 entries` and
+  `drivers.<id>.usage.keepalive requires home_env`
+- `drivers.<id>.login.argv must use {email}`, `drivers.<id>.login.logout_url
+  must be an https:// URL`, `drivers.<id>.login.magic_link_pattern is not a
+  valid regular expression` and `drivers.<id>.login requires home_env`
 - `pane_driver <id> must name a driver with an interactive section`
 - `recorded_slots.first and recorded_slots.second must differ`
 

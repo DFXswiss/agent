@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +19,8 @@ from agent_cli.drivers import (
     DRIVER_REFUSED,
     INTERACTIVE_KEYS,
     JUDGMENT_UNSUPPORTED,
+    KEEPALIVE_KEYS,
+    LOGIN_KEYS,
     LANE_ARGV_KEYS,
     LANE_KEYS,
     NETWORK_OVERRIDE_ENV,
@@ -27,7 +31,9 @@ from agent_cli.drivers import (
     USAGE_KEYS,
     DriverConfigError,
     DriverSpec,
+    LoginSpec,
     RecordedNames,
+    UsageKeepalive,
     credential_dir_overlap_error,
     credential_scrub,
     credential_wrapper,
@@ -49,7 +55,13 @@ from agent_cli.drivers import (
     role_clear_env,
     valid_driver_id,
 )
-from driver_fixtures import DECLARED_DRIVERS, LANE_DRIVERS, driver_document
+from driver_fixtures import (
+    DECLARED_DRIVERS,
+    LANE_DRIVERS,
+    WINDOWS_DRIVER_ID,
+    driver_document,
+    windows_driver,
+)
 
 pytestmark = pytest.mark.no_pg
 
@@ -633,3 +645,189 @@ def test_every_driver_key_is_documented() -> None:
         assert f"`{key}`" in section, key
     for key in LANE_ARGV_KEYS:
         assert f"`argv.{key}`" in section, key
+
+
+# --- usage keep-alive and login sections -----------------------------------------
+
+KEEPALIVE_ARGV = ["login-tool", "--print", "Reply with the single word: ok", "--model", "small-model"]
+LOGIN: dict[str, Any] = {
+    "argv": ["login-tool", "auth", "login", "--email", "{email}"],
+    "status_argv": ["login-tool", "auth", "status", "--json"],
+    "email_field": "email",
+    "logged_in_field": "loggedIn",
+    "subscription_field": "plan",
+    "logout_url": "https://sign-in.example.test/logout",
+    "authorize_url_marker": "redirect_uri=http%3A%2F%2Flocalhost",
+    "magic_link_pattern": r"https://sign-in\.example\.test/magic-link#[A-Za-z0-9_:=+/-]+",
+    "mail_from": "sign-in.example.test",
+}
+
+
+def _windows_document(
+    *, keepalive: Any = None, login: Any = None, home_env: bool = True
+) -> dict[str, Any]:
+    driver = windows_driver()
+    if keepalive is not None:
+        driver["usage"]["keepalive"] = keepalive
+    if login is not None:
+        driver["login"] = login
+    if not home_env:
+        del driver["home_env"]
+    return {"drivers": {WINDOWS_DRIVER_ID: driver}}
+
+
+def _windows_spec(**changes: Any) -> DriverSpec:
+    return parse_driver_document(_windows_document(**changes)).drivers[WINDOWS_DRIVER_ID]
+
+
+def test_windows_usage_keepalive_is_optional() -> None:
+    spec = _windows_spec()
+    assert spec.usage is not None and spec.usage.keepalive is None
+    assert spec.login is None
+
+
+def test_windows_usage_keepalive_is_parsed() -> None:
+    spec = _windows_spec(keepalive={"argv": KEEPALIVE_ARGV})
+    assert spec.usage is not None
+    assert spec.usage.keepalive == UsageKeepalive(tuple(KEEPALIVE_ARGV))
+
+
+@pytest.mark.parametrize(
+    ("keepalive", "message"),
+    [
+        ([], "drivers.driver-w.usage.keepalive must be an object"),
+        ("login-tool", "drivers.driver-w.usage.keepalive must be an object"),
+        ({}, "drivers.driver-w.usage.keepalive.argv is required"),
+        ({"argv": ["x"], "env": {}}, "drivers.driver-w.usage.keepalive accepts only argv"),
+        ({"argv": []}, "drivers.driver-w.usage.keepalive.argv must be a list of 1 to 200 entries"),
+        ({"argv": "login-tool"}, "drivers.driver-w.usage.keepalive.argv must be a list of 1 to 200 entries"),
+        ({"argv": ["x"] * 201}, "drivers.driver-w.usage.keepalive.argv must be a list of 1 to 200 entries"),
+        ({"argv": ["login-tool", ""]}, "drivers.driver-w.usage.keepalive.argv[1] must be a non-empty single-line string"),
+        ({"argv": ["login-tool", "  "]}, "drivers.driver-w.usage.keepalive.argv[1] must be a non-empty single-line string"),
+        ({"argv": ["login-tool", 3]}, "drivers.driver-w.usage.keepalive.argv[1] must be a non-empty single-line string"),
+        ({"argv": ["login-tool\n"]}, "drivers.driver-w.usage.keepalive.argv[0] must be a non-empty single-line string"),
+    ],
+)
+def test_invalid_windows_usage_keepalive_fails_with_its_path(
+    keepalive: Any, message: str
+) -> None:
+    with pytest.raises(DriverConfigError, match=re.escape(message)):
+        parse_driver_document(_windows_document(keepalive=keepalive))
+
+
+def test_windows_usage_keepalive_requires_home_env() -> None:
+    with pytest.raises(
+        DriverConfigError, match=re.escape("drivers.driver-w.usage.keepalive requires home_env")
+    ):
+        parse_driver_document(
+            _windows_document(keepalive={"argv": KEEPALIVE_ARGV}, home_env=False)
+        )
+    # Without the keep-alive section the same driver stays valid.
+    assert _windows_spec(home_env=False).home_env is None
+
+
+@pytest.mark.parametrize("driver_id", ["driver-a", "driver-d"])
+def test_keepalive_is_refused_outside_a_windows_adapter(driver_id: str) -> None:
+    document = driver_document()
+    document["drivers"][driver_id]["usage"]["keepalive"] = {"argv": KEEPALIVE_ARGV}
+    with pytest.raises(DriverConfigError, match=re.escape(f"drivers.{driver_id}.usage accepts only")):
+        parse_driver_document(document)
+
+
+def test_login_section_is_parsed() -> None:
+    spec = _windows_spec(login=LOGIN)
+    login = spec.login
+    assert isinstance(login, LoginSpec)
+    assert login.argv == tuple(LOGIN["argv"])
+    assert login.status_argv == tuple(LOGIN["status_argv"])
+    assert login.email_field == "email"
+    assert login.logged_in_field == "loggedIn"
+    assert login.subscription_field == "plan"
+    assert login.logout_url == "https://sign-in.example.test/logout"
+    assert login.authorize_url_marker == "redirect_uri=http%3A%2F%2Flocalhost"
+    assert login.magic_link_pattern.search(
+        "see https://sign-in.example.test/magic-link#abc:1 now"
+    )
+    assert login.mail_from == "sign-in.example.test"
+
+    without_subscription = dict(LOGIN)
+    del without_subscription["subscription_field"]
+    login = _windows_spec(login=without_subscription).login
+    assert login is not None and login.subscription_field is None
+
+
+def test_login_does_not_need_a_usage_section() -> None:
+    document = {"drivers": {"driver-l": {"home_env": "LOGIN_HOME", "login": LOGIN}}}
+    spec = parse_driver_document(document).drivers["driver-l"]
+    assert spec.login is not None and spec.usage is None
+
+
+def _login(**changes: Any) -> dict[str, Any]:
+    login = copy.deepcopy(LOGIN)
+    for key, value in changes.items():
+        if value is None:
+            del login[key]
+        else:
+            login[key] = value
+    return login
+
+
+@pytest.mark.parametrize(
+    ("login", "message"),
+    [
+        ([], "drivers.driver-w.login must be an object"),
+        ({**LOGIN, "extra": 1}, "drivers.driver-w.login accepts only argv, status_argv"),
+        (_login(argv=None), "drivers.driver-w.login.argv is required"),
+        (_login(status_argv=None), "drivers.driver-w.login.status_argv is required"),
+        (_login(email_field=None), "drivers.driver-w.login.email_field is required"),
+        (_login(logged_in_field=None), "drivers.driver-w.login.logged_in_field is required"),
+        (_login(logout_url=None), "drivers.driver-w.login.logout_url is required"),
+        (_login(authorize_url_marker=None), "drivers.driver-w.login.authorize_url_marker is required"),
+        (_login(magic_link_pattern=None), "drivers.driver-w.login.magic_link_pattern is required"),
+        (_login(mail_from=None), "drivers.driver-w.login.mail_from is required"),
+        (_login(argv=[]), "drivers.driver-w.login.argv must be a list of 1 to 200 entries"),
+        (_login(argv=["login-tool", "auth", "login"]), "drivers.driver-w.login.argv must use {email}"),
+        (_login(argv=["login-tool", "{user}"]), "drivers.driver-w.login.argv[1] uses unknown placeholder {user}"),
+        (_login(argv=["login-tool", "--email={email}"]), "drivers.driver-w.login.argv[1] may use a placeholder only as the whole element"),
+        (_login(argv=["login-tool", "", "{email}"]), "drivers.driver-w.login.argv must not contain an empty string"),
+        (_login(status_argv=[]), "drivers.driver-w.login.status_argv must be a list of 1 to 200 entries"),
+        (_login(status_argv=["login-tool", ""]), "drivers.driver-w.login.status_argv[1] must be a non-empty single-line string"),
+        (_login(email_field=""), "drivers.driver-w.login.email_field must be a non-empty single-line string"),
+        (_login(logged_in_field=7), "drivers.driver-w.login.logged_in_field must be a non-empty single-line string"),
+        (_login(subscription_field=""), "drivers.driver-w.login.subscription_field must be a non-empty single-line string"),
+        (_login(logout_url="http://sign-in.example.test/logout"), "drivers.driver-w.login.logout_url must be an https:// URL"),
+        (_login(authorize_url_marker="a\nb"), "drivers.driver-w.login.authorize_url_marker must be a non-empty single-line string"),
+        (_login(magic_link_pattern="(https://"), "drivers.driver-w.login.magic_link_pattern is not a valid regular expression"),
+        (_login(magic_link_pattern="x" * 501), "drivers.driver-w.login.magic_link_pattern must be a non-empty single-line string of at most 500 characters"),
+        (_login(mail_from=""), "drivers.driver-w.login.mail_from must be a non-empty single-line string"),
+        (_login(mail_from='sign-in" OR ALL'), "drivers.driver-w.login.mail_from must not contain a double quote or a backslash"),
+        (_login(mail_from="sign-in\\x"), "drivers.driver-w.login.mail_from must not contain a double quote or a backslash"),
+    ],
+)
+def test_invalid_login_fails_with_its_path(login: Any, message: str) -> None:
+    with pytest.raises(DriverConfigError, match=re.escape(message)):
+        parse_driver_document(_windows_document(login=login))
+
+
+def test_login_requires_home_env() -> None:
+    with pytest.raises(DriverConfigError, match=re.escape("drivers.driver-w.login requires home_env")):
+        parse_driver_document(_windows_document(login=LOGIN, home_env=False))
+
+
+def test_keepalive_and_login_keys_are_documented() -> None:
+    section = _drivers_section()
+    for key in (*KEEPALIVE_KEYS, *LOGIN_KEYS, "keepalive", "login"):
+        assert f"`{key}`" in section, key
+
+
+def test_documented_login_example_is_a_valid_driver_document() -> None:
+    section = _drivers_section()
+    example = section.split("### Login section", 1)[1]
+    block = example.split("```json\n", 1)[1].split("```", 1)[0]
+    config = parse_driver_document(json.loads(block))
+    login = config.drivers["driver-c"].login
+    assert login is not None
+    assert login.argv[-1] == "{email}"
+    assert login.magic_link_pattern.search(
+        "https://sign-in.example.test/magic-link#abc:1"
+    )
