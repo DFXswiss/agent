@@ -38,7 +38,31 @@
             [
               "python3",
               "-m",
-              "pytest"
+              "coverage",
+              "run",
+              "-m",
+              "pytest",
+              "-m",
+              "not timing"
+            ],
+            [
+              "python3",
+              "-m",
+              "coverage",
+              "combine"
+            ],
+            [
+              "python3",
+              "-m",
+              "coverage",
+              "report"
+            ],
+            [
+              "python3",
+              "-m",
+              "pytest",
+              "-m",
+              "timing"
             ]
           ]
         }
