@@ -1,4 +1,4 @@
-"""Vendor-lane launcher (argv builders + subprocess or tmux holder)."""
+"""Lane launcher: driver argv from configuration, run as a subprocess or in tmux."""
 
 from __future__ import annotations
 
@@ -16,7 +16,16 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
+from .drivers import (
+    WRITE_READ_DIRS_REFUSED,
+    LaneIO,
+    credential_dir_overlap_error,
+    lane_argv,
+    lane_io,
+    lane_scrub_env,
+    redirect_argv,
+    require_lane,
+)
 from .text_sanitize import (
     redact_terminal_interleaved_secret,
     sanitize_terminal_text,
@@ -26,12 +35,6 @@ if TYPE_CHECKING:
     from .ai_accounts import AIRole
 
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
-LANE_VENDORS = tuple(sorted(SUPPORTED_PROVIDERS))
-# Providers that read the spec from stdin instead of a --prompt-file argument.
-SPEC_VIA_STDIN = frozenset({"codex", "claude", "openrouter"})
-# Providers whose final message is collected from an output file.
-OUTPUT_FILE_VENDORS = frozenset({"codex", "openrouter"})
-OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 NPROC_CAP = 800
 LANE_MODEL_LIMIT = 200
 LANE_TOOL_LIMIT = 200
@@ -42,42 +45,6 @@ LANE_GITHUB_TOKEN_ENV = (
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
 )
-# Stripped from every lane and every lane pane: a lane runs on its own provider
-# login, never on the orchestrator's ambient Claude credentials, its API route
-# (gateway, Bedrock, Vertex, Foundry), Claude Code session markers, or ambient
-# proxy/CA overrides (an intercepting proxy must never see a lane's credentials).
-LANE_STRIP_ENV = (
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "OPENROUTER_API_KEY",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_CUSTOM_HEADERS",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "AWS_BEARER_TOKEN_BEDROCK",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "ANTHROPIC_FOUNDRY_API_KEY",
-    "ANTHROPIC_FOUNDRY_BASE_URL",
-    "ANTHROPIC_FOUNDRY_RESOURCE",
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "HTTP_PROXY",
-    "http_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-    "NO_PROXY",
-    "no_proxy",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "REQUESTS_CA_BUNDLE",
-    "CURL_CA_BUNDLE",
-)
-_CLAUDE_READ_TOOLS = ("Read", "Grep", "Glob")
-_CLAUDE_WRITE_TOOLS = ("Edit", "Write")
 
 
 @dataclass(frozen=True)
@@ -120,6 +87,9 @@ class LaneResult:
     # must never be reparsed because redaction can remove hidden duplicate
     # STATUS/RESULT records.
     protocol_result: str = ""
+    # The driver's lane.audit_stderr_when_empty: the lane.run audit text falls
+    # back to stderr when the final text is empty.
+    audit_stderr_when_empty: bool = False
 
 
 # runner(argv, stdin_text) -> object with returncode, stdout, stderr
@@ -151,166 +121,6 @@ def sanitized_lane_argv(argv: list[str], profile_dir: str | None = None):
         yield _github_cleared_argv(argv, profile)
 
 
-def _env_strip_prefix() -> list[str]:
-    argv = ["env"]
-    for key in LANE_STRIP_ENV:
-        argv.extend(["-u", key])
-    return argv
-
-
-def grok_argv(*, spec_file: str, cwd: str, write: bool, model: str) -> list[str]:
-    argv = _env_strip_prefix()
-    argv.extend(["grok", "--prompt-file", spec_file, "-m", model])
-    if write:
-        argv.extend(
-            [
-                "--permission-mode",
-                "acceptEdits",
-                "--allow",
-                "Write",
-                "--allow",
-                "Edit",
-                "--output-format",
-                "streaming-messages-json",
-                "--cwd",
-                cwd,
-            ]
-        )
-    else:
-        argv.extend(
-            [
-                "--allow",
-                "Read",
-                "--allow",
-                "Grep",
-                "--allow",
-                "Glob",
-                "--deny",
-                "Write",
-                "--deny",
-                "Edit",
-                "--deny",
-                "Bash",
-                "--no-subagents",
-                "--disable-web-search",
-                "--output-format",
-                "streaming-messages-json",
-                "--cwd",
-                cwd,
-            ]
-        )
-    return argv
-
-
-def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[str]:
-    sandbox = "workspace-write" if write else "read-only"
-    argv = _env_strip_prefix()
-    argv.extend(
-        [
-            "codex",
-            "exec",
-            "-c",
-            'model_reasoning_effort="high"',
-            "--model",
-            model,
-            "--sandbox",
-            sandbox,
-            "--skip-git-repo-check",
-            "--cd",
-            cwd,
-            "--output-last-message",
-            output_file,
-            "-",
-        ]
-    )
-    return argv
-
-
-def claude_argv(
-    *,
-    cwd: str,
-    write: bool,
-    model: str,
-    read_dirs: tuple[str, ...] = (),
-    tools: tuple[str, ...] | None = None,
-) -> list[str]:
-    """Restricted Claude Code lane with only explicit file tools."""
-    if write and read_dirs:
-        raise SystemExit("write lane takes no extra directories")
-    argv = _env_strip_prefix()
-    argv.extend(
-        [
-            "claude",
-            "--print",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--model",
-            model,
-            # Restricted mode ignores settings and confines file tools to the
-            # process cwd plus explicitly supplied read-only directories.
-            "--restricted",
-            "--strict-mcp-config",
-            "--disable-slash-commands",
-            "--tools",
-            ",".join(tools)
-            if tools is not None
-            else ",".join(
-                (*_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS)
-                if write
-                else _CLAUDE_READ_TOOLS
-            ),
-            "--permission-mode",
-            "acceptEdits" if write else "default",
-        ]
-    )
-    for directory in read_dirs:
-        argv.extend(["--add-dir", directory])
-    return argv
-
-
-_OPENROUTER_WRAPPER = (
-    'out=$1; shift; key_file=${CLAUDE_CONFIG_DIR:+$CLAUDE_CONFIG_DIR/openrouter-api-key}; '
-    'if [ -z "$key_file" ] || [ ! -r "$key_file" ]; then '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; fi; "
-    'key=$(cat "$key_file" 2>/dev/null) || { '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; }; "
-    'if [ -z "$key" ]; then '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; fi; "
-    'export ANTHROPIC_AUTH_TOKEN="$key"; exec "$@" > "$out"'
-)
-
-
-def openrouter_argv(
-    *,
-    cwd: str,
-    write: bool,
-    model: str,
-    output_file: str,
-    read_dirs: tuple[str, ...] = (),
-    tools: tuple[str, ...] | None = None,
-) -> list[str]:
-    claude = claude_argv(
-        cwd=cwd,
-        write=write,
-        model=model,
-        read_dirs=read_dirs,
-        tools=tools,
-    )
-    inner = claude[len(_env_strip_prefix()) :]
-    return [
-        *_env_strip_prefix(),
-        f"ANTHROPIC_BASE_URL={OPENROUTER_BASE_URL}",
-        "ANTHROPIC_API_KEY=",
-        "sh",
-        "-c",
-        _OPENROUTER_WRAPPER,
-        "sh",
-        output_file,
-        *inner,
-    ]
-
-
 def replace_path_roots(
     text: str, replacements: tuple[tuple[str, str], ...]
 ) -> str:
@@ -340,119 +150,6 @@ def hide_config_dir(text: str, config_dir: str | None) -> str:
         text,
         ((config_dir, "<config_dir>"),) if config_dir else (),
     )
-
-
-def openrouter_path_error(
-    config_dir: str, cwd: str, read_dirs: tuple[str, ...] = ()
-) -> str | None:
-    """Return an error when restricted lane roots overlap the key directory."""
-    config = Path(config_dir).expanduser().resolve()
-    for label, raw in (("worktree", cwd), *(("read directory", d) for d in read_dirs)):
-        path = Path(raw).expanduser().resolve()
-        try:
-            path.relative_to(config)
-            return f"openrouter {label} overlaps account config_dir"
-        except ValueError:
-            pass
-        try:
-            config.relative_to(path)
-            return f"openrouter account config_dir overlaps {label}"
-        except ValueError:
-            pass
-    return None
-
-
-def provider_argv(
-    vendor: str,
-    *,
-    spec_file: str,
-    cwd: str,
-    write: bool,
-    model: str,
-    output_file: str | None = None,
-    read_dirs: tuple[str, ...] = (),
-) -> list[str]:
-    """Build the lane argv for one supported provider.
-
-    ``output_file`` is required for providers in ``OUTPUT_FILE_VENDORS``.
-    """
-    if vendor == "grok":
-        return grok_argv(spec_file=spec_file, cwd=cwd, write=write, model=model)
-    if vendor == "codex":
-        if not output_file:
-            raise SystemExit("codex lane requires an output file")
-        return codex_argv(cwd=cwd, write=write, output_file=output_file, model=model)
-    if vendor == "claude":
-        return claude_argv(cwd=cwd, write=write, model=model, read_dirs=read_dirs)
-    if vendor == "openrouter":
-        if not output_file:
-            raise SystemExit("openrouter lane requires an output file")
-        return openrouter_argv(
-            cwd=cwd,
-            write=write,
-            model=model,
-            output_file=output_file,
-            read_dirs=read_dirs,
-        )
-    raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
-
-
-CODEX_CHECK_LANE_REFUSED = (
-    "codex cannot run a check lane: its sandbox cannot remove file access"
-)
-
-
-def judgment_argv(
-    vendor: str,
-    *,
-    spec_file: str,
-    cwd: str,
-    model: str,
-    output_file: str | None = None,
-) -> list[str]:
-    """argv of a lane without tools and without file access, for one judgment."""
-    if vendor == "grok":
-        return [
-            *_env_strip_prefix(),
-            "grok",
-            "--prompt-file",
-            spec_file,
-            "-m",
-            model,
-            "--deny",
-            "Read",
-            "--deny",
-            "Grep",
-            "--deny",
-            "Glob",
-            "--deny",
-            "Write",
-            "--deny",
-            "Edit",
-            "--deny",
-            "Bash",
-            "--no-subagents",
-            "--disable-web-search",
-            "--output-format",
-            "streaming-messages-json",
-            "--cwd",
-            cwd,
-        ]
-    if vendor == "claude":
-        return claude_argv(cwd=cwd, write=False, model=model, tools=())
-    if vendor == "openrouter":
-        if not output_file:
-            raise SystemExit("openrouter lane requires an output file")
-        return openrouter_argv(
-            cwd=cwd,
-            write=False,
-            model=model,
-            output_file=output_file,
-            tools=(),
-        )
-    if vendor == "codex":
-        raise SystemExit(CODEX_CHECK_LANE_REFUSED)
-    raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
 
 
 def lane_tmux_name(*, vendor: str, role: str, unique: str = "") -> str:
@@ -619,6 +316,7 @@ def unreadable_output_result(
     exc: BaseException,
     config_dir: str | None,
     tmux_session: str | None = None,
+    audit_stderr_when_empty: bool = False,
 ) -> LaneResult:
     """Unavailable result for a lane whose output file cannot be read or decoded."""
     message = output_read_failure(exc)
@@ -637,22 +335,20 @@ def unreadable_output_result(
         stderr=diagnostic,
         tmux_session=tmux_session,
         config_dir=config_dir,
+        audit_stderr_when_empty=audit_stderr_when_empty,
     )
 
 
 def finalize_lane_output(
-    vendor: str,
+    io: LaneIO,
     stdout: str,
     output_file_text: str,
     *,
     cwd: str,
-    stream_from_output_file: bool = False,
     config_dir: str | None = None,
 ) -> LaneOutput:
     """Final text, usage and tools of one lane run, with the account directory hidden."""
-    out = _finalize_lane_output(
-        vendor, stdout, output_file_text, cwd=cwd, stream_from_output_file=stream_from_output_file
-    )
+    out = _finalize_lane_output(io, stdout, output_file_text, cwd=cwd)
     usage = out.usage
     if usage is not None and usage.model is not None:
         usage = replace(
@@ -673,24 +369,22 @@ def finalize_lane_output(
 
 
 def _finalize_lane_output(
-    vendor: str,
+    io: LaneIO,
     stdout: str,
     output_file_text: str,
     *,
     cwd: str,
-    stream_from_output_file: bool = False,
 ) -> LaneOutput:
-    """Normalize final text, reported usage, and the bounded tool transcript."""
-    if vendor == "codex":
-        return LaneOutput(output_file_text or stdout, None, (), False)
-    if vendor not in ("claude", "openrouter", "grok"):
-        return LaneOutput("", None, (), False)
+    """Normalize final text, reported usage, and the bounded tool transcript.
 
-    stream = (
-        output_file_text
-        if vendor == "openrouter" or stream_from_output_file
-        else stdout
-    )
+    A ``last-message-file`` lane reports only its final text. An
+    ``event-stream`` lane reports newline-delimited JSON events, read from the
+    output file when ``io.output_file`` is set and from stdout otherwise.
+    """
+    if io.output == "last-message-file":
+        return LaneOutput(output_file_text or stdout, None, (), False)
+
+    stream = output_file_text if io.output_file else stdout
     events: list[dict] = []
     for line in stream.splitlines():
         try:
@@ -800,7 +494,7 @@ def record_lane_run(
     metadata = bounded_lane_metadata(result)
     activity_id = activity_id or str(uuid.uuid4())
     final_text = result.stdout
-    if not final_text and result.vendor in ("claude", "openrouter"):
+    if not final_text and result.audit_stderr_when_empty:
         final_text = result.stderr
     payload = {
         "role": result.role,
@@ -991,13 +685,16 @@ def launch(
 ) -> LaneResult:
     if role not in LANE_ROLES:
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
-    if vendor not in LANE_VENDORS:
-        raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
     from .ai_accounts import load_ai_accounts
 
     ai = load_ai_accounts(config_home, defer_model_configuration=True)
+    # An unconfigured driver, or one without a lane section, is refused like
+    # an unknown --vendor.
+    driver = ai.driver(vendor, lane=True)
+    lane = require_lane(driver)
+    io = lane_io(driver, tmux=tmux)
     if binding is None:
         selected = ai.for_lane(session_id, role, vendor, require_execution=False)
     else:
@@ -1017,17 +714,18 @@ def launch(
 
     ai.require_model_configuration()
     write = selected.access == "workspace-write"
-    if vendor in ("claude", "openrouter") and write and read_dirs:
-        raise SystemExit("write lane takes no extra directories")
-    if vendor == "openrouter":
-        overlap = openrouter_path_error(selected.account.config_dir, cwd, read_dirs)
-        if overlap is not None:
-            raise SystemExit(overlap)
+    if write and read_dirs and lane.read_dir_args is not None:
+        raise SystemExit(WRITE_READ_DIRS_REFUSED)
+    overlap = credential_dir_overlap_error(
+        driver, selected.account.config_dir, cwd, read_dirs
+    )
+    if overlap is not None:
+        raise SystemExit(overlap)
     if not dry_run:
         ai.require_lane_execution()
     lane_output_file: str | None = None
     output_file: str | None = None
-    if vendor in OUTPUT_FILE_VENDORS or (vendor in ("claude", "grok") and tmux):
+    if io.output_file:
         if dry_run:
             output_file = f"/tmp/agent-lane-{vendor}-dry-run.txt"
         else:
@@ -1037,64 +735,34 @@ def launch(
             )
             os.close(fd)
             output_file = lane_output_file
-    argv = provider_argv(
-        vendor,
+    argv = lane_argv(
+        driver,
+        "write" if write else "read",
+        scrub=lane_scrub_env(ai.drivers),
         spec_file=spec_file,
         cwd=cwd,
-        write=write,
         model=selected.model,
         output_file=output_file,
         read_dirs=read_dirs,
     )
 
-    # Apply the selected provider home inside the tmux child too. The builders'
+    # Apply the selected driver home inside the tmux child too. The lane's
     # credential-clearing prefix is nested, never a process-global mutation.
-    argv = [*selected.env_prefix(), *argv]
+    argv = [*selected.env_prefix(ai.drivers), *argv]
     github_environment = sanitized_lane_argv(argv)
     argv = github_environment.__enter__()
 
     tmux_session: str | None = None
-    claude_redirect = False
     try:
         if tmux:
             unique = "" if dry_run else uuid.uuid4().hex[:8]
             tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
-            if vendor == "claude":
-                # Claude's stream-json lines can exceed a tmux pane width and its
-                # history. Keep the stream in a file and use pane capture only as
-                # process diagnostics, never as the parser input.
-                if output_file is None:
-                    raise SystemExit("claude tmux lane requires an output file")
-                argv = [
-                    "sh",
-                    "-c",
-                    'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
-                    "sh",
-                    spec_file,
-                    output_file,
-                    *argv,
-                ]
-                claude_redirect = True
-            elif vendor == "grok":
-                # Grok's message stream carries more than fits in a tmux pane and
-                # its history. Keep the stream in a file; pane capture stays a
-                # process diagnostic, never the parser input. Grok reads its spec
-                # through --prompt-file, so only stdout is redirected.
-                if output_file is None:
-                    raise SystemExit("grok tmux lane requires an output file")
-                argv = [
-                    "sh",
-                    "-c",
-                    'out=$1; shift; exec "$@" > "$out"',
-                    "sh",
-                    output_file,
-                    *argv,
-                ]
-            elif vendor == "openrouter":
-                # Claude Code reads the prompt from stdin only when stdin is not a
-                # TTY; in a tmux pane it is. Redirect this adapter's spec file.
-                argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
-                claude_redirect = True
+            # A pane's stdin is a terminal and its history is bounded, so the
+            # driver's spec and stream go through files (see drivers.lane_io).
+            # Pane capture stays a process diagnostic, never the parser input.
+            argv = redirect_argv(
+                io, argv, spec_file=spec_file, output_file=output_file
+            )
             argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
     except BaseException:
         github_environment.__exit__(None, None, None)
@@ -1113,13 +781,12 @@ def launch(
                 stderr="",
                 tmux_session=tmux_session,
                 config_dir=selected.account.config_dir,
+                audit_stderr_when_empty=io.audit_stderr_when_empty,
             )
         finally:
             github_environment.__exit__(None, None, None)
 
-    stdin_text: str | None = spec_text if vendor in SPEC_VIA_STDIN else None
-    if claude_redirect:
-        stdin_text = None
+    stdin_text: str | None = spec_text if io.stdin else None
     try:
         if runner is not None:
             completed = runner(argv, None if tmux else stdin_text)
@@ -1155,17 +822,14 @@ def launch(
                     exc=exc,
                     config_dir=selected.account.config_dir,
                     tmux_session=tmux_session,
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
                 )
 
-        stream_from_output_file = vendor in OUTPUT_FILE_VENDORS or (
-            vendor in ("claude", "grok") and tmux
-        )
         finalized = finalize_lane_output(
-            vendor,
+            io,
             stdout,
             output_file_text,
             cwd=cwd,
-            stream_from_output_file=stream_from_output_file,
             config_dir=selected.account.config_dir,
         )
         # The protocol is counted on the raw source exactly once. Only the
@@ -1175,7 +839,7 @@ def launch(
         protocol_status, protocol_result = parse_model_result(
             finalized.source_text, returncode
         )
-        if stream_from_output_file and not finalized.text and stdout and not stderr:
+        if io.output_file and not finalized.text and stdout and not stderr:
             # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr
             # so the CLI and lane.run show why a lane produced no stream output.
             stderr = stdout
@@ -1196,6 +860,7 @@ def launch(
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
             protocol_result=protocol_result,
+            audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
     finally:
         if lane_output_file is not None:

@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
+# Re-exported: coordinator implementer argv hardening from the driver configuration.
+from .drivers import harden_write_argv as harden_write_argv
 from .github_accounts import Account, AccountError, load_accounts
 from .model_slots import (
     SLOT_KEY_PREFIXES,
     STAGE_SLOTS,
     ModelSlots,
     canonical_key,
+    canonical_phase,
     canonical_stage,
 )
 from .runtime import Completed
@@ -1381,6 +1384,37 @@ def save_task(store: Store, task: dict[str, Any]) -> None:
     store.write("task", "update", task["id"], strip_row(task))
 
 
+def upgrade_recorded_phases(c: dict[str, Any]) -> bool:
+    """Rename the phases an earlier version stored in this checkpoint.
+
+    Returns True when a name changed; the caller saves the task. The order
+    checkpoint key embeds ``resume_phase`` as its second ``|`` part, so it is
+    renamed as well and an open order checkpoint is not posted again.
+    """
+    changed = False
+
+    def upgrade(holder: Any, key: str) -> None:
+        nonlocal changed
+        value = holder.get(key) if isinstance(holder, dict) else None
+        if isinstance(value, str) and canonical_phase(value) != value:
+            holder[key] = canonical_phase(value)
+            changed = True
+
+    upgrade(c, "phase")
+    upgrade(c, "resume_phase")
+    upgrade(c.get("retry"), "phase")
+    upgrade(c.get("gate_route"), "phase")
+    order = c.get("order")
+    checkpoint = order.get("checkpoint") if isinstance(order, dict) else None
+    if isinstance(checkpoint, dict) and isinstance(checkpoint.get("key"), str):
+        parts = checkpoint["key"].split("|")
+        if len(parts) > 1 and canonical_phase(parts[1]) != parts[1]:
+            parts[1] = canonical_phase(parts[1])
+            checkpoint["key"] = "|".join(parts)
+            changed = True
+    return changed
+
+
 def completed_comment_timestamp(store: Store, activity_id: Any) -> str | None:
     """Return the valid durable completion time of a comment activity."""
     if not isinstance(activity_id, str) or not activity_id:
@@ -1549,31 +1583,6 @@ def a38_model_second(c: dict[str, Any]) -> bool:
         and a38.get("enabled") is True
         and a38.get("second_review_mode") == "model"
     )
-
-
-def harden_grok_write_argv(argv: list[str]) -> list[str]:
-    """Ensure the Grok implementer cannot Bash, spawn subagents, or web-search.
-
-    The stock write builder in lane.grok_argv does not add these denies. This is
-    process argv hardening for the coordinator, not universal sandbox enforcement.
-    """
-    if "grok" not in argv:
-        return list(argv)
-    out = list(argv)
-    if "--no-subagents" not in out:
-        out.append("--no-subagents")
-    if "--disable-web-search" not in out:
-        out.append("--disable-web-search")
-    denied = False
-    i = 0
-    while i < len(out) - 1:
-        if out[i] == "--deny" and out[i + 1] == "Bash":
-            denied = True
-            break
-        i += 1
-    if not denied:
-        out.extend(["--deny", "Bash"])
-    return out
 
 
 def parse_model_result(output: str, returncode: int) -> tuple[str, str]:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .runtime import Runtime
-from .store import Store, StoreError
+from .store import Store, StoreConnectionError, StoreError
 from .watch import acked_assigned_ids, pending_assigned, refresh_assigned_queue_files
 
 KNOCK_PREFIX = "da ist Post id "
@@ -83,7 +83,15 @@ def deliver(
     if not runtime.exists(sid, target=target):
         store.enqueue_wake(activity_id, sid)
         return "unread"
-    if runtime.is_busy(sid):
+    try:
+        busy = runtime.is_busy(sid)
+    except StoreConnectionError:
+        raise
+    except SystemExit:
+        # A pane that cannot be classified fails loudly and keeps its wake queued.
+        store.enqueue_wake(activity_id, sid)
+        raise
+    if busy:
         store.enqueue_wake(activity_id, sid)
         return "queued"
     if activity.get("type") == "issue.assigned":

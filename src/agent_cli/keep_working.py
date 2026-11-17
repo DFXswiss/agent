@@ -1,15 +1,15 @@
-"""Keep a Grok session working until the standing assignment is done.
+"""Keep an interactive session working until the standing assignment is done.
 
-The TUI stops after each turn. That is not rest. One standing instruction
-is sent the first time the pane is idle; later idle ticks send a short
-continue. In-flight turns are never interrupted.
+The driver's terminal user interface stops after each turn. That is not rest.
+One standing instruction is sent the first time the pane is idle; later idle
+ticks send a short continue. In-flight turns are never interrupted.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .pane_state import grok_pane_is_idle, grok_pane_is_working, grok_permission_prompt
+from .pane_state import pane_is_idle, pane_is_working, pane_permission_prompt
 from .runtime import Runtime
 
 STANDING = (
@@ -31,10 +31,11 @@ def tick(
     pane = runtime.capture(session_id)
     if pane.strip() == "":
         return "unobservable"
-    if grok_permission_prompt(pane):
+    markers = runtime.markers_for(session_id)
+    if pane_permission_prompt(pane, markers):
         runtime.input_key(session_id, "enter")
         return "approved"
-    if grok_pane_is_working(pane) or not grok_pane_is_idle(pane):
+    if pane_is_working(pane, markers) or not pane_is_idle(pane, markers):
         return "working"
     if not state.get("standing_sent"):
         runtime.input_text(session_id, STANDING)
