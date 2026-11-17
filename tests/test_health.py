@@ -191,7 +191,7 @@ def test_agent_config_problems_reports_one_problem_when_an_extra_skill_is_presen
 
 def test_agent_config_problems_reports_one_problem_naming_cli_when_cli_is_wrong() -> None:
     agent_config = {
-        "cli": "codex",
+        "cli": "tool-b",
         "session_kind": "runner",
         "skills": ["spine", "review-loop", "pr-review"],
     }

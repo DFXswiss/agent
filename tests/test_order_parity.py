@@ -282,7 +282,7 @@ def seed_parity_order(device) -> str:
         round_limit={
             "max_rounds": 2,
             "origin": "submit",
-            "model": "grok-model",
+            "model": "driver-a-model",
             "limit": 2,
         },
         round_limit_question={

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from agent_cli.drivers import PaneMarkers
 from agent_cli.keep_working import CONTINUE, STANDING, tick
 from agent_cli.runtime import Completed, Runtime
+from driver_fixtures import PANE_IDLE, PANE_PERMISSION, PANE_WORKING, pane_markers
 
 
 class FakeRuntime:
@@ -10,9 +12,14 @@ class FakeRuntime:
         self.pane = pane
         self.texts: list[str] = []
         self.keys: list[str] = []
+        self.classified: list[str] = []
 
     def exists(self, session_id: str, *, target: str | None = None) -> bool:
         return self._exists
+
+    def markers_for(self, session_id: str) -> PaneMarkers:
+        self.classified.append(session_id)
+        return pane_markers("driver-a")
 
     def capture(self, session_id: str) -> str:
         return self.pane
@@ -32,24 +39,21 @@ def test_missing_session_is_noop() -> None:
 
 
 def test_working_is_noop() -> None:
-    rt = FakeRuntime(pane="    Waiting for response… 1s   [stop]\n")
+    rt = FakeRuntime(pane=PANE_WORKING)
     assert tick(rt, "worker", {}) == "working"
     assert rt.texts == []
+    assert rt.classified == ["worker"]
 
 
 def test_permission_sends_enter_only() -> None:
-    pane = (
-        "  1 (●) Yes, and don't ask again for anything (always-approve mode)\n"
-        "  1/3:select  │  Tab:next option\n"
-    )
-    rt = FakeRuntime(pane=pane)
+    rt = FakeRuntime(pane=PANE_PERMISSION)
     assert tick(rt, "worker", {}) == "approved"
     assert rt.texts == []
     assert rt.keys == ["enter"]
 
 
 def test_first_idle_sends_standing_once() -> None:
-    rt = FakeRuntime(pane="     Worked for 1.8s\n  │ ❯\n")
+    rt = FakeRuntime(pane=PANE_IDLE)
     state: dict[str, object] = {}
     assert tick(rt, "worker", state) == "standing"
     assert state["standing_sent"] is True
@@ -67,10 +71,11 @@ def test_empty_pane_does_not_type() -> None:
     assert tick(rt, "worker", {}) == "unobservable"
     assert rt.texts == []
     assert rt.keys == []
+    assert rt.classified == []
 
 
 def test_pane_without_composer_is_not_idle() -> None:
-    rt = FakeRuntime(pane="dashboard only\nShift+Tab:mode\n")
+    rt = FakeRuntime(pane="dashboard only\nStatus bar: model-a\n")
     assert tick(rt, "worker", {}) == "working"
     assert rt.texts == []
 

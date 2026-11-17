@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli import coordinator_exec, coordinator_lanes
-from agent_cli.coordinator_common import control_dir, coord
+from agent_cli.coordinator_common import CoordinatorError, control_dir, coord
 from agent_cli.coordinator_exec import process_scope, run_bounded
 from agent_cli.coordinator_lanes import (
     _prepare_pr_review_agent,
@@ -28,12 +28,13 @@ from agent_cli.coordinator_lanes import (
     launch_lane,
     recover_working_lanes,
 )
+from agent_cli.drivers import LaneIO
 from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
 from agent_cli.coordinator_orders import consume_order_intents
 from agent_cli.store import Store
 from test_coordinator_support import (
-    grok_messages_stream,
+    event_stream_output,
     insert_order_intent,
     make_order_worker,
     make_session,
@@ -41,7 +42,11 @@ from test_coordinator_support import (
     seed_order_task,
     write_accounts,
 )
-
+from driver_fixtures import (
+    accounts_document,
+    write_accounts as write_placeholder_accounts,
+    write_drivers,
+)
 
 TID = "aa000001-0000-4000-8000-000000000601"
 
@@ -66,6 +71,7 @@ def seed_lane_task(
     phase: str = "implement",
     head: str = "a" * 40,
     current_round: int = 1,
+    models: dict | None = None,
 ) -> dict:
     worktree = worker.workspace_root / "lane-process-task"
     worktree.mkdir(parents=True, exist_ok=True)
@@ -75,7 +81,7 @@ def seed_lane_task(
         "workflow": "implement",
         "state": "implementing",
         "current_round": current_round,
-        "models": {"first": "grok", "second": "codex"},
+        "models": models or {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": phase,
@@ -96,7 +102,7 @@ def working_row(
     agent_id: str,
     *,
     role: str = "implementer",
-    vendor: str = "grok",
+    vendor: str = "driver-a",
     **fields,
 ) -> dict:
     row = {
@@ -260,16 +266,17 @@ def test_run_prepared_reports_and_forgets_a_real_process(tmp_path: Path) -> None
         {
             "agent_id": "agent-1",
             "role": "pr-reviewer-quality",
-            "vendor": "grok",
+            "vendor": "driver-a",
+            "io": LaneIO("event-stream", output_file=False, stdin=False, audit_stderr_when_empty=False),
             "argv": [
                 sys.executable,
                 "-c",
                 "import sys; sys.stdout.write(sys.argv[1])",
-                grok_messages_stream("STATUS: complete\nRESULT: approved"),
+                event_stream_output("STATUS: complete\nRESULT: approved"),
             ],
             "stdin_text": None,
             "output_file": None,
-            "model": "grok-model",
+            "model": "driver-a-model",
             "worktree": str(tmp_path),
             "on_start": seen.append,
             "forget": lambda: forgotten.append(True),
@@ -296,11 +303,12 @@ def test_run_prepared_forgets_when_the_runner_raises(tmp_path: Path) -> None:
         {
             "agent_id": "agent-1",
             "role": "pr-reviewer-quality",
-            "vendor": "grok",
+            "vendor": "driver-a",
+            "io": LaneIO("event-stream", output_file=False, stdin=False, audit_stderr_when_empty=False),
             "argv": [sys.executable, "-c", "print(1)"],
             "stdin_text": None,
             "output_file": None,
-            "model": "grok-model",
+            "model": "driver-a-model",
             "worktree": str(tmp_path),
             "on_start": seen.append,
             "forget": lambda: forgotten.append(True),
@@ -324,7 +332,7 @@ def test_prepared_review_agent_carries_the_process_callbacks(tmp_path: Path) -> 
         worker,
         task,
         role="pr-reviewer-quality",
-        vendor="grok",
+        vendor="driver-a",
         stage="review-1",
         head="a" * 40,
         spec_body="Review this.",
@@ -370,10 +378,10 @@ while time.time() < deadline:
     time.sleep(0.05)
 sys.stdout.write(sys.argv[2] if seen else sys.argv[3])
 """
-    seen_stream = grok_messages_stream("RECORD-SEEN\nSTATUS: complete\nRESULT: done")
-    missing_stream = grok_messages_stream("RECORD-MISSING\nSTATUS: partial")
+    seen_stream = event_stream_output("RECORD-SEEN\nSTATUS: complete\nRESULT: done")
+    missing_stream = event_stream_output("RECORD-MISSING\nSTATUS: partial")
 
-    def provider(_vendor: str, **_kwargs) -> list[str]:
+    def provider(*_args, **_kwargs) -> list[str]:
         return [
             sys.executable,
             "-c",
@@ -383,13 +391,13 @@ sys.stdout.write(sys.argv[2] if seen else sys.argv[3])
             missing_stream,
         ]
 
-    monkeypatch.setattr(coordinator_lanes, "provider_argv", provider)
+    monkeypatch.setattr(coordinator_lanes, "lane_argv", provider)
     agent, result = launch_lane(
         store,
         worker,
         task,
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
@@ -417,12 +425,12 @@ def test_injected_lane_runner_writes_no_record(
         worker,
         task,
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=lambda argv, stdin: Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         ),
     )
     assert result.status == "complete"
@@ -602,13 +610,13 @@ def test_recover_leaves_a_pull_request_reviewer_row_with_a_saved_result(
     write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
-    task = seed_lane_task(store, worker, phase="pr_gates_codex")
+    task = seed_lane_task(store, worker, phase="pr_gates_second")
     row = working_row(
         store,
         worker,
         "agent-1",
         role="pr-reviewer-quality",
-        vendor="codex",
+        vendor="driver-b",
         round=None,
         head_sha="a" * 40,
         dimension="quality",
@@ -626,7 +634,7 @@ def test_recover_leaves_a_pull_request_reviewer_row_with_a_saved_result(
     )
     assert recover_working_lanes(store, worker, task) == "none"
     assert store.row("agent", "agent-1")["status"] == "working"
-    coord(task)["phase"] = "pr_gates_grok"
+    coord(task)["phase"] = "pr_gates_first"
     assert recover_working_lanes(store, worker, task) == "recovered"
     assert store.row("agent", "agent-1")["status"] == "done"
 
@@ -659,7 +667,7 @@ def _implementer_stream() -> str:
         "REUSED: none — the process record already identifies the lane.\n"
         "ADDED: none — the captured output is the lane result.\n"
     )
-    return grok_messages_stream(text)
+    return event_stream_output(text)
 
 
 def _prepared_store(tmp_path: Path):
@@ -1349,7 +1357,7 @@ def test_pr_gate_stop_adopts_both_review_lanes(tmp_path: Path) -> None:
     # coordinator process only; both lanes are in other sessions and stay up.
     store, worker, task = _prepared_store(tmp_path)
     head = "c" * 40
-    coord(task)["phase"] = "pr_gates_grok"
+    coord(task)["phase"] = "pr_gates_first"
     coord(task)["head_sha"] = head
     coord(task)["base_sha"] = "b" * 40
     store.write(
@@ -1380,7 +1388,7 @@ def test_pr_gate_stop_adopts_both_review_lanes(tmp_path: Path) -> None:
     )
     stream = tmp_path / "review-stream.txt"
     stream.write_text(
-        grok_messages_stream("STATUS: complete\nRESULT: approved\n"),
+        event_stream_output("STATUS: complete\nRESULT: approved\n"),
         encoding="utf-8",
     )
     child = tmp_path / "pr-gate-stop.py"
@@ -1412,7 +1420,7 @@ def test_pr_gate_stop_adopts_both_review_lanes(tmp_path: Path) -> None:
                 "coordinator_lanes.verify_signed_clean_head = signed_head",
                 "coordinator_lanes.write_review_diff = review_diff",
                 "coordinator_lanes.write_review_context = review_context",
-                "coordinator_lanes.provider_argv = provider",
+                "coordinator_lanes.lane_argv = provider",
                 "store = Store(Path(home))",
                 "task = store.row('task', task_id)",
                 "assert task is not None",
@@ -1430,7 +1438,7 @@ def test_pr_gate_stop_adopts_both_review_lanes(tmp_path: Path) -> None:
                 "    raise AssertionError('phase_pr_gates must not call the runner')",
                 "with process_scope():",
                 "    coordinator_lanes.phase_pr_gates(",
-                "        store, worker, task, runner, None, vendor='grok', stage='review-1',",
+                "        store, worker, task, runner, None, vendor='driver-a', stage='review-1',",
                 "    )",
                 "",
             ]
@@ -1567,3 +1575,87 @@ def test_cancel_still_kills_a_recorded_lane(tmp_path: Path) -> None:
     assert coord(saved)["failed_kind"] == "cancelled"
     assert store.row("agent", "agent-cancel")["status"] == "working"
     assert _lane_runs(store) == []
+
+
+def _result_event(text: str) -> str:
+    """A one-event stream whose terminal result is ``text``."""
+    return json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": text})
+
+
+def _placeholder_lane_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    first: str,
+    *,
+    accounts: dict | None = None,
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    write_placeholder_accounts(store.home, accounts)
+    write_drivers(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    task = seed_lane_task(store, worker, models={"first": first, "second": "driver-b"})
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *a, **k: {}
+    )
+    return store, worker, task
+
+
+@pytest.mark.parametrize(
+    ("driver", "tail"),
+    [
+        ("driver-a", ["--edit", "--cwd", "WORKTREE", "--no-shell", "--deny", "Shell"]),
+        ("driver-c", ["--tools", "Read,Edit", "--mode", "edit"]),
+    ],
+)
+def test_implementer_lane_appends_the_configured_write_hardening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, driver: str, tail: list[str]
+) -> None:
+    store, worker, task = _placeholder_lane_env(tmp_path, monkeypatch, driver)
+    seen: list[tuple[list[str], str | None]] = []
+
+    def lane(argv: list[str], stdin: str | None) -> Completed:
+        seen.append((list(argv), stdin))
+        return Completed(0, _result_event("STATUS: complete\nRESULT: done"), "")
+
+    _agent, result = launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor=driver,
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=lane,
+    )
+    assert result.status == "complete"
+    argv, stdin = seen[0]
+    worktree = str(coord(task)["worktree"])
+    assert argv[-len(tail) :] == [worktree if item == "WORKTREE" else item for item in tail]
+    # A file-argument driver reads its spec from the file; a stdin driver gets the text.
+    assert (stdin is None) == (driver == "driver-a")
+
+
+def test_lane_refuses_a_worktree_inside_the_key_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accounts = accounts_document()
+    accounts["accounts"]["driver-d-account"]["config_dir"] = str(tmp_path)
+    store, worker, task = _placeholder_lane_env(
+        tmp_path, monkeypatch, "driver-d", accounts=accounts
+    )
+    with pytest.raises(CoordinatorError, match="driver-d worktree overlaps account config_dir"):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-d",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=lambda argv, stdin: Completed(0, "", ""),
+        )
+    assert not [row for row in store.rows("agent") if row.get("task_id") == TID]

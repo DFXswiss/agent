@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -10,13 +11,22 @@ from agent_cli import error_fix_act as error_fix_act_mod
 from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
+from driver_fixtures import install_recorded_slots, write_drivers
+
+
+@pytest.fixture(autouse=True)
+def _recorded_slots() -> None:
+    """Stored names of earlier versions read as a store opened on this home reads them."""
+    install_recorded_slots()
 
 
 def _runner_session(store: Store) -> None:
-    # The local harness configures device model slots before creating tasks.
+    # The local harness configures device drivers and model slots before
+    # creating tasks.
     if not (store.home / "ai-accounts.json").exists():
+        write_drivers(store.home)
         (store.home / "ai-accounts.json").write_text(
-            json.dumps({"models": {"first": "grok", "second": "codex"}}),
+            json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
             encoding="utf-8",
         )
     store.write(
@@ -366,7 +376,7 @@ def test_scan_error_fix_waits_for_model_configuration_before_git(
     assert calls == []
 
     (tmp_path / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     lines = scan_error_fix(store, _clone_runner(calls))
@@ -419,7 +429,7 @@ def test_scan_error_fix_requires_explicit_legacy_supersede_before_git(
     replacements = [task for task in tasks if task["id"] != legacy["id"]]
     assert len(replacements) == 1
     replacement = replacements[0]
-    assert replacement["models"] == {"first": "grok", "second": "codex"}
+    assert replacement["models"] == {"first": "driver-a", "second": "driver-b"}
     assert lines == [
         f"error.fix fix-1 task={replacement['id']} "
         f"worktree={tmp_path / 'error-fix-work' / replacement['id']}"
@@ -483,7 +493,7 @@ def test_scan_error_fix_legacy_fingerprint_changes_with_model_configuration(
     assert calls == []
 
     (tmp_path / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     lines = scan_error_fix(store, _clone_runner(calls))
@@ -575,8 +585,8 @@ def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_gi
             "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
             "state": "open",
             "current_round": 0,
-            "models": {"first": "grok", "second": "codex"},
-            "implementer": "not-a-provider",
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "implementer": "not a provider",
             "created_at": now,
             "updated_at": now,
         },
@@ -587,7 +597,7 @@ def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_gi
     row = store.row("activity", "fix-1")
     assert row is not None
     assert row["execution_status"] == "error"
-    assert "implementer must be one of" in row["execution_error"]
+    assert "implementer must be a driver id" in row["execution_error"]
     assert calls == []
     assert not (tmp_path / "error-fix-work").exists()
 
@@ -804,8 +814,8 @@ def test_find_or_create_pins_the_device_models(tmp_path: Path) -> None:
     (store.home / "ai-accounts.json").write_text(
         _json.dumps(
             {
-                "models": {"first": "claude", "second": "codex"},
-                "implementer": "deepseek",
+                "models": {"first": "driver-c", "second": "driver-b"},
+                "implementer": "driver-e",
             }
         ),
         encoding="utf-8",
@@ -813,8 +823,8 @@ def test_find_or_create_pins_the_device_models(tmp_path: Path) -> None:
     find_or_create_implement_task(store, "runner-1", "error-seen-12345678", "Fix observed error")
     tasks = store.rows("task")
     assert len(tasks) == 1
-    assert tasks[0]["models"] == {"first": "claude", "second": "codex"}
-    assert tasks[0]["implementer"] == "deepseek"
+    assert tasks[0]["models"] == {"first": "driver-c", "second": "driver-b"}
+    assert tasks[0]["implementer"] == "driver-e"
 
 
 def test_find_or_create_omits_an_implementer_equal_to_models_first(
@@ -828,8 +838,8 @@ def test_find_or_create_omits_an_implementer_equal_to_models_first(
     (store.home / "ai-accounts.json").write_text(
         _json.dumps(
             {
-                "models": {"first": "claude", "second": "codex"},
-                "implementer": "claude",
+                "models": {"first": "driver-c", "second": "driver-b"},
+                "implementer": "driver-c",
             }
         ),
         encoding="utf-8",
@@ -847,7 +857,7 @@ def test_find_or_create_refuses_external_second_review(tmp_path: Path) -> None:
     _runner_session(store)
     _seen(store)
     (store.home / "ai-accounts.json").write_text(
-        _json.dumps({"models": {"first": "grok", "second": None}}), encoding="utf-8"
+        _json.dumps({"models": {"first": "driver-a", "second": None}}), encoding="utf-8"
     )
     with pytest.raises(
         StoreError,
@@ -856,3 +866,18 @@ def test_find_or_create_refuses_external_second_review(tmp_path: Path) -> None:
         find_or_create_implement_task(
             store, "runner-1", "error-seen-12345678", "Fix observed error"
         )
+
+
+@pytest.mark.no_pg
+def test_configuration_fingerprint_follows_the_driver_file(tmp_path: Path) -> None:
+    fingerprint = error_fix_act_mod._model_configuration_fingerprint
+    (tmp_path / "ai-accounts.json").write_text("{}", encoding="utf-8")
+    without_drivers = fingerprint(tmp_path)
+    # Without drivers.json the fingerprint covers ai-accounts.json alone, as before.
+    assert without_drivers == hashlib.sha256(b"present\0{}").hexdigest()
+    (tmp_path / "drivers.json").write_text("{}", encoding="utf-8")
+    with_drivers = fingerprint(tmp_path)
+    assert with_drivers != without_drivers
+    # A driver change can resolve a model configuration error, so it is a retry trigger.
+    (tmp_path / "drivers.json").write_text('{"drivers": {}}', encoding="utf-8")
+    assert fingerprint(tmp_path) not in (without_drivers, with_drivers)

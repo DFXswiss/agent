@@ -81,8 +81,8 @@ class _StateStore:
                     "type": "usage.snapshot",
                     "_origin_device_id": "device-a",
                     "payload": {
-                        "vendor": "claude",
-                        "provider": "claude",
+                        "vendor": "driver-a",
+                        "provider": "driver-a",
                         "account_email": "seat-1@example.com",
                     },
                 }
@@ -121,8 +121,8 @@ def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
             json.dumps(
                 {
                     "subscriptions": [
-                        {"provider": "claude", "account": "Seat-1@example.com", "label": "Seat 1"},
-                        {"provider": "claude", "account": "seat-2@example.com"},
+                        {"provider": "driver-a", "account": "Seat-1@example.com", "label": "Seat 1"},
+                        {"provider": "driver-a", "account": "seat-2@example.com"},
                     ]
                 }
             ),

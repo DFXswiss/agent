@@ -26,6 +26,7 @@ from agent_cli.order_report import (
     visible_text,
 )
 from agent_cli.store import Store
+from driver_fixtures import install_recorded_slots
 from test_coordinator_support import (
     FakeGh,
     make_order_worker,
@@ -76,8 +77,8 @@ def add_lane(
     head=HEAD,
     stage=None,
     dimension=None,
-    vendor="grok",
-    model="grok-model",
+    vendor="driver-a",
+    model="driver-a-model",
     note=None,
 ):
     if role == "reviewer":
@@ -118,7 +119,7 @@ def add_gate(
     dimension,
     verdict,
     head=HEAD,
-    vendor="grok",
+    vendor="driver-a",
 ):
     store.write(
         "review_gate",
@@ -223,14 +224,14 @@ def review_body(
 
 
 def gate_body(text="logic defect"):
-    return f"**grok logic — rejected** at `{HEAD[:7]}`\n\n{text}"
+    return f"**driver-a logic — rejected** at `{HEAD[:7]}`\n\n{text}"
 
 
 def second_review_body():
     lanes = [
         {
             "id": lane_id,
-            "provider": "OpenAI",
+            "provider": "Vendor B",
             "model": "Reviewer Model 2",
             "model_number": "reviewer-model-2",
             "prompt": COMPLIANCE_PROMPT,
@@ -378,8 +379,8 @@ def test_inner_review_runs_take_the_round_verdict(tmp_path, monkeypatch) -> None
     assert all(
         run["stage"] == "inner"
         and run["head"] == HEAD
-        and run["provider"] == "grok"
-        and run["model"] == "grok-model"
+        and run["provider"] == "driver-a"
+        and run["model"] == "driver-a-model"
         for run in runs
     )
     store.close()
@@ -490,9 +491,10 @@ def test_rejection_with_an_unavailable_sibling_is_kept(tmp_path, monkeypatch) ->
 
 
 def test_legacy_stage_names_are_canonical(tmp_path, monkeypatch) -> None:
+    install_recorded_slots()
     store, worker, _fake = env(tmp_path, monkeypatch)
     task = ready_order(store, worker)
-    _pair_lane(store, task, "q", "quality", "2026-01-01T00:00:00Z", stage="grok-pr")
+    _pair_lane(store, task, "q", "quality", "2026-01-01T00:00:00Z", stage="driver-a-pr")
     assert review_runs(store, task)[0]["stage"] == "review-1"
     store.close()
 
@@ -594,7 +596,7 @@ def test_report_fields(tmp_path, monkeypatch) -> None:
     task = ready_order(
         store,
         worker,
-        round_limit={"max_rounds": 10, "origin": "default", "model": "grok-model", "limit": 10},
+        round_limit={"max_rounds": 10, "origin": "default", "model": "driver-a-model", "limit": 10},
         change_stats={
             "head": HEAD, "base": BASE, "total": 2, "added": 3, "deleted": 1,
             "files": [
@@ -624,7 +626,7 @@ def test_report_fields(tmp_path, monkeypatch) -> None:
     report = build_order_report(store, store.row("task", task["id"]))
     operation = next(op for op in order_ops.OPERATIONS if op.name == "report")
     assert set(report) == set(operation.fields)
-    assert report["rounds"] == {"used": 2, "limit": 10, "max_rounds": 10, "origin": "default", "model": "grok-model"}
+    assert report["rounds"] == {"used": 2, "limit": 10, "max_rounds": 10, "origin": "default", "model": "driver-a-model"}
     assert report["waivers"] == [
         {
             "check": "duplicates_checked",
@@ -874,7 +876,7 @@ def sample_report():
         "head": HEAD,
         "summary_en": "Done.",
         "summary_de": "Erledigt.",
-        "rounds": {"used": 2, "limit": 10, "max_rounds": 10, "origin": "default", "model": "grok-model"},
+        "rounds": {"used": 2, "limit": 10, "max_rounds": 10, "origin": "default", "model": "driver-a-model"},
         "waivers": [
             {"check": "one", "kind": "skip", "by": "owner", "reason": "reason one", "at": "t1"},
             {"check": "two", "kind": "override", "by": "owner", "reason": "reason two", "at": "t2"},
@@ -888,8 +890,8 @@ def sample_report():
             "omitted": 0, "error": None,
         },
         "reviews": [
-            {"stage": "inner", "round": 1, "head": HEAD, "provider": "grok", "model": "m1", "lanes": "inner=approved", "verdict": "approved", "defects": 0, "at": "t1"},
-            {"stage": "review-1", "round": None, "head": HEAD, "provider": "grok", "model": "m2", "lanes": "quality=approved logic=approved", "verdict": "approved", "defects": 0, "at": "t2"},
+            {"stage": "inner", "round": 1, "head": HEAD, "provider": "driver-a", "model": "m1", "lanes": "inner=approved", "verdict": "approved", "defects": 0, "at": "t1"},
+            {"stage": "review-1", "round": None, "head": HEAD, "provider": "driver-a", "model": "m2", "lanes": "quality=approved logic=approved", "verdict": "approved", "defects": 0, "at": "t2"},
         ],
         "reviews_omitted": 0,
         "comments": [
