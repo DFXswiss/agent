@@ -349,11 +349,13 @@
     }
 
     // One line: name, time until the reset, bar and percentage; without a
-    // percentage the status icon or the figure stands in place of the bar.
-    function usageLineHtml(name, resetsIn, percent, text, status) {
+    // percentage the status icon or the figure stands in place of the bar. A
+    // title replaces the status word as the tooltip; the icon keeps the word.
+    function usageLineHtml(name, resetsIn, percent, text, status, title) {
       let bar;
+      const attributes = title ? ` title="${esc(title)}" aria-label="${esc(status)}"` : stateCellAttributes(status);
       if (typeof percent === "number") bar = usageMeter(percent) + `<span>${esc(percent)}%</span>`;
-      else if (status) bar = `<span${stateCellAttributes(status)}>${stateIcon(status)}</span><span></span>`;
+      else if (status) bar = `<span${attributes}>${stateIcon(status)}</span><span></span>`;
       else bar = `<span class="usage-muted">${esc(text || "—")}</span><span></span>`;
       return `<span class="usage-line"><span>${name}</span><span>${esc(resetsIn || "")}</span>${bar}</span>`;
     }
@@ -371,7 +373,9 @@
         const accounts = (p.accounts || []).map(a => {
           const label = a.label ? ` <span class="usage-muted">${esc(a.label)}</span>` : "";
           const age = a.recorded ? `<br><span class="usage-muted" title="${esc(a.recorded)}">recorded ${esc(elapsedText(a.recorded, now))} ago</span>` : "";
-          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text, a.status);
+          // A listed account without any snapshot explains itself as the table below does.
+          const title = a.status === "no data" && !a.has_snapshot ? NO_USAGE : null;
+          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text, a.status, title);
         }).join("");
         const isOpen = detailed || open.has(p.provider);
         const recorded = p.recorded ? `<p class="usage-muted" title="${esc(p.recorded)}">recorded ${esc(elapsedText(p.recorded, now))} ago</p>` : "";

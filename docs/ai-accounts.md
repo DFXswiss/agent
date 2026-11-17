@@ -569,7 +569,10 @@ stored only when a value changed, so that age is the time of the last change.
 With several accounts a provider window shows the highest use among them.
 `detailed` opens every provider, `sort by used` orders providers by the
 headline percentage. The main page shows one summary line, for example
-`Claude 32% 5 d 19 h · Codex not read · Grok 0% 3 d 4 h`. The figures come only
+`Claude 32% 5 d 19 h · Codex ⊗ · Grok 0% 3 d 4 h`, where a status shows as its
+icon with the word as its title. A listed account without any snapshot has the
+title `No usage: no paired device polls this login`, as in the table. The
+figures come only
 from stored `usage.snapshot` payloads and the inventory; `/api/state` delivers
 them as `usage_overview`.
 

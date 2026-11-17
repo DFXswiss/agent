@@ -396,6 +396,8 @@ def test_usage_overview_one_entry_per_provider() -> None:
         ("seat-3@example.com", None, 32.0, None, "2026-11-17T08:00:00+00:00"),
     ]
 
+    assert [a["has_snapshot"] for a in claude["accounts"]] == [True, False, True]
+
     codex = overview["codex"]
     assert codex["status"] == "not read" and codex["used_percent"] is None
     assert codex["summary"] == "Codex not read"
@@ -474,7 +476,7 @@ def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
 def test_usage_overview_markup() -> None:
     index = PAGE.read_text(encoding="utf-8")
     assert '<p>Subscriptions: <span id="usage-summary">—</span></p>' in index
-    assert "(data.usage_overview || []).map(p => p.summary).join(\" · \")" in index
+    assert 'setHtml(document.getElementById("usage-summary"), usageSummaryHtml(data.usage_overview || []));' in index
     html = SECTION_PAGE.read_text(encoding="utf-8")
     assert '<div id="usage-overview"></div>' in html
     assert 'id="usage-detailed"' in html and 'id="usage-sort"' in html
@@ -489,7 +491,9 @@ def test_usage_overview_renders_in_node() -> None:
         pytest.skip("node is not installed; the static tests above cover the source")
     html = SECTION_PAGE.read_text(encoding="utf-8")
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
-    helpers = "\n".join(line for line in script.splitlines() if line.startswith("    function esc("))
+    helpers = "\n".join(
+        line for line in script.splitlines() if line.startswith(("    function esc(", "    const NO_USAGE"))
+    )
     functions = "\n".join(
         section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
     )
@@ -526,7 +530,12 @@ console.log(JSON.stringify({{
         '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
         f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
     ) in closed
-    assert '<span title="no data" aria-label="no data">' in out["open"]
+    # A listed account without a snapshot carries the table's explanation as its title.
+    no_data = state_icons(html)["no data"]
+    assert (
+        '<span title="No usage: no paired device polls this login" aria-label="no data">'
+        f'<span class="state-icon" role="img" aria-label="no data">{no_data}&#xFE0E;</span></span>'
+    ) in out["open"]
     assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
     # The browser renders the age of the raw timestamp with the shared elapsedText.
     assert '<span class="usage-muted" title="2026-11-17T09:56:00+00:00">recorded 4 min ago</span>' in closed
@@ -539,6 +548,39 @@ console.log(JSON.stringify({{
     order = re.findall(r'data-provider="([a-z]+)"', out["sorted"])
     assert order == ["claude", "openrouter", "grok", "codex"]
     assert out["none"] == '<p class="usage-muted">—</p>'
+
+
+def test_usage_summary_renders_in_node() -> None:
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    index = static_page("index.html")
+    script = re.findall(r"<script>(.*?)</script>", index, flags=re.S)[0]
+    helpers = "\n".join(line for line in script.splitlines() if line.startswith("    function esc("))
+    harness = (
+        helpers
+        + "\nconst document = { addEventListener() {} };\n"
+        + common_block(index)
+        + section_function(index, "usageSummaryHtml")
+        + f"""
+console.log(JSON.stringify({{
+  line: usageSummaryHtml({json.dumps(_usage_overview(_overview_rows(), OVERVIEW_NOW))}),
+  none: usageSummaryHtml([]),
+}}));
+"""
+    )
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout)
+    not_read = state_icons(index)["not read"]
+    assert out["line"] == (
+        "Claude 32% 6 d 0 h · Codex "
+        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
+        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
+        " · Grok 0% 3 d 4 h · OpenRouter 12.5% 13 d 14 h"
+    )
+    assert out["none"] == "—"
 
 
 def static_page(name: str) -> str:

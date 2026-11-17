@@ -250,6 +250,13 @@
     }
     /* DASHBOARD_COMMON_END */
 
+    // One figure per provider; a status word shows as its state icon.
+    function usageSummaryHtml(providers) {
+      return providers.map(p => p.status
+        ? `${esc(p.name)} <span${stateCellAttributes(p.status)}>${stateIcon(p.status)}</span>`
+        : esc(p.summary)).join(" · ") || "—";
+    }
+
     async function tick() {
       const err = document.getElementById("err");
       try {
@@ -260,8 +267,7 @@
         document.getElementById("stamp").textContent = data.generated_at;
         setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
-        document.getElementById("usage-summary").textContent =
-          (data.usage_overview || []).map(p => p.summary).join(" · ") || "—";
+        setHtml(document.getElementById("usage-summary"), usageSummaryHtml(data.usage_overview || []));
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);

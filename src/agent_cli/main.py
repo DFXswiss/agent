@@ -2663,6 +2663,7 @@ def _usage_overview(
                 "label": row.get("label"),
                 "listed": row.get("listed"),
                 "origin": event.get("_origin_device_id") if event else None,
+                "has_snapshot": payload is not None,
                 "status": None,
                 "used_percent": None,
                 "resets_in": None,
