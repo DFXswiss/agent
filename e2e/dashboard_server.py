@@ -58,8 +58,9 @@ class FrozenDatetime(datetime):
     """``datetime`` of ``agent_cli.main`` whose ``now`` is the frozen clock."""
 
     @classmethod
-    def now(cls, tz=None):  # type: ignore[override]
-        return Clock.at.astimezone(tz) if tz is not None else Clock.at.replace(tzinfo=None)
+    def now(cls, tz=timezone.utc):  # type: ignore[override]
+        # agent_cli.main calls only datetime.now(timezone.utc).
+        return Clock.at.astimezone(tz)
 
 
 def freeze_clock() -> None:
