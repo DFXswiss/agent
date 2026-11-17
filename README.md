@@ -27,6 +27,9 @@ export AGENT_CORE_GITHUB_TOKEN_URL=https://github.com/login/oauth/access_token
 export AGENT_CORE_GITHUB_USER_URL=https://api.github.com/user
 export AGENT_CORE_DATABASE=./hub.sqlite
 export AGENT_CORE_TEAMS="$(pwd)/teams.yaml"
+export AGENT_CORE_KEYS="$(pwd)/keys.yaml"
+export AGENT_CORE_SIGNING_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+export AGENT_CORE_HUB_KEY_ID=hub-local-1
 export AGENT_CORE_HOST=127.0.0.1
 export AGENT_CORE_PORT=8787
 python -m agent_core
@@ -35,6 +38,13 @@ python -m agent_core
 Open http://127.0.0.1:8787 and sign in.
 
 Every variable above is required. The process exits if one is missing.
+
+- `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed.
+- `AGENT_CORE_KEYS` is the path of the keys file (`keys.yaml` next to `teams.yaml`).
+- `AGENT_CORE_SIGNING_KEY` is the 32-byte seed of the hub's Ed25519 signing key as 64 lowercase hex characters. It is a secret: every environment has its own seed, and the hub never logs or returns it.
+- `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters). It is not a secret.
+
+At start the hub logs one line `hub key <id> <public key>`; callers pin that pair.
 
 ## Teams
 
@@ -60,6 +70,8 @@ The optional `agents` map declares GitHub logins operated by autonomous agents. 
 ## Protocol
 
 See [PROTOCOL.md](PROTOCOL.md).
+
+The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hub side of its first build step is built: the keys file `keys.yaml` (changed only by pull request), signed requests under `/api/key/`, the hub's signed answers, and `GET /api/key/whoami`.
 
 ## Control
 

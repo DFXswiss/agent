@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, ConfigDict, StrictStr
 from starlette.middleware.sessions import SessionMiddleware
 
-from .config import Config
+from .config import Config, public_url_host
 from .db import Store, dumps, loads, row_dict, utcnow
 from .github import (
     GITHUB_REQUEST_TIMEOUT,
@@ -30,6 +30,18 @@ from .github import (
     GitHubError,
     RealGitHub,
     valid_repository_name,
+)
+from .keys import KeyEntry, load_keys
+from .signing import (
+    LOG as KEY_LOG,
+    Clock,
+    HubSigner,
+    KeyGate,
+    KeyRequest,
+    KeyRoutes,
+    KeyService,
+    format_time,
+    system_clock,
 )
 from .teams import Roster, load_roster, visible_logins
 from .tokens import TokenError, issue, parse
@@ -212,8 +224,38 @@ def can_control(hub: Hub, login: str, origin_device_id: str) -> bool:
     return device_login == actor or hub.roster.owns_agent(actor, device_login)
 
 
-def create_app(cfg: Config, github: GitHub | None = None, store: Store | None = None) -> FastAPI:
+def whoami_body(entry: KeyEntry, hub_key_id: str) -> dict[str, Any]:
+    """The answer of GET /api/key/whoami (KEY-PROTOCOL.md section 7)."""
+    body: dict[str, Any] = {
+        "key": entry.id,
+        "kind": entry.kind,
+        "principal": entry.principal,
+        "handle": entry.handle,
+        "team": entry.team,
+    }
+    if entry.device is not None:
+        body["device"] = entry.device
+    body["scopes"] = list(entry.scopes)
+    body["hub_key"] = hub_key_id
+    if entry.program is not None:
+        body["program"] = entry.program
+    if entry.subjects is not None:
+        body["subjects"] = list(entry.subjects)
+    if entry.expires is not None:
+        body["expires"] = format_time(entry.expires)
+    return body
+
+
+def create_app(
+    cfg: Config,
+    github: GitHub | None = None,
+    store: Store | None = None,
+    clock: Clock = system_clock,
+) -> FastAPI:
     roster = load_roster(cfg.teams_path)
+    keys = load_keys(cfg.keys_path, roster, clock())
+    signer = HubSigner.from_seed_hex(cfg.hub_key_id, cfg.signing_key)
+    key_host = public_url_host(cfg.public_url)
     app_store = store if store is not None else Store(cfg.database)
     try:
         hub = Hub(cfg, github or RealGitHub(cfg), app_store, roster)
@@ -224,11 +266,27 @@ def create_app(cfg: Config, github: GitHub | None = None, store: Store | None = 
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        KEY_LOG.info("hub key %s %s", signer.key_id, signer.public_key_text)
         try:
             yield
         finally:
             if store is None:
                 app_store.close()
+
+    key_routes = KeyRoutes()
+    key_service = KeyService(
+        keys=keys,
+        store=app_store,
+        signer=signer,
+        host=key_host,
+        clock=clock,
+        routes=key_routes,
+    )
+
+    async def key_whoami(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        return 200, whoami_body(request.entry, signer.key_id)
+
+    key_routes.add("GET", "/api/key/whoami", key_whoami, scope=None, subject=None)
 
     app = FastAPI(title="agent-core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -237,7 +295,11 @@ def create_app(cfg: Config, github: GitHub | None = None, store: Store | None = 
         same_site="lax",
         https_only=cfg.public_url.startswith("https://"),
     )
+    # Added last, so it runs first: every request under /api/key/ passes checks 1 to 8 here
+    # and never reaches the session middleware or the router.
+    app.add_middleware(KeyGate, service=key_service)
     app.state.hub = hub
+    app.state.key_service = key_service
 
     @app.exception_handler(HTTPException)
     async def http_exception_response(request: Request, exc: HTTPException) -> JSONResponse:
