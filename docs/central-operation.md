@@ -39,8 +39,9 @@ Today the pieces are spread out:
 - To see what a session is doing, you have to be at its terminal.
 - Nobody has one place that shows tasks, pull requests, running sessions and AI usage together.
 
-Central operation puts all of that in the hub, with one rule on top: whatever was commanded
-can always be reconstructed.
+Central operation puts all of that in the hub, with one rule on top: whatever was commanded,
+by whom, on which target and when can always be reconstructed. Only a value masked by the
+device's owner (section 8) is replaced by a marker.
 
 ## 2. The idea in one picture
 
@@ -178,7 +179,7 @@ could show you one command and sign another while you sign in or are signed in, 
 A certificate obtained that way can be used for at most one working day, at a time the
 attacker chooses, until your passkey is revoked; it never reaches an allow list. A passkey
 created through an invite during a break-in can be the attacker's. After a break-in into the
-hub, every passkey used or created during it is revoked. The session key's
+hub, every passkey used or created during it is revoked, and the hub's own keys are replaced. The session key's
 short life and a published hash of the website reduce the risk. They do not remove it. A command
 can always be issued from a controller device instead, whose program does not come from the
 hub.
@@ -217,14 +218,14 @@ there.
 
 | Store | Holds | Rule |
 |---|---|---|
-| Team record | Tasks, log entries, discussions, orders, questions, answers, grants, every command | Signed, chained, never deleted, no secrets and no personal data |
+| Team record | Tasks, log entries, discussions, orders, questions, answers, grants and other changes of an allow list, maskings, every command | Signed, chained, never deleted, no secrets and no personal data |
 | Session log | Everything a session shows and receives | Recorded on the device first, synced completely, never deleted; the only later change is masking |
 | Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
 
 - A command that cannot be written to the device's local log is not executed.
 - **Executors hide nothing.** Every AI session on an executor runs inside this system and is
   recorded in full. Direct logins to the account that runs sessions are recorded too. A local
-  administrator login is not recorded as a session. The client writes a signed entry for every
+  administrator login is not recorded as a session. The client writes a signed event for every
   change to the allow list, the device key or the recording software that it makes or notices.
   An administrator of a device can get around that and is trusted like its owner.
 - **Your controller may work outside.** You may start an AI session on your controller that
@@ -292,7 +293,7 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 | Event | What happens |
 |---|---|
 | You join | The administrator sends you an invite link. You open it and create your passkey; it counts once its public key was added by pull request. Then you connect your devices. |
-| You add a passkey | The administrator sends you an invite link for it, as for your first one. |
+| You add a passkey | The administrator sends you an invite link for it, as for your first one. After its pull request you add it to the allow lists of your devices from a controller device. |
 | You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
 | You leave | Your open orders are ended and your devices sync completely. Then your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
 | A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |

@@ -64,7 +64,7 @@ flowchart LR
     E["Network edge<br/>tunnel, TLS, rate limits<br/>no login"]
     subgraph Hub["agent-core hub"]
         V["Verify signature<br/>and scopes"]
-        C[("Signed event chain<br/>append-only")]
+        C[("Signed team record<br/>append-only, chained per key")]
         F["Fold events<br/>into current state"]
         D["Dashboard<br/>today or any past date"]
     end
@@ -83,9 +83,9 @@ In words:
 1. Everyone who talks to the hub signs what they send with their own key.
 2. The hub checks that signature against the public keys the team has registered. Nobody else
    is asked.
-3. A change is stored as an **event** at the end of a chain. Each event points to the one
+3. A change is stored as an **event** at the end of its writer's chain. Each event points to the one
    its writer signed before it, so the history cannot be rewritten without it showing.
-4. What you see on the dashboard is computed from that chain, for today or for any day in the
+4. What you see on the dashboard is computed from that record, for today or for any day in the
    past.
 5. The hub signs its answers too, so a program that asks the hub something can check that the
    answer really came from the hub.
@@ -313,7 +313,7 @@ secrets and customer data: what goes in cannot come out again.
 
 ## 8. Who changed what, when and how
 
-Every question about history can be answered from the chain alone:
+Every question about history can be answered from the record alone:
 
 | Question | Answered by |
 |---|---|
@@ -335,7 +335,7 @@ open, in which repository, at which severity and urgency, and who is working on 
 It also has a **date picker**. Pick any past date and the dashboard shows the record exactly as
 it was then. This needs no separate archive: the state at a moment is simply all events received
 up to that moment, applied in order. Cached snapshots may exist for speed, but they can always be
-rebuilt from the chain.
+rebuilt from the record.
 
 Only registered keys can see the dashboard. There is no public view of security issues, not even
 a count, unless a later change to DESIGN.md §24 allows one specific public view.
@@ -404,7 +404,7 @@ tests for every refusal path, not only the success path.
 |---|---|---|
 | 1 | Keys file with scopes, and signature checking in the hub | not started |
 | 2 | Release query for external programs, with a hub-signed answer | not started |
-| 3 | Event chain in PostgreSQL and the security-issue object | not started |
+| 3 | Team record in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
 | 6 | Sign-in with passkeys and the certified session key instead of GitHub | not started |
@@ -435,7 +435,7 @@ None at the moment. Three earlier questions were decided on 2026-11-17:
 | GitHub sign-in | Makes GitHub the judge of who someone is; an outage or policy change there locks the team out |
 | A login gate at the network edge | A second sign-in that a third party runs; the hub's own check must be the only one |
 | CI provider identity tokens for external programs | Would make the CI provider the identity source |
-| One shared database that everyone edits | Edits overwrite each other and history can be changed; the signed chain avoids both |
+| One shared database that everyone edits | Edits overwrite each other and history can be changed; the signed record avoids both |
 | A delete or redact function | Breaks the trust in the history; the price is the strict rule about what may be written |
 
 ## 16. Glossary
