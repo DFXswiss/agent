@@ -550,7 +550,7 @@ def test_migrate_checks_the_login_role_not_a_role_set_through_pgoptions(
 
 
 def test_pgoptions_does_not_reach_the_session(record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The only test that depends on the empty `options` of connection.py: a parameter the server
+    # The only test against the server that depends on the empty `options` of connection.py: a parameter the server
     # does not know ends the connection at login if it reaches the server.
     with monkeypatch.context() as patched:
         patched.setenv("PGOPTIONS", "-c t_no_such_parameter=1")
