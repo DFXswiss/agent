@@ -201,8 +201,10 @@ def _snapshot_load(snapshot: dict[str, Any], now: datetime) -> float:
 
     A ``null`` window counts 0, and so does a window whose ``resets_at`` is at
     or before ``now``: it has reset since the snapshot. The snapshot's
-    ``fetched_at`` is not checked; a snapshot is stored only when a value
-    changed, so an old one is still current.
+    ``fetched_at`` is not checked. A snapshot is stored only when a value
+    changed, so an old one is current only while polling of that account
+    succeeds. A member whose poll fails (expired credentials, rate limit,
+    request error) keeps its last snapshot, and selection still uses it.
     """
     windows = snapshot.get("windows")
     if not isinstance(windows, dict):

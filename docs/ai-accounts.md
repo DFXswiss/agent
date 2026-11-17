@@ -217,6 +217,9 @@ accepted before the current hash formula accepts the matching legacy formula
 once and is immediately repinned; this compatibility covers only
 the newly added `lane_execution` field and the former omission of a `models`
 value equal to the slots of `recorded_slots`. Other changes still stop the task.
+Each bound lane role is part of that binding with its account; for a pool role
+that is every member account, so changing a member's `config_dir` stops the
+task just as it does for a single-account role.
 Driver descriptions in `drivers.json` are not part of the execution binding, so
 changing them does not stop an accepted task. For the PR reviewer roles, `agent agent start --stage review-1|review-2` requires the
 provider pinned to that stage. A second-stage agent cannot start until both
@@ -549,8 +552,10 @@ chooses at that moment, from local data only (no network request):
 2. Usage: the newest own `usage.snapshot` for that driver and login, with the
    same match the poll uses (equal vendor, `account_email` equal without regard
    to case). None → not eligible (`no usage snapshot`). The snapshot's
-   `fetched_at` age is not checked: a snapshot is stored only when a value
-   changed, so an old one is still current.
+   `fetched_at` age is not checked. A snapshot is stored only when a value
+   changed, so an old one is current only while polling of that account
+   succeeds. A member whose poll fails (expired credentials, rate limit,
+   request error) keeps its last snapshot, and selection still uses it.
 3. Load: the largest `used_percent` of `windows.five_hour` and
    `windows.weekly`. A `null` window counts 0 %, and so does a window whose
    `resets_at` is at or before the start time, because it has reset since the
