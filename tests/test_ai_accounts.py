@@ -31,9 +31,11 @@ from agent_cli.model_slots import ModelSlots
 from driver_fixtures import (
     DECLARED_DRIVERS,
     LANE_DRIVERS,
+    RPC_DRIVER_ID,
     WINDOWS_DRIVER_ID,
     accounts_document,
     driver_document,
+    rpc_driver,
     windows_driver,
     write_accounts,
     write_drivers,
@@ -542,6 +544,26 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     write_config(tmp_path, data, drivers=False)
     assert load_ai_accounts(tmp_path).usage_accounts == ("or", "seat")
     del data["accounts"]["seat"]
+
+    # A driver whose usage section is an rpc adapter reads its accounts too.
+    document = driver_document()
+    document["drivers"][RPC_DRIVER_ID] = rpc_driver()
+    data["accounts"]["rpc-seat"] = {
+        "provider": RPC_DRIVER_ID,
+        "config_dir": "/operator/path/driver-r-seat",
+    }
+    data["usage_accounts"] = ["or", "rpc-seat"]
+    write_drivers(tmp_path, document)
+    write_config(tmp_path, data, drivers=False)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.usage_accounts == ("or", "rpc-seat")
+    # The HTTP usage adapter lookup refuses an rpc adapter; rpc_usage reads it.
+    with pytest.raises(
+        AccountError,
+        match=f"rpc-seat uses driver {RPC_DRIVER_ID}, which has no rpc usage section",
+    ):
+        loaded.usage_adapter(RPC_DRIVER_ID, "rpc", "rpc-seat")
+    del data["accounts"]["rpc-seat"]
 
     data["usage_accounts"] = ["driver-a-primary"]
     write_config(tmp_path, data)

@@ -453,6 +453,7 @@ agent watch pending                            # one scan; LISTEN agent_work / e
 agent watch session-usage                      # one scan; knock child (under the device daemon) polls every 60s
 agent watch account-usage                      # one scan of explicitly configured usage accounts
 agent watch window-usage                       # one scan of explicitly configured window-usage accounts
+agent watch rpc-usage                          # one scan of explicitly configured rpc-usage accounts (driver's own local server)
 agent watch token-keepalive                    # one keep-alive pass over window-usage accounts; needs token_keepalive
 agent account-login ACCOUNT --email ADDRESS [--no-mailbox]  # sign a subscription into the account's profile
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
@@ -889,7 +890,9 @@ variables to scrub, capability flags, the usage adapter, the display name and
 the pane markers. The repository ships no driver table and no driver default;
 a missing or incomplete description fails loudly.
 Window-usage reads are a usage adapter; their login, requests and response keys
-come from that driver's `drivers.json` configuration.
+come from that driver's `drivers.json` configuration. Rpc-usage reads are one
+too: the program, JSON-RPC method and answer keys come from `drivers.json`, and
+Agent reads no token for them.
 Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid

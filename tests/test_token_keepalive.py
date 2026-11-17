@@ -30,11 +30,13 @@ from agent_cli.token_keepalive import (
 )
 from agent_cli.usage import AccountUsageError, keychain_service_name
 from driver_fixtures import (
+    RPC_DRIVER_ID,
     WINDOWS_CREDENTIAL_FILE,
     WINDOWS_DRIVER_ID,
     WINDOWS_OBJECT,
     WINDOWS_TOKEN_FIELD,
     driver_document,
+    rpc_driver,
     windows_driver,
     write_drivers,
 )
@@ -330,6 +332,35 @@ def test_keep_alive_skips_the_default_profile(
     assert results == [
         KeepaliveResult("main", "skipped", None, "default profile is not kept alive")
     ]
+
+
+@pytest.mark.no_pg
+def test_keep_alive_leaves_rpc_accounts_alone(tmp_path: Path) -> None:
+    """An rpc driver's own server renews its login; the keep-alive never runs for it."""
+    doc = document()
+    doc["drivers"][RPC_DRIVER_ID] = rpc_driver()
+    seat = tmp_path / "rpc-seat"
+    seat.mkdir()
+    accounts = AIAccounts(
+        accounts={"rpc-seat": AIAccount("rpc-seat", RPC_DRIVER_ID, str(seat))},
+        roles={},
+        sessions={},
+        _models=None,
+        _implementer=None,
+        usage_accounts=("rpc-seat",),
+        driver_configuration=parse_driver_document(doc),
+        token_keepalive_seconds=MARGIN,
+    )
+    results = keep_alive(
+        accounts,
+        agent_home=tmp_path,
+        pace=None,
+        run=forbidden_run,
+        clock=lambda: NOW,
+        read_keychain=no_keychain,
+        which=opt_bin,
+    )
+    assert results == []
 
 
 @pytest.mark.no_pg
@@ -960,6 +991,10 @@ def test_knock_daemon_runs_the_keepalive_before_the_account_scanners(
         order.append("window")
         raise AccountUsageError(["seat: Login usage returned HTTP 500"], [])
 
+    def fake_rpc(_store: object, *, pace: dict[str, float]) -> list[str]:
+        order.append("rpc")
+        return []
+
     def stop_listen(*_args: object, **_kwargs: object) -> None:
         listens.append(1)
         if len(listens) == 2:
@@ -967,6 +1002,7 @@ def test_knock_daemon_runs_the_keepalive_before_the_account_scanners(
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
     monkeypatch.setattr("agent_cli.main.keepalive_due", fake_keepalive_due)
+    monkeypatch.setattr("agent_cli.main.scan_rpc_usage", fake_rpc)
     paces: list[KeepalivePace] = []
 
     def fake_tick(_home: Path, pace: KeepalivePace) -> None:
@@ -987,7 +1023,8 @@ def test_knock_daemon_runs_the_keepalive_before_the_account_scanners(
     with pytest.raises(SystemExit, match="stop"):
         run_cli(tmp_path, ["knock"], monkeypatch)
 
-    assert order == ["keepalive", "account", "window", "account", "window"]
+    # The keep-alive runs before every account scanner, the rpc scanner included.
+    assert order == ["keepalive", "account", "window", "rpc", "account", "window", "rpc"]
     assert len(paces) == 1 and isinstance(paces[0], KeepalivePace)
     assert len(keepalive_checks) == 2
     assert keepalive_checks[0] is None and isinstance(keepalive_checks[1], float)

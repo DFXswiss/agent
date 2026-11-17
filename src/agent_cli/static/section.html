@@ -290,11 +290,13 @@
       return w && typeof w.used_percent === "number" ? w.used_percent + "%" : "—";
     }
 
-    // The windows of a window snapshot: five hours, the week, and the week per model.
+    // The windows of a window snapshot: five hours, the week, the week per
+    // model, and (rpc adapters) windows of any other length.
     function windowLines(p) {
       const w = p.windows || {};
       const list = [["5h", w.five_hour], ["Week", w.weekly]];
       (Array.isArray(w.weekly_models) ? w.weekly_models : []).forEach(m => list.push(["Week " + (m.model || "scoped"), m]));
+      (Array.isArray(w.other) ? w.other : []).forEach(o => list.push([o.window_minutes + " min", o]));
       return list;
     }
 
@@ -302,8 +304,11 @@
     function usageCells(p) {
       if (p.windows && typeof p.windows === "object") {
         const list = windowLines(p);
+        const notes = [];
+        if (p.limit_reached === true) notes.push("limit reached");
+        if (typeof p.reset_credits_available === "number" && p.reset_credits_available > 0) notes.push("free resets: " + p.reset_credits_available);
         return {
-          used: list.map(([name, w]) => esc(name + ": " + percentText(w))).join("<br>"),
+          used: list.map(([name, w]) => esc(name + ": " + percentText(w))).concat(notes.map(esc)).join("<br>"),
           reset: list.map(([name, w]) => esc(name + ": " + (w && w.resets_at ? w.resets_at : "—"))).join("<br>"),
         };
       }

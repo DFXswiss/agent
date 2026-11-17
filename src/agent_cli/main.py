@@ -113,6 +113,7 @@ from .model_slots import (
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .preconditions import REGISTRY_KEYS
+from .rpc_usage import scan_rpc_usage
 from .runner_cmd import cmd_runner
 from .runtime import (
     PreflightRuntime,
@@ -2552,14 +2553,16 @@ def _usage_check_times(
 
     ``checks`` holds the ``usage.checked.`` meta values, read by the caller
     with the store's other reads. Keyed like ``_usage_identity``: a spend
-    account by its name, which its snapshots carry, and a windows account by
-    the identity of its login, which its snapshots carry. A check applies only
-    while the identity it read is still the account's identity: after another
-    login in the same configuration directory the old check time is dropped.
-    The second value names the providers whose accounts are spend accounts. A
-    windows account without a usable login has no snapshot of this device to
-    match and is left out; any other read error is returned as text.
+    account by its name, which its snapshots carry, and a windows or rpc
+    account by the identity of its login, which its snapshots carry. A check
+    applies only while the identity it read is still the account's identity:
+    after another login in the same configuration directory the old check time
+    is dropped. The second value names the providers whose accounts are spend
+    accounts. A windows or rpc account without a usable login has no snapshot
+    of this device to match and is left out; any other read error is returned
+    as text.
     """
+    from .rpc_usage import load_rpc_account
     from .usage import load_login_account, parse_usage_check, usage_check_key
 
     try:
@@ -2572,12 +2575,13 @@ def _usage_check_times(
     for name in accounts.usage_accounts:
         account = accounts.accounts[name]
         driver = accounts.drivers.get(account.provider)
-        windows = (
-            driver is not None
-            and driver.usage is not None
-            and driver.usage.snapshot == "windows"
+        snapshot = (
+            driver.usage.snapshot
+            if driver is not None and driver.usage is not None
+            else None
         )
-        if not windows:
+        login = snapshot in ("windows", "rpc")
+        if not login:
             spend_providers.add(account.provider)
         meta_key = usage_check_key(account.provider, name)
         if meta_key not in checks:
@@ -2587,9 +2591,11 @@ def _usage_check_times(
         except StoreError as exc:
             errors.append(f"{name}: {exc}")
             continue
-        if windows:
+        if driver is not None and login:
+            # The identity of the login the account's directory holds now.
+            read_identity = load_rpc_account if snapshot == "rpc" else load_login_account
             try:
-                identity = load_login_account(driver, account.config_dir)
+                identity = read_identity(driver, account.config_dir)
             except AuthStale:
                 continue
             except StoreError as exc:
@@ -2723,10 +2729,11 @@ def _usage_windows(
     limit).
 
     The snapshot kind is read from the payload, as the subscription table does:
-    a ``windows`` object is a window snapshot, a usage ``account`` a spend
-    snapshot, and a top-level ``used_percent`` a period snapshot. Each window
-    is ``{"name", "used_percent", "resets_at"}``; a value the snapshot does not
-    report stays ``None``, never 0 %.
+    a ``windows`` object is a window snapshot (``windows`` and ``rpc``
+    adapters), a usage ``account`` a spend snapshot, and a top-level
+    ``used_percent`` a period snapshot. Each window is ``{"name",
+    "used_percent", "resets_at"}``; a value the snapshot does not report stays
+    ``None``, never 0 %.
     """
 
     def percent(value: Any) -> float | None:
@@ -2755,6 +2762,15 @@ def _usage_windows(
         for item in models if isinstance(models, list) else []:
             model = item.get("model") if isinstance(item, dict) else None
             found = window("Week " + (model if isinstance(model, str) and model else "scoped"), item)
+            if found:
+                windows.append(found)
+        # Windows of a length the rpc adapter maps to no named window.
+        others = raw.get("other")
+        for item in others if isinstance(others, list) else []:
+            minutes = item.get("window_minutes") if isinstance(item, dict) else None
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                continue
+            found = window(f"{minutes} min", item)
             if found:
                 windows.append(found)
         weekly = [i for i, w in enumerate(windows) if w["name"] == "Week"]
@@ -2799,11 +2815,12 @@ def _usage_overview(
     ``usage.snapshot`` payloads and the inventory. Every configured driver and
     every provider of a row has an entry, named by the driver's
     ``display_name`` or else by its id. One without a ``usage`` section in
-    ``drivers.json`` and without any recorded snapshot is ``not read``; one
-    with it but no figure is ``no data``. ``drivers`` is ``None`` when
-    ``drivers.json`` cannot be read; then no provider is claimed ``not read``. A provider window shows the
-    highest use among its accounts; the headline is the headline window of the
-    most used account.
+    ``drivers.json`` (any of ``period``, ``spend``, ``windows`` or ``rpc``)
+    and without any recorded snapshot is ``not read``; one with it but no
+    figure is ``no data``. ``drivers`` is ``None`` when ``drivers.json``
+    cannot be read; then no provider is claimed ``not read``. A provider
+    window shows the highest use among its accounts; the headline is the
+    headline window of the most used account.
     """
     providers = sorted(
         set(drivers or ())
@@ -5607,6 +5624,9 @@ def cmd_knock(args: list[str]) -> None:
         # Not-before times per window-usage account; the usage tick stays the only clock.
         window_pace: dict[str, float] = {}
         scan_window_paced = functools.partial(scan_window_usage, pace=window_pace)
+        # Each rpc read starts the driver's local server; paced by its poll_seconds.
+        rpc_pace: dict[str, float] = {}
+        scan_rpc_paced = functools.partial(scan_rpc_usage, pace=rpc_pace)
         from .coordinator import shared_github_runner
 
         github_runner = shared_github_runner(run_argv, home=store.home)
@@ -5632,8 +5652,13 @@ def cmd_knock(args: list[str]) -> None:
                     usage_accounts = ()
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 if usage_accounts:
-                    # Spend accounts and window-usage accounts.
-                    for scan_accounts in (scan_account_usage, scan_window_paced):
+                    # Spend, window-usage and rpc-usage accounts; each scanner
+                    # reads only the accounts of its own adapter kind.
+                    for scan_accounts in (
+                        scan_account_usage,
+                        scan_window_paced,
+                        scan_rpc_paced,
+                    ):
                         _print_account_usage(scan_accounts, store)
                 try:
                     created, skipped = scan_merged(store, github_runner)
@@ -5781,7 +5806,7 @@ def cmd_pg(args: list[str]) -> None:
 WATCH_USAGE = (
     "Usage: agent watch "
     "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|"
-    "token-keepalive|errors|error-fix"
+    "rpc-usage|token-keepalive|errors|error-fix"
 )
 
 
@@ -5793,6 +5818,7 @@ def cmd_watch(args: list[str]) -> None:
         "session-usage",
         "account-usage",
         "window-usage",
+        "rpc-usage",
         "token-keepalive",
         "errors",
         "error-fix",
@@ -5852,10 +5878,13 @@ def cmd_watch(args: list[str]) -> None:
             if not activity_ids:
                 print("usage.snapshot none")
             return
-        if args[0] == "window-usage":
+        if args[0] in ("window-usage", "rpc-usage"):
             skipped: list[str] = []
             try:
-                activity_ids = scan_window_usage(store, skipped=skipped)
+                if args[0] == "rpc-usage":
+                    activity_ids = scan_rpc_usage(store, skipped=skipped)
+                else:
+                    activity_ids = scan_window_usage(store, skipped=skipped)
             except AccountUsageError as exc:
                 for activity_id in exc.activity_ids:
                     print(f"usage.snapshot {activity_id}")
