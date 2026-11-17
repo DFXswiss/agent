@@ -16,7 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .daemon import REAP_AFTER_SIGKILL_S, _terminate
 from .runtime import Completed
+
+# Seconds the pipe runner waits after SIGTERM before SIGKILL. A surviving lane uses it too.
+_SIGTERM_GRACE_S = 2
 
 _CLEAR_GITHUB = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR")
 _CHILD_LOCK = threading.RLock()
@@ -203,11 +207,11 @@ def _stop_children() -> None:
         _stop_survive_wrapper(child.proc)
     for child in ephemeral:
         try:
-            child.proc.wait(timeout=5)
+            child.proc.wait(timeout=REAP_AFTER_SIGKILL_S)
         except subprocess.TimeoutExpired:
             _kill_group(child.proc.pid, signal.SIGKILL)
             try:
-                child.proc.wait(timeout=5)
+                child.proc.wait(timeout=REAP_AFTER_SIGKILL_S)
             except subprocess.TimeoutExpired:
                 pass
     for child in (*ephemeral, *unsettled):
@@ -370,14 +374,14 @@ def _run_process(
     except subprocess.TimeoutExpired:
         _kill_group(proc.pid, signal.SIGTERM)
         try:
-            stdout, stderr = proc.communicate(timeout=2)
+            stdout, stderr = proc.communicate(timeout=_SIGTERM_GRACE_S)
         except subprocess.TimeoutExpired:
             _kill_group(proc.pid, signal.SIGKILL)
             stdout, stderr = proc.communicate()
         return Completed(124, stdout or "", (stderr or "") + "\ntimeout")
     except BaseException:
         _kill_group(proc.pid, signal.SIGKILL)
-        proc.wait(timeout=5)
+        proc.wait(timeout=REAP_AFTER_SIGKILL_S)
         raise
     finally:
         # A child must not leave descendants behind after returning a result.
@@ -602,7 +606,7 @@ def _run_surviving_process(
         command_pid = _await_command_pid(pid_path, proc)
         if command_pid is None:
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=REAP_AFTER_SIGKILL_S)
             except subprocess.TimeoutExpired:
                 _stop_survive_wrapper(proc)
             stdout, stderr, error = _captured_streams(stdout_path, stderr_path)
@@ -627,7 +631,7 @@ def _run_surviving_process(
                 except Exception:  # noqa: BLE001 — failed bookkeeping must not leave the lane running
                     _signal_command(command_pid, proc, signal.SIGKILL)
                     try:
-                        proc.wait(timeout=5)
+                        proc.wait(timeout=REAP_AFTER_SIGKILL_S)
                     except subprocess.TimeoutExpired:
                         pass
                     return _completed_from_capture(
@@ -683,11 +687,11 @@ def _run_surviving_process(
     except subprocess.TimeoutExpired:
         _signal_command(command_pid, proc, signal.SIGTERM)
         try:
-            proc.wait(timeout=2)
+            proc.wait(timeout=_SIGTERM_GRACE_S)
         except subprocess.TimeoutExpired:
             _signal_command(command_pid, proc, signal.SIGKILL)
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=REAP_AFTER_SIGKILL_S)
             except subprocess.TimeoutExpired:
                 pass
         return _completed_from_capture(
@@ -718,8 +722,6 @@ def _stop_survive_wrapper(proc: subprocess.Popen) -> None:
     wrapper's handler and does not reach that session. SIGKILL follows only
     when the wrapper ignores SIGTERM. That grace is `_terminate`.
     """
-    from .daemon import _terminate
-
     _terminate(proc)
 
 

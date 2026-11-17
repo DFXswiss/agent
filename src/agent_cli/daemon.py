@@ -23,6 +23,8 @@ LOCK_NAME = "daemon.lock"
 SERVICE_LABEL = "swiss.dfx.agent"
 SYNC_RESTART_LIMIT = 10
 SYNC_RESTART_WINDOW_S = 60.0
+# Seconds `_terminate` waits for a child to exit after SIGKILL.
+REAP_AFTER_SIGKILL_S = 5
 
 
 def agent_argv() -> list[str]:
@@ -127,7 +129,7 @@ def _terminate(proc: Any) -> None:
             if callable(kill):
                 kill()
         try:
-            wait(timeout=5)
+            wait(timeout=REAP_AFTER_SIGKILL_S)
         except subprocess.TimeoutExpired:
             return
 
