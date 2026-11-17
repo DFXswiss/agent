@@ -1370,7 +1370,7 @@ This revision records the decision of 2026-11-17 to build the team record in age
 
 ## 24. Team record and key identity (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule.
 
 Still open, each decided by a human before the part it affects is built:
 
