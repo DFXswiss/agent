@@ -155,7 +155,10 @@ A device tells the hub what it has, its **inventory**: which AI accounts and sub
 set up on it, which code-host accounts it can act as, which runtimes it offers, everything
 else of its configuration and local state that its local dashboard shows and that is not in
 the synced records of its session store, and how long its time window for commands is. It reports names, states and
-times only, never a password or token.
+times only, never a password or token. This includes whether its subscriptions file
+`ai-subscriptions.json` exists, and whether reading it or a usage check failed; such a failure
+is reported as a state, not as the raw error text, so that no local path with a user name
+reaches the hub.
 
 Devices always connect outward to the hub. No device opens a port for it.
 
@@ -179,7 +182,11 @@ your login, and the agent's own key on it is one of its program keys (section 3)
 works under the agent's own login any more, so a ping sent to that login reaches no device;
 it stays readable on the website. Ping the device's owner instead. `agent assign --agent`
 still names the code-host account the issue is assigned to, until tasks and orders replace
-it.
+it. From build step 1 (section 16) the hub accepts `agent assign` only when it is signed with
+the session key of your passkey sign-in. The old token of a paired device ends in that step,
+and no key of a device, also not of a device run by an autonomous agent, can issue an
+assignment. The technical specification of that step fixes how `agent assign` gets that
+signature.
 
 ## 5. Handing work over
 
@@ -366,8 +373,9 @@ page; the page links to it.
 
 - **The hub never asks the device.** It shows the page only from four things it already holds
   for that device: the device's own records, up to the last sync the hub accepted; the records of other devices that the hub
-  delivered to it, that is session mail to its sessions, the pings its login sent or received,
-  and what matched its subscriptions; its inventory (section 3); and the hub's own state for
+  delivered to it since its last restore, that is session mail to its sessions, the pings its
+  login sent or received, and what matched its subscriptions (a restore brings back only part
+  of them, so it starts this set again from what the restore returned); its inventory (section 3); and the hub's own state for
   the device, that is its entry in the device list, the time of its last sync by the hub's
   clock (if that clock is set back, the time shown can be too early), and the commands
   sent to it with whether they were delivered, accepted or refused. To decide what you may see
@@ -474,7 +482,7 @@ Each step is its own pull request and follows the steps of the
 
 | Step | What | Status |
 |---|---|---|
-| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key, and handles as logins; retiring the devices paired before, after each has synced completely, and connecting them again as new devices; the allow list on the device; the device id in team-record.md | not started |
+| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key, and handles as logins; retiring the devices paired before, after each has synced completely, and connecting them again as new devices; `agent assign` accepted only with the session key of the owner's passkey sign-in; the allow list on the device; the device id in team-record.md | not started |
 | 2 | Checking the session key's certificate on the device; grants | not started |
 | 3 | Tasks, log entries, repository registry, one-time import | not started |
 | 4 | Orders and questions through the hub | not started |
