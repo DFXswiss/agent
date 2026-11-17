@@ -956,10 +956,11 @@ def test_usage_overview_lists_every_configured_driver_and_every_row_provider() -
     stray = _snapshot("driver-x", "seat-9@example.com")
     rows = _subscription_dashboard_rows((), [stray])
     overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW, {})}
-    # Without drivers.json no provider has a usage section; the id is the name.
+    # Without a usage section the id is the name; a recorded snapshot means the
+    # provider is read somewhere, so it is "no data" rather than "not read".
     assert list(overview) == ["driver-x"]
-    assert overview["driver-x"]["status"] == "not read"
-    assert overview["driver-x"]["summary"] == "driver-x not read"
+    assert overview["driver-x"]["status"] == "no data"
+    assert overview["driver-x"]["summary"] == "driver-x no data"
 
 
 def test_usage_overview_without_data_never_shows_zero() -> None:
