@@ -408,11 +408,11 @@ def test_max_rounds_is_optional(tmp_path):
 
     selected = data['workers']['selected-session']
     selected['max_rounds'] = 7
-    selected['max_rounds_by_model'] = {'grok-model': 3}
+    selected['max_rounds_by_model'] = {'driver-a-model': 3}
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     worker = load_coordinator_config(tmp_path)['selected-session']
     assert worker.max_rounds == 7
-    assert worker.max_rounds_by_model == {'grok-model': 3}
+    assert worker.max_rounds_by_model == {'driver-a-model': 3}
 
 
 @pytest.mark.parametrize('value', [0, -1, '8', True])
@@ -448,11 +448,11 @@ def test_resolve_round_limit_order(tmp_path):
     worker = replace(
         base,
         max_rounds=7,
-        max_rounds_by_model={'grok-model': 3},
+        max_rounds_by_model={'driver-a-model': 3},
     )
     cases = [
-        (resolve_round_limit(worker, 'grok-model', 2), 2, 'submit'),
-        (resolve_round_limit(worker, 'grok-model'), 3, 'model'),
+        (resolve_round_limit(worker, 'driver-a-model', 2), 2, 'submit'),
+        (resolve_round_limit(worker, 'driver-a-model'), 3, 'model'),
         (resolve_round_limit(worker, 'other-model'), 7, 'worker'),
         (resolve_round_limit(base, 'other-model'), 10, 'default'),
     ]
@@ -460,7 +460,7 @@ def test_resolve_round_limit_order(tmp_path):
         assert set(result) == {'max_rounds', 'origin', 'model', 'limit'}
         assert result['max_rounds'] == result['limit'] == limit
         assert result['origin'] == origin
-        assert result['model'] in {'grok-model', 'other-model'}
+        assert result['model'] in {'driver-a-model', 'other-model'}
 
 
 def test_pinned_model_name_is_redacted_and_still_matches(tmp_path):

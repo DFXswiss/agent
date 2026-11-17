@@ -1,8 +1,8 @@
 """Successive-tick integration flow for the issue coordinator.
 
 Drives script-generated facts through acceptance → checkout → implement →
-immediate Draft → inner review → checks → parallel Grok PR gates → Codex PR
-gates → CI → readiness → formal approve → Ready → human merge.
+immediate Draft → inner review → checks → parallel first-slot PR gates →
+second-slot PR gates → CI → readiness → formal approve → Ready → human merge.
 
 Fake GitHub/model/check transports only. No real network/models/tests.
 """
@@ -20,7 +20,7 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
-    grok_messages_stream,
+    event_stream_output,
     lane_runner,
     make_session,
     make_worker,
@@ -55,7 +55,7 @@ def test_task_binding_ignores_unrelated_profiles_but_pins_selected_model(tmp_pat
     before = execution_binding(store, worker, 'example/project')
     path = store.home / 'ai-accounts.json'
     configuration = json.loads(path.read_text())
-    configuration['accounts']['unrelated'] = {'provider': 'grok', 'config_dir': '/test/unrelated'}
+    configuration['accounts']['unrelated'] = {'provider': 'driver-a', 'config_dir': '/test/unrelated'}
     path.write_text(json.dumps(configuration))
     assert execution_binding(store, worker, 'example/project') == before
     configuration['roles']['impl']['model'] = 'explicitly-changed-model'
@@ -100,7 +100,7 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     assert task["payload"]["coordinator"].get("head_sha")
     for _ in range(4):
         phase = _phase(store)
-        if phase in ("inner_review", "tests", "pr_gates_grok"):
+        if phase in ("inner_review", "tests", "pr_gates_first"):
             break
         if phase == "publish_draft":
             fake.commits_ahead = True
@@ -109,16 +109,16 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     assert task.get("ref") == "42" or task["payload"]["coordinator"].get("pr_number") == 42
 
     for _ in range(3):
-        if _phase(store) in ("tests", "pr_gates_grok"):
+        if _phase(store) in ("tests", "pr_gates_first"):
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     assert "reviewer" in fake.launched
 
     for _ in range(2):
-        if _phase(store) == "pr_gates_grok":
+        if _phase(store) == "pr_gates_first":
             break
         tick(store, worker, runner=fake, lane_runner=lane)
-    assert _phase(store) == "pr_gates_grok", store.rows("task")[0]["payload"]["coordinator"].get("blocker")
+    assert _phase(store) == "pr_gates_first", store.rows("task")[0]["payload"]["coordinator"].get("blocker")
 
     before = list(fake.launched)
     tick(store, worker, runner=fake, lane_runner=lane)
@@ -126,7 +126,7 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     assert "pr-reviewer-quality" in launched
     assert "pr-reviewer-logic" in launched
     assert fake.parallel_launch_seen
-    assert _phase(store) == "pr_gates_codex", store.rows("task")[0]["payload"]["coordinator"].get("blocker")
+    assert _phase(store) == "pr_gates_second", store.rows("task")[0]["payload"]["coordinator"].get("blocker")
     from agent_cli.coordinator_git import control_dir
 
     task = store.rows("task")[0]
@@ -784,7 +784,7 @@ def _surface_repair_fixture(tmp_path: Path, tid: str):
         "title": "Fix",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -868,7 +868,7 @@ def test_malformed_surface_checkpoint_is_repaired_before_the_next_phase(
 
     def lane(_argv, _stdin):
         calls.append(1)
-        return Completed(0, grok_messages_stream(next(outputs)), "")
+        return Completed(0, event_stream_output(next(outputs)), "")
 
     lines = phase_implement(
         store, worker, store.row("task", tid), lambda _argv: Completed(0, "", ""), lane
@@ -914,7 +914,7 @@ def test_two_failed_surface_repairs_block_with_the_named_reason(
 
     def lane(_argv, _stdin):
         calls.append(1)
-        return Completed(0, grok_messages_stream(MALFORMED_SURFACE_OUTPUT), "")
+        return Completed(0, event_stream_output(MALFORMED_SURFACE_OUTPUT), "")
 
     with pytest.raises(MalformedSurfaceCheckpoint) as raised:
         phase_implement(
@@ -969,9 +969,9 @@ def test_adopted_malformed_surface_is_recorded_and_repaired(
             "session_id": worker.session_id,
             "round": 1,
             "role": "implementer",
-            "vendor": "grok",
-            "provider": "grok",
-            "model": "grok-model",
+            "vendor": "driver-a",
+            "provider": "driver-a",
+            "model": "driver-a-model",
             "status": "working",
             "started_at": "2026-01-01T00:00:00Z",
             "finished_at": None,
@@ -983,7 +983,7 @@ def test_adopted_malformed_surface_is_recorded_and_repaired(
     paths = coordinator_lanes._lane_capture_paths(worker, tid, agent_id)
     paths["stdout"].parent.mkdir(parents=True, exist_ok=True)
     paths["stdout"].write_text(
-        grok_messages_stream(MALFORMED_SURFACE_OUTPUT), encoding="utf-8"
+        event_stream_output(MALFORMED_SURFACE_OUTPUT), encoding="utf-8"
     )
     paths["stderr"].write_text("", encoding="utf-8")
     paths["status"].write_text(json.dumps({"returncode": 0}), encoding="utf-8")
@@ -1035,7 +1035,7 @@ def test_adopted_malformed_surface_is_recorded_and_repaired(
 
     def lane(_argv, _stdin):
         calls.append(1)
-        return Completed(0, grok_messages_stream(VALID_SURFACE_OUTPUT), "")
+        return Completed(0, event_stream_output(VALID_SURFACE_OUTPUT), "")
 
     lines = phase_implement(
         store, worker, task, lambda _argv: Completed(0, "", ""), lane
@@ -1124,7 +1124,7 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
         "title": "Fix",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -1157,7 +1157,7 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
             worker,
             task,
             fake,
-            lambda _argv, _stdin: Completed(0, grok_messages_stream(full), ""),
+            lambda _argv, _stdin: Completed(0, event_stream_output(full), ""),
         )
 
     saved = store.row("task", tid)
@@ -1229,7 +1229,7 @@ def test_real_implementer_launch_reuses_checkpoint_and_invalidates_head_same_tic
         "title": "Fix",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -1303,7 +1303,7 @@ def test_real_implementer_launch_reuses_checkpoint_and_invalidates_head_same_tic
         worker,
         task,
         lambda _argv: Completed(0, "", ""),
-        lambda _argv, _stdin: Completed(0, grok_messages_stream(full), ""),
+        lambda _argv, _stdin: Completed(0, event_stream_output(full), ""),
     )
 
     saved = store.row("task", tid)
@@ -1447,10 +1447,10 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -1479,7 +1479,7 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
     task = store.row("task", tid)
     coord = task["payload"]["coordinator"]
     assert coord["phase"] == "blocked"
-    assert coord.get("resume_phase") == "pr_gates_grok"
+    assert coord.get("resume_phase") == "pr_gates_first"
     qid = coord.get("question_activity_id")
     assert isinstance(qid, str) and qid
     gates = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
@@ -1497,7 +1497,7 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
     launched_before = list(fake.launched)
     lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
     task = store.row("task", tid)
-    assert task["payload"]["coordinator"]["phase"] == "pr_gates_grok", lines
+    assert task["payload"]["coordinator"]["phase"] == "pr_gates_first", lines
     assert fake.launched == launched_before
     assert "implementer" not in fake.launched[len(launched_before) :]
 
@@ -1538,10 +1538,10 @@ def test_incomplete_pr_review_crash_checkpoint_precedes_a38_pr_state(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -1642,14 +1642,14 @@ def test_incomplete_pr_review_crash_checkpoint_precedes_a38_pr_state(
                 store.row("task", tid),
                 fake,
                 lane_runner(fake),
-                vendor="grok",
+                vendor="driver-a",
                 stage="review-1",
             )
 
     saved = store.row("task", tid)
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "pr_gates_grok"
+    assert checkpoint["resume_phase"] == "pr_gates_first"
     assert "review unavailable/incomplete" in checkpoint["blocker"]
     assert checkpoint["blocker_publish_once"] is True
     qid = checkpoint["question_activity_id"]
@@ -1724,7 +1724,7 @@ def test_incomplete_pr_review_crash_checkpoint_precedes_a38_pr_state(
         lane_runner=lane_runner(fake),
     )
     resumed = store.row("task", tid)["payload"]["coordinator"]
-    assert resumed["phase"] == "pr_gates_grok"
+    assert resumed["phase"] == "pr_gates_first"
     assert "blocker_publish_once" not in resumed
     assert "blocker_publish_kind" not in resumed
     assert any("consumed 1 authorized reply" in line for line in reply_lines)
@@ -1773,10 +1773,10 @@ def test_parallel_pr_review_rejection_wins_over_other_incomplete_dimension(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -1886,10 +1886,10 @@ def test_parallel_pr_review_persists_both_rejections_before_github_crash(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -1956,7 +1956,7 @@ def test_parallel_pr_review_persists_both_rejections_before_github_crash(
             store.row("task", tid),
             fake,
             lane_runner(fake),
-            vendor="grok",
+            vendor="driver-a",
             stage="review-1",
         )
 
@@ -2035,10 +2035,10 @@ def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -2094,7 +2094,7 @@ def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
         if "pr-reviewer-quality" in material:
             raise RuntimeError("provider transport failed")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         )
 
     lines = tick(store, worker, runner=fake, lane_runner=one_lane_fails)
@@ -2108,15 +2108,15 @@ def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
     ]
     assert len(blockers) == 1
     body = str((blockers[0].get("payload") or {}).get("body") or "")
-    assert "Model lane interrupted in pr_gates_grok; not a code rejection." in body
+    assert "Model lane interrupted in pr_gates_first; not a code rejection." in body
     assert lines == [
-        "blocked: Model lane interrupted in pr_gates_grok; not a code rejection.",
+        "blocked: Model lane interrupted in pr_gates_first; not a code rejection.",
         "blocker published on example/project#7",
     ]
     saved = store.row("task", tid)
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "pr_gates_grok"
+    assert checkpoint["resume_phase"] == "pr_gates_first"
     assert "uncertain_lane" not in checkpoint
     assert checkpoint["question_activity_id"] == blockers[0]["id"]
     outcomes = checkpoint["lane_outcome"]["outcomes"]
@@ -2153,10 +2153,10 @@ def _seed_retry_gate_task(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -2230,11 +2230,11 @@ def test_incomplete_pr_review_is_retried_before_blocking(
 
     lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
     assert (
-        "retry 1/1 of pr_gates_grok after review-1 review incomplete "
+        "retry 1/1 of pr_gates_first after review-1 review incomplete "
         "(quality: status=partial, result=empty); next attempt in 30s"
     ) in lines
     checkpoint = store.row("task", tid)["payload"]["coordinator"]
-    assert checkpoint["phase"] == "pr_gates_grok"
+    assert checkpoint["phase"] == "pr_gates_first"
     assert checkpoint["retry"]["attempt"] == 1
     assert "question_activity_id" not in checkpoint
     assert "lane_outcome" not in checkpoint
@@ -2260,7 +2260,7 @@ def test_incomplete_pr_review_is_retried_before_blocking(
         )
         started.append(role)
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         )
 
     tick(store, worker, runner=fake, lane_runner=approve_one)
@@ -2304,12 +2304,12 @@ def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
         if "pr-reviewer-quality" in material:
             raise RuntimeError("provider transport failed")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         )
 
     lines = tick(store, worker, runner=fake, lane_runner=fail_quality)
     assert lines == [
-        "retry 1/1 of pr_gates_grok after review-1 review lane failed; "
+        "retry 1/1 of pr_gates_first after review-1 review lane failed; "
         "next attempt in 30s"
     ]
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
@@ -2318,7 +2318,7 @@ def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
     quality = next(row for row in agents if row.get("dimension") == "quality")
     assert quality["note"] == "PR review lane execution failed"
     checkpoint = store.row("task", tid)["payload"]["coordinator"]
-    assert checkpoint["phase"] == "pr_gates_grok"
+    assert checkpoint["phase"] == "pr_gates_first"
     assert checkpoint.get("uncertain_lane") is not True
     outcomes = checkpoint["lane_outcome"]["outcomes"]
     assert len(outcomes) == 1 and outcomes[0]["dimension"] == "logic"
@@ -2341,7 +2341,7 @@ def test_failed_pr_review_lane_is_retried_and_keeps_the_sibling_result(
         )
         started.append(role)
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         )
 
     tick(store, worker, runner=fake, lane_runner=approve_one)
@@ -2393,21 +2393,21 @@ def test_formal_dismissal_recovery_requires_new_reply_then_ready(
     tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(4):
         phase = _phase(store)
-        if phase in ("inner_review", "tests", "pr_gates_grok"):
+        if phase in ("inner_review", "tests", "pr_gates_first"):
             break
         if phase == "publish_draft":
             fake.commits_ahead = True
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(3):
-        if _phase(store) in ("tests", "pr_gates_grok"):
+        if _phase(store) in ("tests", "pr_gates_first"):
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(2):
-        if _phase(store) == "pr_gates_grok":
+        if _phase(store) == "pr_gates_first":
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     tick(store, worker, runner=fake, lane_runner=lane)
-    assert _phase(store) == "pr_gates_codex"
+    assert _phase(store) == "pr_gates_second"
     tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "ci"
     fake.pr["statusCheckRollup"] = [
@@ -2660,21 +2660,21 @@ def test_nonrecoverable_post_ready_ignores_authorized_replies(
     tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(4):
         phase = _phase(store)
-        if phase in ("inner_review", "tests", "pr_gates_grok"):
+        if phase in ("inner_review", "tests", "pr_gates_first"):
             break
         if phase == "publish_draft":
             fake.commits_ahead = True
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(3):
-        if _phase(store) in ("tests", "pr_gates_grok"):
+        if _phase(store) in ("tests", "pr_gates_first"):
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(2):
-        if _phase(store) == "pr_gates_grok":
+        if _phase(store) == "pr_gates_first":
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     tick(store, worker, runner=fake, lane_runner=lane)
-    assert _phase(store) == "pr_gates_codex"
+    assert _phase(store) == "pr_gates_second"
     tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "ci"
     fake.pr["statusCheckRollup"] = [
@@ -2780,21 +2780,21 @@ def test_formal_approve_transport_preserves_same_attempt_until_visible(
     tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(4):
         phase = _phase(store)
-        if phase in ("inner_review", "tests", "pr_gates_grok"):
+        if phase in ("inner_review", "tests", "pr_gates_first"):
             break
         if phase == "publish_draft":
             fake.commits_ahead = True
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(3):
-        if _phase(store) in ("tests", "pr_gates_grok"):
+        if _phase(store) in ("tests", "pr_gates_first"):
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(2):
-        if _phase(store) == "pr_gates_grok":
+        if _phase(store) == "pr_gates_first":
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     tick(store, worker, runner=fake, lane_runner=lane)
-    assert _phase(store) == "pr_gates_codex"
+    assert _phase(store) == "pr_gates_second"
     tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "ci"
     fake.pr["statusCheckRollup"] = [
@@ -2902,21 +2902,21 @@ def _drive_through_ci_to(store, worker, fake, lane, target_phase: str) -> None:
     tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(4):
         phase = _phase(store)
-        if phase in ("inner_review", "tests", "pr_gates_grok"):
+        if phase in ("inner_review", "tests", "pr_gates_first"):
             break
         if phase == "publish_draft":
             fake.commits_ahead = True
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(3):
-        if _phase(store) in ("tests", "pr_gates_grok"):
+        if _phase(store) in ("tests", "pr_gates_first"):
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     for _ in range(2):
-        if _phase(store) == "pr_gates_grok":
+        if _phase(store) == "pr_gates_first":
             break
         tick(store, worker, runner=fake, lane_runner=lane)
     tick(store, worker, runner=fake, lane_runner=lane)
-    assert _phase(store) == "pr_gates_codex"
+    assert _phase(store) == "pr_gates_second"
     tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "ci"
     fake.pr["statusCheckRollup"] = [

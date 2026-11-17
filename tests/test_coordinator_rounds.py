@@ -65,7 +65,7 @@ def _task(store, worker, task_id="22222222-2222-4222-8222-222222222222", **c):
         "payload": {"coordinator": checkpoint},
         "state": "open",
         "current_round": 0,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
     }
@@ -192,21 +192,21 @@ def test_created_task_pins_the_limit_and_its_origin(tmp_path, monkeypatch):
         (
             replace(
                 base,
-                max_rounds_by_model={"grok-model": 3},
+                max_rounds_by_model={"driver-a-model": 3},
                 max_rounds=7,
             ),
             7,
-            {"max_rounds": 3, "origin": "model", "model": "grok-model", "limit": 3},
+            {"max_rounds": 3, "origin": "model", "model": "driver-a-model", "limit": 3},
         ),
         (
             replace(base, max_rounds=7),
             8,
-            {"max_rounds": 7, "origin": "worker", "model": "grok-model", "limit": 7},
+            {"max_rounds": 7, "origin": "worker", "model": "driver-a-model", "limit": 7},
         ),
         (
             base,
             9,
-            {"max_rounds": 10, "origin": "default", "model": "grok-model", "limit": 10},
+            {"max_rounds": 10, "origin": "default", "model": "driver-a-model", "limit": 10},
         ),
     ]
     for worker, number, expected in cases:
@@ -242,7 +242,7 @@ def test_task_without_a_pin_is_pinned_at_first_evaluation(tmp_path, monkeypatch)
     assert coord(task)["round_limit"] == {
         "max_rounds": 10,
         "origin": "default",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 10,
     }
 
@@ -289,7 +289,7 @@ def test_a_changed_configuration_does_not_change_a_pinned_task(
     tmp_path, monkeypatch
 ):
     store, base, fake = _setup(tmp_path, monkeypatch)
-    pin = {"max_rounds": 2, "origin": "worker", "model": "grok-model", "limit": 2}
+    pin = {"max_rounds": 2, "origin": "worker", "model": "driver-a-model", "limit": 2}
     task = _task(store, base, round_limit=pin)
     value = resolve_round_budget(
         CheckContext(
@@ -349,7 +349,7 @@ def test_round_limit_raises_a_question(tmp_path, monkeypatch):
     assert question["assessment"]["result"] == "unavailable"
     assert question["assessment"]["reasoning"].startswith(
         "check lane is not configured: No AI lane configured for session "
-        "worker-session slot grok:check"
+        "worker-session slot driver-a:check"
     )
     assert row["opinion"]["result"] == "unavailable"
     assert not any(
@@ -373,7 +373,7 @@ def test_reply_grants_more_rounds_and_reaches_the_implementer(
     )
     assert row["status"] == "ja"
     assert row["evidence"] == "rounds within limit 4"
-    prompt = control_dir(worker, str(task["id"])) / "implementer-grok.md"
+    prompt = control_dir(worker, str(task["id"])) / "implementer-driver-a.md"
     assert "Please try the focused fix." in prompt.read_text(encoding="utf-8")
     assert fake.launched.count("implementer") == 3
 
@@ -523,7 +523,7 @@ def test_reply_reaches_the_implementer_and_the_approach_does_not(
     )
     assert row["status"] == "ja"
     assert row["opinion"]["result"] == "change-approach"
-    prompt = control_dir(worker, str(task["id"])) / "implementer-grok.md"
+    prompt = control_dir(worker, str(task["id"])) / "implementer-driver-a.md"
     text = prompt.read_text(encoding="utf-8")
     assert "try the allowlist" in text
     assert "Use an allowlist." not in text

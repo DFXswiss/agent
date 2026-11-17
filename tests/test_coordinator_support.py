@@ -14,17 +14,18 @@ from agent_cli.coordinator_config import RepositoryConfig, WorkerConfig
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, utcnow
 from agent_cli.github_act import scan_github as _REAL_SCAN
+from driver_fixtures import write_drivers
 
 
-def grok_messages_stream(text: str) -> str:
-    """Grok ``streaming-messages-json`` stream whose final answer is ``text``.
+def event_stream_output(text: str) -> str:
+    """``event-stream`` lane output whose final answer is ``text``.
 
     The lane finalizer reads the final assistant message only from the terminal
-    ``result`` event, so a fake provider must emit the Messages stream instead of
-    plain text. This one helper keeps every grok fake on that wire format.
+    ``result`` event, so a fake ``driver-a`` lane must emit the event stream
+    instead of plain text. This one helper keeps every such fake on that format.
     """
     events = [
-        {"type": "system", "subtype": "init", "model": "grok-model"},
+        {"type": "system", "subtype": "init", "model": "driver-a-model"},
         {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": text}]},
@@ -41,6 +42,7 @@ def grok_messages_stream(text: str) -> str:
 
 
 def write_accounts(home: Path) -> None:
+    write_drivers(home)
     (home / "github-accounts.json").write_text(
         json.dumps(
             {
@@ -72,25 +74,25 @@ def write_accounts(home: Path) -> None:
         json.dumps(
             {
                 "lane_execution": {"mode": "this-device-is-lane-host"},
-                "models": {"first": "grok", "second": "codex"},
+                "models": {"first": "driver-a", "second": "driver-b"},
                 "accounts": {
-                    "grok-w": {"provider": "grok", "config_dir": "/test/grok"},
-                    "codex-w": {"provider": "codex", "config_dir": "/test/codex"},
+                    "driver-a-w": {"provider": "driver-a", "config_dir": "/test/driver-a"},
+                    "driver-b-w": {"provider": "driver-b", "config_dir": "/test/driver-b"},
                 },
                 "roles": {
                     "impl": {
-                        "account": "grok-w",
-                        "model": "grok-model",
+                        "account": "driver-a-w",
+                        "model": "driver-a-model",
                         "access": "workspace-write",
                     },
                     "rev": {
-                        "account": "grok-w",
-                        "model": "grok-model",
+                        "account": "driver-a-w",
+                        "model": "driver-a-model",
                         "access": "read-only",
                     },
-                    "codex-rev": {
-                        "account": "codex-w",
-                        "model": "codex-model",
+                    "driver-b-rev": {
+                        "account": "driver-b-w",
+                        "model": "driver-b-model",
                         "access": "read-only",
                     },
                 },
@@ -98,12 +100,12 @@ def write_accounts(home: Path) -> None:
                     "worker-session": {
                         "interactive": "impl",
                         "lanes": {
-                            "grok:implementer": "impl",
-                            "grok:reviewer": "rev",
-                            "grok:pr-reviewer-quality": "rev",
-                            "grok:pr-reviewer-logic": "rev",
-                            "codex:pr-reviewer-quality": "codex-rev",
-                            "codex:pr-reviewer-logic": "codex-rev",
+                            "driver-a:implementer": "impl",
+                            "driver-a:reviewer": "rev",
+                            "driver-a:pr-reviewer-quality": "rev",
+                            "driver-a:pr-reviewer-logic": "rev",
+                            "driver-b:pr-reviewer-quality": "driver-b-rev",
+                            "driver-b:pr-reviewer-logic": "driver-b-rev",
                         },
                     }
                 },
@@ -114,7 +116,7 @@ def write_accounts(home: Path) -> None:
 
 
 def write_check_lane(
-    home: Path, vendor: str = "grok", role: str = "rev"
+    home: Path, vendor: str = "driver-a", role: str = "rev"
 ) -> None:
     path = home / "ai-accounts.json"
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -221,7 +223,7 @@ def seed_order_task(
         "payload": {"coordinator": c},
         "state": "open",
         "current_round": 0,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
         "change_summary_en": None,
@@ -853,33 +855,32 @@ def lane_runner(fake: FakeGh):
             with fake._lane_lock:
                 fake.parallel_launch_seen = {"pr-reviewer-quality", "pr-reviewer-logic"} <= fake._inflight_roles
         fake.launched.append(role)
-        if role == "implementer" and "grok" in argv:
-            assert "--deny" in argv and "Bash" in argv
-            assert "--no-subagents" in argv
-            assert "--disable-web-search" in argv
+        if role == "implementer" and "tool-a" in argv:
+            assert "--no-shell" in argv
+            assert "--deny" in argv and "Shell" in argv
             assert "timeout" not in argv
         out = fake.model_outputs.get(role, "STATUS: partial\n")
         if role.startswith("pr-reviewer"):
             fake._lane_barrier.wait(timeout=3)
             with fake._lane_lock:
                 fake._inflight_roles.discard(role)
-        if "claude" in argv:
+        if "tool-c" in argv:
             stream = json.dumps(
                 {"type": "result", "result": out, "usage": {}}
             ) + "\n"
-            if f"ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+            if "TOOL_C_BASE_URL=https://gateway.example.test/api" in argv:
                 wrapper_index = next(
-                    i for i, value in enumerate(argv) if "openrouter-api-key" in value
+                    i for i, value in enumerate(argv) if "tool-d-key" in value
                 )
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
-        if "--output-last-message" in argv:
-            output = Path(argv[argv.index("--output-last-message") + 1])
+        if "--last-message" in argv:
+            output = Path(argv[argv.index("--last-message") + 1])
             output.write_text(out, encoding="utf-8")
             return Completed(0, "", "")
-        if "grok" in argv:
-            return Completed(0, grok_messages_stream(out), "")
+        if "tool-a" in argv:
+            return Completed(0, event_stream_output(out), "")
         return Completed(0, out, "")
 
     return run
@@ -914,21 +915,21 @@ def order_lane_runner(
             fake.launched.append("check")
             fake.check_prompts.append(prompt or "")
             output = check_output
-        if "claude" in argv:
+        if "tool-c" in argv:
             stream = json.dumps(
                 {"type": "result", "result": output, "usage": {}}
             ) + "\n"
-            if "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+            if "TOOL_C_BASE_URL=https://gateway.example.test/api" in argv:
                 wrapper_index = next(
                     i
                     for i, value in enumerate(argv)
-                    if "openrouter-api-key" in value
+                    if "tool-d-key" in value
                 )
                 Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
                 return Completed(0, "", "")
             return Completed(0, stream, "")
-        if "grok" in argv:
-            return Completed(0, grok_messages_stream(output), "")
+        if "tool-a" in argv:
+            return Completed(0, event_stream_output(output), "")
         return Completed(0, output, "")
 
     return run

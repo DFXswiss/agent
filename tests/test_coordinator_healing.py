@@ -28,7 +28,7 @@ from test_coordinator import (
 )
 from test_coordinator_support import (
     FakeGh,
-    grok_messages_stream,
+    event_stream_output,
     lane_runner,
     make_session,
     make_worker,
@@ -129,7 +129,7 @@ def _tests_task(
             "title": "Check task",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
                     "phase": "tests",
@@ -510,7 +510,7 @@ def test_incomplete_inner_reviewer_is_retried_then_blocks(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -545,7 +545,7 @@ def test_incomplete_inner_reviewer_is_retried_then_blocks(
     def partial(*args: Any, **kwargs: Any) -> Completed:
         nonlocal calls
         calls += 1
-        return Completed(0, grok_messages_stream("STATUS: partial\n"), "")
+        return Completed(0, event_stream_output("STATUS: partial\n"), "")
 
     lines = coordinator_runtime.phase_inner_review(
         store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""), partial
@@ -697,7 +697,7 @@ def _a38_tests_task(
         "title": "A38 tests",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {
             "coordinator": {
                 "phase": "tests",
@@ -795,7 +795,7 @@ def _working_implementer(store: Store, worker: WorkerConfig, task_id: str, agent
             "task_id": task_id,
             "round": 1,
             "role": "implementer",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "status": "working",
             "started_at": "2026-01-01T00:00:00Z",
             "finished_at": None,
@@ -924,7 +924,7 @@ def test_launch_refuses_an_open_lane_record(
             worker,
             task,
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             round_num=1,
             spec_body="Implement.",
             runner=fake,
@@ -970,7 +970,7 @@ def test_stored_uncertain_flag_resumes_the_phase_of_the_newest_lane(
             "task_id": tid,
             "round": None,
             "role": "pr-reviewer-logic",
-            "vendor": "codex",
+            "vendor": "driver-b",
             "stage": "review-2",
             "status": "done",
             "started_at": "2026-02-01T00:00:00Z",
@@ -979,11 +979,11 @@ def test_stored_uncertain_flag_resumes_the_phase_of_the_newest_lane(
 
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
     assert (
-        "retry 1/1 of pr_gates_codex after lane outcome was uncertain; "
+        "retry 1/1 of pr_gates_second after lane outcome was uncertain; "
         "next attempt in 30s"
     ) in lines
     c = coord(store.row("task", tid))
-    assert c["phase"] == "pr_gates_codex"
+    assert c["phase"] == "pr_gates_second"
     assert "uncertain_lane" not in c
     assert "resume_phase" not in c
     assert "blocker" not in c
@@ -995,10 +995,10 @@ def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
     from agent_cli import coordinator_lanes
     from agent_cli.coordinator_runtime import advance_one
     from agent_cli.lane import LaneResult
-    from test_coordinator import _codex_prelaunch_fixture
+    from test_coordinator import _second_prelaunch_fixture
 
     tid = "aa000001-0000-4000-8000-000000000301"
-    store, base_worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, base_worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     worker = replace(base_worker, lane_retries=1)
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
@@ -1011,9 +1011,9 @@ def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
         "session_id": worker.session_id,
         "task_id": tid,
         "round": None,
-        "vendor": "codex",
-        "provider": "codex",
-        "model": "codex-model",
+        "vendor": "driver-b",
+        "provider": "driver-b",
+        "model": "driver-b-model",
         "head_sha": head,
         "stage": "review-2",
         "status": "working",
@@ -1039,8 +1039,8 @@ def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
         {"id": quality_id},
         LaneResult(
             role="pr-reviewer-quality",
-            vendor="codex",
-            model="codex-model",
+            vendor="driver-b",
+            model="driver-b-model",
             status="complete",
             argv=[],
             returncode=0,
@@ -1075,7 +1075,7 @@ def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
     )
     assert any(
         line.startswith(
-            "retry 1/1 of pr_gates_codex after a lane left running by an "
+            "retry 1/1 of pr_gates_second after a lane left running by an "
             "earlier tick ended without a result"
         )
         for line in lines
@@ -1096,7 +1096,7 @@ def test_saved_review_result_is_replayed_after_the_dead_sibling_is_retried(
             else "pr-reviewer-quality"
         )
         starts.append(role)
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(
             "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
         )

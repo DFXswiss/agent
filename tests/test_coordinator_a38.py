@@ -39,7 +39,7 @@ def second_payload(*, defects: int = 0, blocks_merge: bool = False) -> dict:
         "lanes": [
             {
                 "id": "conformity-b",
-                "provider": "OpenAI",
+                "provider": "Vendor B",
                 "model": "Reviewer Model 2",
                 "model_number": "reviewer-model-2",
                 "prompt": COMPLIANCE_PROMPT,
@@ -48,7 +48,7 @@ def second_payload(*, defects: int = 0, blocks_merge: bool = False) -> dict:
             },
             {
                 "id": "logic-b",
-                "provider": "OpenAI",
+                "provider": "Vendor B",
                 "model": "Reviewer Model 2",
                 "model_number": "reviewer-model-2",
                 "prompt": COMPLIANCE_PROMPT,
@@ -173,7 +173,7 @@ def test_review_comment_refuses_github_oversize_body() -> None:
         "lanes": [
             {
                 "id": lane_id,
-                "provider": "OpenAI",
+                "provider": "Vendor B",
                 "model": "Reviewer Model",
                 "model_number": "reviewer-model",
                 "prompt": prompt,
