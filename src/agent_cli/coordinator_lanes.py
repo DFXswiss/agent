@@ -65,6 +65,8 @@ from .drivers import (
 )
 from .lane import (
     DELEGATED_GIT_METADATA_CHANGED,
+    DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE,
+    DELEGATED_GIT_METADATA_UNREADABLE,
     LANE_MODEL_LIMIT,
     LANE_ROLES,
     LaneResult,
@@ -2126,6 +2128,15 @@ def launch_lane(
         if role == "implementer":
             argv = harden_write_argv(argv, driver)
         stdin_text = spec_text if io.stdin else None
+        # A delegated implementer writes back a worktree; its git metadata must
+        # not change. The operator excludes .git, and this snapshot verifies it.
+        # Refuse to start when the guard cannot be taken completely.
+        git_snapshot = None
+        if delegated and write:
+            try:
+                git_snapshot = snapshot_git_metadata(worktree)
+            except OSError as exc:
+                raise LaneFailedError(DELEGATED_GIT_METADATA_UNREADABLE) from exc
 
         store.write(
             "agent",
@@ -2191,11 +2202,6 @@ def launch_lane(
                 profile_dir = None
         else:
             profile_dir = str(capture["profile"])
-        # A delegated implementer writes back a worktree; its git metadata must
-        # not change. The operator excludes .git, and this snapshot verifies it.
-        git_snapshot = (
-            snapshot_git_metadata(worktree) if delegated and write else None
-        )
         try:
             with sanitized_lane_argv(argv, profile_dir=profile_dir) as run_argv:
                 argv = run_argv
@@ -2238,12 +2244,14 @@ def launch_lane(
                 except Exception as exc:
                     # A delegated implementer can change git metadata and then
                     # raise. Restore it before the exception leaves this block.
-                    if git_snapshot is not None and restore_git_metadata(
-                        git_snapshot
-                    ):
-                        raise LaneFailedError(
-                            DELEGATED_GIT_METADATA_CHANGED
-                        ) from exc
+                    if git_snapshot is not None:
+                        changed, complete = restore_git_metadata(git_snapshot)
+                        if changed:
+                            raise LaneFailedError(
+                                DELEGATED_GIT_METADATA_CHANGED
+                                if complete
+                                else DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE
+                            ) from exc
                     raise
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
@@ -2253,8 +2261,14 @@ def launch_lane(
                 path_replacements=path_replacements,
                 limit=None,
             )
-            if git_snapshot is not None and restore_git_metadata(git_snapshot):
-                raise LaneFailedError(DELEGATED_GIT_METADATA_CHANGED)
+            if git_snapshot is not None:
+                changed, complete = restore_git_metadata(git_snapshot)
+                if changed:
+                    raise LaneFailedError(
+                        DELEGATED_GIT_METADATA_CHANGED
+                        if complete
+                        else DELEGATED_GIT_METADATA_RESTORE_INCOMPLETE
+                    )
             lane_output_read_error: BaseException | None = None
             output_file_text = ""
             if lane_output is not None:

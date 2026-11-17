@@ -20822,6 +20822,62 @@ def test_launch_lane_delegate_restores_git_metadata_when_runner_raises(
     assert not (hooks / "post-commit").exists()
 
 
+def test_launch_lane_delegate_refuses_unreadable_git_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "delegate-git-unreadable"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/develop\n", encoding="utf-8")
+    _set_delegate_execution(store, ["/operator/lane"])
+    task = _seed_delegate_implementer_task(
+        store, worker, "aa000001-0000-4000-8000-0000000000f5", worktree
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    read_bytes = Path.read_bytes
+
+    def fail_read(self: Path) -> bytes:
+        if self == head:
+            raise PermissionError("denied")
+        return read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+    called = {"n": 0}
+
+    def run(_argv: list[str], _stdin: str | None = None) -> Completed:
+        called["n"] += 1
+        return Completed(0, "", "")
+
+    with pytest.raises(
+        LaneFailedError,
+        match="delegated implementer git metadata could not be read; lane not started",
+    ):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=run,
+        )
+
+    assert called["n"] == 0
+
+
 def test_run_prepared_delegate_prefixes_a_pr_review_lane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
