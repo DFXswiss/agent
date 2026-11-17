@@ -135,22 +135,25 @@ session id is recorded on the row and may contain only letters, digits, `_` and
 A mention is identified by the comment that carries it
 (`comment:<repo>:<ref>:<comment id>`), not by the thread. An existing row is
 handled by its state: `queued` or `running` is left alone; `failed` is retried
-with its attempt count incremented and the previous attempt's activity,
-worktree and log files removed; `done` is queued again only when it is a pull
-request whose current head SHA is known and differs from the SHA stored on the
-row. A `done` row whose stored head is a commit id and whose current head cannot
-be read is skipped and left unread, so an unreadable answer does not discard the
-mention; a `done` row that cannot be shown to have moved otherwise is a
-duplicate. A row whose recorded trigger is missing (a row written before
-triggers existed) is treated as already handled.
+with its attempt count incremented, and the re-queue retires the previous
+attempt's pending status activity (it stays in the store as `error`) and
+removes the previous attempt's worktree and log files; `done` is queued again
+only when it is a pull request whose current head SHA is known and differs from
+the SHA stored on the row. A `done` row whose stored head is a commit id and
+whose current head cannot be read is skipped and left unread, so an unreadable
+answer does not discard the mention; a `done` row that cannot be shown to have
+moved otherwise is a duplicate. A row whose recorded trigger is missing (a row
+written before triggers existed) is treated as already handled.
 The recorded trigger is a high-water mark: only a comment newer than the
 recorded one counts as a new request, so a deleted or edited later mention does
 not bring back an earlier one. A new generation gets a fresh `created_at`, so it
-also gets a new status comment. Rows written for another device are skipped
-without marking the thread read. Where a thread is marked read without a new
-job and the comment is newer than the recorded trigger — the job is queued or
-running, or a finished job's head did not move — the handled comment is first
-recorded as the row's `trigger`, so a later failure or head change that makes
+also gets a new status comment; it waits until the clock is past the previous
+`created_at`, so its status comment gets a new identity. Rows written for
+another device are skipped without marking the thread read. Where a thread is
+marked read without a new job and the comment is newer than the recorded
+trigger — the job is queued or running, or a finished job's head did not move —
+the handled comment is first recorded as the row's `trigger`, so a later
+failure or head change that makes
 the thread unread cannot select the same mention again. A path that leaves the
 thread unread leaves the trigger unchanged.
 
@@ -210,12 +213,13 @@ marker the executor accepts:
 `<!-- agent-runner-job:<job id>:<UTC timestamp> -->`. The job id matches
 `[A-Za-z0-9_-]+` without `--`, and the timestamp has the form
 `YYYY-MM-DDTHH:MM:SSZ`. The announcement creates the comment the first time it
-runs; every later status activity (a retry's announcement or a failure
-outcome) edits that same comment in place, so the issue or pull request keeps
-one status comment per job. The
-announcement still has to precede the output baseline: the first announcement
-is what creates the comment, and an edit never creates a new comment id, so a
-later edit can never count as new output.
+runs; every later status activity of that generation (a retry's announcement or
+a failure outcome) edits that same comment in place, so the issue or pull
+request keeps one status comment per job generation. A retry edits that
+comment; a new generation, started by a new mention after the head moved, posts
+its own. The announcement still has to precede the output baseline: the first
+announcement is what creates the comment, and an edit never creates a new
+comment id, so a later edit can never count as new output.
 
 The row records `pull_request` (whether the probe answered that the number is a
 pull request) and `announced` once the announcement ended `done`. Writing
@@ -311,9 +315,10 @@ budgets; a row whose session has disappeared is recorded as crashed.
 A job that ends as failed gets one outcome comment describing how it ended:
 `agent_failed`, `timeout`, `stalled`, `crashed` or `workspace_failed`. A
 successful job gets none: its posted review is the output. The comment is a
-`comment.post` activity that edits the job's existing status comment in place,
-keeping the job to one status comment, and the timeout/stall sentence uses the
-same budget the watchdog applied. A row carries `reported`
+`comment.post` activity that edits the generation's existing status comment in
+place, keeping one status comment per job generation; a new generation, started
+by a new mention after the head moved, posts its own. The timeout/stall sentence
+uses the same budget the watchdog applied. A row carries `reported`
 (`False` when the outcome comment is still owed, `True` after it is delivered)
 and `report_attempts`. A failed comment increments `report_attempts` and is
 retried on the next pass, up to five passes; after that the row is left alone.

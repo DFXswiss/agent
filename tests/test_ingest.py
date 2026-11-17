@@ -10,6 +10,7 @@ from agent_cli.ingest import (
     ListingFailed,
     Skill,
     _comment_author,
+    _patterns,
     _skill_of,
     allowed_skills,
     catalog_skills,
@@ -24,7 +25,7 @@ from agent_cli.ingest import (
     trigger_comment_id,
 )
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreConnectionError, StoreError
 
 HEAD = "a" * 40
 OTHER_HEAD = "b" * 40
@@ -195,6 +196,14 @@ def test_allowed_skills_ignores_unusable_allow_list_entries() -> None:
     assert unknown == []
 
 
+def test_patterns_drops_a_non_string_item_and_a_blank_item() -> None:
+    assert _patterns(
+        {"command_prefixes": [7, "  ", "/review"]}, "command_prefixes"
+    ) == ["/review"]
+    # A value that is not a list names no pattern at all.
+    assert _patterns({"command_prefixes": "not a list"}, "command_prefixes") == []
+
+
 # ------------------------------------------------------------ resolve_skill
 
 
@@ -228,6 +237,25 @@ def test_a_tie_goes_to_the_lower_skill_id() -> None:
         ]
     }
     assert resolve_skill("@theo-vane review", catalog) == Skill("alpha", None)
+
+
+def test_a_tie_keeps_an_earlier_skill_whose_id_is_already_lower() -> None:
+    # The earlier candidate keeps its lead when the later one matches equally
+    # well but has the higher id.
+    catalog = {
+        "skills": [
+            {"id": "alpha", "body_patterns": ["review"]},
+            {"id": "zeta", "body_patterns": ["review"]},
+        ]
+    }
+    assert resolve_skill("@theo-vane review", catalog) == Skill("alpha", None)
+
+
+def test_a_first_line_that_is_only_a_handle_has_no_word_for_a_command_prefix() -> None:
+    # Removing the handle can leave no first word at all, so a command prefix
+    # has nothing to be compared against.
+    catalog = {"skills": [{"id": "review", "command_prefixes": ["review"]}]}
+    assert resolve_skill("@theo-vane", catalog) is None
 
 
 def test_quotes_code_and_handles_are_ignored() -> None:
@@ -560,6 +588,55 @@ def test_an_admitted_mention_becomes_a_queued_job(tmp_path: Path) -> None:
         store.close()
 
 
+def test_a_catalogue_id_is_stored_in_lower_case(tmp_path: Path) -> None:
+    # `done_kind` looks the stored job type up case-sensitively, so a
+    # catalogue id spelled `PR-Review` must land on the row as `pr-review`.
+    catalog = {
+        "skills": [
+            {
+                "id": "PR-Review",
+                "queue_type": "pr-ready",
+                "body_patterns": ["please review"],
+            }
+        ]
+    }
+    store = Store(tmp_path)
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review")],
+            ),
+            catalog=catalog,
+        )
+        assert len(created) == 1
+        assert requeued == []
+        assert skipped == 0
+        assert _jobs(store)[0]["job_type"] == "pr-review"
+    finally:
+        store.close()
+
+
+def test_a_requeue_stores_the_catalogue_id_in_lower_case(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        row = _insert(store, state="failed", job_type="PR-Review")
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+            ),
+        )
+        assert created == []
+        assert requeued == [row["id"]]
+        assert skipped == 0
+        assert store.row("job", row["id"])["job_type"] == "pr-review"
+    finally:
+        store.close()
+
+
 def test_a_phrase_for_a_non_allowed_queue_type_is_denied_not_defaulted(
     tmp_path: Path,
 ) -> None:
@@ -748,6 +825,33 @@ def test_a_comment_without_an_integer_id_is_skipped(tmp_path: Path) -> None:
         assert skipped == 1
     finally:
         store.close()
+
+
+def test_a_comment_whose_id_is_a_boolean_is_skipped(tmp_path: Path) -> None:
+    # `True` is an int subclass in Python, but a JSON boolean is not a comment
+    # id: it cannot become a trigger, so the thread stays unread.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[
+                    {
+                        "id": True,
+                        "body": "@theo-vane please review",
+                        "user": {"login": "davidleomay"},
+                    }
+                ],
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
 
 
 def test_an_unreadable_comment_list_leaves_the_notification_unread(
@@ -1852,6 +1956,61 @@ def test_a_failed_trigger_write_skips_and_leaves_the_thread_unread(
 
         def fail_write(*_args: Any, **_kwargs: Any) -> None:
             raise RuntimeError("boom")
+
+        monkeypatch.setattr(store, "write", fail_write)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=2)],
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_store_error_from_the_trigger_write_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A StoreError is a genuine data problem, not a retryable one. It must not
+    # be reported as a skip, which would hide it forever.
+    store = Store(tmp_path)
+    try:
+        _insert(store, state="running", trigger="comment:owner/name:7:1")
+
+        def fail_write(*_args: Any, **_kwargs: Any) -> None:
+            raise StoreError("boom")
+
+        monkeypatch.setattr(store, "write", fail_write)
+        with pytest.raises(StoreError):
+            _scan(
+                store,
+                _runner(
+                    notifications=[_notification()],
+                    comments=[
+                        _comment("@theo-vane please review", comment_id=2)
+                    ],
+                ),
+            )
+    finally:
+        store.close()
+
+
+def test_a_store_connection_error_from_the_trigger_write_is_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A lost connection is retryable: the mention is skipped and the thread
+    # stays unread so the next pass tries again.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        _insert(store, state="running", trigger="comment:owner/name:7:1")
+
+        def fail_write(*_args: Any, **_kwargs: Any) -> None:
+            raise StoreConnectionError("lost")
 
         monkeypatch.setattr(store, "write", fail_write)
         created, requeued, skipped = _scan(

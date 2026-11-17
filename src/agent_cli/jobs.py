@@ -84,11 +84,13 @@ def _repo_named(repo_l: str, patterns: list[str]) -> bool:
     The wildcard is deliberately narrow: exactly one slash, ending in `/*`, with
     a non-empty owner that contains no `*`. `*`, `*/*`, `owner/prefix*` and
     `owner/` therefore name nothing, which keeps a typo from widening an
-    allow-list to every repository this runner can reach. Both sides are already
-    lower-cased by the caller.
+    allow-list to every repository this runner can reach. An entry whose owner
+    contains a `*` names nothing on the exact path either: a repository name
+    cannot contain one, so `*/name` is never a literal entry. Both sides are
+    already lower-cased by the caller.
     """
     for pattern in patterns:
-        if repo_l == pattern:
+        if "*" not in pattern and repo_l == pattern:
             return True
         if not pattern.endswith("/*") or pattern.count("/") != 1:
             continue

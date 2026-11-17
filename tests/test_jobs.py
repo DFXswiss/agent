@@ -193,7 +193,9 @@ def test_an_owner_wildcard_ignores_case() -> None:
     assert v.admitted, v.reason
 
 
-@pytest.mark.parametrize("pattern", ["*", "*/*", "owner/prefix*", "owner/"])
+@pytest.mark.parametrize(
+    "pattern", ["*", "*/*", "owner/prefix*", "owner/", "/*"]
+)
 def test_a_pattern_that_is_not_owner_wildcard_admits_nothing(pattern: str) -> None:
     # A typo must not widen the allow-list to every repository.
     policy = _policy(repos_allow=[pattern])
@@ -211,6 +213,34 @@ def test_an_owner_containing_a_star_names_nothing() -> None:
     # `*/*` ends in `/*` with owner `*`; without checking the owner it would
     # name a repository literally called `*/name`.
     policy = _policy(repos_allow=["*/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="*/name",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_owner_wildcard_does_not_reach_a_deeper_path() -> None:
+    # `owner/name/*` has two slashes, so it is not the one-level owner
+    # wildcard and may not admit a repository below `owner/name`.
+    policy = _policy(repos_allow=["owner/name/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name/child",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_entry_with_a_star_owner_names_nothing_on_the_exact_path() -> None:
+    # A repository name cannot contain `*`, so `*/name` is never a literal
+    # entry. The exact comparison must not accept it either.
+    policy = _policy(repos_allow=["*/name"])
     v = admits(
         policy,
         actor="davidleomay",
