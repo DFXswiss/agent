@@ -478,6 +478,26 @@ class FakeGh:
             return Completed(0, json.dumps([{"id": 701, "event": "assigned",
                 "assignee": {"login": "worker-bot"}, "actor": {"login": "human-owner", "type": "User"},
                 "created_at": "2026-09-01T00:00:00Z"}]), "")
+        if (
+            argv[:2] == ["gh", "api"]
+            and "PATCH" in argv
+            and "repos/example/project/pulls/42" in argv
+        ):
+            body_arg = None
+            for part in argv:
+                if part.startswith("body="):
+                    body_arg = part[5:]
+                    break
+            if body_arg is None:
+                return Completed(1, "", "pull body missing")
+            self.pr["body"] = body_arg
+            self.pr_edits.append(body_arg)
+            return Completed(
+                0,
+                json.dumps({"number": 42, "body": body_arg}),
+                "",
+            )
+
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/example/project/pulls/42":
             target = self.remotes.get("origin", "https://github.com/example/project.git")
             publication = self.remotes.get("publication", target)

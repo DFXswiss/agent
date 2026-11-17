@@ -395,6 +395,14 @@ def test_draft_body_for_an_order() -> None:
     assert "Draft for order 11111111: Add a widget." in draft_pr_body(
         order_source(OID, title="Add a widget.")
     )
+    from agent_cli.coordinator_git import _description_de_line
+
+    assert _description_de_line(
+        "DE:\r\nEntwurf für Auftrag 11111111: Satz.\r\n"
+    ) == "Entwurf für Auftrag 11111111: Satz."
+    assert _description_de_line(
+        "DE: Entwurf für Auftrag 11111111: Satz.\n"
+    ) == "Entwurf für Auftrag 11111111: Satz."
     german = (
         "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
         "statt dies als Authentifizierungsfehler zu melden."
@@ -539,7 +547,7 @@ def test_refresh_replaces_a_published_english_title_without_a_german_sentence(
 
 
 class _StalePrBody(FakeGh):
-    """A pull-request edit that reports success and leaves the published body."""
+    """A pulls update that reports the previous description."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -549,9 +557,17 @@ class _StalePrBody(FakeGh):
         command = list(argv)
         if command and command[0] == "env" and "gh" in command:
             command = command[command.index("gh") :]
-        if command[:3] == ["gh", "pr", "edit"]:
+        if (
+            command[:2] == ["gh", "api"]
+            and "PATCH" in command
+            and "repos/example/project/pulls/42" in command
+        ):
             self.edit_calls += 1
-            return Completed(0, self.pr["url"], "")
+            published = self.pr.get("body")
+            payload: dict[str, object] = {"number": 42}
+            if isinstance(published, str):
+                payload["body"] = published
+            return Completed(0, json.dumps(payload), "")
         return super().__call__(argv)
 
 
@@ -581,6 +597,75 @@ def test_refresh_rejects_a_published_description_that_stays_english(
         refresh_draft_body(store, worker, task, stale)
     assert stale.edit_calls == 2
     assert stale.pr["body"] == _ENGLISH_TITLE_IN_DE
+
+
+def test_refresh_reads_back_the_german_line_after_an_unchecked_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _fake = prepare(tmp_path, monkeypatch)
+
+    class _RejectPrEdit(FakeGh):
+        def __call__(self, argv: list[str]) -> Completed:
+            command = list(argv)
+            if command and command[0] == "env" and "gh" in command:
+                command = command[command.index("gh") :]
+            if command[:3] == ["gh", "pr", "edit"]:
+                return Completed(1, "", "pr edit is not the description write")
+            return super().__call__(argv)
+
+    editor = _RejectPrEdit()
+    patch_account_runners(monkeypatch, editor)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    editor.pr["body"] = (
+        "EN:\nDraft for order 11111111: Add a widget.\n\n"
+        "DE: Entwurf für Auftrag 11111111: Wait for the GitHub rate limit reset "
+        "instead of reporting an authentication failure.\n"
+    )
+    coord(task)["lane_outcome"] = {
+        "role": "implementer",
+        "result": "done",
+        "applied": False,
+        "summary_de": _GERMAN_SENTENCE,
+    }
+    save_task(store, task)
+    source = coord(task)["source"]
+    body = draft_pr_body(source, summary_de=_GERMAN_SENTENCE)
+    stale_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{OID}:{body}"))
+    store.write(
+        "activity",
+        "insert",
+        stale_id,
+        {
+            "id": stale_id,
+            "session_id": worker.session_id,
+            "type": "pr.body",
+            "payload": {"repo": "example/project", "number": 42, "body": body},
+            "execution_status": "done",
+            "result": {"repo": "example/project", "number": 42},
+        },
+    )
+    assert refresh_draft_body(store, worker, task, editor) == [
+        "replaced draft description on example/project#42"
+    ]
+    published = editor.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert "Wait for the GitHub" not in published.split("DE:\n", 1)[1]
+    assert store.row("task", OID)["change_summary_de"] is None
+    checked = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "pr.body"
+        and isinstance(row.get("result"), dict)
+        and row["result"].get("description_checked") is True
+    ]
+    assert len(checked) == 1
+    assert checked[0]["id"] != stale_id
+    assert checked[0]["payload"]["body"].split("DE:\n", 1)[1].split("\n", 1)[0] == de_line
 
 
 def test_review_context_uses_the_order_text(

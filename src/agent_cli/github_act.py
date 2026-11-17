@@ -732,8 +732,24 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any], *, expected_
         return f"pr.open {rid} error"
 
 
+PR_BODY_NOT_UPDATED = "pr.body did not update the draft"
+
+
+def _published_body_matches(returned: str, wanted: str) -> bool:
+    """The pulls response carries the description the coordinator will read back."""
+    from .coordinator_git import _published_description_matches
+
+    return _published_description_matches(returned, wanted)
+
+
 def _run_pr_body(store: Store, runner: Runner, row: dict[str, Any]) -> str:
-    """Replace a draft pull request body. The model does not call gh."""
+    """Replace a draft pull request body. The model does not call gh.
+
+    The update is the same ``gh api -f body=`` field a review post already
+    uses. ``gh pr edit --body`` can exit 0 while the published description
+    stays unchanged. Done requires the pulls response body to be that
+    description. The body text is not copied into the error.
+    """
     rid = str(row["id"])
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -750,11 +766,33 @@ def _run_pr_body(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         _mark(store, row, status="error", error="pr.body requires repo, number, body")
         return f"pr.body {rid} error"
     try:
-        _gh_text(
-            ["gh", "pr", "edit", str(number), "--repo", repo, "--body", body],
+        updated = _gh_json(
+            [
+                "gh",
+                "api",
+                "-X",
+                "PATCH",
+                f"repos/{repo}/pulls/{number}",
+                "-f",
+                f"body={body}",
+            ],
             runner,
         )
-        _mark(store, row, status="done", result={"repo": repo, "number": number})
+        if not isinstance(updated, dict):
+            raise _GhError(PR_BODY_NOT_UPDATED)
+        returned = updated.get("body")
+        if not isinstance(returned, str) or not _published_body_matches(returned, body):
+            raise _GhError(PR_BODY_NOT_UPDATED)
+        _mark(
+            store,
+            row,
+            status="done",
+            result={
+                "repo": repo,
+                "number": number,
+                "description_checked": True,
+            },
+        )
         return f"pr.body {rid} done number={number}"
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))

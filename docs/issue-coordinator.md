@@ -525,11 +525,16 @@ A record of a check lane is closed the same way, but closing it does not retry t
    pushes it, and opens the draft through `pr.open`. Crash after commit/push before draft reconciles
    without starting another implementer. `task.ref` holds the **PR** number
    only (never the issue number). An order draft's `DE:` line is the stored
-   full German change-summary sentence. Pushing an existing draft replaces
-   the published description with that sentence, including a description
-   whose `DE:` line is still the English title, and then reads the published
-   description to require that `DE:` line. A missing sentence, or a sentence
-   that is only the English title, does not leave that title in the published
+   full German change-summary sentence. When that sentence is not stored yet,
+   the open implementer checkpoint supplies it. Pushing an existing draft
+   replaces the published description with that sentence, including a
+   description whose `DE:` line is still the English title or cannot be read.
+   The replacement is `gh api` `PATCH` of the pull request. A previous
+   `gh pr edit` that was marked done without this check does not count as
+   the update. The published description is read afterwards and its `DE:`
+   line has to be that sentence. A response that still shows the English
+   title is not accepted. A missing sentence, or a sentence that is only
+   the English title, does not leave that title in the published
    description: the read `DE:` line names the order and does not repeat it.
 6. **Tests** run only via script `check_argv` on the exact clean signed head
    (cwd = worktree). Failure routes bounded output to the implementer. Stale

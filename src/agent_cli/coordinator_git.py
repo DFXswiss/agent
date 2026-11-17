@@ -657,9 +657,20 @@ def draft_pr_body(
 
 
 def _description_de_line(body: str) -> str | None:
-    if "DE:\n" not in body:
-        return None
-    return body.split("DE:\n", 1)[1].split("\n", 1)[0]
+    """First DE line of a published description.
+
+    Accepts a ``DE:`` block and a ``DE:`` line whose text is on the same
+    line. Carriage returns do not hide that line.
+    """
+    normalized = body.replace("\r\n", "\n").replace("\r", "\n")
+    if "DE:\n" in normalized:
+        return normalized.split("DE:\n", 1)[1].split("\n", 1)[0]
+    for line in normalized.split("\n"):
+        if line.startswith("DE:"):
+            text = line[3:].strip()
+            if text:
+                return text
+    return None
 
 
 def _order_de_has_sentence(source: dict[str, Any], body: str) -> bool:
@@ -670,9 +681,32 @@ def _order_de_has_sentence(source: dict[str, Any], body: str) -> bool:
     return line is not None and line != f"Entwurf für Auftrag {short}."
 
 
+def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
+    """German sentence from an implementer checkpoint that is not stored yet.
+
+    The draft refresh runs before that sentence is saved on the task. The
+    checkpoint is the full sentence for this round. A stored summary, once
+    present, stays the one the description uses.
+    """
+    outcome = coord(task).get("lane_outcome")
+    if not isinstance(outcome, dict) or outcome.get("applied") is True:
+        return None
+    if outcome.get("role") != "implementer":
+        return None
+    if outcome.get("result") not in {"done", "no-change"}:
+        return None
+    value = outcome.get("summary_de")
+    if not isinstance(value, str) or not value.strip() or "\n" in value:
+        return None
+    return value.strip()
+
+
 def _stored_de_summary(task: dict[str, Any], *, has_lists: bool) -> str | None:
     raw = task.get("change_summary_de")
     if not isinstance(raw, str) or not raw.strip() or "\n" in raw:
+        pending = _pending_implementer_summary(task)
+        if pending is not None:
+            return pending
         if has_lists and raw is not None:
             from .coordinator_a38 import _summary
 
@@ -722,21 +756,40 @@ def _published_description_matches(live: str | None, wanted: str) -> bool:
     return True
 
 
-def _done_pr_body_posts(
+def _description_was_checked(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    result = row.get("result")
+    return isinstance(result, dict) and result.get("description_checked") is True
+
+
+def _pr_body_attempts(
     store: Store, *, body: str, number: int, target: str
 ) -> int:
+    """Checked updates and failed checks for this description.
+
+    A done ``pr.body`` row from ``gh pr edit`` has no description check. It
+    does not block the pulls update that reads the published body back.
+    """
     count = 0
     for row in store.rows("activity"):
-        if row.get("type") != "pr.body" or row.get("execution_status") != "done":
+        if row.get("type") != "pr.body":
+            continue
+        status = row.get("execution_status")
+        if status not in {"done", "error"}:
             continue
         payload = row.get("payload")
-        if (
+        if not (
             isinstance(payload, dict)
+            and payload.get("description_check") is True
             and payload.get("body") == body
             and payload.get("number") == number
             and payload.get("repo") == target
         ):
-            count += 1
+            continue
+        if status == "done" and not _description_was_checked(row):
+            continue
+        count += 1
     return count
 
 
@@ -749,8 +802,10 @@ def refresh_draft_body(
     """Replace a draft description from the stored German sentence. The script calls GitHub.
 
     An order uses the full stored German sentence, not the English title.
-    That sentence replaces an already published description even when the
-    reused and added list is absent. A missing sentence, or a sentence that
+    A sentence that is not stored yet is taken from the implementer
+    checkpoint. That sentence replaces an already published description
+    even when the reused and added list is absent, including a description
+    whose DE line cannot be read. A missing sentence, or a sentence that
     is only the English title, still replaces a published description whose
     DE line is that title. The published description is read back; its DE
     line has to be the line just written.
@@ -791,31 +846,45 @@ def refresh_draft_body(
     if not has_lists and not _order_de_has_sentence(source, body):
         live_de = _description_de_line(live) if isinstance(live, str) else None
         wanted_de = _description_de_line(body)
-        if live_de is None or live_de == wanted_de:
+        if live_de == wanted_de:
             return []
     if _published_description_matches(live, body):
         return [posted] if has_lists else []
-    # A done pr.body row with this body is not run again. A live description
-    # that still differs needs a new id, and two finished posts that did not
-    # stick stop further edits.
-    done_posts = _done_pr_body_posts(store, body=body, number=number, target=target)
-    if done_posts >= 2:
+    # A checked pr.body row with this body is not run again. An older edit
+    # that was marked done without reading the published description does
+    # not count. A live description that still differs needs a new id, and
+    # two checked posts that did not stick stop further edits.
+    attempts = _pr_body_attempts(store, body=body, number=number, target=target)
+    if attempts >= 2:
         raise _published_de_error()
     key = f"coordinator-pr-body:{task['id']}:{body}"
-    if done_posts:
-        key = f"{key}:{done_posts}"
+    if attempts:
+        key = f"{key}:{attempts}"
     activity_id = str(uuid5(NAMESPACE_URL, key))
+    existing = store.row("activity", activity_id)
+    if (
+        isinstance(existing, dict)
+        and existing.get("execution_status") == "done"
+        and not _description_was_checked(existing)
+    ):
+        key = f"{key}:checked"
+        activity_id = str(uuid5(NAMESPACE_URL, key))
     queue_activity(
         store,
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="pr.body",
-        payload={"repo": target, "number": number, "body": body},
+        payload={
+            "repo": target,
+            "number": number,
+            "body": body,
+            "description_check": True,
+        },
     )
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
-        raise CoordinatorError("pr.body did not update the draft")
+        raise _published_de_error()
     published = _published_pr_body(store, worker, runner, target, number)
     if not _published_description_matches(published, body):
         raise _published_de_error()
@@ -875,10 +944,9 @@ def ensure_draft(
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)
     stored_de = task.get("change_summary_de")
-    body = draft_pr_body(
-        source,
-        summary_de=stored_de if isinstance(stored_de, str) else None,
-    )
+    if not isinstance(stored_de, str):
+        stored_de = _pending_implementer_summary(task)
+    body = draft_pr_body(source, summary_de=stored_de)
     head = pr_head_ref(branch, target, publication)
     queue_activity(
         store,
