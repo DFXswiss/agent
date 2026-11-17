@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import unicodedata
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
@@ -1252,3 +1253,138 @@ def test_account_file_read_error_is_not_readable(
         load_login_account(SPEC, str(config_dir))
     assert str(info.value) == f"{WINDOWS_CREDENTIAL_LABEL} account file is not readable"
     _assert_unchained(info.value)
+
+
+def test_scan_reports_a_fetched_answer_that_is_not_an_object(tmp_path: Path) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        tokens: list[str] = []
+
+        def fetch(token: str) -> Any:
+            tokens.append(token)
+            return ["not", "an", "object"]
+
+        with pytest.raises(AccountUsageError) as info:
+            scan_window_usage(store, fetch=fetch, read_keychain=no_keychain)
+        assert info.value.errors == (f"seat: {WINDOWS_LABEL} response is not an object",)
+        assert len(info.value.activity_ids) == 0
+        assert tokens == ["token-seat"]
+        assert _window_snapshots(store) == []
+        assert _checked(store, "seat") is None
+    finally:
+        store.close()
+
+
+def test_scan_with_a_fetch_refuses_an_adapter_with_two_requests(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        _session(store, "s-windows", WINDOWS_DRIVER_ID)
+        seat = tmp_path / "seat"
+        write_login(seat, creds=credentials(token="token-seat"))
+        document = driver_document()
+        driver = windows_driver()
+        driver["usage"]["requests"].append(
+            {"name": "extra", "url": "https://usage.example/oauth/extra"}
+        )
+        document["drivers"][WINDOWS_DRIVER_ID] = driver
+        write_drivers(store.home, document)
+        (store.home / "ai-accounts.json").write_text(
+            json.dumps(
+                {
+                    "models": {"first": "driver-a", "second": "driver-b"},
+                    "accounts": {
+                        "seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(seat)}
+                    },
+                    "usage_accounts": ["seat"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        tokens: list[str] = []
+
+        def fetch(token: str) -> dict[str, Any]:
+            tokens.append(token)
+            return usage_body()
+
+        with pytest.raises(AccountUsageError) as info:
+            scan_window_usage(store, fetch=fetch, read_keychain=no_keychain)
+        assert info.value.errors == (
+            f"seat: {WINDOWS_LABEL} fetch requires exactly one request",
+        )
+        assert len(info.value.activity_ids) == 0
+        assert tokens == ["token-seat"]
+        assert _window_snapshots(store) == []
+        assert _checked(store, "seat") is None
+    finally:
+        store.close()
+
+
+def test_scan_without_a_fetch_reads_the_usage_over_https(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json=usage_body(weekly=33.0))
+
+        class MockedClient(httpx.Client):
+            def __init__(self, **kwargs: Any) -> None:
+                super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+
+        # The usage service is mocked; the scanner builds its own client.
+        monkeypatch.setattr(httpx, "Client", MockedClient)
+        created = scan_window_usage(
+            store, read_keychain=no_keychain, now=lambda: "2026-11-16T12:00:00Z"
+        )
+        assert len(created) == 1
+        assert len(requests) == 1
+        assert str(requests[0].url) == WINDOWS_URL
+        assert requests[0].headers["Authorization"] == "Bearer token-seat"
+        row = store.row("activity", created[0])
+        assert row is not None
+        assert row["payload"]["account_email"] == "seat@example.com"
+        assert row["payload"]["windows"]["weekly"]["used_percent"] == 33.0
+        assert "token-seat" not in json.dumps(row["payload"])
+        assert _checked(store, "seat") == "2026-11-16T12:00:00Z"
+    finally:
+        store.close()
+
+
+def test_scan_refuses_a_windows_adapter_without_poll_seconds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The driver loader and ``_windows_spec`` both require ``poll_seconds``
+    # today. A windows spec that still arrives without one stops the scan
+    # before any account is paced or read.
+    store = _paced_store(tmp_path, ["seat"])
+    try:
+        real_windows_spec = usage._windows_spec
+
+        def without_poll_seconds(spec: Any) -> Any:
+            return replace(real_windows_spec(spec), poll_seconds=None)
+
+        monkeypatch.setattr(usage, "_windows_spec", without_poll_seconds)
+        reads = _Reads()
+        pace: dict[str, float] = {}
+        with pytest.raises(StoreError) as info:
+            scan_window_usage(
+                store,
+                fetch=reads.fetch,
+                read_keychain=reads.read_keychain,
+                pace=pace,
+                clock=lambda: 100.0,
+            )
+        assert type(info.value) is StoreError
+        assert str(info.value) == (
+            f"{WINDOWS_DRIVER_ID} windows usage has no poll_seconds"
+        )
+        assert pace == {}
+        assert reads.keychain == []
+        assert reads.fetches == []
+        assert _window_snapshots(store) == []
+        assert _checked(store, "seat") is None
+    finally:
+        store.close()

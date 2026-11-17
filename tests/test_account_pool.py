@@ -553,3 +553,36 @@ def test_agent_run_refuses_a_pool_role_without_an_agent_row(
     assert str(refused.value) == f"agent: {POOL_REFUSAL}"
     assert _agents(tmp_path, tid) == agents_before
     assert not any(agent.get("role") == "implementer" for agent in _agents(tmp_path, tid))
+
+
+@pytest.mark.no_pg
+def test_pool_selection_refuses_a_time_without_a_zone(tmp_path: Path) -> None:
+    ai = configure(tmp_path, tmp_path / "logins")
+    naive = datetime(2026, 11, 17, 12, 0)
+    with pytest.raises(AccountError) as excinfo:
+        # The refusal comes before any store read.
+        select_lane_account(UntouchableStore(), ai, ai.roles[POOL_ROLE], now=naive)  # type: ignore[arg-type]
+    assert str(excinfo.value) == "pool selection time must carry a time zone"
+
+
+def test_working_rows_without_a_recorded_account_are_not_counted(tmp_path: Path) -> None:
+    store, ai = pool_setup(tmp_path, {"seat-1": 40, "seat-2": 10, "seat-3": 25})
+    # A working row of this device that names no account (written before pools
+    # existed) counts for no member.
+    agent_id = str(uuid.uuid4())
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "task_id": "other-task",
+            "role": "implementer",
+            "vendor": POOL_DRIVER,
+            "status": "working",
+        },
+    )
+    choice = choose(store, ai)
+    assert choice.account.name == "seat-2"
+    assert choice.running_lanes == 0
+    assert choice.load == 10

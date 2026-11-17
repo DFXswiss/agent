@@ -2101,7 +2101,15 @@ def launch_lane(
 
     aid = str(uuid.uuid4())
     lane_output: str | None = None
-    leave_running = False
+
+    def _release_lane() -> None:
+        forget_lane_process(worker, str(task["id"]), aid)
+        if lane_output is not None and role != "reviewer":
+            try:
+                os.unlink(lane_output)
+            except OSError:
+                pass
+
     try:
         replay_source: str | None = None
         try:
@@ -2333,17 +2341,13 @@ def launch_lane(
     except SystemExit as exc:
         # StoreError and lane failures are SystemExit too, and those lanes
         # were already stopped. Only a coordinator stop leaves the lane running.
-        if not isinstance(exc, StoreError):
-            leave_running = True
+        if isinstance(exc, StoreError):
+            _release_lane()
         raise
-    finally:
-        if not leave_running:
-            forget_lane_process(worker, str(task["id"]), aid)
-            if lane_output is not None and role != "reviewer":
-                try:
-                    os.unlink(lane_output)
-                except OSError:
-                    pass
+    except BaseException:
+        _release_lane()
+        raise
+    _release_lane()
 
     # The lane verdict is the script-owned result status. For a normal run it
     # already equals the parsed output status; an unreadable output file keeps
