@@ -42,14 +42,22 @@ TEMPLATE = "Review {{REPO}} {{NUMBER}} {{BASE}} {{HEAD}} {{JOB_ID}}.\n"
 
 
 class _FakeAccount:
-    def __init__(self, login: str = "example-bot", name: str = "test") -> None:
+    def __init__(
+        self,
+        login: str = "example-bot",
+        name: str = "test",
+        runner_error: BaseException | None = None,
+    ) -> None:
         self.name = name
         self.login = login
+        self.runner_error = runner_error
         # The executor reads these when it redacts a failed row's error.
         self.gh_config_dir = "/test/gh"
         self.git_identity: dict[str, str] | None = None
 
     def runner(self, runner: Any) -> Any:
+        if self.runner_error is not None:
+            raise self.runner_error
         return runner
 
 
@@ -95,9 +103,15 @@ def _write_worker_files(
 
 
 def _install_account(
-    monkeypatch: pytest.MonkeyPatch, *, login: str = "example-bot", present: bool = True
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    login: str = "example-bot",
+    present: bool = True,
+    runner_error: BaseException | None = None,
 ) -> None:
-    accounts = {"s": _FakeAccount(login)} if present else {}
+    accounts = (
+        {"s": _FakeAccount(login, runner_error=runner_error)} if present else {}
+    )
     monkeypatch.setattr(
         runner_worker.github_accounts,
         "load_accounts",
@@ -502,7 +516,7 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _write_worker_files(tmp_path)
-    _insert_job(tmp_path, paths, monkeypatch)
+    job = _insert_job(tmp_path, paths, monkeypatch)
     calls: list[list[str]] = []
     launches: list[dict[str, Any]] = []
     posted: list[str] = []
@@ -575,7 +589,10 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
     # The activity binds the review to the checked-out head and carries the
     # protocol-free body under the required header.
     activity_id = str(
-        uuid.uuid5(uuid.NAMESPACE_URL, f"runner-review:job-1:0:{HEAD}")
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"runner-review:job-1:{job['created_at']}:{job['attempts']}:{HEAD}",
+        )
     )
     assert posted == [activity_id]
     store = Store(tmp_path)
@@ -645,19 +662,38 @@ def test_worker_accepts_the_job_type_case_insensitively(
 
 def test_worker_reuses_the_activity_id_for_one_attempt_and_not_for_another() -> None:
     first = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=HEAD
+        job_id="job-1",
+        created_at="2026-01-01T00:00:00Z",
+        attempts=0,
+        head=HEAD,
     )
     second = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=HEAD
+        job_id="job-1",
+        created_at="2026-01-01T00:00:00Z",
+        attempts=0,
+        head=HEAD,
     )
     retry = runner_worker._review_activity_id(
-        job_id="job-1", attempts=1, head=HEAD
+        job_id="job-1",
+        created_at="2026-01-01T00:00:00Z",
+        attempts=1,
+        head=HEAD,
+    )
+    other_generation = runner_worker._review_activity_id(
+        job_id="job-1",
+        created_at="2026-01-02T00:00:00Z",
+        attempts=0,
+        head=HEAD,
     )
     other_head = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=OTHER_HEAD
+        job_id="job-1",
+        created_at="2026-01-01T00:00:00Z",
+        attempts=0,
+        head=OTHER_HEAD,
     )
     assert first == second
     assert first != retry
+    assert first != other_generation
     assert first != other_head
 
 
@@ -877,10 +913,14 @@ def test_worker_fails_closed_for_a_job_that_is_not_queued_or_running(
     [
         ({"attempts": "0"}, runner_worker.FAILED_ATTEMPTS),
         ({"attempts": True}, runner_worker.FAILED_ATTEMPTS),
+        ({"created_at": ""}, runner_worker.FAILED_CREATED_AT),
+        ({"created_at": None}, runner_worker.FAILED_CREATED_AT),
         ({"session_id": "bad id"}, runner_worker.FAILED_SESSION),
         ({"worktree": None}, runner_worker.FAILED_WORKTREE),
         ({"worktree": "/somewhere/else"}, runner_worker.FAILED_WORKTREE),
         ({"repo": ""}, runner_worker.FAILED_REPO),
+        ({"ref": None}, runner_worker.FAILED_REF),
+        ({"ref": ""}, runner_worker.FAILED_REF),
         ({"ref": "seven"}, runner_worker.FAILED_REF),
         ({"job_type": ""}, runner_worker.FAILED_JOB_TYPE_MISSING),
     ],
@@ -900,6 +940,30 @@ def test_worker_requires_every_mandatory_row_field(
     assert code == 2
     assert launches == []
     assert message in _transcript(paths)
+
+
+def test_worker_rejects_a_repository_that_is_not_owner_slash_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A non-empty value still has to name a repository. The slug is what the
+    # worktree and cleanup use, so the worker refuses it before any git or gh
+    # call rather than deriving a name that names something else.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch, repo="not-a-slug")
+    calls: list[list[str]] = []
+    launches: list[dict[str, Any]] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        runner=_fake_runner(calls),
+        launch=_fake_launch(launches),
+    )
+
+    assert code == 2
+    assert launches == []
+    assert calls == []
+    assert runner_worker.FAILED_REPO in _transcript(paths)
 
 
 def test_worker_fails_closed_for_a_job_type_it_does_not_implement(
@@ -932,6 +996,24 @@ def test_worker_fails_closed_without_a_prompt_template(
     assert "is not usable" in _transcript(paths)
 
 
+def test_worker_fails_closed_when_the_prompt_template_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A template that is missing or not decodable is not a template the lane
+    # may be started from. It fails closed instead of falling back to text.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    (paths.prompts / "pr-review.md").unlink()
+    launches: list[dict[str, Any]] = []
+
+    code, _out = _run(paths, tmp_path, launch=_fake_launch(launches))
+
+    assert code == 2
+    assert launches == []
+    assert "prompt template" in _transcript(paths)
+    assert "is not usable" in _transcript(paths)
+
+
 def test_worker_fails_closed_without_an_expected_login(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -952,6 +1034,26 @@ def test_worker_fails_closed_without_a_configured_github_account(
     paths = _write_worker_files(tmp_path)
     _insert_job(tmp_path, paths, monkeypatch)
     _install_account(monkeypatch, present=False)
+    launches: list[dict[str, Any]] = []
+
+    code, _out = _run(paths, tmp_path, launch=_fake_launch(launches))
+
+    assert code == 2
+    assert launches == []
+    assert "no GitHub account for session s" in _transcript(paths)
+
+
+def test_worker_fails_closed_when_the_account_cannot_build_a_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `Account.runner` reads the account's isolated git and gh setup. A store
+    # failure there means the worker cannot act as the validated login, so it
+    # stops before the lane instead of falling back to the ambient one.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    _install_account(
+        monkeypatch, runner_error=runner_worker.StoreError("no account config")
+    )
     launches: list[dict[str, Any]] = []
 
     code, _out = _run(paths, tmp_path, launch=_fake_launch(launches))
@@ -994,6 +1096,31 @@ def test_worker_compares_the_expected_login_case_insensitively(
 
     assert code == 0
     assert len(launches) == 1
+
+
+def test_worker_fails_closed_when_the_prompt_cannot_be_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The prompt is replaced into place atomically. If that final step fails,
+    # no lane is started from a half-written or missing file.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+    real_replace = os.replace
+
+    def fail_prompt_replace(src: Any, dst: Any) -> None:
+        if str(dst).endswith(".prompt"):
+            raise OSError("prompt directory is not writable")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(runner_worker.os, "replace", fail_prompt_replace)
+
+    code, _out = _run(paths, tmp_path, launch=_fake_launch(launches))
+
+    assert code == 2
+    assert launches == []
+    assert not (paths.logs / "job-1.prompt").exists()
+    assert runner_worker.FAILED_PROMPT_WRITE in _transcript(paths)
 
 
 def test_worker_fails_closed_without_an_ai_selection(
@@ -1439,6 +1566,63 @@ def test_worker_fails_when_the_review_was_not_posted(
     assert runner_worker.FAILED_REVIEW_POST in _transcript(paths)
 
 
+def test_worker_fails_closed_when_the_review_activity_cannot_be_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A store failure while inserting or re-opening the activity is not a
+    # failed post yet: it is reported as a queueing failure, and no executor
+    # is asked to run an activity that does not exist.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+    posted: list[str] = []
+
+    def fail_queue(*_args: Any, **_kwargs: Any) -> bool:
+        raise runner_worker.StoreError("store unavailable")
+
+    monkeypatch.setattr(
+        runner_worker.runner_status, "queue_activity", fail_queue
+    )
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(launches),
+        execute=_done_executor(posted),
+    )
+
+    assert code == 2
+    assert len(launches) == 1
+    assert posted == []
+    assert runner_worker.FAILED_ACTIVITY in _transcript(paths)
+    store = Store(tmp_path)
+    try:
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
+def test_worker_posts_without_an_executor_result_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Not every executor reports a text line. The post is verified from the
+    # activity row, so a missing line adds nothing to the transcript and does
+    # not turn a done post into a failure.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+
+    def execute(store: Store, _runner: Any, activity_id: str) -> None:
+        _mark_done(store, activity_id)
+        return None
+
+    code, _out = _run(paths, tmp_path, execute=execute)
+
+    assert code == 0
+    assert _exit_code(paths) == "0"
+    assert "review posted" in _transcript(paths)
+    assert "review.post job-1" not in _transcript(paths)
+
+
 def test_worker_pins_the_account_validated_before_the_lane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1449,7 +1633,7 @@ def test_worker_pins_the_account_validated_before_the_lane(
     from agent_cli import github_act
 
     paths = _write_worker_files(tmp_path)
-    _insert_job(tmp_path, paths, monkeypatch)
+    job = _insert_job(tmp_path, paths, monkeypatch)
     validated = _FakeAccount(login="example-bot", name="test")
     switched = _FakeAccount(login="someone-else", name="other")
 
@@ -1504,7 +1688,7 @@ def test_worker_pins_the_account_validated_before_the_lane(
     # The executor refused before any gh call, so nothing was posted.
     assert not any("-X" in argv and "POST" in argv for argv in calls)
     activity_id = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=HEAD
+        job_id="job-1", created_at=job["created_at"], attempts=0, head=HEAD
     )
     store = Store(tmp_path)
     try:
@@ -1527,9 +1711,9 @@ def test_worker_does_not_execute_an_activity_that_is_already_done(
     # review that was already delivered stays delivered, and the executor is
     # never asked to run it again.
     paths = _write_worker_files(tmp_path)
-    _insert_job(tmp_path, paths, monkeypatch)
+    job = _insert_job(tmp_path, paths, monkeypatch)
     activity_id = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=HEAD
+        job_id="job-1", created_at=job["created_at"], attempts=0, head=HEAD
     )
     store = Store(tmp_path)
     try:
@@ -1579,9 +1763,9 @@ def test_worker_resets_a_failed_activity_to_pending_before_executing_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _write_worker_files(tmp_path)
-    _insert_job(tmp_path, paths, monkeypatch)
+    job = _insert_job(tmp_path, paths, monkeypatch)
     activity_id = runner_worker._review_activity_id(
-        job_id="job-1", attempts=0, head=HEAD
+        job_id="job-1", created_at=job["created_at"], attempts=0, head=HEAD
     )
     store = Store(tmp_path)
     try:

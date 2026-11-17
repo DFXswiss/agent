@@ -1165,6 +1165,41 @@ def test_a_row_in_an_unexpected_state_is_skipped(tmp_path: Path) -> None:
     assert _mark_read_calls(calls) == []
 
 
+def test_a_row_stored_under_the_key_with_another_id_is_skipped(
+    tmp_path: Path,
+) -> None:
+    # The cleanup that follows a re-queue uses the stored id as a path. A row
+    # whose id is not the key it was looked up by is refused before any
+    # decision, and the thread stays unread for a pass that sees a consistent
+    # row.
+    store = Store(tmp_path)
+    seen: list[Any] = []
+    calls: list[list[str]] = []
+    try:
+        row = _insert(store, state="failed")
+        mismatched = {k: v for k, v in row.items() if k != "id"}
+        mismatched["id"] = "another-job"
+        store.write("job", "update", row["id"], mismatched)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                calls=calls,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert seen == []
+        stored = store.row("job", row["id"])
+        assert stored is not None
+        assert stored["id"] == "another-job"
+        assert stored["state"] == "failed"
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
 def test_a_failed_row_whose_id_cannot_be_read_is_skipped(
     tmp_path: Path,
 ) -> None:

@@ -242,8 +242,8 @@ writes `state/logs/<id>.exit` last:
    child worktree named by a safe job id. Require the row to be this device's,
    to be `running`, and to carry a non-empty repository, numeric
    `ref`, `pr-review` job type (case-insensitive), a session id matching
-   `[A-Za-z0-9_-]+`, an integer `attempts`, and a stored `worktree` equal to
-   `state/work/<id>`.
+   `[A-Za-z0-9_-]+`, an integer `attempts`, a non-empty `created_at`, and a
+   stored `worktree` equal to `state/work/<id>`.
 2. Read `prompts/pr-review.md`. It is the operator's template; the worker
    substitutes the literal placeholders `{{REPO}}`, `{{NUMBER}}`, `{{BASE}}`,
    `{{HEAD}}` and `{{JOB_ID}}` and adds nothing else before the fixed data
@@ -279,8 +279,9 @@ writes `state/logs/<id>.exit` last:
    over 60,000 characters.
 8. Insert a deterministic `review.post` (COMMENT) bound to the checked-out
    head and to the GitHub account validated before the lane. Its id includes
-   the job, the attempt count and the head, so a retry gets its own row while
-   re-running one attempt reuses its own. A row already `done` is not executed
+   the job generation (`created_at`), the attempt count and the head, so a
+   re-queued generation and a retry each get their own row while re-running one
+   attempt of one generation reuses its own. A row already `done` is not executed
    again; an `error` row is reset to `pending`. Because the row carries that
    account binding, a session binding that changes during the lane cannot post
    the review through another login: the executor refuses the switch.

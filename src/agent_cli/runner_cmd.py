@@ -905,9 +905,10 @@ def _requeue_job(
     """Move one existing row to the queued `payload`, or say why not.
 
     Returns a problem text instead of exiting so `retry` and `ingest` can share
-    the exact sequence. A pending status activity of the attempt being replaced
-    is retired first; if that cannot be done, neither the row nor its evidence
-    is touched. Only after a clean worktree removal are the previous attempt's
+    the exact sequence. The row's id must be a safe path component and the
+    payload must name the same id; a mismatch is refused before anything is
+    touched. A pending status activity of the attempt being replaced is retired
+    first; if that cannot be done, neither the row nor its evidence is touched. Only after a clean worktree removal are the previous attempt's
     artefacts removed: a stale exit code would otherwise be read as the next
     attempt's result. The single write is last, so a refused re-queue leaves
     the row unchanged.
@@ -915,8 +916,13 @@ def _requeue_job(
     from . import runner_status
 
     job_id = row.get("id")
-    if not isinstance(job_id, str) or not job_id:
+    if not safe_job_id(job_id):
         return "job has no usable id"
+    if payload.get("id") != job_id:
+        # The payload names the row that is written after the cleanup. A
+        # mismatch would remove files and a worktree for one id and then store
+        # another, so nothing may be touched.
+        return f"job {job_id}: payload id does not match the row"
     if not runner_status.retire_status_activities(store, row):
         return (
             f"job {job_id}: a status comment of the previous attempt "

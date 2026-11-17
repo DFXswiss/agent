@@ -2053,6 +2053,152 @@ def test_requeue_job_refuses_a_stored_row_without_a_usable_id(
         store.close()
 
 
+def test_requeue_job_refuses_an_unsafe_id_before_any_side_effect(
+    tmp_path: Path,
+) -> None:
+    # Ingest reads the plain store, so a malformed row could carry an id like
+    # `../escape`, which the cleanup would turn into a path outside the logs
+    # and work directories. Nothing may be retired, removed or written.
+    home = tmp_path / "home"
+    paths = runner_paths(home / "runner")
+    paths.logs.mkdir(parents=True)
+    row = _job_row()
+    row.update(
+        {
+            "id": "../escape",
+            "state": "failed",
+            "finished": "2020-01-01T00:00:00Z",
+            "attempts": 0,
+        }
+    )
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], 0
+    )
+    store = Store(home)
+    calls: list[list[str]] = []
+    try:
+        store.write("job", "insert", "stored-key", row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+        # Files the cleanup would reach through the unsafe id.
+        sentinels = [
+            paths.state / "escape.exit",
+            paths.state / "escape.transcript",
+            paths.state / "escape.prompt",
+        ]
+        for sentinel in sentinels:
+            sentinel.write_text("keep", encoding="utf-8")
+        worktree = paths.state / "escape"
+        worktree.mkdir()
+        (worktree / "keep").write_text("keep", encoding="utf-8")
+        original = store.row("job", "stored-key")
+        assert original is not None
+
+        problem = runner_cmd._requeue_job(
+            paths,
+            store,
+            original,
+            {"id": "../escape", "state": "queued"},
+            lambda argv: (calls.append(list(argv)), _completed())[1],
+        )
+
+        assert problem == "job has no usable id"
+        assert store.row("job", "stored-key") == original
+        activity = store.row("activity", activity_id)
+        assert activity is not None
+        assert activity["execution_status"] == "pending"
+        assert calls == []
+        assert all(
+            sentinel.read_text(encoding="utf-8") == "keep"
+            for sentinel in sentinels
+        )
+        assert (worktree / "keep").read_text(encoding="utf-8") == "keep"
+    finally:
+        store.close()
+
+
+def test_requeue_job_refuses_a_payload_for_another_id_before_any_side_effect(
+    tmp_path: Path,
+) -> None:
+    # The payload is the row written after the cleanup. Storing a different id
+    # than the one whose files were removed would silently move the job, so the
+    # mismatch is refused before anything is touched.
+    home = tmp_path / "home"
+    paths = runner_paths(home / "runner")
+    paths.logs.mkdir(parents=True)
+    paths.work.mkdir(parents=True)
+    row = _job_row()
+    row.update(
+        {
+            "state": "failed",
+            "finished": "2020-01-01T00:00:00Z",
+            "attempts": 0,
+        }
+    )
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], 0
+    )
+    store = Store(home)
+    calls: list[list[str]] = []
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+        sentinels = [
+            paths.logs / f"{row['id']}{suffix}"
+            for suffix in (".exit", ".transcript", ".prompt")
+        ]
+        for sentinel in sentinels:
+            sentinel.write_text("keep", encoding="utf-8")
+        worktree = paths.work / row["id"]
+        worktree.mkdir()
+        (worktree / "keep").write_text("keep", encoding="utf-8")
+        original = store.row("job", row["id"])
+        assert original is not None
+
+        problem = runner_cmd._requeue_job(
+            paths,
+            store,
+            original,
+            {"id": "another-job", "state": "queued"},
+            lambda argv: (calls.append(list(argv)), _completed())[1],
+        )
+
+        assert problem == f"job {row['id']}: payload id does not match the row"
+        assert store.row("job", row["id"]) == original
+        activity = store.row("activity", activity_id)
+        assert activity is not None
+        assert activity["execution_status"] == "pending"
+        assert calls == []
+        assert all(
+            sentinel.read_text(encoding="utf-8") == "keep"
+            for sentinel in sentinels
+        )
+        assert (worktree / "keep").read_text(encoding="utf-8") == "keep"
+    finally:
+        store.close()
+
+
 def test_retry_requeues_and_removes_the_previous_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
