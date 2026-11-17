@@ -394,7 +394,7 @@ The hub:
   outside the `id` rule; a public URL with a path
 - the start log line with the hub key id and public key, and no seed in it
 - a failure of the nonce insert other than the unique constraint gives an unsigned `500` with
-  `{"error": "internal"}`; a `500` after check 8 is signed
+  `{"error":"internal"}`; a `500` after check 8 is signed
 - a corrupt `gzip` body and two content codings (refused at check 1)
 - exactly one log line per request of a `service` key that passed check 8, and no secret in any
   log line or body
