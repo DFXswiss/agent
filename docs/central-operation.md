@@ -183,7 +183,8 @@ works under the agent's own login any more, so a ping sent to that login reaches
 it stays readable on the website. Ping the device's owner instead. `agent assign --agent`
 still names the code-host account the issue is assigned to, until tasks and orders replace
 it. From build step 1 (section 16) the hub accepts `agent assign` only when it is signed with
-the session key of your passkey sign-in. The old token of a paired device ends in that step,
+the session key of the passkey sign-in of a staff member who is an owner of the named agent
+login in the team file. The old token of a paired device ends in that step,
 and no key of a device, also not of a device run by an autonomous agent, can issue an
 assignment. The technical specification of that step fixes how `agent assign` gets that
 signature.
@@ -375,7 +376,8 @@ page; the page links to it.
   for that device: the device's own records, up to the last sync the hub accepted; the records of other devices that the hub
   delivered to it since its last restore, that is session mail to its sessions, the pings its
   login sent or received, and what matched its subscriptions (a restore brings back only part
-  of them, so it starts this set again from what the restore returned); its inventory (section 3); and the hub's own state for
+  of them, so it first empties these records on the device, also when the device was not
+  wiped, and the device then holds exactly what the restore returned); its inventory (section 3); and the hub's own state for
   the device, that is its entry in the device list, the time of its last sync by the hub's
   clock (if that clock is set back, the time shown can be too early), and the commands
   sent to it with whether they were delivered, accepted or refused. To decide what you may see
@@ -482,7 +484,7 @@ Each step is its own pull request and follows the steps of the
 
 | Step | What | Status |
 |---|---|---|
-| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key, and handles as logins; retiring the devices paired before, after each has synced completely, and connecting them again as new devices; `agent assign` accepted only with the session key of the owner's passkey sign-in; the allow list on the device; the device id in team-record.md | not started |
+| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key, and handles as logins; retiring the devices paired before, after each has synced completely, and connecting them again as new devices; `agent assign` accepted only with the session key of the passkey sign-in of an owner of the named agent login in the team file; a restore that first empties the device's records of other devices, so it holds exactly what the restore returned; the allow list on the device; the device id in team-record.md | not started |
 | 2 | Checking the session key's certificate on the device; grants | not started |
 | 3 | Tasks, log entries, repository registry, one-time import | not started |
 | 4 | Orders and questions through the hub | not started |
