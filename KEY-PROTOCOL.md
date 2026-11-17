@@ -41,6 +41,9 @@ work as before. The hub additionally requires two new environment variables at s
 | Ed25519 signature | the 64 raw bytes, plain Ed25519 (not the prehashed or the context variant) |
 | Passkey public key | the 65 bytes of the uncompressed P-256 point (`0x04`, X, Y) |
 
+A public key must be a valid point: an Ed25519 key decodes to a point on the curve that is not
+of small order and is in its canonical encoding; a passkey key is a point on P-256.
+
 A value that does not decode, is not canonical or has the wrong length is refused.
 
 Wherever a time is compared with a clock, the clock is cut to whole seconds first. "Now" in
@@ -96,14 +99,14 @@ keys:
 | `id` | Unique across `keys` and `hub`. Lowercase letters, digits and `-`, 3 to 63 characters, starts and ends with a letter or digit. Never reused, also not after revocation. |
 | `kind` | `ed25519` or `webauthn`. |
 | `principal` | `staff`, `agent` or `service`. |
-| `handle` | The person or program the key belongs to; for an `agent` key the staff member who owns the device. Lowercase. A handle, never a legal name or mail address. |
+| `handle` | The person or program the key belongs to; for an `agent` key the staff member who owns the device. Lowercase letters, digits and `-`, 1 to 39 characters, starts and ends with a letter or digit, no `--`. A handle, never a legal name or mail address. |
 | `team` | A team in `teams.yaml`. |
 | `public_key` | As in section 2. Unique across `keys` and `hub`. |
-| `credential_id` | The credential id of the passkey. |
+| `credential_id` | The credential id of the passkey, 16 to 1023 bytes, unique across `keys`. |
 | `device` | Label of the machine, same form as an `id`. |
 | `program` | Label of the program, same form as an `id`. |
 | `scopes` | Non-empty list from the table below, no scope twice. |
-| `subjects` | Non-empty list of repositories (`owner/name`, lowercase) the key may ask about. |
+| `subjects` | The repositories the key may ask about: a non-empty list, no entry twice. Each entry is `owner/name`; `owner` has the form of a handle, `name` is 1 to 100 characters of lowercase letters, digits, `.`, `_` and `-`. |
 | `expires` | From this time on the key is refused. |
 | `revoked` | From this time on the key is refused. An entry is revoked, never removed, so that what it signed stays attributable. |
 
@@ -129,6 +132,10 @@ Further rules:
   entries share a `device`.
 - An entry is revoked when its `revoked` time is at or before now, and expired when its `expires`
   time is at or before now. A time in the future has no effect yet.
+- The hub reads the keys file once, at start. A change, also a revocation, takes effect with the
+  next deployment of the file.
+- A value that YAML would read as something other than text, such as `on`, `no` or a time, is
+  written in quotes.
 
 ### Scopes
 
@@ -149,8 +156,9 @@ Further rules:
 ### Entries in `hub`
 
 A `hub` entry is one of the hub's own signing keys. It has exactly `id` (rule as above),
-`kind: ed25519`, `public_key` and optionally `retired` (a time). An entry is retired when its
-`retired` time is at or before now; a retired key signs nothing.
+`kind: ed25519`, `public_key` and optionally `retired` (a time). `retired` is evaluated once, at
+start: an entry is retired when its `retired` time is at or before the start. To retire the key
+of a running hub, the hub is restarted with a new seed.
 
 ### Loader
 
@@ -159,7 +167,7 @@ The loader fails closed. The process does not start when:
 - the file is missing or unreadable, or a mapping key is written twice
 - a field is unknown, missing, of the wrong type, refused for that principal or not in the form
   given above
-- an `id` or a `public_key` appears twice
+- an `id`, a `public_key` or a `credential_id` appears twice, or a public key is not a valid point
 - a `team` is not in `teams.yaml`, or a `staff` or `agent` handle breaks the handle rule
 - a scope is unknown or not allowed for the principal, an `agent` entry does not hold exactly
   one device scope, or `keys:invite` is held by more than one handle
@@ -193,7 +201,7 @@ The signed text has eight lines:
 ```text
 agent-request-v1
 <Agent-Key>
-<method, uppercase>
+<method>
 <host>
 <request target>
 <Agent-Time>
@@ -201,9 +209,11 @@ agent-request-v1
 <body hash>
 ```
 
+- **Method** is the method as received. A method that is not uppercase fails check 1.
 - **Host** is the host of the hub's public URL (`AGENT_CORE_PUBLIC_URL`), lowercase, followed by
-  `:` and the port only when the port is not the default of the URL's scheme. The public URL has
-  no path.
+  `:` and the port only when the port is not the default of the URL's scheme. An IPv6 address is
+  written in brackets, an international name in its ASCII form. The public URL has no path, query
+  or fragment; otherwise the process does not start.
 - **Request target** is the path and query as the hub receives them: the raw path with its
   percent-encoding unchanged, followed by `?` and the raw query only when the query is not
   empty. A client never sends `?` with an empty query. Whatever stands in front of the hub
@@ -211,12 +221,18 @@ agent-request-v1
 - **Body hash** is the SHA-256 of the body bytes after removing any `Content-Encoding`; of the
   empty string when there is no body.
 
+Checks 1 to 10 run for every request whose raw path starts with `/api/key/`, before routing, and
+only for those. Every other path is handled exactly as today and never carries the hub's
+signature headers, also when the request carries `Agent-*` headers. A request under `/api/key/`
+that names no endpoint passes checks 1 to 8 and then gets a signed `404` with the body
+`{"error": "not_found"}`.
+
 The hub builds the text from what it received and checks in this order, stopping at the first
 failure:
 
 | # | Check | Status | `error` |
 |---|---|---|---|
-| 1 | All four headers are present, once each, and well formed | 401 | `signature_missing` |
+| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request has no `Content-Encoding` the hub cannot remove. | 401 | `signature_missing` |
 | 2 | `Agent-Key` names an entry in `keys` | 401 | `key_unknown` |
 | 3 | The entry is not revoked | 401 | `key_revoked` |
 | 4 | The entry is not expired | 401 | `key_expired` |
@@ -237,8 +253,8 @@ failure:
 - A refusal has the JSON body `{"error": "<value>"}` and nothing else. It carries no data of the
   hub. The keys file is public, so the values of checks 2 to 5 tell a caller nothing it could
   not read there.
-- Every accepted request of a `service` key writes one log line with the key id, method, request
-  target and status.
+- Every request of a `service` key that passed check 8 writes exactly one log line with the key
+  id, method, path and final status, also when the status is 403, 404 or 500.
 
 ## 6. A signed answer
 
@@ -306,7 +322,10 @@ them. It shows nothing about any other key.
 | `agent key pin-hub --id HUB_ID --public-key VALUE` | Stores the hub key id and public key in `$AGENT_HOME/hub-key.json`. |
 | `agent key whoami --id ID` | Sends a signed `GET /api/key/whoami` to the configured hub, verifies the answer and prints it. |
 
-- `ID` must follow the `id` rule of section 3; any other value is refused and nothing is written.
+- `ID` and `HUB_ID` must follow the `id` rule of section 3, and `VALUE` must be an Ed25519 public
+  key as in section 2; any other value is refused and nothing is written.
+- `agent key pin-hub` refuses to replace a pinned key unless it is called with `--replace`. The
+  file `hub-key.json` has mode `0600`.
 - The directory `$AGENT_HOME/keys` has mode `0700`. A key file has mode `0600` and holds the
   32-byte seed as base64url text. An existing file is never overwritten. The private key is
   never printed.
@@ -328,20 +347,30 @@ The hub:
   nonce under two different keys (both accepted)
 - a request signed for another key id, host, method, path, query and body
 - a percent-encoded path, and a request sent with `?` and an empty query
-- a revoked key, an expired key, and a key whose `revoked` time is in the future (accepted)
+- a revoked key, an expired key, a key whose `revoked` or `expires` time equals now (refused),
+  and a key whose `revoked` time is in the future (accepted)
 - a `webauthn` key used directly
-- the signed answer for 200, for a refusal at check 9, and for an unknown route; no hub
-  signature on a refusal at checks 1 to 8
-- every loader failure of section 3, and a signing seed that matches no `hub` entry or a retired
-  one
-- one log line per accepted request of a `service` key, and no secret in any log line or body
+- the signed answer for 200, for a refusal at check 9, and for an unknown route under
+  `/api/key/`; no hub signature on a refusal at checks 1 to 8; an existing endpoint called with
+  `Agent-*` headers behaves as before
+- every loader failure of section 3, including a small-order Ed25519 public key in `keys` and in
+  `hub`
+- `AGENT_CORE_KEYS` or `AGENT_CORE_SIGNING_KEY` missing or empty; a signing seed that does not
+  decode, is padded or is not 32 bytes; a seed that matches no `hub` entry or a retired one; a
+  public URL with a path
+- exactly one log line per request of a `service` key that passed check 8, and no secret in any
+  log line or body
 
 The client:
 
 - key creation: directory and file modes, no overwrite, no private key on standard output, an
   `ID` outside the rule refused with nothing written
-- an answer with a wrong hub key id, a wrong signature, a changed body, a changed status, a time
-  outside the window, and an answer sent with a `Content-Encoding`
+- an answer without hub headers, with a wrong hub key id, with a wrong signature, a validly
+  signed answer to another request of the same key (other nonce, other `Agent-Time`), a changed
+  body, a changed status, a time outside the window, and an answer sent with a
+  `Content-Encoding`
+- `agent key pin-hub` with an invalid id or key refused with nothing written, and no silent
+  replacement of a pinned key
 - a redirect is not followed
 - no request without a pinned hub key
 
@@ -351,6 +380,7 @@ The client:
   implementation of a primitive.
 - New required environment variables of the hub: `AGENT_CORE_KEYS` and `AGENT_CORE_SIGNING_KEY`.
   Like every `AGENT_CORE_*` variable, a missing or empty value stops the process. The list of
-  required variables in the README and the compose file are updated in the same change.
+  required variables in the README, the compose file and the configuration test is updated in
+  the same change, and the image contains the keys file next to `teams.yaml`.
 - One new table, the nonce store: key id, nonce, time seen, with a unique constraint on key id
   and nonce. Rows older than 10 minutes are deleted.
