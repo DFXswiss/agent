@@ -65,8 +65,12 @@ TOP_LEVEL_KEYS = frozenset(
         "implementer",
         "lanes",
         "lane_execution",
+        "token_keepalive",
     }
 )
+# Accepted range of token_keepalive.refresh_before_minutes.
+KEEPALIVE_MIN_MINUTES = 5
+KEEPALIVE_MAX_MINUTES = 480
 LANE_EXECUTION_ERROR = (
     "lane_execution is not configured: lanes never run on a work device; "
     "start lanes through the local harness's lane starter on an external lane host, "
@@ -280,6 +284,8 @@ class AIAccounts:
     usage_accounts: tuple[str, ...] = ()
     # The validated drivers.json of the same load.
     driver_configuration: DriverConfiguration = NO_DRIVER_CONFIGURATION
+    # Renew window logins this many seconds before expiry; None is off.
+    token_keepalive_seconds: int | None = None
 
     @property
     def drivers(self) -> Mapping[str, DriverSpec]:
@@ -443,7 +449,8 @@ def load_ai_accounts(
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
             f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
-            "usage_accounts, models, implementer, lanes, and lane_execution"
+            "usage_accounts, models, implementer, lanes, lane_execution, "
+            "and token_keepalive"
         )
     lane_execution_raw = raw.get("lane_execution")
     lane_execution = _parse_lane_execution(lane_execution_raw)
@@ -575,6 +582,7 @@ def load_ai_accounts(
         if account_name in usage_accounts:
             raise AccountError(f"usage_accounts contains duplicate account {account_name}")
         usage_accounts.append(account_name)
+    keepalive_seconds = _parse_token_keepalive(raw.get("token_keepalive"))
     return AIAccounts(
         accounts=accounts,
         roles=roles,
@@ -588,6 +596,7 @@ def load_ai_accounts(
         model_configuration_error=model_configuration_error,
         usage_accounts=tuple(usage_accounts),
         driver_configuration=driver_configuration,
+        token_keepalive_seconds=keepalive_seconds,
     )
 
 
@@ -602,6 +611,27 @@ def _require_usage(
             f"section in {DRIVERS_FILE} ({DRIVERS_DOC})"
         )
     return spec.usage
+
+
+def _parse_token_keepalive(value: Any) -> int | None:
+    """Seconds before expiry at which window logins are renewed; ``None`` is off."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"refresh_before_minutes"}:
+        raise AccountError(
+            "token_keepalive must be null or an object with only refresh_before_minutes"
+        )
+    minutes = value["refresh_before_minutes"]
+    if (
+        isinstance(minutes, bool)
+        or not isinstance(minutes, int)
+        or not KEEPALIVE_MIN_MINUTES <= minutes <= KEEPALIVE_MAX_MINUTES
+    ):
+        raise AccountError(
+            "token_keepalive.refresh_before_minutes must be an integer from "
+            f"{KEEPALIVE_MIN_MINUTES} to {KEEPALIVE_MAX_MINUTES}"
+        )
+    return minutes * 60
 
 
 def _parse_lane_execution(value: Any) -> LaneExecution | None:
@@ -639,7 +669,8 @@ def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
             f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
-            "usage_accounts, models, implementer, lanes, and lane_execution"
+            "usage_accounts, models, implementer, lanes, lane_execution, "
+            "and token_keepalive"
         )
     # Device-configuration read: task creation never supplies a built-in assignment.
     return _model_configuration(raw, driver_configuration)

@@ -568,6 +568,84 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     assert load_model_slots(tmp_path).as_dict()["first"]
 
 
+@pytest.mark.parametrize("value", ["absent", None])
+def test_token_keepalive_is_off_by_default(tmp_path: Path, value: object) -> None:
+    data = sample_config()
+    if value != "absent":
+        data["token_keepalive"] = value
+    write_config(tmp_path, data)
+    assert load_ai_accounts(tmp_path).token_keepalive_seconds is None
+
+
+@pytest.mark.parametrize("minutes", [5, 30, 480])
+def test_token_keepalive_minutes_become_seconds(tmp_path: Path, minutes: int) -> None:
+    data = sample_config()
+    data["token_keepalive"] = {"refresh_before_minutes": minutes}
+    write_config(tmp_path, data)
+    assert load_ai_accounts(tmp_path).token_keepalive_seconds == minutes * 60
+
+
+def test_token_keepalive_is_available_with_deferred_models(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        {"models": {"first": "nope"}, "token_keepalive": {"refresh_before_minutes": 45}},
+    )
+    accounts = load_ai_accounts(tmp_path, defer_model_configuration=True)
+    assert accounts.token_keepalive_seconds == 45 * 60
+    assert accounts.model_configuration_error is not None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"refresh_before_minutes": 4},
+        {"refresh_before_minutes": 481},
+        {"refresh_before_minutes": 0},
+        {"refresh_before_minutes": -5},
+        {"refresh_before_minutes": 30.0},
+        {"refresh_before_minutes": "30"},
+        {"refresh_before_minutes": True},
+        {"refresh_before_minutes": None},
+        {},
+        {"refresh_before_minutes": 30, "accounts": ["seat"]},
+        {"minutes": 30},
+        30,
+        True,
+        "30",
+        [30],
+    ],
+)
+def test_token_keepalive_rejects_invalid_values(tmp_path: Path, value: object) -> None:
+    data = sample_config()
+    data["token_keepalive"] = value
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="token_keepalive"):
+        load_ai_accounts(tmp_path)
+
+
+def test_unknown_top_level_key_error_lists_token_keepalive(tmp_path: Path) -> None:
+    data = sample_config()
+    data["extra"] = {}
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert "token_keepalive" in str(excinfo.value)
+
+    with pytest.raises(AccountError) as excinfo:
+        load_model_configuration(tmp_path)
+    assert "token_keepalive" in str(excinfo.value)
+
+
+def test_token_keepalive_does_not_stop_task_creation(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_model_slots
+
+    data = sample_config()
+    data["token_keepalive"] = {"refresh_before_minutes": 1}
+    write_config(tmp_path, data)
+    # Task creation reads only models and implementer; the key itself is known.
+    assert load_model_slots(tmp_path).as_dict()["first"] == "driver-a"
+
+
 def write_subscriptions(home: Path, data: object) -> None:
     (home / "ai-subscriptions.json").write_text(json.dumps(data), encoding="utf-8")
 
