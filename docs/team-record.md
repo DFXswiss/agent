@@ -459,8 +459,11 @@ No. There is no delete and no edit of past events. An administrator can write a 
 event like anyone else, signed with their own key, and that correction is visible.
 
 **What if I lose my laptop?**
-Revoke that passkey or device key with a pull request to the keys file and register a new one.
-Your earlier events stay valid and stay yours.
+Its device key is revoked with a pull request to the keys file, its broker key is disabled and
+its open orders are ended. A passkey that your platform syncs is not lost with the laptop; one
+that lived only there is revoked the same way, and the administrator invites you to create a new
+one. Your earlier events stay valid and stay yours
+([central-operation.md](central-operation.md#14-joining-leaving-and-loss)).
 
 **What if I put something into the record by mistake that must not be there?**
 It cannot be removed. Report it at once so it can be handled outside the record (for example

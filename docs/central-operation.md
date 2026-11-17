@@ -137,7 +137,10 @@ whatever the hub says.
   signed with that device's key after you confirmed it there, or by hand on the device. The
   website can ask for such a change; it cannot make it.
 - Sessions, orders and direct logins run under a different system account and cannot read or
-  change the allow list or the device's key.
+  change the allow list, the device's key or the key of your own AI. Your AI gets its
+  signatures from a small local service that signs for nothing else.
+- If one of your controller keys is revoked, your devices also suspend everything that key
+  signed, until you confirm it again.
 
 **Signing in.** You sign in with your passkey, confirmed by fingerprint, face or PIN. That is
 the only time you are asked. Your browser then creates a session key that cannot be copied out
@@ -170,7 +173,8 @@ device obeys.
 
 **What stays a risk.** The website's code is delivered by the hub. A hub that was taken over
 could show you one command and sign another while you sign in or are signed in, in your name.
-That ends when the session key expires, and it never reaches an allow list. The session key's
+A certificate obtained that way works for at most one working day, and it never reaches an
+allow list. After a break-in into the hub, every passkey used during it is revoked. The session key's
 short life and a published hash of the website reduce the risk. They do not remove it. A command
 can always be issued from a controller device instead, whose program does not come from the
 hub.
@@ -215,7 +219,9 @@ there.
 
 - A command that cannot be written to the device's local log is not executed.
 - **Executors hide nothing.** Every AI session on an executor runs inside this system and is
-  recorded in full. Direct logins to an executor are recorded too.
+  recorded in full. Direct logins to the account that runs sessions are recorded too. A local
+  administrator login is not recorded as a session; every administrator change to the allow
+  list, the device key or the recording software leaves a signed entry.
 - **Your controller may work outside.** You may start an AI session on your controller that
   does not use this system. It is then not recorded and not visible.
 - A session log can contain a password or a name that appeared on the screen by mistake. Such
@@ -252,7 +258,8 @@ shown with the time they were fetched; the hub only reads them.
 AI accounts and subscriptions are assigned to devices. The hub shows what each device uses.
 
 The team also holds one central account at a model broker. The hub can create a key per device
-with a spending limit, lower the limit and disable the key. It cannot call a model itself. The
+with a spending limit, lower the limit and disable the key. Its own key for that account cannot
+call a model; it sees each device key once, when it creates it, and does not keep it. The
 model traffic goes from the device straight to the broker, so a hub outage stops no session.
 
 ## 12. People and AI use the same interface
@@ -324,7 +331,7 @@ Each step is its own pull request and follows the steps of the
 | **Task** | What has to be done |
 | **Order** | One attempt to do a task on one executor |
 | **Question** | A decision a running session needs |
-| **Command** | Any instruction to a device |
+| **Command** | Any signed instruction that reaches a device through the hub |
 | **Allow list** | The file on a device that lists the keys it obeys |
 | **Grant** | A signed permission by an owner for someone else's key |
 | **Session key** | A short-lived key in your browser, certified by your passkey |
@@ -358,7 +365,7 @@ the device itself. Everything syncs afterwards.
 They can read, delay and drop, hold back the notice that a key was revoked, and create broker
 keys up to the limit of the central account. They cannot sign as a device and cannot change
 whom a device obeys. While you sign in or are signed in, a changed website could get a
-command signed in your name until your session key expires (section 6, What stays a risk).
+command signed in your name (section 6, What stays a risk).
 
 **Where did the issues and the lists go?**
 They were imported once. The old place points to the hub and is no longer edited.
