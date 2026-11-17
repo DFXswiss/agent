@@ -593,6 +593,53 @@ def _record_account_snapshot(
     return None if event is None else activity_id
 
 
+USAGE_CHECKED_PREFIX = "usage.checked."
+
+
+def usage_check_key(driver: str, account_name: str) -> str:
+    """The meta key of the last successful usage read of a configured account."""
+    return f"{USAGE_CHECKED_PREFIX}{driver}.{account_name}"
+
+
+def _record_usage_check(
+    store: Store, driver: str, account_name: str, identity: str, checked_at: str
+) -> None:
+    """Remember when the configured account ``account_name`` was last read successfully.
+
+    A snapshot is stored only on a change, so its ``fetched_at`` is the last
+    change; this meta value is the last successful check. The key names the
+    configured account, never a token or an e-mail address. The value also
+    holds the case-folded identity that was read (the spend account name or
+    the windows login), so a later login of another identity in the same
+    configuration directory does not inherit this check time.
+    """
+    store.set_meta(
+        usage_check_key(driver, account_name),
+        json.dumps(
+            {"checked_at": checked_at, "identity": identity.casefold()}, sort_keys=True
+        ),
+    )
+
+
+def parse_usage_check(value: str) -> tuple[str, str]:
+    """The ``(checked_at, identity)`` of a value written by ``_record_usage_check``.
+
+    Raises StoreError for any other value.
+    """
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise StoreError("usage check time is not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise StoreError("usage check time is not an object")
+    checked_at, identity = data.get("checked_at"), data.get("identity")
+    if not isinstance(checked_at, str) or not checked_at:
+        raise StoreError("usage check time has no checked_at")
+    if not isinstance(identity, str) or not identity:
+        raise StoreError("usage check time has no identity")
+    return checked_at, identity
+
+
 def scan_account_usage(
     store: Store,
     *,
@@ -633,36 +680,23 @@ def scan_account_usage(
             snapshot = spend_snapshot(
                 driver, spec, account_name, documents, (now or utcnow)()
             )
-            compare_keys = tuple(key for key in snapshot if key != "fetched_at")
 
             def match(
                 payload: dict[str, Any], name: str = account_name, vendor: str = driver
             ) -> bool:
                 return payload.get("vendor") == vendor and payload.get("account") == name
 
-            if usage_unchanged(
-                last_usage_snapshot(store, match), snapshot, compare_keys
-            ):
-                continue
-            session_id = pick_session_id(store, driver)
-            activity_id = str(uuid.uuid4())
-            event = store.write_with_advisory(
-                "activity",
-                "insert",
-                activity_id,
-                {
-                    "id": activity_id,
-                    "session_id": session_id,
-                    "type": "usage.snapshot",
-                    "payload": snapshot,
-                    "execution_status": "done",
-                },
+            activity_id = _record_account_snapshot(
+                store,
+                snapshot,
+                match,
+                provider=driver,
                 lock_key=f"usage.snapshot:{driver}:{account_name}",
-                skip=lambda matcher=match, snap=snapshot, keys=compare_keys: (
-                    usage_unchanged(last_usage_snapshot(store, matcher), snap, keys)
-                ),
             )
-            if event is not None:
+            _record_usage_check(
+                store, driver, account_name, account_name, snapshot["fetched_at"]
+            )
+            if activity_id is not None:
                 created.append(activity_id)
         except StoreError as exc:
             errors.append(f"{account_name}: {exc}")
@@ -1238,6 +1272,7 @@ def scan_window_usage(
                 provider=driver,
                 lock_key=f"usage.snapshot:{driver}:{key}",
             )
+            _record_usage_check(store, driver, account_name, key, snapshot["fetched_at"])
             if activity_id is not None:
                 created.append(activity_id)
         except UsageRateLimited as exc:

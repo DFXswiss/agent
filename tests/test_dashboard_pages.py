@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import http.client
+import json
 
 import pytest
 
 from agent_cli import main as main_mod
-from driver_fixtures import DECLARED_DRIVERS, write_drivers
+from driver_fixtures import (
+    DECLARED_DRIVERS,
+    WINDOWS_ACCOUNT_FILE,
+    WINDOWS_DRIVER_ID,
+    driver_document,
+    windows_driver,
+    write_drivers,
+)
 from test_dashboard_control import _running_dashboard
 
 pytestmark = pytest.mark.no_pg
@@ -70,8 +78,9 @@ def test_dashboard_serves_the_main_page_and_every_subpage(monkeypatch) -> None:
 
 
 class _StateStore:
-    def __init__(self, agent_home) -> None:
+    def __init__(self, agent_home, provider: str = "driver-a") -> None:
         self.home = agent_home
+        self.provider = provider
 
     def snapshot(self) -> dict:
         return {
@@ -82,8 +91,8 @@ class _StateStore:
                     "type": "usage.snapshot",
                     "_origin_device_id": "device-a",
                     "payload": {
-                        "vendor": "driver-a",
-                        "provider": "driver-a",
+                        "vendor": self.provider,
+                        "provider": self.provider,
                         "account_email": "seat-1@example.com",
                     },
                 }
@@ -92,6 +101,14 @@ class _StateStore:
 
     def device_id(self) -> str:
         return "device-a"
+
+    def meta_prefix(self, prefix: str) -> dict[str, str]:
+        assert prefix == "usage.checked."
+        return {
+            f"usage.checked.{WINDOWS_DRIVER_ID}.seat": json.dumps(
+                {"checked_at": "2026-11-16T12:30:00Z", "identity": "seat-1@example.com"}
+            )
+        }
 
     def close(self) -> None:
         pass
@@ -142,8 +159,69 @@ def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
             ("seat-2@example.com", None, False),
         ]
 
+        # Without usage_accounts no row has a check time.
+        assert [row["checked_at"] for row in rows] == [None, None]
+        assert _state(port)["subscriptions"]["check_error"] is None
+
         # A broken file is data on the page, not a broken endpoint.
         path.write_text("{", encoding="utf-8")
         subscriptions = _state(port)["subscriptions"]
         assert subscriptions["error"] == "Cannot read ai-subscriptions.json"
         assert [row["listed"] for row in subscriptions["rows"]] == [False]
+
+
+def test_state_carries_the_check_time_of_each_account(monkeypatch, tmp_path) -> None:
+    import json
+
+    monkeypatch.setattr(
+        main_mod, "open_store", lambda: _StateStore(tmp_path, WINDOWS_DRIVER_ID)
+    )
+    (tmp_path / "ai-subscriptions.json").write_text(
+        json.dumps(
+            {
+                "subscriptions": [
+                    {"provider": WINDOWS_DRIVER_ID, "account": "Seat-1@example.com"},
+                    {"provider": WINDOWS_DRIVER_ID, "account": "seat-2@example.com"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The configured account "seat" logs in as seat-1; its check time joins
+    # the row that shows that login, by the account name in the meta key.
+    seat = tmp_path / "seat"
+    seat.mkdir()
+    (seat / WINDOWS_ACCOUNT_FILE).write_text(
+        json.dumps({"loginAccount": {"emailAddress": "seat-1@example.com"}}),
+        encoding="utf-8",
+    )
+    document = driver_document()
+    document["drivers"][WINDOWS_DRIVER_ID] = windows_driver()
+    write_drivers(tmp_path, document)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "accounts": {"seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(seat)}},
+                "usage_accounts": ["seat"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with _running_dashboard(monkeypatch) as port:
+        state = _state(port)
+    subscriptions = state["subscriptions"]
+    assert subscriptions["check_error"] is None
+    rows = subscriptions["rows"]
+    assert [(row["account"], row["checked_at"]) for row in rows] == [
+        ("Seat-1@example.com", "2026-11-16T12:30:00Z"),
+        ("seat-2@example.com", None),
+    ]
+    assert rows[0]["usage"]["payload"]["account_email"] == "seat-1@example.com"
+    overview = {entry["provider"]: entry for entry in state["usage_overview"]}
+    assert [
+        (a["account"], a["checked_at"]) for a in overview[WINDOWS_DRIVER_ID]["accounts"]
+    ] == [
+        ("Seat-1@example.com", "2026-11-16T12:30:00Z"),
+        ("seat-2@example.com", None),
+    ]

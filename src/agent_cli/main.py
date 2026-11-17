@@ -137,6 +137,7 @@ from .store import Store, StoreConnectionError, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
 from .token_keepalive import KeepalivePace, keepalive_due
 from .usage import (
+    USAGE_CHECKED_PREFIX,
     AccountUsageError,
     AuthStale,
     is_spend_snapshot,
@@ -2544,20 +2545,121 @@ def _subscription_dashboard_rows(
     return rows
 
 
+def _usage_check_times(
+    agent_home: Path, checks: Mapping[str, str]
+) -> tuple[dict[tuple[str, str], str], set[str], list[str]]:
+    """Last successful usage check of each configured ``usage_accounts`` account.
+
+    ``checks`` holds the ``usage.checked.`` meta values, read by the caller
+    with the store's other reads. Keyed like ``_usage_identity``: a spend
+    account by its name, which its snapshots carry, and a windows account by
+    the identity of its login, which its snapshots carry. A check applies only
+    while the identity it read is still the account's identity: after another
+    login in the same configuration directory the old check time is dropped.
+    The second value names the providers whose accounts are spend accounts. A
+    windows account without a usable login has no snapshot of this device to
+    match and is left out; any other read error is returned as text.
+    """
+    from .usage import load_login_account, parse_usage_check, usage_check_key
+
+    try:
+        accounts = load_ai_accounts(agent_home, defer_model_configuration=True)
+    except StoreError as exc:
+        return {}, set(), [str(exc)]
+    checked: dict[tuple[str, str], str] = {}
+    spend_providers: set[str] = set()
+    errors: list[str] = []
+    for name in accounts.usage_accounts:
+        account = accounts.accounts[name]
+        driver = accounts.drivers.get(account.provider)
+        windows = (
+            driver is not None
+            and driver.usage is not None
+            and driver.usage.snapshot == "windows"
+        )
+        if not windows:
+            spend_providers.add(account.provider)
+        meta_key = usage_check_key(account.provider, name)
+        if meta_key not in checks:
+            continue
+        try:
+            value, checked_identity = parse_usage_check(checks[meta_key])
+        except StoreError as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        if windows:
+            try:
+                identity = load_login_account(driver, account.config_dir)
+            except AuthStale:
+                continue
+            except StoreError as exc:
+                errors.append(f"{name}: {exc}")
+                continue
+        else:
+            identity = name
+        if checked_identity != identity.casefold():
+            # The check read another identity than the account has now.
+            continue
+        key = (account.provider, identity.casefold())
+        if key not in checked or value > checked[key]:
+            checked[key] = value
+    return checked, spend_providers, errors
+
+
+def _subscription_checked_at(
+    row: dict[str, Any],
+    checked: dict[tuple[str, str], str],
+    spend_providers: set[str],
+    device: str,
+) -> str | None:
+    """When this device last read the row's account; ``None`` when it does not poll it."""
+    provider, account = row.get("provider"), row.get("account")
+    if not isinstance(provider, str) or not isinstance(account, str):
+        return None
+    usage = row.get("usage")
+    payload = usage.get("payload") if isinstance(usage, dict) else None
+    spend = (
+        is_spend_snapshot(payload) if isinstance(payload, dict) else provider in spend_providers
+    )
+    if spend:
+        # Spend account names are device-local: only a snapshot of this device
+        # names an account of this device's configuration.
+        if not isinstance(usage, dict) or usage.get("_origin_device_id") != device:
+            return None
+    key = (provider, account.casefold())
+    return checked[key] if key in checked else None
+
+
 def _subscriptions_dashboard(
-    agent_home: Path, usage: list[dict[str, Any]]
+    agent_home: Path,
+    usage: list[dict[str, Any]],
+    checks: Mapping[str, str],
+    device: str,
 ) -> dict[str, Any]:
-    """The subscription overview of ``/api/state``; a file error is data, not a failure."""
+    """The subscription overview of ``/api/state``; a file error is data, not a failure.
+
+    Each row carries ``checked_at``, the last successful usage read of its
+    account on this device, next to the snapshot's ``fetched_at``, the last
+    change. ``checks`` are the ``usage.checked.`` meta values of this device.
+    """
     error: str | None = None
     try:
         inventory = load_ai_subscriptions(agent_home)
     except StoreError as exc:
         inventory = None
         error = str(exc)
+    checked, spend_providers, check_errors = _usage_check_times(agent_home, checks)
     return {
         "configured": inventory is not None,
         "error": error,
-        "rows": _subscription_dashboard_rows(inventory or (), usage),
+        "check_error": "; ".join(check_errors) if check_errors else None,
+        "rows": [
+            {
+                **row,
+                "checked_at": _subscription_checked_at(row, checked, spend_providers, device),
+            }
+            for row in _subscription_dashboard_rows(inventory or (), usage)
+        ],
     }
 
 
@@ -2735,6 +2837,8 @@ def _usage_overview(
                 "resets_in": None,
                 "text": None,
                 "recorded": None,
+                # The last successful read on this device; "recorded" is the last change.
+                "checked_at": row.get("checked_at"),
             }
             accounts.append(account)
             if payload is None:
@@ -2873,6 +2977,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 try:
                     snap = store.snapshot()
                     device = store.device_id()
+                    checks = store.meta_prefix(USAGE_CHECKED_PREFIX)
                 except StoreConnectionError:
                     try:
                         store.reconnect()
@@ -2882,9 +2987,13 @@ def cmd_dashboard(args: list[str]) -> None:
                     try:
                         snap = store.snapshot()
                         device = store.device_id()
-                    except StoreConnectionError as exc:
+                        checks = store.meta_prefix(USAGE_CHECKED_PREFIX)
+                    except StoreError as exc:
                         self._json(503, {"ok": False, "error": str(exc)})
                         return
+                except StoreError as exc:
+                    self._json(503, {"ok": False, "error": str(exc)})
+                    return
                 for session in snap.get("sessions") or []:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
@@ -2893,6 +3002,8 @@ def cmd_dashboard(args: list[str]) -> None:
                 snap["subscriptions"] = _subscriptions_dashboard(
                     store_home if isinstance(store_home, Path) else home(),
                     snap["usage"],
+                    checks,
+                    device,
                 )
                 try:
                     drivers: Mapping[str, DriverSpec] | None = load_driver_configuration(

@@ -238,6 +238,16 @@ class Store:
             row = self.conn.execute("SELECT value FROM meta WHERE key = %s", (key,)).fetchone()
             return None if row is None else row["value"]
 
+    @_wrap_pg_errors
+    def meta_prefix(self, prefix: str) -> dict[str, str]:
+        """Every meta value whose key starts with ``prefix``, in one query."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT key, value FROM meta WHERE left(key, %s) = %s",
+                (len(prefix), prefix),
+            ).fetchall()
+            return {row["key"]: row["value"] for row in rows}
+
     def set_meta(self, key: str, value: str) -> None:
         with self._lock:
             self.conn.execute(
