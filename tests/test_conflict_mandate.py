@@ -65,6 +65,12 @@ from test_coordinator_support import (
     make_session,
     write_accounts,
 )
+from driver_fixtures import (
+    pool_accounts_document,
+    pool_driver_document,
+    write_accounts as write_placeholder_accounts,
+    write_drivers,
+)
 
 
 SCRIPT_REQ = Request(
@@ -5838,6 +5844,40 @@ def test_lane_start_failure_with_unchanged_state_is_transient(
     monkeypatch.setattr("agent_cli.conflict_mandate.launch_lane_process", unavailable)
     lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
     assert any(line.startswith("transient:") for line in lines)
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_lane_attempt_without_a_usable_pool_account_is_transient_without_a_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    # The implementer role pools two accounts; neither has a login on this
+    # device, so no member can be chosen.
+    logins = tmp_path / "logins"
+    accounts = pool_accounts_document(
+        {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    )
+    accounts["models"] = {"first": "driver-c", "second": "driver-b"}
+    write_placeholder_accounts(store.home, accounts)
+    write_drivers(store.home, pool_driver_document())
+    launches: list[dict[str, Any]] = []
+
+    def launch(**kwargs: Any) -> Any:
+        launches.append(kwargs)
+        raise OSError("a lane started without a chosen pool account")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.launch_lane_process", launch)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(
+        line.startswith("transient:")
+        and "Role pooled-writer has no usable pool account "
+        "(seat-1: no login; seat-2: no login)" in line
+        for line in lines
+    )
+    assert launches == []
+    assert fake.lanes == []
     assert fake.pr_comments == []
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 

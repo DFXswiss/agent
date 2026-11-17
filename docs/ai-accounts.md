@@ -578,8 +578,9 @@ A lane recorded before pools existed has no `account`: a single-account role
 uses its account; a pool role is an error naming the lane. A conflicts-worker
 lane attempt finishes within one call and writes no agent row; it keeps its
 chosen account for the whole attempt. `agent lane` and the `agent run` lane
-launcher do not choose from a pool: a pool role is refused there when the
-process isolation prefix is built.
+launcher do not choose from a pool: they refuse a pool role right after
+resolving the lane slot (see above); building the process isolation prefix
+refuses it as well.
 
 The optional top-level `usage_session` selects an explicitly configured
 interactive session for automatic billing reads. The driver of its interactive

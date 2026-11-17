@@ -32,8 +32,12 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from driver_fixtures import (
     accounts_document,
+    pool_accounts_document,
+    pool_driver_document,
+    record_weekly_usage,
     write_accounts as write_placeholder_accounts,
     write_drivers,
+    write_pool_login,
 )
 from test_coordinator_support import (
     FakeGh,
@@ -948,11 +952,16 @@ def test_a_waived_check_starts_no_resolver(
 
 
 def _placeholder_check_context(
-    tmp_path: Path, first: str, *, accounts: dict | None = None, lanes=None
+    tmp_path: Path,
+    first: str,
+    *,
+    accounts: dict | None = None,
+    drivers: dict | None = None,
+    lanes=None,
 ) -> CheckContext:
     store = Store(tmp_path)
     write_placeholder_accounts(store.home, accounts)
-    write_drivers(store.home)
+    write_drivers(store.home, drivers)
     worker = make_order_worker(tmp_path)
     second = "driver-a" if first == "driver-b" else "driver-b"
     task = {"id": ORDER_ID, "models": {"first": first, "second": second}}
@@ -1015,3 +1024,41 @@ def test_check_lane_runs_the_driver_judgment_template(tmp_path: Path) -> None:
         "--tools", "", "--mode", "default",
     ]
     assert stdin == "Is this a duplicate?"
+
+
+def test_check_lane_of_a_pool_role_runs_on_the_chosen_account(
+    tmp_path: Path,
+) -> None:
+    logins = tmp_path / "logins"
+    config_dirs = {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    seen: list[list[str]] = []
+    result = {"type": "result", "subtype": "success", "is_error": False, "result": "RESULT: ok"}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        return Completed(0, json.dumps(result), "")
+
+    ctx = _placeholder_check_context(
+        tmp_path,
+        "driver-c",
+        accounts=pool_accounts_document(config_dirs),
+        drivers=pool_driver_document(),
+        lanes=lane,
+    )
+    for seat, used in (("seat-1", 60.0), ("seat-2", 20.0)):
+        write_pool_login(logins / seat, f"{seat}@example.com")
+        record_weekly_usage(ctx.store, f"{seat}@example.com", used)
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    # The process ran isolated to the least-loaded member.
+    assert len(seen) == 1
+    assert f"TOOL_C_CONFIG={config_dirs['seat-2']}" in seen[0]
+    assert f"TOOL_C_CONFIG={config_dirs['seat-1']}" not in seen[0]
+    row = ctx.store.row("agent", outcome.agent_id)
+    assert row is not None
+    assert row["role"] == "check"
+    assert row["account"] == "seat-2"
+    assert row["account_choice"] == (
+        "account seat-2 chosen from the pool of role pooled-reader at load 20 % "
+        "with 0 running lanes"
+    )
