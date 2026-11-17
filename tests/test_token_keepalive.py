@@ -13,13 +13,20 @@ from agent_cli.drivers import DriverConfiguration, DriverSpec, parse_driver_docu
 from agent_cli.main import _token_keepalive_tick, main
 from agent_cli.store import StoreError
 from agent_cli.token_keepalive import (
+    ERROR_BACKOFF_MAX_SECONDS,
     KEEPALIVE_CHECK_SECONDS,
+    REFRESH_IN_PROGRESS_MESSAGE,
+    SHORT_LIFETIME_MESSAGE,
+    KeepalivePace,
     KeepaliveResult,
     describe,
     driver_env,
+    error_backoff,
     keep_alive,
     keepalive_due,
+    profile_lock_path,
     token_expiry,
+    try_profile_lock,
 )
 from agent_cli.usage import AccountUsageError, keychain_service_name
 from driver_fixtures import (
@@ -291,7 +298,17 @@ def test_keep_alive_off_does_no_work(tmp_path: Path) -> None:
         raise AssertionError("no keychain read when off")
 
     accounts = accounts_for({"seat": tmp_path / "seat"}, seconds=None)
-    assert keep_alive(accounts, run=forbidden_run, read_keychain=reader, which=opt_bin) == []
+    assert (
+        keep_alive(
+            accounts,
+            agent_home=tmp_path,
+            pace=None,
+            run=forbidden_run,
+            read_keychain=reader,
+            which=opt_bin,
+        )
+        == []
+    )
 
 
 @pytest.mark.no_pg
@@ -303,6 +320,8 @@ def test_keep_alive_skips_the_default_profile(
     write_credentials(default_dir, NOW - 10)
     results = keep_alive(
         accounts_for({"main": default_dir}),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -319,6 +338,8 @@ def test_keep_alive_skips_a_driver_without_keepalive_section(tmp_path: Path) -> 
     write_credentials(seat, NOW - 10)
     results = keep_alive(
         accounts_for({"seat": seat}, keepalive=False),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -341,6 +362,8 @@ def test_keep_alive_fresh_token_runs_nothing(tmp_path: Path) -> None:
     write_credentials(seat, NOW + MARGIN + 60)
     results = keep_alive(
         accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -368,6 +391,8 @@ def test_keep_alive_near_expiry_and_expired_run_the_command_once(
     }
     results = keep_alive(
         accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
         run=fake,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -399,6 +424,8 @@ def test_keep_alive_refresh_that_does_not_extend_is_an_error(tmp_path: Path) -> 
     fake.stderr = "boom\n" + "word " * 100 + "\n" + "MODEL-OUTPUT-NEVER"
     results = keep_alive(
         accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
         run=fake,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -421,6 +448,8 @@ def test_keep_alive_without_login_is_skipped(tmp_path: Path) -> None:
     seat.mkdir()
     results = keep_alive(
         accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -446,6 +475,8 @@ def test_keep_alive_one_failing_account_does_not_stop_the_others(tmp_path: Path)
     fake.raises[str(crash)] = PermissionError(13, "Permission denied")
     results = keep_alive(
         accounts_for({"broken": broken, "slow": slow, "crash": crash, "good": good}),
+        agent_home=tmp_path,
+        pace=None,
         run=fake,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -472,6 +503,8 @@ def test_keep_alive_reads_only_window_usage_accounts(tmp_path: Path) -> None:
     spend = AIAccount("spend", "driver-d", str(tmp_path / "spend"))
     results = keep_alive(
         accounts_for({"seat": seat}, extra={"spend": spend}),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -494,6 +527,8 @@ def test_keep_alive_without_the_executable_reports_due_accounts(tmp_path: Path) 
 
     results = keep_alive(
         accounts_for({"due": due, "fresh": fresh}),
+        agent_home=tmp_path,
+        pace=None,
         run=forbidden_run,
         clock=lambda: NOW,
         read_keychain=no_keychain,
@@ -502,6 +537,250 @@ def test_keep_alive_without_the_executable_reports_due_accounts(tmp_path: Path) 
     assert [(r.account, r.action) for r in results] == [("due", "error"), ("fresh", "fresh")]
     assert results[0].message == "login-tool executable not found on PATH"
     assert looked_up == ["login-tool"]
+
+
+# --- Renewal within the margin, backoff and profile lock -----------------------
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = NOW
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def paced_pass(
+    home: Path, seat: Path, fake: Any, clock: Clock, pace: KeepalivePace
+) -> list[KeepaliveResult]:
+    return keep_alive(
+        accounts_for({"seat": seat}),
+        agent_home=home,
+        pace=pace,
+        run=fake,
+        clock=clock,
+        read_keychain=no_keychain,
+        which=opt_bin,
+    )
+
+
+@pytest.mark.no_pg
+def test_keep_alive_renewal_within_the_margin_counts_and_defers(tmp_path: Path) -> None:
+    # The tool's token lifetime (20 minutes) is shorter than the 30 minute margin.
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW + 60)
+    fake = FakeRun({str(seat): NOW + 20 * 60})
+    clock = Clock()
+    pace = KeepalivePace()
+
+    results = paced_pass(tmp_path, seat, fake, clock, pace)
+    assert results == [KeepaliveResult("seat", "refreshed", NOW + 20 * 60, SHORT_LIFETIME_MESSAGE)]
+    assert describe(results[0]) == (
+        "token.keepalive refreshed seat until 2027-01-15T08:20Z "
+        "(lifetime shorter than refresh_before_minutes)"
+    )
+    # Deferred until 10 minutes before the new expiry, not rerun every 5 minutes.
+    assert pace.not_before == {"seat": NOW + 10 * 60}
+    assert pace.failures == {}
+
+    clock.now = NOW + KEEPALIVE_CHECK_SECONDS
+    assert paced_pass(tmp_path, seat, fake, clock, pace) == []
+    assert len(fake.calls) == 1
+
+    clock.now = NOW + 10 * 60
+    fake.renew[str(seat)] = NOW + 30 * 60
+    results = paced_pass(tmp_path, seat, fake, clock, pace)
+    assert results == [KeepaliveResult("seat", "refreshed", NOW + 30 * 60, SHORT_LIFETIME_MESSAGE)]
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.no_pg
+def test_keep_alive_without_pace_reports_a_short_renewal_as_refreshed(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW + 60)
+    fake = FakeRun({str(seat): NOW + MARGIN})
+    results = keep_alive(
+        accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
+        run=fake,
+        clock=lambda: NOW,
+        read_keychain=no_keychain,
+        which=opt_bin,
+    )
+    assert results == [KeepaliveResult("seat", "refreshed", NOW + MARGIN, SHORT_LIFETIME_MESSAGE)]
+
+
+@pytest.mark.no_pg
+def test_keep_alive_later_but_still_expired_login_is_not_renewed(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW - 3600)
+    fake = FakeRun({str(seat): NOW - 60})
+    results = keep_alive(
+        accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
+        run=fake,
+        clock=lambda: NOW,
+        read_keychain=no_keychain,
+        which=opt_bin,
+    )
+    (result,) = results
+    assert result.action == "error"
+    assert result.message == "token not renewed (exit 0)"
+
+
+@pytest.mark.no_pg
+def test_keep_alive_backs_off_after_an_error_and_resets_on_success(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW + 10)
+    fake = FakeRun()
+    fake.returncode = 1
+    clock = Clock()
+    pace = KeepalivePace()
+
+    # First due tick: the refresh run fails.
+    (result,) = paced_pass(tmp_path, seat, fake, clock, pace)
+    assert result.action == "error"
+    assert len(fake.calls) == 1
+    assert pace.not_before == {"seat": NOW + 10 * 60}
+    assert pace.failures == {"seat": 1}
+
+    # The next due tick (5 minutes later) runs nothing and prints nothing.
+    clock.now = NOW + KEEPALIVE_CHECK_SECONDS
+    assert paced_pass(tmp_path, seat, fake, clock, pace) == []
+    assert len(fake.calls) == 1
+
+    # After the wait it runs again; a second error doubles the wait.
+    clock.now = NOW + 10 * 60
+    (result,) = paced_pass(tmp_path, seat, fake, clock, pace)
+    assert result.action == "error"
+    assert len(fake.calls) == 2
+    assert pace.not_before == {"seat": NOW + 10 * 60 + 20 * 60}
+    assert pace.failures == {"seat": 2}
+
+    clock.now = NOW + 20 * 60
+    assert paced_pass(tmp_path, seat, fake, clock, pace) == []
+    assert len(fake.calls) == 2
+
+    # A success clears the backoff.
+    clock.now = NOW + 30 * 60
+    fake.returncode = 0
+    fake.renew[str(seat)] = NOW + 8 * 3600
+    (result,) = paced_pass(tmp_path, seat, fake, clock, pace)
+    assert result == KeepaliveResult("seat", "refreshed", NOW + 8 * 3600, "")
+    assert len(fake.calls) == 3
+    assert pace.not_before == {} and pace.failures == {}
+
+
+@pytest.mark.no_pg
+def test_keep_alive_backs_off_after_an_unreadable_login(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    seat.mkdir()
+    (seat / WINDOWS_CREDENTIAL_FILE).write_text("{" + TOKEN, encoding="utf-8")
+    clock = Clock()
+    pace = KeepalivePace()
+    (result,) = paced_pass(tmp_path, seat, forbidden_run, clock, pace)
+    assert result.action == "error"
+    assert pace.failures == {"seat": 1}
+    clock.now = NOW + KEEPALIVE_CHECK_SECONDS
+    assert paced_pass(tmp_path, seat, forbidden_run, clock, pace) == []
+
+
+@pytest.mark.no_pg
+def test_error_backoff_grows_and_is_capped() -> None:
+    assert [error_backoff(count) for count in (1, 2, 3, 4)] == [600, 1200, 2400, 4800]
+    assert error_backoff(7) == ERROR_BACKOFF_MAX_SECONDS == 6 * 3600
+    assert error_backoff(10_000) == ERROR_BACKOFF_MAX_SECONDS
+    with pytest.raises(StoreError):
+        error_backoff(0)
+
+
+@pytest.mark.no_pg
+def test_keep_alive_skips_a_profile_whose_lock_is_taken(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW + 10)
+    pace = KeepalivePace()
+    with try_profile_lock(tmp_path, str(seat)) as held:
+        assert held
+        results = keep_alive(
+            accounts_for({"seat": seat}),
+            agent_home=tmp_path,
+            pace=pace,
+            run=forbidden_run,
+            clock=lambda: NOW,
+            read_keychain=no_keychain,
+            which=opt_bin,
+        )
+    assert results == [KeepaliveResult("seat", "skipped", None, REFRESH_IN_PROGRESS_MESSAGE)]
+    assert describe(results[0]) == "token.keepalive skipped seat: refresh in progress"
+    # Not an error: no backoff.
+    assert pace.not_before == {} and pace.failures == {}
+
+
+@pytest.mark.no_pg
+def test_keep_alive_rereads_the_expiry_after_taking_the_lock(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    seat.mkdir()
+    reads: list[int] = []
+
+    def reader(_service: str, _user: str) -> str | None:
+        reads.append(1)
+        # Another process renewed the login between the check and the lock.
+        expiry = NOW + 10 if len(reads) == 1 else NOW + 8 * 3600
+        return json.dumps(credentials(int(expiry * 1000)))
+
+    results = keep_alive(
+        accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
+        run=forbidden_run,
+        clock=lambda: NOW,
+        read_keychain=reader,
+        which=opt_bin,
+    )
+    assert results == [KeepaliveResult("seat", "fresh", NOW + 8 * 3600, "")]
+    assert len(reads) == 2
+
+
+@pytest.mark.no_pg
+def test_keep_alive_holds_the_profile_lock_during_the_run(tmp_path: Path) -> None:
+    seat = tmp_path / "seat"
+    write_credentials(seat, NOW + 10)
+    fake = FakeRun({str(seat): NOW + 8 * 3600})
+    free_during_run: list[bool] = []
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        with try_profile_lock(tmp_path, str(seat)) as acquired:
+            free_during_run.append(acquired)
+        return fake(argv, **kwargs)
+
+    results = keep_alive(
+        accounts_for({"seat": seat}),
+        agent_home=tmp_path,
+        pace=None,
+        run=run,
+        clock=lambda: NOW,
+        read_keychain=no_keychain,
+        which=opt_bin,
+    )
+    assert [r.action for r in results] == ["refreshed"]
+    assert free_during_run == [False]
+    with try_profile_lock(tmp_path, str(seat)) as acquired:
+        assert acquired
+
+
+@pytest.mark.no_pg
+def test_profile_lock_path_is_private_and_per_directory(tmp_path: Path) -> None:
+    first = profile_lock_path(tmp_path, str(tmp_path / "seat"))
+    assert first.parent == tmp_path / "token-keepalive"
+    assert profile_lock_path(tmp_path, str(tmp_path / "x" / ".." / "seat")) == first
+    assert profile_lock_path(tmp_path, str(tmp_path / "other")) != first
+    with try_profile_lock(tmp_path, str(tmp_path / "seat")) as acquired:
+        assert acquired
+    assert first.is_file()
+    assert first.stat().st_mode & 0o077 == 0
+    assert first.parent.stat().st_mode & 0o077 == 0
 
 
 # --- Daemon tick and watch -----------------------------------------------------
@@ -534,13 +813,18 @@ def test_daemon_tick_prints_refreshed_errors_and_skips_but_not_fresh(
 ) -> None:
     write_manifest(tmp_path, tmp_path / "seat")
     seen: list[AIAccounts] = []
+    passed: list[dict[str, Any]] = []
+    pace = KeepalivePace()
 
-    def fake_keep_alive(accounts: AIAccounts) -> list[KeepaliveResult]:
+    def fake_keep_alive(accounts: AIAccounts, **kwargs: Any) -> list[KeepaliveResult]:
         seen.append(accounts)
+        passed.append(kwargs)
         return RESULTS
 
     monkeypatch.setattr(token_keepalive, "keep_alive", fake_keep_alive)
-    _token_keepalive_tick(tmp_path)
+    _token_keepalive_tick(tmp_path, pace)
+    # The daemon's pace object carries the backoff from one pass to the next.
+    assert passed == [{"agent_home": tmp_path, "pace": pace}]
     assert seen[0].token_keepalive_seconds == 30 * 60
     assert seen[0].drivers[WINDOWS_DRIVER_ID].usage.keepalive is not None  # type: ignore[union-attr]
     captured = capsys.readouterr()
@@ -561,11 +845,11 @@ def test_daemon_tick_when_off_does_nothing(
 ) -> None:
     write_manifest(tmp_path, tmp_path / "seat", keepalive)
 
-    def fake_keep_alive(_accounts: AIAccounts) -> list[KeepaliveResult]:
+    def fake_keep_alive(_accounts: AIAccounts, **_kwargs: Any) -> list[KeepaliveResult]:
         raise AssertionError("keep-alive is off")
 
     monkeypatch.setattr(token_keepalive, "keep_alive", fake_keep_alive)
-    _token_keepalive_tick(tmp_path)
+    _token_keepalive_tick(tmp_path, KeepalivePace())
     assert capsys.readouterr() == ("", "")
 
 
@@ -574,7 +858,7 @@ def test_daemon_tick_survives_a_broken_manifest(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "ai-accounts.json").write_text("{", encoding="utf-8")
-    _token_keepalive_tick(tmp_path)
+    _token_keepalive_tick(tmp_path, KeepalivePace())
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("token.keepalive error: ")
@@ -590,10 +874,18 @@ def test_watch_token_keepalive_prints_every_account_and_fails_on_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_manifest(tmp_path, tmp_path / "seat")
-    monkeypatch.setattr(token_keepalive, "keep_alive", lambda _accounts: RESULTS)
+    passed: list[dict[str, Any]] = []
+
+    def fake_keep_alive(_accounts: AIAccounts, **kwargs: Any) -> list[KeepaliveResult]:
+        passed.append(kwargs)
+        return RESULTS
+
+    monkeypatch.setattr(token_keepalive, "keep_alive", fake_keep_alive)
     with pytest.raises(SystemExit) as info:
         run_cli(tmp_path, ["watch", "token-keepalive"], monkeypatch)
     assert info.value.code == 1
+    # A manual pass has no backoff but uses the profile locks under AGENT_HOME.
+    assert passed == [{"agent_home": tmp_path, "pace": None}]
     captured = capsys.readouterr()
     assert captured.out == (
         "token.keepalive fresh fresh-seat until 2027-01-15T11:00Z\n"
@@ -601,13 +893,13 @@ def test_watch_token_keepalive_prints_every_account_and_fails_on_error(
     )
     assert "token.keepalive error: broken-seat: token not renewed (exit 1)" in captured.err
 
-    monkeypatch.setattr(token_keepalive, "keep_alive", lambda _accounts: RESULTS[:3])
+    monkeypatch.setattr(token_keepalive, "keep_alive", lambda _accounts, **_kwargs: RESULTS[:3])
     run_cli(tmp_path, ["watch", "token-keepalive"], monkeypatch)
     captured = capsys.readouterr()
     assert "fresh-seat" in captured.out
     assert "token.keepalive skipped no-login" in captured.err
 
-    monkeypatch.setattr(token_keepalive, "keep_alive", lambda _accounts: [])
+    monkeypatch.setattr(token_keepalive, "keep_alive", lambda _accounts, **_kwargs: [])
     run_cli(tmp_path, ["watch", "token-keepalive"], monkeypatch)
     assert capsys.readouterr().out == "token.keepalive none\n"
 
@@ -619,7 +911,7 @@ def test_watch_token_keepalive_not_configured_is_an_error(
 ) -> None:
     write_manifest(tmp_path, tmp_path / "seat", keepalive)
 
-    def fake_keep_alive(_accounts: AIAccounts) -> list[KeepaliveResult]:
+    def fake_keep_alive(_accounts: AIAccounts, **_kwargs: Any) -> list[KeepaliveResult]:
         raise AssertionError("keep-alive is off")
 
     monkeypatch.setattr(token_keepalive, "keep_alive", fake_keep_alive)
@@ -675,9 +967,13 @@ def test_knock_daemon_runs_the_keepalive_before_the_account_scanners(
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
     monkeypatch.setattr("agent_cli.main.keepalive_due", fake_keepalive_due)
-    monkeypatch.setattr(
-        "agent_cli.main._token_keepalive_tick", lambda _home: order.append("keepalive")
-    )
+    paces: list[KeepalivePace] = []
+
+    def fake_tick(_home: Path, pace: KeepalivePace) -> None:
+        paces.append(pace)
+        order.append("keepalive")
+
+    monkeypatch.setattr("agent_cli.main._token_keepalive_tick", fake_tick)
     monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts())
     monkeypatch.setattr("agent_cli.main.scan_account_usage", fake_account)
@@ -692,6 +988,7 @@ def test_knock_daemon_runs_the_keepalive_before_the_account_scanners(
         run_cli(tmp_path, ["knock"], monkeypatch)
 
     assert order == ["keepalive", "account", "window", "account", "window"]
+    assert len(paces) == 1 and isinstance(paces[0], KeepalivePace)
     assert len(keepalive_checks) == 2
     assert keepalive_checks[0] is None and isinstance(keepalive_checks[1], float)
     # The keep-alive has its own clock; the usage tick is checked once per loop.

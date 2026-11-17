@@ -16,7 +16,9 @@ from typing import Any
 import pytest
 
 from agent_cli.account_login import (
+    IMAP_TIMEOUT_SECONDS,
     LOGOUT_WAIT_SECONDS,
+    MAX_MESSAGE_BYTES,
     Mailbox,
     load_mailbox,
     login,
@@ -27,6 +29,7 @@ from agent_cli.ai_accounts import AIAccount
 from agent_cli.drivers import DriverSpec, parse_driver_document
 from agent_cli.main import main
 from agent_cli.store import StoreError
+from agent_cli.token_keepalive import try_profile_lock
 from driver_fixtures import write_drivers
 
 pytestmark = pytest.mark.no_pg
@@ -208,10 +211,11 @@ class FakeImap:
         self.calls: list[tuple[Any, ...]] = []
         self.connected: list[tuple[Any, ...]] = []
         self.fetched: list[bytes] = []
+        self.fetch_parts: list[str] = []
         self.logged_out = 0
 
-    def __call__(self, host: str, port: int, *, ssl_context: Any) -> FakeImap:
-        self.connected.append((host, port, ssl_context))
+    def __call__(self, host: str, port: int, *, ssl_context: Any, timeout: float) -> FakeImap:
+        self.connected.append((host, port, ssl_context, timeout))
         return self
 
     def login(self, user: str, password: str) -> tuple[str, list[bytes]]:
@@ -233,8 +237,13 @@ class FakeImap:
 
     def fetch(self, message_id: bytes, parts: str) -> tuple[str, list[Any]]:
         self.fetched.append(message_id)
+        self.fetch_parts.append(parts)
         raw = self.messages[int(message_id) - 1]
-        return "OK", [(message_id + b" (BODY[] {%d}" % len(raw), raw), b")"]
+        # What a server does with a partial fetch: send at most that many bytes.
+        partial = re.fullmatch(r"\(BODY\.PEEK\[\]<0\.(\d+)>\)", parts)
+        if partial is not None:
+            raw = raw[: int(partial.group(1))]
+        return "OK", [(message_id + b" (BODY[]<0> {%d}" % len(raw), raw), b")"]
 
     def logout(self) -> tuple[str, list[bytes]]:
         self.logged_out += 1
@@ -255,13 +264,39 @@ def test_newest_magic_link_returns_the_newest_matching_message() -> None:
     imap = FakeImap([message(OLD_LINK, NOW + 10), message(LINK, NOW + 20, html=False)])
     assert newest(imap) == LINK
     assert imap.fetched == [b"2"]
-    host, port, context = imap.connected[0]
+    host, port, context, timeout = imap.connected[0]
     assert (host, port) == ("imap.example.com", 993)
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
+    # A stalled server cannot block the poll loop past the timeout.
+    assert timeout == IMAP_TIMEOUT_SECONDS == 30
     assert ("select", "INBOX", True) in imap.calls
     assert ("search", None, "FROM", f'"{MAIL_FROM}"') in imap.calls
+    assert imap.fetch_parts == [f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)"]
     assert imap.logged_out == 1
+
+
+def test_newest_magic_link_skips_an_oversized_message() -> None:
+    assert MAX_MESSAGE_BYTES == 1024 * 1024
+    huge = EmailMessage()
+    huge["From"] = f"Sign-in <no-reply@{MAIL_FROM}>"
+    huge["Date"] = format_datetime(datetime.fromtimestamp(NOW + 20, timezone.utc))
+    huge.set_content(f"Sign in: {OLD_LINK}\n" + "x" * 76 * 15000)
+    oversized = bytes(huge)
+    assert len(oversized) > MAX_MESSAGE_BYTES
+    imap = FakeImap([message(LINK, NOW + 10), oversized])
+    # The oversized newest message is not parsed; its link is never used.
+    assert newest(imap) == LINK
+    assert imap.fetched == [b"2", b"1"]
+    assert all(parts == f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)" for parts in imap.fetch_parts)
+    assert imap.logged_out == 1
+
+
+def test_newest_magic_link_reads_a_message_of_exactly_the_limit() -> None:
+    small = message(LINK, NOW + 10, html=False)
+    padded = small + b"\n" * (MAX_MESSAGE_BYTES - len(small))
+    assert len(padded) == MAX_MESSAGE_BYTES
+    assert newest(FakeImap([padded])) == LINK
 
 
 def test_newest_magic_link_skips_newer_messages_without_a_link() -> None:
@@ -475,15 +510,19 @@ def test_login_retries_after_an_imap_error(tmp_path: Path) -> None:
     good = FakeImap([message(LINK, NOW + 30)])
     attempts: list[int] = []
 
-    def flaky(host: str, port: int, *, ssl_context: Any) -> FakeImap:
+    def flaky(host: str, port: int, *, ssl_context: Any, timeout: float) -> FakeImap:
         attempts.append(1)
         if len(attempts) == 1:
             raise OSError(f"cannot reach {host} with {PASSWORD}")
-        return good(host, port, ssl_context=ssl_context)
+        if len(attempts) == 2:
+            # What the socket timeout raises for a stalled server.
+            raise TimeoutError("timed out")
+        return good(host, port, ssl_context=ssl_context, timeout=timeout)
 
     harness.login(seat(tmp_path), imap_factory=flaky)
-    assert len(attempts) == 2
+    assert len(attempts) == 3
     assert "note: mailbox check failed (OSError); retrying" in harness.lines
+    assert "note: mailbox check failed (TimeoutError); retrying" in harness.lines
     assert PASSWORD not in "\n".join(harness.lines)
     assert harness.opened == [LOGOUT_URL, AUTHORIZE_URL, LINK]
 
@@ -636,6 +675,55 @@ def test_login_without_the_executable_fails_before_starting(tmp_path: Path) -> N
     with pytest.raises(StoreError, match="login-tool executable not found on PATH"):
         harness.login(seat(tmp_path), use_mailbox=False, which=lambda _name: None)
     assert harness.popen_calls == []
+
+
+def test_login_holds_the_profile_lock_of_the_keep_alive(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.finish_on = AUTHORIZE_URL
+    account = seat(tmp_path)
+    free_during_login: list[bool] = []
+    original_run = harness.run
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        # The status check runs while the login still holds the profile.
+        with try_profile_lock(tmp_path, account.config_dir) as acquired:
+            free_during_login.append(acquired)
+        return original_run(argv, **kwargs)
+
+    harness.login(account, use_mailbox=False, run=run)
+    assert free_during_login == [False]
+    assert not any(line.startswith("note: a token keep-alive") for line in harness.lines)
+    # Released afterwards.
+    with try_profile_lock(tmp_path, account.config_dir) as acquired:
+        assert acquired
+
+
+def test_login_waits_with_a_note_when_the_profile_is_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    harness = Harness(tmp_path)
+    harness.finish_on = AUTHORIZE_URL
+    flock_calls: list[int] = []
+    real_flock = fcntl.flock
+
+    def busy_once(fd: int, operation: int) -> None:
+        flock_calls.append(operation)
+        if len(flock_calls) == 1:
+            # Another process holds the profile; the non-blocking attempt fails.
+            assert operation & fcntl.LOCK_NB
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        real_flock(fd, operation)
+
+    monkeypatch.setattr("agent_cli.token_keepalive.fcntl.flock", busy_once)
+    harness.login(seat(tmp_path), use_mailbox=False)
+    assert flock_calls == [fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_EX]
+    assert (
+        "note: a token keep-alive or another login holds profile "
+        f"{tmp_path / 'profiles' / 'seat'}; waiting for it"
+    ) in harness.lines
+    assert harness.lines[-1] == f"account.login ok seat {EMAIL} (max)"
 
 
 def test_capture_helper_is_private(tmp_path: Path) -> None:

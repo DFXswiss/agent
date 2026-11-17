@@ -135,7 +135,7 @@ from .small_change import (
 )
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
-from .token_keepalive import keepalive_due
+from .token_keepalive import KeepalivePace, keepalive_due
 from .usage import (
     AccountUsageError,
     AuthStale,
@@ -5455,8 +5455,12 @@ def _print_keepalive(results: list[Any], *, show_fresh: bool) -> bool:
     return failed
 
 
-def _token_keepalive_tick(agent_home: Path) -> None:
-    """One daemon keep-alive pass; a failure never stops the usage tick."""
+def _token_keepalive_tick(agent_home: Path, pace: KeepalivePace) -> None:
+    """One daemon keep-alive pass; a failure never stops the usage tick.
+
+    ``pace`` holds the per-account not-before times across passes, so an
+    account that failed waits a growing time before its next refresh run.
+    """
     # The keep-alive loads the manifest itself on its own five-minute clock; an
     # unreadable manifest is reported as a keep-alive error.
     from . import token_keepalive
@@ -5466,7 +5470,8 @@ def _token_keepalive_tick(agent_home: Path) -> None:
         accounts = load_manifest(agent_home, defer_model_configuration=True)
         if accounts.token_keepalive_seconds is None:
             return
-        _print_keepalive(token_keepalive.keep_alive(accounts), show_fresh=False)
+        results = token_keepalive.keep_alive(accounts, agent_home=agent_home, pace=pace)
+        _print_keepalive(results, show_fresh=False)
     except StoreError as exc:
         print(f"{token_keepalive.OUTPUT_PREFIX} error: {exc}", file=sys.stderr)
 
@@ -5486,6 +5491,8 @@ def cmd_knock(args: list[str]) -> None:
 
         last_poll: float | None = None
         last_keepalive: float | None = None
+        # Per-account keep-alive backoff after errors and short renewals.
+        keepalive_pace = KeepalivePace()
         # Not-before times per window-usage account; the usage tick stays the only clock.
         window_pace: dict[str, float] = {}
         scan_window_paced = functools.partial(scan_window_usage, pace=window_pace)
@@ -5505,7 +5512,7 @@ def cmd_knock(args: list[str]) -> None:
                 # Before the account scanners, so a renewed token is read this tick.
                 if keepalive_due(last_keepalive, time.monotonic()):
                     last_keepalive = time.monotonic()
-                    _token_keepalive_tick(store.home)
+                    _token_keepalive_tick(store.home, keepalive_pace)
                 try:
                     usage_accounts = load_ai_accounts(
                         store.home, defer_model_configuration=True
@@ -5689,7 +5696,8 @@ def cmd_watch(args: list[str]) -> None:
         accounts = load_ai_accounts(home(), defer_model_configuration=True)
         if accounts.token_keepalive_seconds is None:
             die("token_keepalive is not configured")
-        results = token_keepalive.keep_alive(accounts)
+        # A manual pass has no backoff; the profile lock still guards each refresh.
+        results = token_keepalive.keep_alive(accounts, agent_home=home(), pace=None)
         if not results:
             print(f"{token_keepalive.OUTPUT_PREFIX} none")
         if _print_keepalive(results, show_fresh=True):

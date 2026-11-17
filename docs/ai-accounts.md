@@ -608,6 +608,18 @@ optional top-level `token_keepalive` keeps those logins fresh:
   `config_dir`. The tool then renews the login itself. Agent never calls a
   token endpoint, never uses the refresh token and never reads, prints or
   stores a token or the tool's answer.
+- A run counts as a renewal when the login's new expiry is later than the one
+  before the run and still in the future; otherwise it is the error `token not
+  renewed`. When the tool's token lifetime is not longer than
+  `refresh_before_minutes`, the renewal is reported as `token.keepalive
+  refreshed <account> until <UTC minute> (lifetime shorter than
+  refresh_before_minutes)`; choose a smaller `refresh_before_minutes`.
+- Each refresh holds an exclusive lock for the profile directory under
+  `$AGENT_HOME/token-keepalive/` (one file per directory). After taking it,
+  the expiry is read again, so a login another process renewed meanwhile is
+  reported as fresh. When the lock is taken (another keep-alive pass or a
+  running `agent account-login` for that profile), the account is skipped with
+  `refresh in progress`.
 - Cost: each renewal is one run of the configured command against that
   subscription; choose a minimal request.
 - The device daemon checks at most every 5 minutes, on the usage tick and
@@ -618,9 +630,16 @@ optional top-level `token_keepalive` keeps those logins fresh:
   nothing. An error names the exit code and at most 200 characters of the
   tool's redacted stderr. A failure of one account never stops the others or
   the tick.
-- `agent watch token-keepalive` runs one pass immediately, prints one line per
-  account (a fresh token as `token.keepalive fresh <account> until <UTC
-  minute>`), and exits 1 when an account failed. Without the key it fails with
+- After an error the daemon leaves that account out (without output) for a
+  growing wait: 10 minutes, doubled after each further error in a row, at most
+  6 hours. A fresh or renewed login resets the wait. After a renewal whose
+  lifetime is within `refresh_before_minutes`, the daemon leaves the account
+  out until 10 minutes before the new expiry. These waits live in the daemon
+  process and start over when it restarts.
+- `agent watch token-keepalive` runs one pass immediately, without the
+  daemon's waits, prints one line per account (a fresh token as
+  `token.keepalive fresh <account> until <UTC minute>`), and exits 1 when an
+  account failed. Without the key it fails with
   `token_keepalive is not configured`.
 - An account without a login is skipped with
   `no login; run agent account-login`.
@@ -645,7 +664,10 @@ account's driver must have a `login` section in `drivers.json` (see
 (docs/ai-accounts.md#drivers)`. It does every step a script may do; sign-in
 pages may block automated browsers, so the pages open in the user's normal
 browser through the operating system (`open` on macOS, `xdg-open` elsewhere)
-and the human clicks. The steps:
+and the human clicks. For the whole sign-in the command holds the profile's
+[token keep-alive](#token-keep-alive) lock, so no keep-alive run writes the
+login at the same time; when the lock is taken it prints a note and waits for
+it. The steps:
 
 1. The command starts `login.argv` with `{email}` replaced by `ADDRESS` for
    that profile (the same environment as the keep-alive run) in a private
@@ -687,9 +709,12 @@ The optional mailbox file is
 `imap_port` is optional (default 993). The file must have mode `0600` (no
 group or other permission) and must never be committed to a repository; a
 file with other keys, empty values or a wider mode is refused. The connection
-uses IMAPS with certificate verification, opens `INBOX` read-only and reads at
-most the newest 10 messages whose sender matches `login.mail_from` and that
-were sent after the authorize page was opened. In each message the first
+uses IMAPS with certificate verification and a 30 second socket timeout (a
+timeout is a failed check that is retried), opens `INBOX` read-only and reads
+at most the newest 10 messages whose sender matches `login.mail_from` and that
+were sent after the authorize page was opened. Each message is fetched only up
+to 1 MiB plus one byte; a message larger than 1 MiB is skipped without being
+parsed. In each message the first
 `https://` match of `login.magic_link_pattern` is the sign-in link. A missing
 file continues without the mailbox; `--no-mailbox` ignores an existing file.
 The sign-in link, tokens and the mailbox password are never printed, logged or

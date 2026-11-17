@@ -201,6 +201,8 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch session-usage # one scan of the usage session's period usage into usage.snapshot
 agent watch account-usage # one scan of the configured usage accounts' key USD usage
 agent watch window-usage # one scan of configured window usage (5h, weekly, per model)
+agent watch token-keepalive # one keep-alive pass over window-usage accounts; needs token_keepalive
+agent account-login ACCOUNT --email ADDRESS [--no-mailbox] # sign a subscription into the account's profile
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
 agent order submit|list|show|events|wait|ack|reply|override|cancel|done|report  # local orders for the coordinator; coordinator.json "orders": true
 agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
@@ -208,8 +210,10 @@ agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HO
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each window-usage account no more often than its configured poll_seconds
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each window-usage account no more often than its configured poll_seconds; token keep-alive (at most every 5 minutes, when `token_keepalive` is set)
 ```
+
+The token keep-alive and `agent account-login` are described in [docs/ai-accounts.md](docs/ai-accounts.md#token-keep-alive).
 
 `agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the interactive driver's tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The pane working probe (the driver's `interactive.pane.working` and `queued` markers in `drivers.json`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
 

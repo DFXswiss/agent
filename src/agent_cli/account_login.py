@@ -38,7 +38,7 @@ from typing import Any
 from .ai_accounts import AIAccount
 from .drivers import DRIVERS_DOC, DRIVERS_FILE, DriverSpec, LoginSpec, expand_template
 from .store import StoreError
-from .token_keepalive import driver_env
+from .token_keepalive import driver_env, hold_profile_lock
 
 MAIL_WAIT_SECONDS = 600
 FINISH_WAIT_SECONDS = 600
@@ -48,6 +48,10 @@ LOGOUT_WAIT_SECONDS = 5
 # Messages may carry a Date a little before the moment the page was opened.
 DATE_SLACK_SECONDS = 5
 MAX_MESSAGES = 10
+# A sign-in e-mail is small; a larger message is skipped without parsing it.
+MAX_MESSAGE_BYTES = 1024 * 1024
+# Bounds connect and every read, so a stalled server cannot hold the poll loop.
+IMAP_TIMEOUT_SECONDS = 30
 STATUS_TIMEOUT_SECONDS = 60
 MAILBOX_DIR = "account-login"
 OUTPUT_PREFIX = "account.login"
@@ -181,14 +185,19 @@ def newest_magic_link(
 ) -> str | None:
     """The sign-in link of the newest matching e-mail sent after ``since``.
 
-    IMAPS with certificate verification; INBOX is selected read-only. At most
-    the newest ``MAX_MESSAGES`` messages whose sender matches ``mail_from`` are
-    read, newest first, stopping at the first one dated before ``since`` minus
-    a few seconds. Only an ``https://`` match of ``pattern`` counts. The
-    connection is always logged out.
+    IMAPS with certificate verification and a socket timeout of
+    ``IMAP_TIMEOUT_SECONDS``; INBOX is selected read-only. At most the newest
+    ``MAX_MESSAGES`` messages whose sender matches ``mail_from`` are read,
+    newest first, stopping at the first one dated before ``since`` minus a few
+    seconds. Each fetch is limited to one byte more than ``MAX_MESSAGE_BYTES``;
+    a message that reaches that size is skipped unparsed. Only an ``https://``
+    match of ``pattern`` counts. The connection is always logged out.
     """
     conn = imap_factory(
-        mailbox.host, mailbox.port, ssl_context=ssl.create_default_context()
+        mailbox.host,
+        mailbox.port,
+        ssl_context=ssl.create_default_context(),
+        timeout=IMAP_TIMEOUT_SECONDS,
     )
     try:
         conn.login(mailbox.user, mailbox.password)
@@ -200,11 +209,14 @@ def newest_magic_link(
             raise StoreError("mailbox search failed")
         ids = found[0].split() if found and isinstance(found[0], bytes) else []
         for message_id in reversed(ids[-MAX_MESSAGES:]):
-            status, fetched = conn.fetch(message_id, "(BODY.PEEK[])")
+            # A partial fetch bounds what any sender can make this loop read.
+            status, fetched = conn.fetch(
+                message_id, f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)"
+            )
             if status != "OK":
                 raise StoreError("mailbox fetch failed")
             raw = _message_bytes(fetched)
-            if raw is None:
+            if raw is None or len(raw) > MAX_MESSAGE_BYTES:
                 continue
             message = message_from_bytes(raw, policy=email_policy.compat32)
             sent = _message_time(message)
@@ -450,7 +462,8 @@ def login(
     """Sign ``email`` into the profile of ``account``.
 
     Raises ``StoreError`` on every failure. The final status check must report
-    exactly ``email``.
+    exactly ``email``. The profile's keep-alive lock in ``agent_home`` is held
+    from the start of the login command to the end of the status check.
     """
     spec, login_section = login_spec(account, drivers)
     email_address = _check_email(email)
@@ -471,100 +484,109 @@ def login(
     open_url = opener if opener is not None else (lambda url: _open_url(url, run))
     copy = clipboard if clipboard is not None else (lambda text: _copy_to_clipboard(text, run))
 
-    workdir = Path(tempfile.mkdtemp(prefix="agent-account-login-"))
-    process: Any = None
-    master: int | None = None
-    drain: threading.Thread | None = None
-    try:
-        helper = _write_capture_helper(workdir)
-        env = dict(profile_env)
-        env["BROWSER"] = str(helper)
-        master, slave = os.openpty()
-        failure: str | None = None
-        try:
-            process = popen(
-                login_argv,
-                env=env,
-                cwd=str(workdir),
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                close_fds=True,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            failure = f"cannot start {login_argv[0]}: {exc}"
-        finally:
-            os.close(slave)
-        if failure is not None:
-            raise StoreError(failure)
-        drain = threading.Thread(target=_drain, args=(master,), daemon=True)
-        drain.start()
-
-        url = _wait_for_url(
-            workdir, process, login_section.authorize_url_marker, clock=clock, sleep=sleep
-        )
-        try:
-            copy(email_address)
-        except StoreError as exc:
-            out(f"note: {exc}; type the e-mail address in the browser")
-        else:
-            out(f"note: {email_address} is on the clipboard")
-
-        # Sign the site out first so the page cannot belong to another account
-        # that is still signed in; the final status check stays the safeguard.
-        open_url(login_section.logout_url)
-        sleep(LOGOUT_WAIT_SECONDS)
-        since = clock()
-        open_url(url)
+    def note_wait() -> None:
         out(
-            "ACTION: in the browser, paste the e-mail address if the field is empty "
-            f'and choose "continue with e-mail" ({email_address})'
+            f"note: a token keep-alive or another login holds profile "
+            f"{account.config_dir}; waiting for it"
         )
-        manual = (
-            f"ACTION: open the sign-in link from the e-mail to {email_address}, "
-            'then choose "Authorize"'
-        )
-        if mailbox is None:
-            out(manual)
-        elif not _poll_mailbox(
-            mailbox,
-            since,
-            process,
-            login_section,
-            imap_factory=imap_factory,
-            open_url=open_url,
-            clock=clock,
-            sleep=sleep,
-            out=out,
-            email_address=email_address,
-        ):
-            if process.poll() is None:
-                out(f"note: no sign-in e-mail found within {MAIL_WAIT_SECONDS} s")
-                out(manual)
 
-        finish_started = clock()
-        while process.poll() is None:
-            if clock() - finish_started >= FINISH_WAIT_SECONDS:
-                raise StoreError(
-                    f"login command did not finish within {FINISH_WAIT_SECONDS} s"
+    # The same per-profile lock as the token keep-alive: neither may write the
+    # profile's login while the other runs.
+    with hold_profile_lock(agent_home, account.config_dir, on_wait=note_wait):
+        workdir = Path(tempfile.mkdtemp(prefix="agent-account-login-"))
+        process: Any = None
+        master: int | None = None
+        drain: threading.Thread | None = None
+        try:
+            helper = _write_capture_helper(workdir)
+            env = dict(profile_env)
+            env["BROWSER"] = str(helper)
+            master, slave = os.openpty()
+            failure: str | None = None
+            try:
+                process = popen(
+                    login_argv,
+                    env=env,
+                    cwd=str(workdir),
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    close_fds=True,
+                    start_new_session=True,
                 )
-            sleep(1)
-        if process.returncode != 0:
-            raise StoreError(f"login command failed (exit {process.returncode})")
+            except OSError as exc:
+                failure = f"cannot start {login_argv[0]}: {exc}"
+            finally:
+                os.close(slave)
+            if failure is not None:
+                raise StoreError(failure)
+            drain = threading.Thread(target=_drain, args=(master,), daemon=True)
+            drain.start()
 
-        subscription = _check_status(
-            status_argv, login_section, profile_env, email_address, run
-        )
-        line = f"{OUTPUT_PREFIX} ok {account.name} {email_address}"
-        if subscription is not None:
-            line += f" ({subscription})"
-        out(line)
-    finally:
-        if process is not None:
-            _stop(process, sleep)
-        if drain is not None:
-            drain.join(timeout=1)
-        if master is not None:
-            os.close(master)
-        shutil.rmtree(workdir)
+            url = _wait_for_url(
+                workdir, process, login_section.authorize_url_marker, clock=clock, sleep=sleep
+            )
+            try:
+                copy(email_address)
+            except StoreError as exc:
+                out(f"note: {exc}; type the e-mail address in the browser")
+            else:
+                out(f"note: {email_address} is on the clipboard")
+
+            # Sign the site out first so the page cannot belong to another account
+            # that is still signed in; the final status check stays the safeguard.
+            open_url(login_section.logout_url)
+            sleep(LOGOUT_WAIT_SECONDS)
+            since = clock()
+            open_url(url)
+            out(
+                "ACTION: in the browser, paste the e-mail address if the field is empty "
+                f'and choose "continue with e-mail" ({email_address})'
+            )
+            manual = (
+                f"ACTION: open the sign-in link from the e-mail to {email_address}, "
+                'then choose "Authorize"'
+            )
+            if mailbox is None:
+                out(manual)
+            elif not _poll_mailbox(
+                mailbox,
+                since,
+                process,
+                login_section,
+                imap_factory=imap_factory,
+                open_url=open_url,
+                clock=clock,
+                sleep=sleep,
+                out=out,
+                email_address=email_address,
+            ):
+                if process.poll() is None:
+                    out(f"note: no sign-in e-mail found within {MAIL_WAIT_SECONDS} s")
+                    out(manual)
+
+            finish_started = clock()
+            while process.poll() is None:
+                if clock() - finish_started >= FINISH_WAIT_SECONDS:
+                    raise StoreError(
+                        f"login command did not finish within {FINISH_WAIT_SECONDS} s"
+                    )
+                sleep(1)
+            if process.returncode != 0:
+                raise StoreError(f"login command failed (exit {process.returncode})")
+
+            subscription = _check_status(
+                status_argv, login_section, profile_env, email_address, run
+            )
+            line = f"{OUTPUT_PREFIX} ok {account.name} {email_address}"
+            if subscription is not None:
+                line += f" ({subscription})"
+            out(line)
+        finally:
+            if process is not None:
+                _stop(process, sleep)
+            if drain is not None:
+                drain.join(timeout=1)
+            if master is not None:
+                os.close(master)
+            shutil.rmtree(workdir)
