@@ -947,20 +947,25 @@ def _read_reviewer_spool(
     usage_payload = saved.get("usage")
     try:
         ai = load_ai_accounts(store.home)
-        # The spool belongs to a lane that already ran: its recorded account
-        # applies; a recorded account that is no longer configured makes the
-        # spool unusable like any other configuration error here.
-        selected = recorded_lane_role(
-            ai,
-            ai.for_lane(
-                worker.session_id,
-                str(agent.get("role") or ""),
-                str(agent.get("vendor") or ""),
-                require_execution=False,
-            ),
-            agent.get("account"),
-            lane=str(agent.get("id") or ""),
+        binding = ai.for_lane(
+            worker.session_id,
+            str(agent.get("role") or ""),
+            str(agent.get("vendor") or ""),
+            require_execution=False,
         )
+    except (AIAccountError, CoordinatorError, KeyError, TypeError, ValueError):
+        return None
+    try:
+        # The spool belongs to a lane that already ran: its recorded account
+        # applies, as in _finish_captured_lane. A recorded account that is no
+        # longer configured is an error for this lane, not a reason to drop
+        # the spool and let a fresh lane choose again.
+        selected = recorded_lane_role(
+            ai, binding, agent.get("account"), lane=str(agent.get("id") or "")
+        )
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    try:
         _driver, io = _coordinator_lane_driver(ai, str(agent.get("vendor") or ""))
         usage = LaneUsage(**usage_payload) if isinstance(usage_payload, dict) else None
         result = LaneResult(

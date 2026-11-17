@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli import coordinator_exec, coordinator_lanes
+from agent_cli.ai_accounts import AccountError as AIAccountError
 from agent_cli.coordinator_common import CoordinatorError, control_dir, coord
 from agent_cli.coordinator_exec import process_scope, run_bounded
 from agent_cli.coordinator_lanes import (
@@ -1924,8 +1925,11 @@ def test_reviewer_spool_whose_account_left_the_pool_is_unusable(
             store, worker, task, rows[agent_id], **spool_fields
         )
 
-    # seat-1 left the pool after the lane ran: its spool is unusable.
-    assert read("agent-1") is None
+    # seat-1 left the pool after the lane ran: an error for that lane, not a
+    # dropped spool that would let a fresh lane choose again.
+    with pytest.raises(CoordinatorError) as excinfo:
+        read("agent-1")
+    assert "no longer in the pool of role" in str(excinfo.value)
     # The same spool of a lane whose account is still a member is usable and
     # resolves to that recorded account.
     recovered = read("agent-2")
@@ -1933,3 +1937,57 @@ def test_reviewer_spool_whose_account_left_the_pool_is_unusable(
     result, _output_file, _excerpt = recovered
     assert result.protocol_result == "approved"
     assert result.config_dir == config_dirs["seat-2"]
+
+
+def test_reviewer_spool_is_unusable_when_its_role_or_driver_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dirs = {seat: f"/operator/pool/{seat}" for seat in ("seat-1", "seat-2")}
+    store, worker, task = _pool_lane_env(
+        tmp_path, monkeypatch, config_dirs, pool=("seat-1", "seat-2")
+    )
+    spool_fields = {
+        "round_num": None,
+        "head": "a" * 40,
+        "dimension": "quality",
+        "stage": "review-1",
+    }
+    row = working_row(
+        store,
+        worker,
+        "agent-1",
+        role="pr-reviewer-quality",
+        vendor="driver-c",
+        round=None,
+        head_sha="a" * 40,
+        dimension="quality",
+        stage="review-1",
+        account="seat-1",
+    )
+    _write_spool(store, worker, task, row, **spool_fields)
+
+    def read():
+        return coordinator_lanes._read_reviewer_spool(
+            store, worker, task, row, **spool_fields
+        )
+
+    # The spool is usable as written.
+    assert read() is not None
+
+    # The role binding can no longer be resolved: a configuration error makes
+    # the spool unusable, as before pools.
+    def broken_configuration(_home):
+        raise AIAccountError("ai-accounts.json is unreadable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(coordinator_lanes, "load_ai_accounts", broken_configuration)
+        assert read() is None
+
+    # The lane's driver can no longer be resolved after the account was: the
+    # spool is unusable too, and no account error is raised.
+    def no_driver(_ai, vendor):
+        raise CoordinatorError(f"no lane driver for {vendor}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(coordinator_lanes, "_coordinator_lane_driver", no_driver)
+        assert read() is None

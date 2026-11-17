@@ -562,8 +562,8 @@ chooses at that moment, from local data only (no network request):
    snapshot. `weekly_models` is not used: its names are display names that do
    not map to role models. A snapshot whose `windows`, a load window, its
    `used_percent` or its `resets_at` does not have the expected shape, or that
-   lacks `five_hour` or `weekly` (the poller always stores both, `null` when
-   the provider reports no value) → not eligible (`unreadable usage
+   lacks `five_hour`, `weekly` or a window's `resets_at` (the poller always
+   stores them, `null` when the provider reports no value) → not eligible (`unreadable usage
    snapshot`). A load of 100 % or more → not
    eligible (`exhausted at N %`).
 4. Running lanes: the agent rows of this device that are still `working` and
