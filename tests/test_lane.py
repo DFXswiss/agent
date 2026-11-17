@@ -3210,6 +3210,41 @@ def test_launch_delegate_restores_git_metadata_when_runner_raises(
     assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
 
 
+def test_launch_delegate_restores_git_metadata_when_runner_is_interrupted(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        head.write_text("ref: refs/heads/other\n", encoding="utf-8")
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        launch(
+            role="implementer",
+            vendor="driver-a",
+            spec_file=str(spec),
+            cwd=str(worktree),
+            runner=fake,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
 def test_launch_delegate_propagates_runner_exception_without_git_change(
     tmp_path: Path,
 ) -> None:
