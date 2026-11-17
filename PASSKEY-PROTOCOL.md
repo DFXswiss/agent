@@ -36,7 +36,8 @@ Built in this step:
 - `POST /api/key/commands`: the hub verifies a command signed by a session key (section 8). In
   this step the only action is `noop`, and the hub delivers no command to a device.
 - the exact verification a device runs on a certificate and a command (section 9), so that the
-  client repository can build it without asking
+  client repository can build it without asking, except the allow-list checks 1 and 7 of section
+  9, whose format the build steps of the allow list and of grants fix
 - the pages `/passkey` and `/invite` of the website (section 10)
 - the tests of section 13, including an end-to-end test in headless Chromium in CI (section 14)
 
@@ -56,11 +57,14 @@ Not built in this step:
   steps that build them.
 - the published hash of the website (DESIGN.md §25.16) and the access log (DESIGN.md §25.9)
 
-No existing endpoint changes its behaviour, except that the dashboard page `/` gets one link
-(section 10.1). The hub needs no new environment variable. It refuses to start when the host of
-`AGENT_CORE_PUBLIC_URL` ends with a dot or is an IP address (section 3); section 15 lists the
-files of this repository that change because of that. `python -m agent_core` without an argument
-still starts the hub; two operator commands are added (section 5.3).
+No existing endpoint changes its behaviour, with two exceptions: the dashboard page `/` gets one
+link (section 10.1), and on an existing route under `/api/key/` an `Agent-Key` in the session key
+id form now passes check 1 and is refused at check 2 with `key_unknown` instead of at check 1 with
+`signature_missing` (section 7.1). The hub needs no new environment variable. It refuses to start
+when the host of `AGENT_CORE_PUBLIC_URL` ends with a dot or is an IP address (section 3); section
+15 lists the files of this repository that change because of that. `python -m agent_core` without
+an argument still starts the hub; two operator commands are added, and any other argument, which
+today is ignored, now starts nothing and exits with status 2 (section 5.3).
 
 ## 2. Encodings and constants
 
@@ -108,8 +112,8 @@ after `decode()`. The item is accepted only when all three checks pass:
 A session key id and an invite id contain a `.`, which the `id` rule of KEY-PROTOCOL.md section 3
 does not allow. They can therefore never equal a keys-file id.
 
-Every random value in this document comes from the operating system's secure random source
-(`secrets.token_bytes`), in the browser from `crypto.getRandomValues`.
+Every random value the hub or the website creates comes from the operating system's secure
+random source (`secrets.token_bytes`), in the browser from `crypto.getRandomValues`.
 
 | Constant | Value | Meaning |
 |---|---|---|
@@ -158,8 +162,9 @@ Every random value in this document comes from the operating system's secure ran
 Registration (section 5), sign-in (section 6) and a device (section 9) verify the same fields by
 the same steps. This section fixes those steps. The hub and a device implement them in their own
 repositories; both run the shared test vectors of section 13.10, so that they agree on every
-accepted and every refused input. The steps follow WebAuthn Level 3 §7.1 and §7.2 for exactly the
-options this document uses. No server-side WebAuthn library is used (decision 3): the checks are
+input the vectors hold. Vectors cannot cover every input; where the two implementations differ on
+another input, the steps of this section decide which one is wrong (decision 56). The steps
+follow WebAuthn Level 3 §7.1 and §7.2 for exactly the options this document uses. No server-side WebAuthn library is used (decision 3): the checks are
 few, a device has to run the same checks offline, and a library would bring attestation code this
 document never uses. Every cryptographic operation is done by the `cryptography` package; CBOR is
 decoded and checked by the `cbor2` package. No primitive is implemented by hand.
@@ -218,17 +223,19 @@ The hub keeps one counter per keys-file passkey entry (table `passkey_counter`, 
 | Case | Result |
 |---|---|
 | No kept value | Accepted; `received` is kept |
-| `stored` = 0 and `received` = 0 | Accepted. This is the normal case of a synced passkey, whose counter is always 0. |
+| `stored` = 0 and `received` = 0 | Accepted. This is the normal case of a synced passkey, whose counter usually stays 0. |
 | `received` > `stored` | Accepted; `received` is kept |
 | every other case (`received` ≤ `stored` with one of them not 0) | Refused, `counter_regressed` |
 
-The comparison and the update are one transaction, and it is the last check of a sign-in (S7), so
-a sign-in refused for any other reason never changes the counter. A counter is checked only on a
-sign-in at the hub; a device does not check it (section 9). A passkey that is refused for
-`counter_regressed` is revoked and replaced through a new invite. Because `exclude_credentials`
-also lists revoked credentials (section 5.4), the same authenticator refuses to create the
-replacement until the person deletes the old passkey from it; another authenticator is not
-affected.
+The comparison, the update and the insert of the session (section 6.3) are one write transaction
+(`BEGIN IMMEDIATE`), and the comparison is the last check of a sign-in (S7). A sign-in refused for
+any other reason, or one whose session insert fails, therefore never changes the counter, and of
+two parallel sign-ins with the same non-zero `received` value exactly one is accepted. A counter
+is checked only on a sign-in at the hub; a device does not check it (section 9). When a passkey
+is refused for `counter_regressed`, the administrator revokes it, and the person gets a new
+invite. Because `exclude_credentials` also lists revoked credentials (section 5.4), the same
+authenticator refuses to create the replacement until the person deletes the old passkey from it;
+another authenticator is not affected.
 
 ## 5. Invites
 
@@ -240,7 +247,7 @@ POST /api/key/invites
 
 Needs a signed request (section 7) by a key with the scope `keys:invite`. By KEY-PROTOCOL.md
 section 3 only a `staff` entry can hold `keys:invite`, and a `webauthn` key never signs a request
-itself, so only a session key certified by an administrator's passkey reaches the endpoint. An
+itself, so only a session key certified by an administrator's passkey passes check 9. An
 `agent` key, a `service` key and a session key whose passkey lacks `keys:invite` get the signed
 `403` `{"error":"scope_missing"}` of check 9. A `webauthn` key used directly, and any key refused
 at checks 1 to 8 (for example a revoked or expired one), gets the unsigned refusal of that check
@@ -255,7 +262,7 @@ Request body, exactly these three fields:
 | Field | Rule |
 |---|---|
 | `handle` | The handle rule of KEY-PROTOCOL.md section 3, and not a login in the `agents` map of `teams.yaml` |
-| `team` | A team in `teams.yaml`. The handle need not be a member yet; the loader checks membership when the keys-file pull request is deployed (decision 12). |
+| `team` | A team in `teams.yaml`. The handle need not be a member yet; the loader checks membership when the keys-file pull request is deployed. Before that pull request is merged, the GitHub login confirmation of section 5.6 is required (decision 12). |
 | `lifetime_seconds` | A JSON integer (section 2: not a boolean, a string or a number with a fraction or exponent) from `INVITE_MIN_SECONDS` to `INVITE_MAX_SECONDS` |
 
 Checks after checks 9 to 10, in this order; every answer is signed (KEY-PROTOCOL.md section 6):
@@ -277,12 +284,23 @@ SHA-256 of the token and never the token itself, and answers `201`:
 
 - `expires` is now plus `lifetime_seconds`.
 - The token stands only in the fragment of the link. A browser never sends a fragment to a
-  server, so the token is not in any request line, access log or `Referer`.
-- This answer is the only place the token ever appears. It is never logged and never shown again.
+  server, so the token is not in any request line, access log or `Referer`. The answer body that
+  carries the link passes through the network edge (section 10.3).
+- This answer, and for a bootstrap invite the standard output of `invite-bootstrap` (section 5.3),
+  are the only places the hub writes the token. The hub never logs it and never shows it again;
+  the invite page sends it back in the body of `POST /auth/invite/open` (section 5.4).
 - The hub stores with the invite the complete signed creation request: the four `Agent-*`
-  headers, the method, the request target and the body. That is the administrator's signed
-  statement that the invite was created (DESIGN.md §24.2) until the team record exists; the build
-  step of the team record turns these rows into events.
+  headers, the method, the request target, the host line the hub used to build the signed text,
+  and the body bytes after removing any `Content-Encoding`, which are the bytes the signed body
+  hash covers (KEY-PROTOCOL.md section 5). Together with the session row of the signing session
+  key (section 12), which keeps its certificate, that is the administrator's signed statement
+  that the invite was created (DESIGN.md §24.2) until the team record exists. The build step of
+  the team record turns these rows into events. It checks the signer's authority against the
+  keys file as it was when the invite was created, not against the current file: it turns a
+  stored creation request into an event signed by the administrator only when the passkey that
+  certified the signing session held `keys:invite` and was not revoked in the version of
+  `keys.yaml` that was current on the deploying branch at the invite's `created` time (decision
+  25).
 
 ### 5.2 Listing invites
 
@@ -308,12 +326,16 @@ Needs a signed request by a key with `keys:invite`. Answer `200`, signed:
   | `pending` | Not opened, and now is before `expires` |
   | `opened` | Opened, its registration not finished, now is before `expires`, and at most `CEREMONY_SECONDS` passed since it was opened |
   | `received` | A public key was received (R14 passed) |
-  | `failed` | Its registration was finished (consumed at R2) and a later check refused it |
+  | `failed` | Its registration was finished (consumed at R2: `finished` is set) and no public key was received (`received` is null). This covers a later check that refused it, a request that ended with a `500` after R2, and a crash between R2 and R14. |
   | `expired` | No registration was finished, and either now is at or after `expires`, or more than `CEREMONY_SECONDS` passed since it was opened |
 
-  An invite is **open** when its status is `pending` or `opened`. Only open invites count
-  against `INVITE_OPEN_LIMIT` (I2). A ceremony the person cancels leaves the invite `opened`
-  until its ceremony time passes, then `expired`.
+  Every invite has exactly one of these statuses. An invite is **open** when its status is
+  `pending` or `opened`. Only open invites count against `INVITE_OPEN_LIMIT` (I2). A ceremony the
+  person cancels leaves the invite `opened` until its ceremony time passes, then `expired`. R2 is
+  committed on its own, before the checks R3 to R14 run (section 5.5). A list read while a finish
+  request is between R2 and the end of R14 therefore shows that invite as `failed`; when R14
+  passes, the same invite is `received`. Only after the finish request has ended is `failed`
+  final.
 - `created_by` is the session key id that created it, or `operator` for a bootstrap invite.
 - `received`, `credential_id`, `public_key`, `fingerprint`, `keys_entry`, `pull_request_title`
   and `pull_request_body` are present only for status `received`.
@@ -333,7 +355,9 @@ python -m agent_core invite-list
 ```
 
 - Both commands read the same environment variables as the hub and use the same database. They
-  exist only as commands on the hub host; no HTTP route creates a bootstrap invite.
+  exist only as commands on the hub host; no HTTP route creates a bootstrap invite. When the
+  configuration or the keys file breaks a rule that stops the hub at start, either command prints
+  the reason to standard error, writes nothing and exits with status 1.
 - `src/agent_core/__main__.py` today starts the hub and reads no argument. It gets a dispatch on
   the first argument: no argument starts the hub exactly as today (the image's
   `CMD ["python", "-m", "agent_core"]` and the `agent-core` script are unchanged);
@@ -343,8 +367,8 @@ python -m agent_core invite-list
 - `invite-bootstrap` refuses, writes nothing, prints the reason to standard error and exits with
   status 1 when one of these holds, checked in this order:
   1. its arguments break the rules of I1 (with `--seconds` as `lifetime_seconds`)
-  2. the keys file, read at the current time, has an entry that holds `keys:invite`, revoked or
-     not
+  2. the keys file, read from `AGENT_CORE_KEYS` when the command runs (not the copy the running
+     hub loaded at its start), has an entry that holds `keys:invite`, revoked or not
   3. another bootstrap invite is open (section 5.2)
   4. I2 fails
 
@@ -366,8 +390,11 @@ python -m agent_core invite-list
 - This is the path for the first administrator, for an administrator who lost every passkey, and
   nothing else. In the second case a reviewed pull request first revokes every passkey of the old
   administrator and removes `keys:invite` from every entry that holds it, revoked ones included,
-  and is deployed; only that opens the bootstrap path again. The scopes a revoked entry held
-  before stay in the history of the keys file.
+  and is deployed; only that opens the bootstrap path again. The current keys file then no longer
+  shows that the old administrator's passkeys held `keys:invite`, so the authority behind the
+  invites they created is kept only in the history of the keys file. The build step of the team
+  record therefore checks that authority against the keys file as it was at each invite's
+  `created` time (section 5.1, decision 25).
 - The command registers nothing: the passkey counts only after the keys-file pull request that
   adds it is reviewed, merged and deployed. **That pull request, which the team reviews, is the
   real control over who becomes administrator**; the restrictions above only narrow what an
@@ -378,7 +405,8 @@ python -m agent_core invite-list
   operator command" as soon as the record exists (decision 15).
 - Handing the role to another person needs no invite: one pull request removes `keys:invite` from
   the old administrator's entries and adds it to the new administrator's existing entries; the
-  loader rule "at most one handle holds `keys:invite`" holds in every merged state.
+  loader rule "among the entries that are not revoked, at most one handle holds `keys:invite`"
+  holds in every merged state.
 
 ### 5.4 Opening an invite
 
@@ -392,7 +420,7 @@ POST /auth/invite/open
 ```
 
 This request carries no registered key; the token authenticates it. Decision 28 lists every
-request that carries no registered key. Checks in this order; every refusal is
+route of this document that carries no registered key. Checks in this order; every refusal is
 `{"error":"<value>"}`:
 
 | # | Check | Status | `error` |
@@ -408,15 +436,18 @@ exactly one passes. An expired invite is therefore never marked opened. **Openin
 invite**: a ceremony that the person cancels, or that fails, needs a new invite (decision 9).
 
 On success the hub creates a registration (section 12): a registration id, a 32-byte random
-challenge and a 16-byte random user id. It answers `200`:
+challenge and a 16-byte random user id. The update of O4 and the insert of the registration are
+one write transaction, so an invite is never marked opened without its registration, also when
+the insert fails or the process stops between the two. It answers `200`:
 
 ```json
 {"registration":"<id>","handle":"example-staff","rp_id":"hub.example","rp_name":"agent-core","user_id":"<base64url, 16 bytes>","challenge":"<base64url, 32 bytes>","exclude_credentials":["<base64url>"],"timeout_ms":300000}
 ```
 
 `exclude_credentials` lists the credential ids of every keys-file entry with this handle, revoked
-or not, so that an authenticator does not create a second passkey for the same person (section
-4.4 states the consequence for a replacement).
+or not, so that an authenticator that already holds one of them does not create a second passkey
+for the same person; another authenticator is not stopped by it (section 4.4 states the
+consequence for a replacement).
 
 ### 5.5 What the invited person's browser does, and what the hub checks
 
@@ -472,7 +503,8 @@ the proposed keys-file id with the invite, which then has status `received`, and
 
 The page also computes the fingerprint itself from the public key that
 `AuthenticatorAttestationResponse.getPublicKey()` returns (the last 65 bytes of that P-256
-SubjectPublicKeyInfo) and shows it. When the two differ, it shows an error and no fingerprint.
+SubjectPublicKeyInfo) and shows it. When `getPublicKey()` returns `null` or the two differ, it
+shows an error and no fingerprint.
 The page tells the person to compare this fingerprint with the administrator over a channel other
 than the link.
 
@@ -490,6 +522,19 @@ output of `invite-list` on the hub host, which does not pass through the network
 the website is a convenience only (section 10.3). Before the pull request is merged, an operator
 compares its `credential_id` and `public_key` with the `invite-list` output for that invite; the
 pull-request body states this step.
+
+**Team membership and the GitHub login.** As long as GitHub sign-in exists (section 11), a member
+of a team in `teams.yaml` is a GitHub login, and every member reads the whole team's data
+(PROTOCOL.md, section "Identity"). A passkey handle is chosen by the administrator,
+and `teams.yaml` and `keys.yaml` are public. A membership line for a passkey handle therefore
+also gives team read access to whoever holds, or later registers, the GitHub account with exactly
+that login. Before a keys-file pull request for a passkey is merged, the administrator (for a
+bootstrap invite, the reviewers of the pull request) confirms that the GitHub account with
+exactly the login `<handle>` exists and belongs to the invited person. This holds also when
+`<handle>` is already a member of `<team>`, because the existing line already gives that account
+access. Without that confirmation the pull request is not merged, and no membership line is
+added. A person who has no GitHub account of their own therefore gets no passkey entry while
+GitHub sign-in exists (decision 12). Both pull-request bodies below state this step.
 
 The proposed id is `<handle>-passkey-<n>`, where `n` is the smallest integer from 1 for which the
 id is neither in the loaded keys file nor the proposed id of another received invite. It is chosen
@@ -527,7 +572,9 @@ Adds the passkey received through invite <invite id> to keys.yaml.
 - Fingerprint: <fingerprint>
 - Received: <received time>
 
-Before merging, the administrator compares this fingerprint with <handle> over a channel other than the invite link (PASSKEY-PROTOCOL.md section 5.5), and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). If <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
+Before merging, the administrator compares this fingerprint with <handle> over a channel other than the invite link (PASSKEY-PROTOCOL.md section 5.5), and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6).
+
+While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Before merging, the administrator confirms that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged. Only after that confirmation, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
 ```
 
 `pull_request_body` for a bootstrap invite, exactly (lines joined by `\n`):
@@ -541,7 +588,9 @@ Adds the administrator passkey received through bootstrap invite <invite id> to 
 - Fingerprint: <fingerprint>
 - Received: <received time>
 
-Before merging, <handle> compares this fingerprint with the one shown when the passkey was created, and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). The review of this pull request is the control over who becomes administrator. If <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
+Before merging, <handle> compares this fingerprint with the one shown when the passkey was created, and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). The review of this pull request is the control over who becomes administrator.
+
+While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Before merging, the reviewers confirm that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged. Only after that confirmation, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
 ```
 
 `<received time>` has the time form of KEY-PROTOCOL.md section 2.
@@ -582,9 +631,12 @@ answers `200`:
 
 `challenge` is SHA-256 over the statement bytes.
 
-This request carries no registered key, because the passkey can sign only after it. It reveals
-nothing about any key or person and can do nothing but hand out a challenge. Decision 28 lists
-every request that carries no registered key.
+This request carries no registered key, because the passkey can sign only after it. It needs no
+secret and names no person or keys-file entry. Its answers reveal only whether the given session
+public key is already the key of a stored session or of a pending sign-in (B2) and whether the
+pending limit is reached (B3). Besides handing out a challenge it stores one pending sign-in,
+which counts against `PENDING_SIGN_IN_LIMIT` (below). Decision 28 lists every route of this
+document that carries no registered key.
 
 `PENDING_SIGN_IN_LIMIT` is an availability limit, not a protection: anyone can send 1000 begins
 within 300 seconds and so make every further begin get `too_many_pending` until those sign-ins
@@ -631,7 +683,11 @@ statement bytes.
 The browser shows the fingerprint of its session key, checks that the statement it received has
 its own session public key on line 3, its own `location.origin` on line 2, and an expiry no later
 than its clock plus `SESSION_KEY_MAX_SECONDS`, and that `challenge` is SHA-256 of the statement.
-Otherwise it stops. It then calls `navigator.credentials.get` with exactly:
+When one of these fails it stops, and the pending sign-in stays until a later begin deletes it
+(B2). The hub writes an expiry of its own clock plus `SESSION_KEY_ISSUE_SECONDS` (43080), so a
+browser whose clock is more than 120 seconds behind the hub's stops here and cannot sign in; the
+page then shows that the computer's clock is behind (section 10.1). When all pass, the page
+calls `navigator.credentials.get` with exactly:
 
 ```js
 {publicKey: {challenge: challenge, rpId: rp_id, allowCredentials: [], userVerification: "required", timeout: timeout_ms}}
@@ -663,8 +719,11 @@ A finish more than `CEREMONY_SECONDS` after its begin is refused either way, wit
 values: `challenge_expired` (S3) while the pending sign-in still exists, or `challenge_unknown`
 (S2) once a later begin deleted it (B2). Both are correct refusals.
 
-On success the hub stores the session (section 12) with the certificate, the passkey's keys-file
-id, its credential id, public key and handle, and the expiry, and answers `200`:
+In the transaction of S7 (section 4.4) the hub stores the session (section 12) with the
+certificate, the passkey's keys-file id, its credential id, public key and handle, and the
+expiry. When that transaction fails, the request ends with a `500`, no session exists and the
+counter is unchanged; the pending sign-in was already consumed at S2. On success it answers
+`200`:
 
 ```json
 {"session_key":"session.5d1c…","passkey":"example-staff-passkey-1","handle":"example-staff","expires":"2026-11-17T21:58:00Z"}
@@ -730,8 +789,8 @@ The checks of KEY-PROTOCOL.md section 5 run in the same order, with check 9a add
 | 6 | Unchanged | 401 | `time_skew` |
 | 7 | For a keys-file id unchanged. For a session key id: the session key signature verifies with the session public key | 401 | `signature_invalid` |
 | 8 | Unchanged; the key id stored with the nonce is the session key id | 401 | `nonce_replayed` |
-| 9 | The key has the scope the endpoint needs. A session key has the scopes of its passkey entry as loaded now. | 403 | `scope_missing` |
-| 9a | Only on a route marked controller-only: the key is the device key of a device (section 7.4: the `agent` entry of that device without a `program` field) and holds `device:controller`. On every other route this check passes for every key. | 403 | `controller_device_required` |
+| 9 | The key has the scope the endpoint needs. A session key has the scopes of its passkey entry in the keys file the hub loaded at its start, not the scopes at sign-in. | 403 | `scope_missing` |
+| 9a | Only on a route marked controller-only: the key is the device key of a device (section 7.4: the unrevoked `agent` entry of that device without a `program` field, if there is one) and holds `device:controller`. On every other route this check passes for every key. | 403 | `controller_device_required` |
 | 10 | Unchanged; it applies only to `service` keys | 403 | `subject_not_allowed` |
 
 - A route declares `controller_only=True` when it accepts something that only a controller device
@@ -743,7 +802,8 @@ The checks of KEY-PROTOCOL.md section 5 run in the same order, with check 9a add
   build step; the check is tested through a route that exists only in the test suite. Section 8.3
   lists the other places that keep a session key from signing such a statement.
 - Checks 2 to 5 for a session key read the session row once; the read is part of check 2. Ending
-  a session (section 7.3) makes check 2 refuse it.
+  a session (section 7.3) makes check 2 refuse it for every request whose check 2 runs after the
+  end was committed; a request whose check 2 ran before is completed.
 - A revocation of the passkey takes effect, as every keys-file change, with the next deployment
   of the keys file; from then on check 3 refuses every session it certified. A change of the
   passkey entry's credential id, public key or handle makes check 5 refuse every session it
@@ -772,7 +832,9 @@ The answer for a keys-file key is unchanged (KEY-PROTOCOL.md section 7).
 Signs out. Needs a signed request by a session key and no scope; the body is ignored. After checks
 9 to 10, a keys-file key gets the signed `403` `{"error":"session_key_required"}`. For a session
 key the hub sets the session's `ended` time and answers `200` `{"ended":true,"hub_key":"hub-1"}`,
-signed. After this, every request with that session key id is refused at check 2. The browser
+signed. After this, every request with that session key id whose check 2 runs later is refused
+there with `key_unknown` (section 7.1); a second sign-out with it is refused the same way. The
+browser
 deletes the session key (section 10.2) whatever the answer.
 
 ### 7.4 The device key of a device (extends KEY-PROTOCOL.md section 3)
@@ -781,21 +843,26 @@ KEY-PROTOCOL.md section 3 allows `program` on an `agent` entry but does not say 
 device is the device itself. This document adds one rule to its loader:
 
 - The `agent` entries of one handle with the same `device` belong to one device. Among those that
-  are not revoked at start, at most one has no `program` field. That entry is the **device key**
-  of the device. Every other `agent` entry of that device carries `program` and is a **program
-  key**.
+  are not revoked at start (no `revoked` time, or one after the start), at most one has no
+  `program` field. That entry, if there is one, is the **device key** of the device. Every other
+  `agent` entry of that device carries `program` and is a **program key**.
 - The loader refuses, and the process does not start, when two `agent` entries of one handle with
-  the same `device`, neither revoked at start, both have no `program`. For `agent` entries this
-  rule takes the place of the sentence "`program` is required when two such entries share a
-  `device`": of the unrevoked `agent` entries that share a device, one may lack `program` (the
-  device key), and every other one carries it. The rule that the pair of `device` and `program`
-  is unique among the unrevoked `agent` and `service` entries of one handle stays as it is.
+  the same `device`, neither revoked at start, both have no `program`. For a pair of two `agent`
+  entries this rule takes the place of the sentence "`program` is required when two such entries
+  share a `device`": of the unrevoked `agent` entries that share a device, one may lack `program`
+  (the device key), and every other one carries it.
+- For every pair of unrevoked entries of one handle with the same `device` of which at least one
+  is a `service` entry, that sentence stays in force: both carry `program`. An unrevoked `agent`
+  entry without `program` and an unrevoked `service` entry with `program`, of one handle and on
+  the same `device`, are therefore refused at start, as they are today. The rule that the pair of
+  `device` and `program` is unique among the unrevoked `agent` and `service` entries of one handle
+  stays as it is.
 - A device whose unrevoked `agent` entries all carry `program` has no device key. Then no key of
   that device passes check 9a and no command can name it as target (C5).
 - A program key is never the device key, also when it holds `device:controller` and sits on the
   same device as the device key. It never passes check 9a and is never a command target.
 
-The rule for `service` entries is unchanged.
+The rules for `service` entries are unchanged.
 
 ## 8. Commands signed by a session key
 
@@ -862,8 +929,9 @@ On success the hub answers `200`:
 {"command":"<SHA-256 hex of the command text>","target":"example-staff-laptop-1","action":"noop","sequence":1,"delivered":false,"hub_key":"hub-1"}
 ```
 
-`delivered` is `false` in this build step: the hub verifies and stores nothing but the sequence
-number. Delivery comes with DESIGN.md §25.20 step 4. The website never sends a command again
+`delivered` is `false` in this build step: the hub verifies the command and stores nothing of it
+but the sequence number; the request itself leaves its nonce (check 8) and its log line (section
+7.1). Delivery comes with DESIGN.md §25.20 step 4. The website never sends a command again
 because of a hub refusal; it sends again with a new number only after a refusal signed by the
 device (DESIGN.md §25.6), which does not exist yet.
 
@@ -950,13 +1018,21 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
 | `/static/passkey.js` | `GET`, `HEAD` | The script of both pages |
 
 - The pages and the script are the same bytes for every request: they contain no data, no value
-  substituted by the hub (also not the public URL) and no inline script. They are served with the
-  headers
+  substituted by the hub (also not the public URL), no inline script and no inline style (no
+  `<style>` element, no `style` attribute, and the script sets no style through `element.style`
+  or `setAttribute("style", …)`). The policy below has no `style-src`, so `default-src 'self'`
+  blocks every inline style. They are served with the headers
   `Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
   `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 - The dashboard `/` gets one link "Sign in with a passkey" to `/passkey`, next to the GitHub
   button. Nothing else on `/` changes.
 - The pages load nothing from another origin.
+- When the statement check of section 6.3 stops a sign-in because the expiry is later than the
+  browser's clock plus `SESSION_KEY_MAX_SECONDS`, `/passkey` shows "Sign-in stopped: the clock of
+  this computer is behind. Correct the clock and sign in again." A browser whose clock is more
+  than 120 seconds behind the hub's cannot sign in. A signed request whose `Agent-Time` is more
+  than 120 seconds from the hub's clock, in either direction, is refused with `time_skew` (check
+  6); the page then shows that the computer's clock differs from the hub's.
 
 ### 10.2 The session key in the browser
 
@@ -966,11 +1042,17 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
 - The page stores the key pair, the session key id and the expiry in IndexedDB (database
   `agent-core`, store `session`, one record with the key `current`). IndexedDB keeps a
   non-extractable `CryptoKey` without exposing its bytes. The record survives a browser restart,
-  so a session lasts until sign-out or its expiry (decision 30). A new sign-in replaces the record.
+  so a session lasts until sign-out, its expiry, or one of the refusals of the next point
+  (decision 30). A new sign-in replaces the record.
 - The page deletes the record on sign-out, when the expiry passed, and when a signed request is
   refused with `key_unknown`, `key_revoked`, `key_expired` or `certificate_invalid`.
 - The next command sequence number is kept in the same record and incremented in one IndexedDB
-  transaction before the command is signed.
+  transaction before the command is signed, so two tabs never sign two commands with the same
+  number. A new sign-in, which is a new sender, starts at 1. A command refused by the hub uses up
+  its number.
+- A new sign-in replaces the record without ending the old session at the hub. The old session
+  stays valid at the hub until its expiry, but no one holds its private key any more, because
+  the key was not extractable and the record that held it is gone.
 
 ### 10.3 Signing in the browser, and what the browser can trust
 
@@ -997,7 +1079,17 @@ the invited person a matching fingerprint. A hub that was taken over can do the 
 delivers the page code. Until the published hash of the website exists (DESIGN.md §25.16), no
 check in this document detects a changed page.
 
-What an edge that changes the page code can do, in full:
+What the network edge can do, in full:
+
+- Without changing anything, it reads every request and answer that passes it. That includes the
+  invite link with its token in the answer of section 5.1 and the token in the body of
+  `POST /auth/invite/open`. With a token it read, it can open the invite before the invited
+  person and register a key of its own; the invited person then gets `invite_used`. The
+  bootstrap link does not pass it (section 5.3).
+- It can drop or delay any request or answer. It cannot replay a signed request (check 8), nor a
+  finish of a registration or a sign-in (R2, S2); a replayed begin gets `session_key_known` (B2).
+
+What an edge that changes the page code can do in addition, in full:
 
 - It can use the signed-in person's session key, through the page, for as long as the page is open
   and the key is valid (not ended, not past its expiry, its passkey not revoked), within that
@@ -1027,16 +1119,17 @@ What it cannot do:
   confirmed.
 
 What bounds the damage is the lifetime of a session key (at most `SESSION_KEY_MAX_SECONDS`), the
-rights of a session key (the scopes of its passkey entry, in this build step `noop` commands only
-to the person's own device keys, nothing that changes rights), and the record of every command:
-the hub's log line for every request of a session key (section 7.1), which names the session key
-and the passkey, and, once commands are delivered, the bundle every device writes into its local
-log before it runs a command (section 9). These records show afterwards what was signed; they
-stop nothing while it happens. A key
+rights of a session key (the scopes of its passkey entry: in this build step creating and listing
+invites for an administrator, `noop` commands only to the person's own device keys, nothing that
+changes rights), and the record of every command: the hub's log line for every request of a
+session key (section 7.1), which names the session key and the passkey, and, once commands are
+delivered, the bundle every device writes into its local log before it runs a command (section
+9). These records show afterwards what was signed; they stop nothing while it happens. A key
 substituted at an invite gets only the scopes its keys-file entry is given by the reviewed pull
-request: the team scopes, or for a bootstrap invite `keys:invite`; the visible sign is that the
-invited person's own passkey then fails to sign in with `credential_unknown`. Nothing in this
-build step detects a changed page or a substituted key before that. The owner decides whether
+request: the team scopes, or for a bootstrap invite also `keys:invite`. The visible sign is that
+the invited person gets `invite_used` when the edge opened the invite first, or that the invited
+person's own passkey later fails to sign in with `credential_unknown`. Nothing in this build step
+detects a changed page or a substituted key before that. The owner decides whether
 this is acceptable until the published hash of the website exists, or whether a later build step
 adds a countermeasure (decision 17).
 
@@ -1059,8 +1152,17 @@ the owner adjusts.
 - A passkey session is not a GitHub session and a GitHub session is not a passkey session: a
   cookie gives no access to any route of this document, and a session key gives no access to any
   cookie route. A browser may hold both at once; they are independent.
-- The handle of a passkey and a GitHub login may be the same text. That is never used to join
-  them in this build step.
+- The handle of a passkey and a GitHub login may be the same text. The passkey path never uses
+  that to join them. `teams.yaml` does join them: as long as GitHub sign-in exists, a team member
+  there is a GitHub login, and every member reads the whole team's sessions, usage and state
+  (PROTOCOL.md, section "Identity"). A membership line for a passkey handle, which the loader
+  requires (KEY-PROTOCOL.md section 3), therefore also gives team read access to the GitHub
+  account with exactly that login. That is why a keys-file pull request for a passkey is merged
+  only after the administrator, or for a bootstrap invite the reviewers, confirmed that this
+  GitHub account exists and belongs to the invited person (section 5.6, decision 12). The account
+  keeps that access as long as the membership line and GitHub sign-in exist. A GitHub account
+  that is renamed or deleted, and whose login another person registers later, is the same risk
+  that every membership line carries today; this document does not change it.
 - A test proves that every passkey route works when every GitHub call fails, and that no passkey
   route reads the cookie session (section 13).
 
@@ -1070,7 +1172,7 @@ New tables, created at start like the existing ones:
 
 | Table | Columns | Rules |
 |---|---|---|
-| `passkey_invite` | `id` (primary key), `token_hash` (unique), `handle`, `team`, `created` (integer seconds), `expires`, `created_by`, `bootstrap` (0 or 1), `creation_request` (JSON of the signed request, or null for a bootstrap invite), `opened` (nullable), `received` (nullable), `credential_id` (nullable), `public_key` (nullable), `proposed_id` (nullable) | Kept, never deleted |
+| `passkey_invite` | `id` (primary key), `token_hash` (unique), `handle`, `team`, `created` (integer seconds), `expires`, `created_by`, `bootstrap` (0 or 1), `creation_request` (JSON of the signed request as listed in section 5.1, the body as the decoded bytes, or null for a bootstrap invite), `opened` (nullable), `received` (nullable), `credential_id` (nullable), `public_key` (nullable), `proposed_id` (nullable) | Kept, never deleted |
 | `passkey_registration` | `id` (primary key), `invite_id`, `challenge`, `user_id`, `created`, `finished` (nullable) | Kept with its invite. The status of section 5.2 is derived from this row and its invite. |
 | `passkey_sign_in` | `id` (primary key), `statement`, `session_public_key` (unique), `created` | Deleted when consumed (S2), or by a begin when older than `CEREMONY_SECONDS` (B2) |
 | `passkey_session` | `id` (primary key, the session key id), `passkey_id`, `handle`, `credential_id`, `passkey_public_key`, `session_public_key` (unique), `statement`, `authenticator_data`, `client_data_json`, `signature`, `created`, `expires`, `ended` (nullable, set by sign-out, section 7.3) | Kept, never deleted: a certificate is evidence of what its key signed |
@@ -1079,6 +1181,23 @@ New tables, created at start like the existing ones:
 
 All binary values are stored as base64url text, all times as integer seconds. No table holds a
 token, a private key or a secret.
+
+**Steps a crash must not separate.** These are each one write transaction: I2 with the insert of
+the invite, and the bootstrap checks 3 and 4 with their insert (section 5.1, 5.3); O4 with the
+insert of the registration (section 5.4); R14 with the choice of the proposed id and the storing
+of the received key (section 5.5); B2, B3 and the insert of the pending sign-in (section 6.1); S7
+with the update of the counter and the insert of the session (section 4.4, 6.3); C6 with the
+update of the sequence (section 8.2). R2 and S2 are committed on their own, before the later
+checks: a registration or a pending sign-in is consumed also when a later check refuses, when the
+request ends with a `500`, and when the process stops before the end of the request.
+
+**Clock.** Every time check of this document uses the hub's clock at the moment of the check.
+The hub does not detect a clock that goes back. When it goes back, every window that is measured
+from a stored time (the invite's `expires`, `CEREMONY_SECONDS` since an open or a begin, a session
+key's expiry at check 4, the age of a pending sign-in at B2) lasts longer by that amount, and a
+time difference that becomes negative counts as "at most" the limit. When it goes forward, those
+windows end early. The 120-second windows of check 6 and C3 compare with the sender's clock and
+are not affected by a stored time. This is the same as for KEY-PROTOCOL.md (decision 52).
 
 ## 13. Tests this step must carry
 
@@ -1097,13 +1216,15 @@ or a counter that goes backwards without patching it.
 
 The software authenticator:
 
-- creates a real P-256 key pair and a random credential id of 16 to 64 bytes per credential
+- creates a real P-256 key pair and a random credential id per credential, of 16 to 64 bytes by
+  default
 - `create(options, origin)` returns `credential_id`, `client_data_json` and an
   `attestation_object` in canonical CBOR with `fmt` `none`, exactly as a browser sends them
 - `get(options, origin)` returns `credential_id`, `authenticator_data`, `client_data_json`,
   `signature` (DER) and `user_handle`
 - has settings for: the origin and rp id it puts in, the flags (UP, UV, BE, BS, AT, ED), the
-  counter (fixed, increasing, or a given value), `crossOrigin`, `topOrigin`, the client data
+  length of the credential id (any length from 0 to 65535 bytes, for example 15, 16, 1023 and
+  1024), the counter (fixed, increasing, or a given value), `crossOrigin`, `topOrigin`, the client data
   `type`, the challenge it puts in, bytes appended to the authenticator data, a shortened
   authenticator data, non-canonical or duplicate-key CBOR, a tag (an unknown tag and a bignum
   tag), a floating-point value in its shortest form, a simple value, `true`, `false` and `null`
@@ -1118,7 +1239,9 @@ real endpoints.
 
 - an administrator's session key creates an invite: signed `201` with the exact body, the link
   holds the token in the fragment, the database holds only the token hash and the signed creation
-  request
+  request; for a creation request sent with `Content-Encoding: gzip`, the stored body is the
+  decoded bytes, and the stored request, with the session row of its signer, verifies against
+  its body hash and session key signature
 - a session key whose passkey lacks `keys:invite`, an `agent` key and a `service` key get the
   signed `403` `scope_missing`; a `webauthn` key used directly gets the unsigned
   `key_kind_not_allowed`, a revoked key the unsigned `key_revoked`
@@ -1135,7 +1258,8 @@ real endpoints.
 - open: `request_invalid` for a malformed body and a body over the limit, `invite_unknown` for an
   unknown token, `invite_expired` at and after the expiry time (and the invite is not marked
   opened), `invite_used` for a second open; two parallel opens of one invite (exactly one
-  succeeds)
+  succeeds); a failure of the registration insert, injected in the test, leaves the invite not
+  opened
 - `exclude_credentials` lists the handle's keys-file credential ids, revoked ones included
 - registration: each refusal R1 to R14 in its order, produced by the software authenticator:
   a malformed body and a body over the limit, a reused registration, a registration older than
@@ -1154,16 +1278,21 @@ real endpoints.
   file, and one already received by another invite
 - the R13 check called directly on a decoded map refuses `-1: True`, `3: -7.0` and a key `1.0`,
   so that it holds also without the type check of R12
-- a failed registration gives the invite status `failed` at once
+- a failed registration gives the invite status `failed` at once; so does a registration that
+  passed R2 and then ended with a `500` (a failure injected after R2)
 - a successful registration: the fingerprint in the answer, status `received`, the exact
   `keys_entry`, `pull_request_title` and `pull_request_body`, and the proposed id skipping an id in
   the keys file and an id proposed for another invite; two parallel registrations of two invites
   for one handle get different proposed ids
+- the `pull_request_body` of a normal and of a bootstrap invite holds the GitHub login
+  confirmation step of section 5.6, and the sentence that adds the membership comes after it and
+  depends on it
 - the list: newest first by the latest change of section 5.2, every status of section 5.2, no
   token or token hash in the answer; a `failed` invite sorts above an invite that was opened
-  after it but whose registration was not finished, and below an invite created after its
-  registration finished; two invites with the same latest change are ordered by invite id
-  descending; `invite-list` prints the same order
+  after the failed invite was opened and before the failed invite's registration finished, and
+  whose own registration was not finished; it sorts below an invite created after the failed
+  invite's registration finished; two invites with the same latest change are ordered by invite
+  id descending; `invite-list` prints the same order
 - a received key that is not in the keys file cannot sign in (`credential_unknown`)
 - `invite-bootstrap`: creates an invite when no entry holds `keys:invite`, with the
   `invite bootstrap created` line on standard error and only the link on standard output; refuses
@@ -1171,8 +1300,10 @@ real endpoints.
   `keys:invite`, when only a revoked entry holds it, when another bootstrap invite is open, and
   at the open limit; creates one again after a keys file in which no entry holds `keys:invite`;
   two parallel runs create exactly one bootstrap invite
-- `python -m agent_core` without an argument starts the hub as today; an unknown first argument
-  and an unknown option exit with status 2, print a usage line and start nothing
+- `python -m agent_core` without an argument starts the hub as today; an unknown first argument,
+  an unknown option and a repeated option exit with status 2, print a usage line and start
+  nothing; `invite-bootstrap` and `invite-list` with a configuration or keys file that stops the
+  hub exit with status 1 and write nothing
 - a bootstrap invite: the hub's `invite bootstrap opened` and `invite bootstrap received` log
   lines, the proposed entry with `keys:invite`, the bootstrap title and body, `created_by`
   `operator`
@@ -1195,15 +1326,18 @@ real endpoints.
   invite but not in the keys file (S4); a revoked keys-file entry (S5), and a revoked entry whose
   `revoked` time is in the future (accepted); the steps V2 to V10 through S6 as listed below;
   each counter case below (S7). V1 and V11 cannot fail for a statement the hub built and stored
-  within `CEREMONY_SECONDS`; they are tested directly (below).
+  within `CEREMONY_SECONDS`, as long as the public URL does not change and the clock does not go
+  back by more than 120 seconds between begin and finish; they are tested directly (below).
 - through S6: type `webauthn.create` (V2), an assertion whose challenge is the hash of another
   statement (V3), a wrong origin, `crossOrigin` true and a `topOrigin` (V4), authenticator data of
   36 bytes (V5), a wrong rp id (V6), UP not set (V7), UV not set (V8), BS without BE, AT set and
   trailing bytes without ED (V9), a wrong signature and a signature that is not canonical DER
   (V10)
-- a sign-in refused at S6 leaves the stored counter unchanged
+- a sign-in refused at S6 leaves the stored counter unchanged; a failure of the session insert,
+  injected in the test, gives a `500`, no session and an unchanged counter
 - the counter: 0 then 0 accepted, 5 then 6 accepted, 6 then 6 refused, 6 then 3 refused, 6 then 0
-  refused; two parallel sign-ins with the same counter value (exactly one accepted)
+  refused; two parallel sign-ins with stored 5 that both send 6 (exactly one accepted, the other
+  `counter_regressed`)
 - `verify_certificate` directly: an expiry beyond now + `max_lifetime` (refused), exactly now +
   `max_lifetime` (accepted), at now (refused), each with `max_lifetime` 43200 and 3600; a statement
   with four or six lines, a trailing line feed, another label, another origin, a key that is not a
@@ -1214,12 +1348,15 @@ real endpoints.
 
 ### 13.4 The hub, signed requests by a session key
 
-- each changed check of section 7.1 in its order: a session key id in the wrong form
-  (`signature_missing`), an unknown session id, an ended session (`key_unknown`), a session whose
-  passkey is revoked (`key_revoked`), a session at and after its expiry (`key_expired`), a session
-  whose passkey entry changed its public key, credential id or handle (`certificate_invalid`), a
-  session key signature over another text, an `r` or `s` of 0 or of n, a DER signature instead of
-  `r ‖ s` (`signature_invalid`), a replayed nonce
+- each changed check of section 7.1 in its order: a session key id in the wrong form and a DER
+  signature (70 to 72 bytes) instead of the 64-byte `r ‖ s` (each `signature_missing`, check 1),
+  an unknown session id, an ended session (`key_unknown`), a session whose passkey is revoked
+  (`key_revoked`), a session at and after its expiry (`key_expired`), a session whose passkey
+  entry changed its public key, credential id or handle (`certificate_invalid`), a session key
+  signature over another text and an `r` or `s` of 0 or of n (each `signature_invalid`, check 7),
+  a replayed nonce
+- on `GET /api/key/whoami`, an `Agent-Key` in the session key id form that names no session gets
+  `key_unknown` (before this change it got `signature_missing`)
 - a high `s` is accepted
 - check 9: a session key without the scope of a test-only route gets `scope_missing`
 - check 9a on a test-only controller-only route: a session key, an `agent` key with
@@ -1231,7 +1368,10 @@ real endpoints.
   one `device` that both lack `program` is refused at start; a device key and a program key on
   one device load, and so does a revoked device key without `program` next to its unrevoked
   replacement without `program`; a device whose only `agent` entry carries `program` loads and has
-  no device key (that entry fails check 9a and C5)
+  no device key (that entry fails check 9a and C5); an unrevoked `agent` entry without `program`
+  and an unrevoked `service` entry with `program`, of one handle on one `device`, are refused at
+  start; a device key without `program` whose `revoked` time is in the future next to a second
+  `agent` entry without `program` on the same device is refused at start
 - the log line of section 7.1 for a session key, and no certificate, signature or body in any log
   line
 - sign-out: signed `200`, then `key_unknown`; a keys-file key gets `session_key_required`
@@ -1269,7 +1409,8 @@ real endpoints.
   and their messages; and `public_url_host` still returns the host line for `[::1]` and
   `[2001:db8::1]`
 - the pages `/passkey`, `/invite` and `/static/passkey.js` carry the headers of section 10.1, no
-  inline script and no substituted value, and answer `HEAD`
+  inline script, no `<style>` element, no `style` attribute, no use of `.style` or
+  `setAttribute("style"` in the script, and no substituted value, and answer `HEAD`
 - the dashboard `/` carries the link to `/passkey` and is otherwise unchanged
 - the tables of section 12 are created at start, and after a full invite and sign-in no row holds
   the invite token or any private key
@@ -1282,8 +1423,12 @@ These run with Node.js like the existing dashboard tests:
 - the request text and the command text are built byte for byte as in the hub, checked against
   the shared vectors of section 13.10
 - the statement check of section 6.3 stops for another session key, another origin, an expiry
-  beyond 43200 seconds, and a `challenge` that is not SHA-256 of the statement
-- the fingerprint function gives the vector of section 2's format
+  beyond 43200 seconds, and a `challenge` that is not SHA-256 of the statement; with a browser
+  clock 121 seconds behind the hub's clock of the statement it stops and the page shows the
+  clock message of section 10.1, and with 120 seconds behind it passes
+- the fingerprint function gives the vector of section 2's format; the invite page shows an error
+  and no fingerprint when `getPublicKey()` returns `null` and when its fingerprint differs from
+  the hub's
 
 ### 13.8 End to end, in headless Chromium
 
@@ -1351,12 +1496,18 @@ synced passkey (counter 0, flags BE and BS) is covered by the software authentic
 - the shared test vectors of section 13.10 give the same result as in the hub
 - a grant signed by a session key, by a program key and by an executor key is refused; the same
   for an allow-list statement, once DESIGN.md §25.20 step 1 has fixed its format
+- a replayed grant is refused: one that was seen before, one whose sequence is not higher, and one
+  whose time is outside the window; a grant or the removal of a grant whose entry id was removed
+  earlier is refused, also when the hub delivers it late; the same for an allow-list statement,
+  once DESIGN.md §25.20 step 1 has fixed its format
 
 The refusal tests of DESIGN.md §25.21 that concern maskings (DESIGN.md §25.20 step 5, including a
 masking signed by a session key, a program key or an executor key), the signing service and the
-team record belong to the build steps that build those parts; the ones for allow lists and grants
-are in the client list above. This repository carries the ones it can: an unknown key, an expired
-session key, a replayed command, a command outside its permission (C5), a session-key expiry
+team record belong to the build steps that build those parts. The ones for allow lists and grants
+are in the client list above: a grant or an allow-list statement signed by a session key, a
+program key or an executor key, a replayed one, and one whose entry id was removed earlier; for
+an allow-list statement each of them applies once DESIGN.md §25.20 step 1 has fixed its format.
+This repository carries the ones it can: an unknown key, an expired session key, a replayed command, a command outside its permission (C5), a session-key expiry
 beyond the limit, and a session key, a program key or an executor key on a route reserved to a
 controller device (check 9a).
 
@@ -1487,14 +1638,16 @@ A change of the steps changes the file in the same pull request.
 3. The operator runs `invite-bootstrap` for the administrator. The administrator creates the
    passkey and compares the fingerprint with the output of `invite-list`. The pull request adds
    the `keys_entry` that `invite-list` prints, which carries `keys:invite`; the operator compares
-   its `credential_id` and `public_key` with that output; the team reviews it.
+   its `credential_id` and `public_key` with that output; the reviewers confirm the GitHub login
+   of the handle (section 5.6); the team reviews it.
 4. After that pull request is deployed, the administrator invites every other staff member
    (DESIGN.md §25.15). Each passkey counts after its own pull request is deployed; for each, the
-   operator compares the pull request with `invite-list` (section 5.6).
+   operator compares the pull request with `invite-list`, and the administrator confirms the
+   GitHub login of the handle (section 5.6).
 
 GitHub sign-in keeps working during and after these steps. Its removal is the following build
-step, and it is merged only after every staff member who uses the website has a passkey in the
-keys file.
+step, and the pull request that removes it is merged only after every staff member who uses the
+website has an unrevoked passkey entry in the deployed keys file (decision 36).
 
 ## 17. Decisions taken in this document
 
@@ -1536,12 +1689,23 @@ keys file.
     fingerprint comparison and the reviewed pull request. (Section 5.5)
 11. The invite token is in the URL fragment and only its SHA-256 is stored. (Section 5.1)
 12. An invite needs an existing team but not membership of the handle; membership is checked by
-    the loader when the keys-file pull request is deployed. (Section 5.1)
+    the loader when the keys-file pull request is deployed. As long as GitHub sign-in exists, a
+    team member in `teams.yaml` is a GitHub login that reads the whole team's data, so a
+    membership line for a passkey handle gives the GitHub account with exactly that login team
+    read access. A keys-file pull request for a passkey is therefore merged only after the
+    administrator (for a bootstrap invite, the reviewers) confirmed that the GitHub account with
+    exactly the login `<handle>` exists and belongs to the invited person, also when the handle
+    is already a member; only then is a missing membership line added. Both pull-request bodies
+    state this step. A person without a GitHub account of their own gets no passkey entry while
+    GitHub sign-in exists. Choice for the owner: of "confirm that the GitHub account with that
+    login belongs to the person" and "the handle equals the person's own GitHub login", both are
+    required together, and also for a handle that is already a member, the stricter reading.
+    (Section 5.1, 5.6, 11, 13.2, 16)
 13. Invite lifetime is 300 to 86400 seconds; at most 50 invites are open at once. (Section 2, 5.1)
 14. The user id of a new passkey is 16 random bytes per invite, never derived from the handle, so
     that no authenticator replaces an existing passkey. (Section 5.4)
-15. The administrator's first passkey comes through a bootstrap invite, restricted as far as
-    possible: only from the operator command on the hub host; only while no keys-file entry,
+15. The administrator's first passkey comes through a bootstrap invite, restricted as follows:
+    only from the operator command on the hub host; only while no keys-file entry,
     revoked or not, holds `keys:invite`; only one open bootstrap invite at a time; only for an
     entry that carries `keys:invite`; written to standard error and the hub's log with the
     handle; kept as a row with `created_by` `operator` and recorded as an event in the team record
@@ -1556,7 +1720,9 @@ keys file.
 17. The website does not verify hub answer signatures, and a browser has no key pinned outside
     the hub. Consequence, stated in full in section 10.3: the page code and the answers the
     website shows are only as trustworthy as the connection that delivered them, and the network
-    edge, like a hub that was taken over, can change them. An edge that changes the page code can
+    edge, like a hub that was taken over, can change them. Without changing anything the edge
+    reads every invite link the hub hands out over HTTP and can open that invite before the
+    invited person, who then gets `invite_used`. An edge that changes the page code can
     use the signed-in person's session key for as long as the page is open and the key is valid,
     within that session's rights; at a sign-in it can get a session key of its own certified,
     which it then holds within the same rights until that key expires, its session is ended or its
@@ -1574,9 +1740,11 @@ keys file.
     countermeasure; section 17.2 names the sentences to adjust. (Section 10.3)
 18. Every request of a session key writes one log line, like a `service` key, until the access
     log exists. (Section 7.1)
-19. The signature counter rule of section 4.4; synced passkeys with counter 0 always pass; the
-    device does not check the counter; the counter is the last check of a sign-in (S7), so a
-    refused sign-in never changes it. (Section 4.4, 6.3, 9)
+19. The signature counter rule of section 4.4; a passkey whose counter stays 0, as a synced
+    passkey's usually does, passes the counter check every time; the device does not check the
+    counter; the counter is the last check of a sign-in (S7), and its update and the insert of
+    the session are one write transaction, so a refused sign-in and a failed session insert never
+    change it. (Section 4.4, 6.3, 9)
 20. The user handle returned at sign-in is ignored. (Section 6.3)
 21. In this build step the only command action is `noop`, the only sender is a session key, the
     only targets are the unrevoked device keys (section 7.4) of the handle stored with the session,
@@ -1595,8 +1763,17 @@ keys file.
     a trailing dot", the stricter second is taken. The checks run in `Config.from_env` after the
     URL-form checks and outside `public_url_host`; `docker-compose.yaml`, the base URL of
     `tests/test_config.py` and the README's local run move to `localhost`. (Section 3, 15)
-25. The invite creation is kept as the stored signed request until the team record exists.
-    (Section 5.1)
+25. The invite creation is kept as the stored signed request until the team record exists. The
+    build step of the team record checks the signer's authority against the keys file as it was
+    at the invite's `created` time (the version of `keys.yaml` current on the deploying branch
+    then), not against the current file, and turns a stored creation request into an event
+    signed by the administrator only when the certifying passkey held `keys:invite` and was not
+    revoked in that version. Choice for the owner: of "point to the history of the keys file" and
+    "require the migration to check authority at the time of signing", the stricter second is
+    taken. The version current on the branch can differ from the deployed one for the time a
+    deployment takes; in that time the migration refuses a creation that the hub accepted after a
+    scope removal was merged and before it was deployed, never the other way round. (Section
+    5.1, 5.3)
 26. End-to-end tests are deselected by default through a registered marker, are skipped at
     collection without the `e2e` extra, and are required in the CI job `e2e`. That job is a
     required check like `pytest`: it is in `jobs` of `.github/a38.json`, so the A38 local CI report
@@ -1606,7 +1783,8 @@ keys file.
     an availability limit that the edge's per-address rate limit protects; anonymous bodies at
     most 65536 bytes. (Section 2, 6.1, 15)
 28. DESIGN.md §24.2 says every request is authenticated and names opening an invite link as the
-    only exception. These requests carry no registered key, and no others:
+    only exception. Of the routes this document adds, these carry no registered key, and no
+    others (the existing routes keep GitHub sign-in until the following build step, section 11):
     `POST /auth/invite/open` (authenticated by the token); `POST /auth/invite/finish` (bound to the
     open by the registration id); `POST /auth/passkey/begin` (hands out a challenge, unavoidable
     because the passkey signs only after it); `POST /auth/passkey/finish` (authenticated by the
@@ -1629,15 +1807,20 @@ keys file.
     SHA-256 over the statement bytes itself, checks the statement's structure (error
     `statement_invalid`), and takes the expiry bound as a parameter: `SESSION_KEY_MAX_SECONDS` on
     the hub, the configured lifetime on a device. (Section 6.3, 6.4, 9)
-36. A device obeys a passkey only while its allow-list entry is not revoked, not suspended and
-    not past its "until" time, and, for an entry from a grant, while the grant has not expired and
-    was not removed. (Section 9)
+36. The pull request of the following build step, which removes GitHub sign-in, is merged only
+    after every staff member who uses the website has an unrevoked passkey entry in the deployed
+    keys file. (Section 16)
 37. The binding source of the keys-file text is `invite-list` on the hub host; an operator
     compares every keys-file pull request with it; the website copy is a convenience. Owner
     decision. (Section 5.2, 5.6, 16)
 38. Invite statuses are `pending`, `opened`, `received`, `failed` and `expired`; an invite is
-    open when `pending` or `opened`, and only open invites count against the limit. A failed
-    registration makes its invite `failed` at once. (Section 5.2)
+    open when `pending` or `opened`, and only open invites count against the limit. `failed` is
+    derived from the rows: the registration's `finished` is set and the invite's `received` is
+    null. A refused registration, one that ends with a `500` after R2, and one interrupted by a
+    crash after R2 therefore make the invite `failed` at once. Limit for the owner: while a
+    finish request runs between R2 and R14, the list shows `failed` for an invite that becomes
+    `received` when R14 passes; `failed` is final only after that request has ended. (Section
+    5.2, 12)
 39. An invite's expiry is checked before it is marked opened, in the same atomic update, so an
     expired invite is never marked opened. (Section 5.4)
 40. Every CBOR item the hub decodes passes three checks: the RFC 7049 §3.9 canonical form as
@@ -1660,14 +1843,22 @@ keys file.
 42. The device bundle carries `content` and `content_random` beside the command, both `null`
     when line 7 is `-`, and the device checks them against line 7. (Section 8.1, 9)
 43. The pages and the script contain no value substituted by the hub; the script takes the
-    origin and host line from `location`. (Section 6.3, 10.1, 10.3)
-44. The device key of a device is its one unrevoked `agent` entry without `program`; every other
-    `agent` entry of that device carries `program` and is a program key; the loader refuses a
-    file with two unrevoked `agent` entries of one handle and one device without `program`. This
-    extends KEY-PROTOCOL.md section 3. A device whose entries all carry `program` has no device
-    key. Choice for the owner: the rule requires at most one device key per device, not exactly
-    one, so that an existing file with only program keys on a device still loads; such a device
-    can neither pass check 9a nor be a command target. (Section 7.4, 13.4)
+    origin and host line from `location`. They contain no inline script and no inline style, and
+    a test checks both: of "say that the pages use no inline style" and "test for it", both are
+    taken. (Section 6.3, 10.1, 10.3, 13.6)
+44. The device key of a device is the unrevoked `agent` entry of that device without `program`,
+    if there is one; every other `agent` entry of that device carries `program` and is a program
+    key; the loader refuses a file with two unrevoked `agent` entries of one handle and one device
+    without `program`. This extends KEY-PROTOCOL.md section 3 and replaces its sentence
+    "`program` is required when two such entries share a `device`" only for a pair of two `agent`
+    entries; for a pair with a `service` entry that sentence stays, so an unrevoked `agent` entry
+    without `program` and an unrevoked `service` entry on the same device of one handle are
+    refused at start. A device whose entries all carry `program` has no device key. Choices for
+    the owner: the rule requires at most one device key per device, not exactly one, so that an
+    existing file with only program keys on a device still loads; such a device can neither pass
+    check 9a nor be a command target. Of "let a device key share its device with a `service`
+    entry" and "keep requiring `program` on both", the stricter second is taken. (Section 7.4,
+    13.4)
 45. The invite list is ordered newest first by the latest recorded change: `received`, else the
     registration's `finished`, else `opened`, else `created`; the passing of an expiry is not a
     recorded change. (Section 5.2, 13.2)
@@ -1684,16 +1875,43 @@ keys file.
     exceed them. (Section 5.1, 5.3, 6.1)
 49. `python -m agent_core` without an argument starts the hub as today; `invite-bootstrap` and
     `invite-list` run the operator commands; any other argument starts nothing and exits with
-    status 2. Choice for the owner: of "ignore unknown arguments and start the hub" and "refuse
-    them", the stricter second is taken. (Section 5.3, 15)
+    status 2; a configuration or keys file that stops the hub makes either command exit with
+    status 1 and write nothing. Choice for the owner: of "ignore unknown arguments and start the
+    hub" and "refuse them", the stricter second is taken. (Section 5.3, 15)
 50. The client tests (DESIGN.md §25.20 step 2) refuse a grant and, once step 1 has fixed its
-    format, an allow-list statement signed by a session key, a program key or an executor key;
-    the masking case belongs to step 5. (Section 13.9)
+    format, an allow-list statement that is signed by a session key, a program key or an executor
+    key, that is replayed (seen before, sequence not higher, time outside the window), or whose
+    entry id was removed earlier, also when delivered late; the masking case belongs to step 5.
+    Choice for the owner: of "add the replay cases to the client list" and "say that they are not
+    in it", the stricter first is taken. (Section 13.9)
+51. The stored creation request of an invite holds the four `Agent-*` headers, the method, the
+    request target, the host line and the body bytes after removing any `Content-Encoding`, the
+    bytes the signed body hash covers, so that it verifies without the original request.
+    (Section 5.1, 12)
+52. The hub does not detect a clock that goes back: every window measured from a stored time then
+    lasts longer by that amount, and one that goes forward ends early. This is a limit, the same
+    as for KEY-PROTOCOL.md, and no new mechanism is added. (Section 12, 13.3)
+53. A browser whose clock is more than 120 seconds behind the hub's cannot sign in, because the
+    statement check of section 6.3 stops; the page says that the clock is behind. A browser clock
+    more than 120 seconds off in either direction gets `time_skew` on every signed request. This
+    is a limit, consistent with V11 and check 6. (Section 6.3, 10.1, 13.7)
+54. Steps that a crash must not separate are one write transaction (section 12): O4 with the
+    insert of the registration, R14 with the proposed id and the stored key, S7 with the counter
+    and the insert of the session, besides the limits of decision 48 and C6. R2 and S2 are
+    committed on their own, so a registration or a pending sign-in is consumed also when the
+    request later fails, ends with a `500` or is interrupted. (Section 4.4, 5.4, 5.5, 6.3, 12)
+55. A DER signature sent by a session key in `Agent-Signature` is refused at check 1 with
+    `signature_missing`, because it is not 64 bytes; it never reaches check 7. Choice for the
+    owner: of "move the test to check 1" and "drop it", the stricter first is taken. (Section 7,
+    13.4)
+56. The shared test vectors make the hub and a device agree on every input the vectors hold, not
+    on every possible input; where the two differ on another input, the steps of section 4 and
+    6.4 decide. This is a limit. (Section 4, 13.10)
 
 ### 17.2 Decisions for the human owner
 
-The owner confirms decisions 2, 8, 15, 17, 24, 26, 28, 37, 40, 44, 45, 49 and 50, and adjusts these
-sentences of DESIGN.md:
+The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 43, 44, 45, 49,
+50, 52, 53, 55 and 56, and adjusts these sentences of DESIGN.md:
 
 - §24.2: the sentence that the network edge "cannot forge a request or an answer, because both are
   signed". It holds for devices and programs, which pin the hub key; it does not hold for the
