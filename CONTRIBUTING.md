@@ -83,7 +83,7 @@ The pages come from the real dashboard server. `e2e/dashboard_server.py` starts 
 - A pull request that changes a dashboard page (`src/agent_cli/static/*.html`, or the data `/api/state` and `/api/orders/` return to it) commits the new or updated baselines in the same change. A pull request that adds a page or a visual variant adds its test and baseline; a page without a baseline gets one. A pull request whose workflow cannot run Playwright, such as a coordinator order today, leaves its baselines to the next human or script change of that page.
 - Seed data lives in `e2e/dashboard_server.py` and reuses the fixtures under `tests/`; it stays free of personal data and secrets (accounts `@example.com`, placeholder drivers and logins).
 - Baselines are platform-specific (`*-chromium-darwin.png`); generate them on the same platform as the existing ones (macOS).
-- These tests are not a regression gate and do not fail the build. A missing or unrelated baseline change is a review finding that does not block merge ([REVIEW.md](REVIEW.md#dashboard-screenshots)).
+- These tests are not a regression gate and do not fail the build. A missing or unrelated baseline change is a review note, not a defect ([REVIEW.md](REVIEW.md#dashboard-screenshots)).
 
 ## Local CI report (A38)
 
