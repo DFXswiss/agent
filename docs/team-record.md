@@ -64,7 +64,7 @@ flowchart LR
     E["Network edge<br/>tunnel, TLS, rate limits<br/>no login"]
     subgraph Hub["agent-core hub"]
         V["Verify signature<br/>and scopes"]
-        C[("Signed event chain<br/>append-only")]
+        C[("Signed team record<br/>append-only, chained per key")]
         F["Fold events<br/>into current state"]
         D["Dashboard<br/>today or any past date"]
     end
@@ -83,9 +83,9 @@ In words:
 1. Everyone who talks to the hub signs what they send with their own key.
 2. The hub checks that signature against the public keys the team has registered. Nobody else
    is asked.
-3. A change is stored as an **event** at the end of a chain. Each event points to the one
+3. A change is stored as an **event** at the end of its writer's chain. Each event points to the one
    its writer signed before it, so the history cannot be rewritten without it showing.
-4. What you see on the dashboard is computed from that chain, for today or for any day in the
+4. What you see on the dashboard is computed from that record, for today or for any day in the
    past.
 5. The hub signs its answers too, so a program that asks the hub something can check that the
    answer really came from the hub.
@@ -158,7 +158,8 @@ sequenceDiagram
 
 An agent (the `agent` CLI, scripts, model sessions) has an **Ed25519 key**, the same kind of key
 SSH uses. It is generated on the device where the agent runs and stays there, readable only by
-its owner.
+a separate system account that sessions cannot reach
+([central-operation.md](central-operation.md#6-why-a-device-believes-a-command)).
 
 - **At least one key per device.** A key is never copied to another device. A new device means
   a new key.
@@ -216,8 +217,9 @@ attributed to it.
 
 ## 5. Everyone authenticates, every time
 
-- **There is no anonymous access.** The website, the API, sync, pairing, the health check and
-  release queries all need a valid signature from a registered key, or a signed-in passkey
+- **There is no anonymous access, with one exception:** opening an invite link, which is
+  authenticated by the single-use value in the link and can only hand in one public key. The
+  website, the API, sync, pairing, the health check and release queries all need a valid signature from a registered key, or a signed-in passkey
   session. Without one you get nothing, not even a count or a status.
 - **The hub checks every request itself.** No outside service is asked at sign-in or on a
   write.
@@ -311,7 +313,7 @@ secrets and customer data: what goes in cannot come out again.
 
 ## 8. Who changed what, when and how
 
-Every question about history can be answered from the chain alone:
+Every question about history can be answered from the record alone:
 
 | Question | Answered by |
 |---|---|
@@ -320,7 +322,7 @@ Every question about history can be answered from the chain alone:
 | What exactly? | `changes`: each field with old and new value |
 | When? | `signed_at` (writer) and `received_at` (hub) |
 | Is it genuine? | The signature, checked against the registered public key |
-| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them |
+| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them; the newest events of a key can be held back unnoticed until a later event of that key points to them, or until their writer finds them missing from a published fingerprint |
 
 Unlike an ordinary audit log, nobody has to trust that the log was kept honestly. Anyone with
 the public keys can check it.
@@ -333,7 +335,7 @@ open, in which repository, at which severity and urgency, and who is working on 
 It also has a **date picker**. Pick any past date and the dashboard shows the record exactly as
 it was then. This needs no separate archive: the state at a moment is simply all events received
 up to that moment, applied in order. Cached snapshots may exist for speed, but they can always be
-rebuilt from the chain.
+rebuilt from the record.
 
 Only registered keys can see the dashboard. There is no public view of security issues, not even
 a count, unless a later change to DESIGN.md §24 allows one specific public view.
@@ -348,7 +350,8 @@ of one pull request.
 2. **Claim it:** write an event that sets you as assignee and the status to `in progress`.
    Everyone sees immediately that you are on it.
 3. **Fix it** in the affected repository, through the normal pull-request process.
-4. **Link the pull request** to the issue. When it is merged, the issue is set to `merged`
+4. **Link the pull request** to the issue. When every linked pull request is merged or
+   closed and at least one is merged into the default branch, the issue is set to `merged`
    automatically.
 5. **Confirm it:** once the change is rolled out to production and you have checked it there,
    confirm that. The issue is then `done`, with the pull request as its fix reference
@@ -364,7 +367,7 @@ If two people try to claim the same issue at the same moment, the second claim i
 - The record is stored in **PostgreSQL**. The hub connects with a database role that may only
   add and read events, never change or delete them, so the no-delete rule holds even if the
   hub's code had a bug. The agent-session data keeps its own, separate database.
-- There are three copies, one of them off-site. A restore is tested regularly, and a restored
+- There are three copies, one of them off-site. A restore is tested, and a restored
   record is checked completely (every signature, every `prev_hash` and the running
   fingerprint) before the hub serves it.
 - At a fixed interval the hub publishes its current running fingerprint, signed with its own
@@ -401,7 +404,7 @@ tests for every refusal path, not only the success path.
 |---|---|---|
 | 1 | Keys file with scopes, and signature checking in the hub | not started |
 | 2 | Release query for external programs, with a hub-signed answer | not started |
-| 3 | Event chain in PostgreSQL and the security-issue object | not started |
+| 3 | Team record in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
 | 6 | Sign-in with passkeys and the certified session key instead of GitHub | not started |
@@ -432,7 +435,7 @@ None at the moment. Three earlier questions were decided on 2026-11-17:
 | GitHub sign-in | Makes GitHub the judge of who someone is; an outage or policy change there locks the team out |
 | A login gate at the network edge | A second sign-in that a third party runs; the hub's own check must be the only one |
 | CI provider identity tokens for external programs | Would make the CI provider the identity source |
-| One shared database that everyone edits | Edits overwrite each other and history can be changed; the signed chain avoids both |
+| One shared database that everyone edits | Edits overwrite each other and history can be changed; the signed record avoids both |
 | A delete or redact function | Breaks the trust in the history; the price is the strict rule about what may be written |
 
 ## 16. Glossary
