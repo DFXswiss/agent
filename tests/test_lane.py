@@ -4403,3 +4403,206 @@ def test_audit_text_falls_back_to_stderr_only_when_configured(
     assert store.row["payload"]["final_text"] == (
         "driver failed before output" if fallback else ""
     )
+
+
+# Final text of an external reviewer lane, shape kept from a reproduced run and
+# content replaced: the caller's own result line ("RESULT: <N> defects") ahead
+# of sections and the single STATUS line the lane starter asks for. The raw text
+# carried no escape or control characters.
+EXTERNAL_REVIEWER_FINAL_TEXT = (
+    "The reviewed function returns the expected value for every input.\n"
+    "\n"
+    "RESULT: 0 defects\n"
+    "\n"
+    "HINTS\n"
+    "none\n"
+    "\n"
+    "NOT-VERIFIABLE\n"
+    "none\n"
+    "\n"
+    "STATUS: complete"
+)
+
+
+def test_lane_status_reads_the_status_line_alone() -> None:
+    from agent_cli.coordinator_common import parse_lane_status, parse_model_result
+
+    sample = EXTERNAL_REVIEWER_FINAL_TEXT
+    assert sanitize_terminal_text(sample) == sample
+    assert parse_lane_status(sample, 0) == "complete"
+    # The joint verdict still requires one role-valid RESULT record.
+    assert parse_model_result(sample, 0) == ("partial", "")
+    clean = "Review done.\n\nSTATUS: complete\nRESULT: approved\n"
+    assert parse_lane_status(clean, 0) == "complete"
+    assert parse_model_result(clean, 0) == ("complete", "approved")
+    assert parse_lane_status("Review done.\n\nSTATUS: partial\n", 0) == "partial"
+    assert parse_lane_status("Review done.\r\nSTATUS: complete\r\n", 0) == "complete"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Review done.\n",
+        "Review done.\nSTATUS: complete\nSTATUS: complete\n",
+        "Review done.\nSTATUS: complete\nSTATUS: partial\n",
+        "Review done.\nSTATUS: finished\n",
+        "Review done.STATUS: complete\n",
+        "Review done.\n  STATUS: complete\n",
+        "Review done.\nSTATUS: complete, all checked\n",
+    ],
+)
+def test_lane_status_fails_closed(text: str) -> None:
+    from agent_cli.coordinator_common import parse_lane_status
+
+    assert parse_lane_status(text, 0) == "partial"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected"), [(124, "timeout"), (1, "unavailable"), (-9, "unavailable")]
+)
+def test_lane_status_nonzero_returncode_is_unchanged(
+    returncode: int, expected: str
+) -> None:
+    from agent_cli.coordinator_common import parse_lane_status, parse_model_result
+
+    assert parse_lane_status(EXTERNAL_REVIEWER_FINAL_TEXT, returncode) == expected
+    assert parse_model_result(EXTERNAL_REVIEWER_FINAL_TEXT, returncode) == (
+        expected,
+        "",
+    )
+
+
+def _launch_driver_d_with_final_text(tmp_path: Path, final_text: str) -> LaneResult:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("review\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        wrapper_index = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
+        Path(argv[wrapper_index + 2]).write_text(
+            json.dumps({"type": "result", "result": final_text}) + "\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return launch(
+        role="reviewer",
+        vendor="driver-d",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+
+def test_launch_keeps_joint_verdict_and_reports_lane_status(tmp_path: Path) -> None:
+    result = _launch_driver_d_with_final_text(tmp_path, EXTERNAL_REVIEWER_FINAL_TEXT)
+    assert result.lane_status == "complete"
+    assert result.status == "partial"
+    assert result.protocol_result == ""
+
+
+def test_launch_duplicate_status_fails_closed_for_both_verdicts(
+    tmp_path: Path,
+) -> None:
+    result = _launch_driver_d_with_final_text(
+        tmp_path, "STATUS: complete\n" + EXTERNAL_REVIEWER_FINAL_TEXT
+    )
+    assert result.lane_status == "partial"
+    assert result.status == "partial"
+
+
+def _run_cli_lane_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: LaneResult
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.launch", lambda **_kwargs: result)
+    run(
+        [
+            "lane",
+            "run",
+            "--role",
+            "reviewer",
+            "--vendor",
+            "driver-a",
+            "--session",
+            DEFAULT_SESSION,
+            "--spec-file",
+            str(spec),
+            "--cwd",
+            str(tmp_path),
+            "--no-tmux",
+        ]
+    )
+
+
+def _cli_lane_result(*, status: str, lane_status: str, returncode: int = 0) -> LaneResult:
+    return LaneResult(
+        role="reviewer",
+        vendor="driver-a",
+        model=OPERATOR_MODEL_A,
+        status=status,
+        argv=["tool-a"],
+        returncode=returncode,
+        stdout=EXTERNAL_REVIEWER_FINAL_TEXT,
+        stderr="",
+        lane_status=lane_status,
+    )
+
+
+def test_cli_lane_run_reports_the_lane_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_cli_lane_with(
+        tmp_path,
+        monkeypatch,
+        _cli_lane_result(status="partial", lane_status="complete"),
+    )
+    out = capsys.readouterr().out
+    assert out.endswith("lane role=reviewer vendor=driver-a STATUS=complete rc=0\n")
+
+
+@pytest.mark.parametrize(
+    ("status", "lane_status", "returncode", "printed"),
+    [
+        ("partial", "partial", 0, "STATUS=partial rc=0"),
+        ("unavailable", "unavailable", 1, "STATUS=unavailable rc=1"),
+        ("timeout", "timeout", 124, "STATUS=timeout rc=124"),
+        # A result that was never parsed falls back to the joint verdict.
+        ("unavailable", "", 0, "STATUS=unavailable rc=0"),
+    ],
+)
+def test_cli_lane_run_exits_2_unless_the_lane_status_is_complete(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    lane_status: str,
+    returncode: int,
+    printed: str,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _run_cli_lane_with(
+            tmp_path,
+            monkeypatch,
+            _cli_lane_result(
+                status=status, lane_status=lane_status, returncode=returncode
+            ),
+        )
+    assert exc.value.code == 2
+    assert capsys.readouterr().out.endswith(
+        f"lane role=reviewer vendor=driver-a {printed}\n"
+    )

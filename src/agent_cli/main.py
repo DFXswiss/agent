@@ -5301,7 +5301,7 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
-def _print_lane_result(result: LaneResult) -> None:
+def _print_lane_result(result: LaneResult, status: str | None = None) -> None:
     # The vendor's actual review/implementation text lives only in result.stdout —
     # by the time launch() returns, the tmux pane it was captured from is already
     # killed, so this is the only remaining chance to surface it. Without this, a
@@ -5323,7 +5323,8 @@ def _print_lane_result(result: LaneResult) -> None:
         )
     print(
         f"lane role={result.role} vendor={result.vendor} "
-        f"STATUS={result.status} rc={result.returncode}"
+        f"STATUS={result.status if status is None else status} "
+        f"rc={result.returncode}"
     )
 
 
@@ -5412,8 +5413,12 @@ def cmd_lane(args: list[str]) -> None:
     finally:
         if lane_store is not None:
             lane_store.close()
-    _print_lane_result(result)
-    if result.status != "complete":
+    # A standalone lane is judged by its single STATUS record. Its RESULT line
+    # belongs to the caller's protocol; the joint STATUS/RESULT verdict in
+    # ``result.status`` stays with the callers that act on RESULT.
+    lane_status = result.lane_status or result.status
+    _print_lane_result(result, lane_status)
+    if lane_status != "complete":
         raise SystemExit(2)
 
 
