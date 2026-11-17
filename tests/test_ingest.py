@@ -1702,7 +1702,6 @@ def test_a_new_generation_waits_when_its_created_at_is_not_later(
     [
         ({"head_sha": HEAD}, HEAD),
         ({"head_sha": None}, HEAD),
-        ({"head_sha": OTHER_HEAD}, ""),
     ],
 )
 def test_a_done_job_is_a_duplicate_when_the_head_did_not_move(
@@ -1725,6 +1724,75 @@ def test_a_done_job_is_a_duplicate_when_the_head_did_not_move(
         )
         assert created == []
         assert requeued == []
+        assert seen == []
+        assert store.row("job", row["id"])["trigger"] == "comment:owner/name:7:1"
+    finally:
+        store.close()
+    assert len(_mark_read_calls(calls)) == 1
+
+
+@pytest.mark.parametrize(
+    "answer,returncode",
+    [
+        # A malformed answer and a failed call both leave the head unknown.
+        ("", 0),
+        (HEAD, 1),
+    ],
+)
+def test_a_done_job_with_a_stored_head_defers_an_unreadable_current_head(
+    tmp_path: Path, answer: str, returncode: int
+) -> None:
+    # The head is unknown, not unchanged: consuming the mention would discard
+    # a real request after a rate limit or a network error.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    seen: list[Any] = []
+    try:
+        row = _insert(store, state="done", attempts=1, head_sha=OTHER_HEAD)
+        before = store.row("job", row["id"])
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                head_sha=answer,
+                head_rc=returncode,
+                calls=calls,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert seen == []
+        assert store.row("job", row["id"]) == before
+    finally:
+        store.close()
+    assert len(_head_calls(calls)) == 1
+    assert _mark_read_calls(calls) == []
+
+
+@pytest.mark.parametrize("stored", [None, "not-a-commit", ""])
+def test_a_done_job_without_a_stored_commit_id_consumes_an_unreadable_head(
+    tmp_path: Path, stored: str | None
+) -> None:
+    # A row that does not store a commit id (an issue job, or one from before
+    # heads were stored) keeps the duplicate path even when the head is
+    # unreadable.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    seen: list[Any] = []
+    try:
+        row = _insert(store, state="done", attempts=1, head_sha=stored)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                head_rc=1,
+                calls=calls,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 0)
         assert seen == []
         assert store.row("job", row["id"])["trigger"] == "comment:owner/name:7:1"
     finally:

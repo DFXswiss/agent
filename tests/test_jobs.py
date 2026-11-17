@@ -207,6 +207,38 @@ def test_a_pattern_that_is_not_owner_wildcard_admits_nothing(pattern: str) -> No
     assert not v.admitted
 
 
+def test_an_owner_containing_a_star_names_nothing() -> None:
+    # `*/*` ends in `/*` with owner `*`; without checking the owner it would
+    # name a repository literally called `*/name`.
+    policy = _policy(repos_allow=["*/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="*/name",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_owner_wildcard_in_private_repos_allow_admits_nothing() -> None:
+    # `private_repos_allow` stays exact: a wildcard there does not become the
+    # second statement a private repository is meant to require.
+    policy = _policy(
+        repos_allow=["owner/*"],
+        agent_identity={"private_repos_allow": ["owner/*"]},
+    )
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name",
+        job_type="pr-review",
+        private=True,
+    )
+    assert not v.admitted
+    assert "private_repos_allow" in v.reason
+
+
 def test_an_owner_wildcard_in_repos_deny_denies_every_repo_of_that_owner() -> None:
     # Denying is the stricter direction: `owner/*` means the whole owner.
     policy = _policy(repos_allow=["example-owner/*", "other/one"], repos_deny=["Example-Owner/*"])

@@ -667,6 +667,18 @@ def scan_mentions(
             old_head = existing.get("head_sha")
             if (
                 head_sha is None
+                and isinstance(old_head, str)
+                and _HEAD_SHA.fullmatch(old_head) is not None
+            ):
+                # The current head could not be read and the row already
+                # records a commit, so the head is unknown rather than
+                # unchanged. Consuming here would discard a real request after
+                # a rate limit or a network error; leave the thread unread for
+                # a pass that can read the head.
+                skipped += 1
+                continue
+            if (
+                head_sha is None
                 or not isinstance(old_head, str)
                 or old_head == head_sha
             ):
