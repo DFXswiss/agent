@@ -4606,3 +4606,163 @@ def test_cli_lane_run_exits_2_unless_the_lane_status_is_complete(
     assert capsys.readouterr().out.endswith(
         f"lane role=reviewer vendor=driver-a {printed}\n"
     )
+
+
+def _write_spec(tmp_path: Path, text: str = "review\n") -> Path:
+    spec = tmp_path / "spec.md"
+    spec.write_text(text, encoding="utf-8")
+    return spec
+
+
+def test_launch_refuses_an_unknown_role(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    with pytest.raises(SystemExit, match="role must be"):
+        launch(
+            role="not-a-role",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_refuses_a_binding_for_another_driver(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    write_operator_ai_accounts(tmp_path)
+    other = load_ai_accounts(tmp_path, defer_model_configuration=True).for_lane(
+        DEFAULT_SESSION, "reviewer", "driver-b", require_execution=False
+    )
+    with pytest.raises(SystemExit, match="does not match requested vendor"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+            binding=other,
+        )
+
+
+def test_launch_refuses_an_empty_spec(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    with pytest.raises(SystemExit, match="spec-file is empty"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path, " \n")),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_removes_the_empty_github_profile_when_the_command_cannot_be_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = _write_spec(tmp_path)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(temp_root))
+
+    def broken_wrap(inner: list[str], *, name: str, cwd: str) -> list[str]:
+        assert any(temp_root.glob("agent-lane-empty-gh-*"))
+        raise RuntimeError("wrap failed")
+
+    monkeypatch.setattr("agent_cli.lane.tmux_wrap_argv", broken_wrap)
+    with pytest.raises(RuntimeError, match="wrap failed"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert not any(temp_root.glob("agent-lane-empty-gh-*"))
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ("separator", "tmux argv missing command separator"),
+        ("session", "tmux session name missing"),
+    ],
+)
+def test_launch_in_tmux_refuses_an_incomplete_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch: str, message: str
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    started: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.lane._run_in_tmux",
+        lambda inner, **_kwargs: started.append(inner),
+    )
+    if patch == "separator":
+        monkeypatch.setattr(
+            "agent_cli.lane.tmux_wrap_argv",
+            lambda inner, *, name, cwd: ["tmux", "new-session", "-d", *inner],
+        )
+    else:
+        monkeypatch.setattr("agent_cli.lane.lane_tmux_name", lambda **_kwargs: None)
+    with pytest.raises(SystemExit, match=message):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert started == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["lane"], "Usage: agent lane"),
+        (["lane", "start"], "Usage: agent lane"),
+        (
+            [
+                "lane",
+                "run",
+                "--role",
+                "not-a-role",
+                "--vendor",
+                "driver-a",
+                "--session",
+                DEFAULT_SESSION,
+                "--spec-file",
+                "spec.md",
+            ],
+            "role must be",
+        ),
+    ],
+)
+def test_cli_lane_refuses_bad_arguments_before_launch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    message: str,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    _write_spec(tmp_path)
+
+    def no_launch(**_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("launch must not start")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    with pytest.raises(SystemExit) as exc:
+        run(argv)
+    captured = capsys.readouterr()
+    assert message in f"{exc.value.code}{captured.err}{captured.out}"
