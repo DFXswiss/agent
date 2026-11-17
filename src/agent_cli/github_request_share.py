@@ -7,7 +7,8 @@ worker's login check is not stuck behind that HTTP call. ``flock`` is per
 process and not reentrant. A second descriptor for the same file in this
 process would block on the lock this call already holds. Nested callers of one
 file therefore share this thread's document, and the outermost exit writes it
-once.
+once. A failed write still drops that document, so the next call locks and
+reads the file again.
 """
 
 from __future__ import annotations
@@ -161,9 +162,11 @@ def _locked(home: Path, filename: str) -> Iterator[_Share]:
         try:
             yield share
         finally:
-            if share.dirty:
-                _write_document(home, filename, share.document)
-            sessions.pop(filename, None)
+            try:
+                if share.dirty:
+                    _write_document(home, filename, share.document)
+            finally:
+                sessions.pop(filename, None)
     finally:
         handle.close()
 

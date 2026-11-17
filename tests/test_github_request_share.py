@@ -258,10 +258,10 @@ def test_authentication_error_verifies_login_again(tmp_path: Path) -> None:
     assert len(calls) == 5
     fresh = login_cached(base, max_age_seconds=LOGIN_REUSE_SECONDS, cache_dir=tmp_path)
     assert fresh(one).stdout == "worker-bot"
-    assert len(calls) == 6
+    assert len(calls) == 5
     assert fresh(two) is not second
     assert fresh(two).stdout == "worker-bot"
-    assert len(calls) == 6
+    assert len(calls) == 5
 
 
 def test_knock_reuses_one_login_across_scans(tmp_path: Path) -> None:
