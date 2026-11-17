@@ -1258,9 +1258,11 @@ the grant of the migration, which also revokes `CONNECT` from `PUBLIC` there. Th
 dedicated to the record (above), and step `writer` of the start (section 11.4) refuses a server
 whose `pg_database` lists any database other than the record database, `postgres`, `template0`
 and `template1`. That nothing is created in `postgres`, `template0` and `template1` is a
-deployment rule that the hub does not check: the start reads no catalog of those databases, and
-the writer can connect to `postgres` and `template1`, on which `PUBLIC` holds `CONNECT` by
-default, and call there every function that `PUBLIC` can execute. Step `writer` also refuses a writer that can execute any `SECURITY DEFINER`
+deployment rule; of it, the hub checks only what `pg_shdepend` records for the writer (ownership
+of an object and a privilege that names the writer, section 11.4): the start reads no catalog of
+those databases beyond the shared catalogs, and the writer can connect to `postgres` and
+`template1`, on which `PUBLIC` holds `CONNECT` by default, and call there every function that
+`PUBLIC` can execute. Step `writer` also refuses a writer that can execute any `SECURITY DEFINER`
 function of this database outside the schemas `pg_catalog` and `information_schema`, and refuses
 row-level security, a policy, a rule or a trigger other than the four of section 11.3 on the
 three record tables. That check examines the record database and sees the catalog only at start
@@ -2823,8 +2825,9 @@ confirms or changes each one.
     `SECURITY DEFINER` function of this database outside `pg_catalog` and `information_schema`,
     and row-level security, a policy, a rule or a fifth trigger on the record tables (decision
     94); the start check enforces the list of databases (decision 100); that nothing is created
-    in `postgres`, `template0` and `template1` is a deployment rule that the hub does not check
-    (§11.2, §11.4, §15, §16).
+    in `postgres`, `template0` and `template1` is a deployment rule; of it, the hub checks only
+    what `pg_shdepend` records for the writer (ownership of an object and a privilege that names
+    the writer, section 11.4) (§11.2, §11.4, §15, §16).
 36. The database is owned by the owner role, so that it can create the schema; the migration
     revokes every right of `PUBLIC` on the database, on the schema `record`, on its three tables
     and on `record.refuse_change()`, and grants the writer `SELECT` on `record.schema_version`
@@ -3104,7 +3107,9 @@ confirms or changes each one.
     hub runs is found at the next start, and its effect on stored rows by verification. The
     check examines the functions of this database; the start check enforces the list of
     databases (decision 100); that nothing is created in `postgres`, `template0` and `template1`
-    is a deployment rule that the hub does not check (§11.2, §11.4, §14).
+    is a deployment rule; of it, the hub checks only what `pg_shdepend` records for the writer
+    (ownership of an object and a privilege that names the writer, section 11.4) (§11.2, §11.4,
+    §14).
 95. Hub key ids are compared and sorted in byte order everywhere; every statement that sorts or
     compares them in the database uses `COLLATE "C"`, so that `export` writes checkpoint lines in
     the order that `verify` and `restore` require, whatever the collation of the database
@@ -3128,5 +3133,6 @@ confirms or changes each one.
     three; the deployment provides this, and step `writer` of the start, and so `restore`,
     refuses a server whose `pg_database` lists any other database (`record start failed
     writer`, `refused writer_rights`); that nothing is created in `postgres`, `template0` and
-    `template1` is a deployment rule that the hub does not check; a test of the record holds the advisory lock 742180004
-    while its databases exist (§11.2, §11.4, §12.3, §14, §16).
+    `template1` is a deployment rule; of it, the hub checks only what `pg_shdepend` records for
+    the writer (ownership of an object and a privilege that names the writer, section 11.4); a
+    test of the record holds the advisory lock 742180004 while its databases exist (§11.2, §11.4, §12.3, §14, §16).
