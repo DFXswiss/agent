@@ -667,6 +667,103 @@ def test_list_post_replaces_an_english_title_when_the_sentence_is_missing(
     assert fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0] == de_line
 
 
+def _published_order_title_body() -> str:
+    """EN and DE both carry the order title, which is not the source title."""
+    return (
+        f"EN:\nDraft for order 11111111: {_ORDER_TITLE}.\n\n"
+        f"DE:\nEntwurf für Auftrag 11111111: {_ORDER_TITLE}.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        "Reused:\n- `src/agent_cli/coordinator_git.py:605` existing draft body\n"
+        "Added:\n- `src/agent_cli/github_act.py:745` pull request body update\n\n"
+        "</details>\n"
+    )
+
+
+def test_list_post_keeps_the_stored_sentence_when_the_checkpoint_repeats_the_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkpoint that repeats the published title does not hide the stored sentence."""
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    fake.pr["body"] = _published_order_title_body()
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    task["reused_lines"] = [
+        "`src/agent_cli/coordinator_git.py:952` draft refresh"
+    ]
+    task["added_lines"] = [
+        "`src/agent_cli/coordinator_lanes.py:2391` published description"
+    ]
+    coord(task)["lane_outcome"] = {
+        "role": "implementer",
+        "result": "done",
+        "applied": False,
+        "summary_de": _ORDER_TITLE,
+    }
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert _ORDER_TITLE not in published.split("DE:\n", 1)[1]
+    assert "`src/agent_cli/coordinator_git.py:952` draft refresh" in published
+    assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
+
+
+def test_list_post_uses_the_order_only_line_for_a_published_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A published title that is not the source title still becomes the order-only line."""
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    fake.pr["body"] = _published_order_title_body()
+    task["change_summary_de"] = f"{_ORDER_TITLE}."
+    task["reused_lines"] = [
+        "`src/agent_cli/coordinator_git.py:952` draft refresh"
+    ]
+    task["added_lines"] = [
+        "`src/agent_cli/coordinator_lanes.py:2391` published description"
+    ]
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == "Entwurf für Auftrag 11111111."
+    assert _ORDER_TITLE not in published.split("DE:\n", 1)[1]
+    from agent_cli.coordinator_git import _require_stored_sentence
+
+    _require_stored_sentence(coord(task)["source"], published, None, task)
+
+
+def test_refresh_does_not_publish_an_unrecognized_title_without_the_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    english = (
+        f"EN:\nDraft for order 11111111: {_ORDER_TITLE}.\n\n"
+        f"DE:\nEntwurf für Auftrag 11111111: {_ORDER_TITLE}.\n\n"
+    )
+    fake.pr["body"] = english
+    task["change_summary_de"] = f"{_ORDER_TITLE}."
+    save_task(store, task)
+    edits = len(fake.pr_edits)
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ):
+        refresh_draft_body(store, worker, task, fake)
+    assert fake.pr["body"] == english
+    assert len(fake.pr_edits) == edits
+
+
 def test_review_context_reads_the_german_line_after_the_list_post(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -760,6 +857,51 @@ def test_review_context_publishes_the_german_line_before_the_view(
     assert de_line == fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0]
     assert _ORDER_TITLE not in text.split("DE:\n", 1)[1]
     assert "`src/agent_cli/coordinator_git.py:605` existing draft body" in text
+
+
+def test_review_context_writes_the_stored_sentence_not_the_published_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review file is the published description after the German line is set."""
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    wt = worker.workspace_root / OID
+    wt.mkdir()
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="inner_review",
+        worktree=str(wt),
+        base_sha=fake.base,
+        pr_number=42,
+    )
+    fake.pr["body"] = _published_order_title_body()
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    task["reused_lines"] = [
+        "`src/agent_cli/coordinator_git.py:952` draft refresh"
+    ]
+    task["added_lines"] = [
+        "`src/agent_cli/coordinator_lanes.py:2391` published description"
+    ]
+    coord(task)["lane_outcome"] = {
+        "role": "implementer",
+        "result": "done",
+        "applied": False,
+        "summary_de": _ORDER_TITLE,
+    }
+    save_task(store, task)
+    write_review_context(store, worker, task, fake)
+    pr_path = control_dir(worker, OID) / f"review-base-{fake.base[:12]}-pr-body.txt"
+    text = pr_path.read_text(encoding="utf-8")
+    de_line = text.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert de_line == fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert _ORDER_TITLE not in text.split("DE:\n", 1)[1]
+    assert "`src/agent_cli/coordinator_git.py:952` draft refresh" in text
 
 
 def test_review_context_reads_the_order_only_line_when_the_sentence_is_missing(

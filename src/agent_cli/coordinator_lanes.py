@@ -54,6 +54,7 @@ from .coordinator_config import WorkerConfig
 from .coordinator_exec import kill_process_group, run_bounded
 from .coordinator_git import (
     _order_de_sentence,
+    _require_stored_sentence,
     execute_github,
     queue_activity,
     refresh_draft_body,
@@ -2292,6 +2293,8 @@ def write_review_context(
     For an order, that post runs again before ``gh pr view`` when the
     stored German sentence or the reused and added list is present, so
     the text written here is the description the refresh just published.
+    The written DE line is that stored sentence, or the order-only line
+    when the sentence is missing. A published English title is not written.
     """
     c = coord(task)
     worktree = str(c.get("worktree") or "")
@@ -2369,6 +2372,7 @@ def write_review_context(
     target = target_repo(task)
     # The list post and the sentence replacement share one write. Reading
     # before that write keeps a published English title for the review.
+    order_refresh = False
     if source_kind(c) == ORDER_KIND and number is not None and target != "":
         reused_lines = task.get("reused_lines")
         added_lines = task.get("added_lines")
@@ -2380,6 +2384,7 @@ def write_review_context(
         )
         if _order_de_sentence(task) is not None or has_lists:
             refresh_draft_body(store, worker, task, runner)
+            order_refresh = True
     if number is None or target == "":
         pr_path.write_text(
             "The pull request body is not available.\n",
@@ -2391,6 +2396,22 @@ def write_review_context(
             ["gh", "pr", "view", str(number), "--repo", target, "--json", "body"],
         )
         raw_pr = viewed.get("body") if isinstance(viewed, dict) else ""
+        if order_refresh:
+            viewed_body = raw_pr if isinstance(raw_pr, str) else None
+            # The refresh just chose the sentence from the published title.
+            # Re-selecting against the replaced description would treat a
+            # title that is not the source title as the German sentence.
+            if "_order_de_sentence" in task:
+                chosen = task.pop("_order_de_sentence")
+                sentence_now = chosen if isinstance(chosen, str) else None
+            else:
+                sentence_now = _order_de_sentence(task, live=viewed_body)
+            _require_stored_sentence(
+                source if isinstance(source, dict) else {},
+                viewed_body,
+                sentence_now,
+                task,
+            )
         if isinstance(raw_pr, str) and raw_pr.strip():
             pr_path.write_text(redact(raw_pr, limit=100_000), encoding="utf-8")
         else:

@@ -713,11 +713,15 @@ def _order_de_has_sentence(source: dict[str, Any], body: str) -> bool:
     return line is not None and line != f"Entwurf für Auftrag {short}."
 
 
-def _english_title_keys(task: dict[str, Any]) -> set[str]:
+def _english_title_keys(
+    task: dict[str, Any], live: str | None = None
+) -> set[str]:
     """Casefolded order titles a DE line must not repeat.
 
     The source title and the task title are both titles. A session prefix
-    before `` - `` is not part of the order title.
+    before `` - `` is not part of the order title. A published description
+    whose EN and DE sentences are the same text is that title as well, even
+    when the source title text differs.
     """
     keys: set[str] = set()
     source = coord(task).get("source")
@@ -733,20 +737,30 @@ def _english_title_keys(task: dict[str, Any]) -> set[str]:
             tail = text.split(" - ", 1)[1].strip().rstrip(". ").casefold()
             if tail:
                 keys.add(tail)
+    if isinstance(live, str) and live:
+        en_sentence = _line_sentence(_description_en_line(live)).casefold()
+        de_sentence = _line_sentence(_description_de_line(live)).casefold()
+        if en_sentence:
+            keys.add(en_sentence)
+        if de_sentence and en_sentence and de_sentence == en_sentence:
+            keys.add(de_sentence)
     return keys
 
 
-def _repeats_english_title(task: dict[str, Any], summary: str) -> bool:
+def _repeats_english_title(
+    task: dict[str, Any], summary: str, live: str | None = None
+) -> bool:
     text = redact(summary.strip(), limit=800).rstrip(". ")
-    return not text or text.casefold() in _english_title_keys(task)
+    return not text or text.casefold() in _english_title_keys(task, live)
 
 
 def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
     """German sentence from an implementer checkpoint.
 
     The draft refresh runs before the round commit saves that sentence, and
-    stores it itself. The checkpoint is the full sentence for this round. A
-    stored summary that only repeats the English title does not hide it.
+    stores it itself when no German sentence is stored yet. A stored summary
+    that only repeats the English title does not hide the checkpoint. A
+    stored German sentence is not replaced by the checkpoint.
     """
     outcome = coord(task).get("lane_outcome")
     if not isinstance(outcome, dict) or outcome.get("applied") is True:
@@ -761,33 +775,45 @@ def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
     return value.strip()
 
 
-def _stored_de_summary(task: dict[str, Any], *, has_lists: bool) -> str | None:
+def _stored_de_summary(
+    task: dict[str, Any], *, has_lists: bool, live: str | None = None
+) -> str | None:
     """Full German sentence for the draft, never the English title.
 
-    The open implementer checkpoint is that sentence when it is not the
-    English title. It replaces a stored summary that is missing, older, or
-    only the title. The value returned here is the full sentence the refresh
-    stores and publishes.
+    A stored sentence that is not the English title is the sentence the
+    refresh publishes. The open implementer checkpoint supplies that
+    sentence only when nothing is stored yet or the stored sentence only
+    repeats the English title. It does not replace a stored German
+    sentence, including when the checkpoint repeats a published title
+    whose EN and DE sentences are the same text.
     """
     raw = task.get("change_summary_de")
     pending = _pending_implementer_summary(task)
-    if pending is not None and not _repeats_english_title(task, pending):
+    stored = (
+        raw if isinstance(raw, str) and raw.strip() and "\n" not in raw else None
+    )
+    stored_is_sentence = stored is not None and not _repeats_english_title(
+        task, stored, live
+    )
+    pending_is_sentence = pending is not None and not _repeats_english_title(
+        task, pending, live
+    )
+    if stored_is_sentence:
+        from .coordinator_a38 import _summary
+
+        return _summary(task, "de")
+    if pending_is_sentence:
         return pending
-    stored = raw if isinstance(raw, str) and raw.strip() and "\n" not in raw else None
-    if stored is not None and _repeats_english_title(task, stored):
-        return None
-    if stored is None:
-        if has_lists and raw is not None:
-            from .coordinator_a38 import _summary
+    if stored is None and has_lists and raw is not None:
+        from .coordinator_a38 import _summary
 
-            return _summary(task, "de")
-        return None
-    from .coordinator_a38 import _summary
-
-    return _summary(task, "de")
+        return _summary(task, "de")
+    return None
 
 
-def _order_de_sentence(task: dict[str, Any]) -> str | None:
+def _order_de_sentence(
+    task: dict[str, Any], live: str | None = None
+) -> str | None:
     """Full German order sentence, or None when that sentence is not stored.
 
     The order-only line and the English title are not this sentence. Callers
@@ -807,12 +833,12 @@ def _order_de_sentence(task: dict[str, Any]) -> str | None:
         and bool(reused)
         and bool(added)
     )
-    summary = _stored_de_summary(task, has_lists=has_lists)
+    summary = _stored_de_summary(task, has_lists=has_lists, live=live)
     if (
         not isinstance(summary, str)
         or not summary.strip()
         or "\n" in summary
-        or _repeats_english_title(task, summary)
+        or _repeats_english_title(task, summary, live)
     ):
         return None
     return summary.strip()
@@ -834,15 +860,25 @@ def _stored_sentence_line(source: dict[str, Any], sentence: str) -> str | None:
 
 
 def _published_de_is_english_title(
-    task: dict[str, Any], source: dict[str, Any], live: str | None
+    task: dict[str, Any],
+    source: dict[str, Any],
+    body: str | None,
+    live: str | None = None,
 ) -> bool:
-    """The read DE line repeats an English order title."""
-    if _de_repeats_english_title(live):
+    """The DE line repeats an English order title.
+
+    ``live`` is the published description when ``body`` is the text about
+    to be posted. A DE sentence that repeats the published title is still
+    that title when the new EN line uses a different source title.
+    """
+    if _de_repeats_english_title(body):
         return True
-    sentence = _line_sentence(_description_de_line(live or ""))
+    sentence = _line_sentence(_description_de_line(body or ""))
     if not sentence:
         return False
-    if _repeats_english_title(task, sentence):
+    if _repeats_english_title(
+        task, sentence, body if live is None else live
+    ):
         return True
     title = redact(str(source.get("title") or ""), limit=200).strip().rstrip(". ")
     return bool(title) and sentence.casefold() == title.casefold()
@@ -960,8 +996,11 @@ def refresh_draft_body(
     An order uses the full stored German sentence, not the English title.
     A sentence that is not stored yet, and a stored sentence that only
     repeats the English title, is taken from the implementer checkpoint
-    and stored on the task as ``change_summary_de``. That stored value is
-    the full sentence. It replaces an already published description even
+    and stored on the task as ``change_summary_de``. A checkpoint that
+    repeats the English title does not replace a stored German sentence.
+    The published EN and DE sentences are that title when they are the
+    same text, even if the source title differs. The stored value is the
+    full sentence. It replaces an already published description even
     when the reused and added list is absent, including a description
     whose DE line is the English title or cannot be read. Equality with
     the line just generated does not accept that title. Without the
@@ -984,15 +1023,10 @@ def refresh_draft_body(
     )
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     order = source.get("kind") == ORDER_KIND
+    # Titles known before the read. A missing sentence with no list raises
+    # here, before GitHub is called. The published description is read
+    # next and the sentence is chosen again from that text.
     sentence = _order_de_sentence(task) if order else None
-    if order and sentence is not None:
-        if task.get("change_summary_de") != sentence:
-            task["change_summary_de"] = sentence
-            save_task(store, task)
-        from .coordinator_a38 import _summary
-
-        sentence = _summary(task, "de")
-    summary_de = sentence if order else None
     if not has_lists and not order:
         return []
     if not isinstance(source.get("repo"), str) or (
@@ -1010,17 +1044,37 @@ def refresh_draft_body(
     # line may replace a published English title below.
     if order and sentence is None and not has_lists:
         raise _published_de_error()
+    live = _published_pr_body(store, worker, runner, target, number)
+    if order:
+        sentence = _order_de_sentence(task, live=live)
+    if order and sentence is not None:
+        if task.get("change_summary_de") != sentence:
+            task["change_summary_de"] = sentence
+            save_task(store, task)
+        from .coordinator_a38 import _summary
+
+        sentence = _summary(task, "de")
+    if order and sentence is None and not has_lists:
+        raise _published_de_error()
+    if order:
+        # The review read uses this choice. strip_row drops the key, so it
+        # is not stored. None is the order-only line, not a missing call.
+        task["_order_de_sentence"] = sentence
+    summary_de = sentence if order else None
     body = draft_pr_body(
         source,
         [str(line) for line in reused] if has_lists else None,
         [str(line) for line in added] if has_lists else None,
         summary_de,
     )
-    if order and _published_de_is_english_title(task, source, body):
+    if order and sentence is not None:
+        expected = _stored_sentence_line(source, sentence)
+        if expected is None or _description_de_line(body) != expected:
+            raise _published_de_error()
+    if order and _published_de_is_english_title(task, source, body, live):
         raise _published_de_error()
     posted = f"posted reused and added list on {target}#{number}"
     replaced = f"replaced draft description on {target}#{number}"
-    live = _published_pr_body(store, worker, runner, target, number)
     english_live = _published_de_is_english_title(task, source, live)
     if order and sentence is None:
         # A published German sentence stays. An English title, a missing
@@ -1075,7 +1129,7 @@ def refresh_draft_body(
     if row is None or row.get("execution_status") != "done":
         raise _published_de_error()
     published = _published_pr_body(store, worker, runner, target, number)
-    if _published_de_is_english_title(task, source, published):
+    if _published_de_is_english_title(task, source, published, live):
         raise _published_de_error()
     if not _published_description_matches(published, body):
         raise _published_de_error()

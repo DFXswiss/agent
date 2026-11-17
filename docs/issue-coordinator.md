@@ -528,7 +528,11 @@ A record of a check lane is closed the same way, but closing it does not retry t
    full German change-summary sentence. When that sentence is not stored yet,
    or the stored sentence only repeats the English title, the open implementer
    checkpoint supplies the German sentence and the refresh stores that full
-   sentence on the task as `change_summary_de`. A stored sentence that only
+   sentence on the task as `change_summary_de`. The checkpoint does not
+   replace a stored German sentence. A published `DE:` line whose sentence
+   equals the `EN:` sentence is that English title even when the source
+   title text differs, and neither the checkpoint nor the stored summary
+   publishes that title as the German sentence. A stored sentence that only
    repeats the English title is not the `DE:` line. Pushing an existing draft
    replaces the published description with
    `Entwurf für Auftrag <eight characters>: <sentence>`, including a
