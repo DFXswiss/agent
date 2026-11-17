@@ -13,6 +13,9 @@ services:
       AGENT_CORE_GITHUB_USER_URL: https://api.github.com/user
       AGENT_CORE_DATABASE: /data/hub.sqlite
       AGENT_CORE_TEAMS: /app/teams.yaml
+      AGENT_CORE_KEYS: /app/keys.yaml
+      AGENT_CORE_SIGNING_KEY: ${AGENT_CORE_SIGNING_KEY}
+      AGENT_CORE_HUB_KEY_ID: hub-local-1
       AGENT_CORE_HOST: 0.0.0.0
       AGENT_CORE_PORT: "8787"
     volumes:

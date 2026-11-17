@@ -12,9 +12,20 @@ from agent_core.config import Config
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
 
+# The hub signing key of the test configuration. Never used outside the test suite.
+HUB_SEED_HEX = "5e" * 32
+HUB_KEY_ID = "hub-test-1"
+
 
 def write_teams(path: Path, teams: dict) -> Path:
     path.write_text(yaml.safe_dump({"teams": teams}), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def keys_file(tmp_path: Path) -> Path:
+    path = tmp_path / "keys.yaml"
+    path.write_text("keys: []\n", encoding="utf-8")
     return path
 
 
@@ -30,7 +41,7 @@ def teams_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def cfg(tmp_path: Path, teams_file: Path) -> Config:
+def cfg(tmp_path: Path, teams_file: Path, keys_file: Path) -> Config:
     return Config(
         public_url="http://testserver",
         session_secret="s" * 32,
@@ -43,6 +54,9 @@ def cfg(tmp_path: Path, teams_file: Path) -> Config:
         teams_path=teams_file,
         host="127.0.0.1",
         port=8787,
+        keys_path=keys_file,
+        signing_key=HUB_SEED_HEX,
+        hub_key_id=HUB_KEY_ID,
     )
 
 

@@ -66,10 +66,22 @@ CREATE TABLE IF NOT EXISTS oauth_token (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS key_nonce (
+  key_id TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  seen_at INTEGER NOT NULL,
+  UNIQUE (key_id, nonce)
+);
+
+CREATE INDEX IF NOT EXISTS key_nonce_seen_idx ON key_nonce (seen_at);
 CREATE INDEX IF NOT EXISTS event_origin_idx ON ledger_event (origin_device_id, origin_seq);
 CREATE INDEX IF NOT EXISTS replica_login_idx ON row_replica (github_login, table_name);
 CREATE INDEX IF NOT EXISTS device_login_idx ON device (github_login);
 """
+
+# A nonce of a signed request is kept this long (KEY-PROTOCOL.md section 5, check 8).
+NONCE_KEEP_SECONDS = 600
+_UNIQUE_VIOLATION = "SQLITE_CONSTRAINT_UNIQUE"
 
 
 def utcnow() -> str:
@@ -414,6 +426,34 @@ class Store:
                 "ON CONFLICT(table_name, row_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
                 (table, row_id, origin, login, encoded, occurred),
             )
+
+    def insert_nonce(self, key_id: str, nonce: str, seen_at: int) -> bool:
+        """Store the pair of key id and nonce in one atomic insert.
+
+        Returns False only when the unique constraint on the pair is violated; every other
+        failure raises. Rows older than NONCE_KEEP_SECONDS are deleted in the same transaction.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    "DELETE FROM key_nonce WHERE seen_at < ?",
+                    (seen_at - NONCE_KEEP_SECONDS,),
+                )
+                self._conn.execute(
+                    "INSERT INTO key_nonce (key_id, nonce, seen_at) VALUES (?, ?, ?)",
+                    (key_id, nonce, seen_at),
+                )
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                if exc.sqlite_errorname == _UNIQUE_VIOLATION:
+                    return False
+                raise
+            except Exception:
+                self._conn.rollback()
+                raise
+            self._conn.commit()
+            return True
 
     def put_oauth_token(self, github_login: str, token: str) -> None:
         self.execute(

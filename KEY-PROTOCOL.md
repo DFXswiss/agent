@@ -4,7 +4,9 @@ This document fixes the wire format for key identity: the keys file, how a reque
 how the hub signs its answer, and every refusal. It is the technical specification for the
 first build step of the team record.
 
-**Status:** specified, not implemented. The rules behind it are in
+**Status:** the hub side of the first build step is implemented in this repository; the client
+commands are in the client repository. Everything listed under "Not built in this step" is
+not implemented. The rules behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
@@ -233,10 +235,13 @@ never carries the hub's signature headers, also when the request carries `Agent-
 - An endpoint under `/api/key/` runs only with the key entry that checks 1 to 8 established.
 - A request under `/api/key/` for which no endpoint exists with this exact path and method, also
   with an added or missing trailing slash and also `HEAD`, passes checks 1 to 8 and then gets a
-  signed `404` with the body `{"error": "not_found"}`. The hub never answers there with `405` or
+  signed `404` with the body `{"error":"not_found"}`. The hub never answers there with `405` or
   a redirect. "Exact path" means the percent-decoded path the router sees. The answer to `HEAD`
   has no body, and its body hash is that of the empty string.
-- A `500` under `/api/key/` has the body `{"error": "internal"}`.
+- A `500` under `/api/key/` has the body `{"error":"internal"}`.
+- A WebSocket under `/api/key/` is closed with code 1008; this protocol defines no WebSocket.
+- A server in front of the application may already reduce a request in absolute form to its
+  path; the rule for the origin form then applies to what the application receives.
 
 The hub builds the text from what it received and checks in this order, stopping at the first
 failure:
@@ -262,7 +267,8 @@ failure:
   minutes, so a request that fails an earlier check cannot fill the store.
 - Check 10 applies only to an endpoint that names a subject, and then only to `service` keys.
   `GET /api/key/whoami` names none.
-- A refusal has the JSON body `{"error": "<value>"}` and nothing else. It carries no data of the
+- A refusal has the JSON body `{"error":"<value>"}` and nothing else, written without
+  whitespace. It carries no data of the
   hub. The keys file is public, so the values of checks 2 to 5 tell a caller nothing it could
   not read there.
 - Every request of a `service` key that passed check 8 writes exactly one log line with the key
