@@ -1043,10 +1043,11 @@ starts `Previous answer refused: <text>`. A refused override with no pending
 question creates no event. `agent order show` records its fate as
 `last-answer`.
 
-Once the draft exists, it is the public carrier. Questions, blockers and gate
-rejections are pull-request comments. Authorized comments from `reply_logins`
-resume the order. Before the draft exists, a question or blocker exists only as
-an order event. Models never write either order activity type.
+Once the draft exists, it carries the change, its description and the review
+records; gate rejections are still pull-request review comments. Questions and
+blockers of an order exist only as order events, before and after the draft
+exists, and a pull-request comment does not resume the order. Models never
+write either order activity type.
 
 Every side-effecting coordinator action has an ordered list of precondition
 checks in `preconditions.py`. Adding a check to an action requires one registry

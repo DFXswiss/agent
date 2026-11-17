@@ -1993,15 +1993,11 @@ def phase_implement(
         )
     ):
         checkpoint = {}
-    replay_keys = (
-        "summary_en",
-        "summary_de",
-        "reused_lines",
-        "added_lines",
-        "pr_body",
-    )
+    replay_keys = ("summary_en", "summary_de", "reused_lines", "added_lines")
     if all(key in checkpoint for key in replay_keys):
+        # A checkpoint written before pr_body existed replays without it.
         replay_fields = {key: checkpoint[key] for key in replay_keys}
+        replay_fields["pr_body"] = checkpoint.get("pr_body")
     else:
         replay_fields = implementer_replay_fields(
             result.stdout or "",

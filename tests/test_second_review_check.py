@@ -744,10 +744,10 @@ def test_override_resumes_an_order_blocked_in_the_second_review(
     store.close()
 
 
-def test_override_waits_for_the_blocker_comment(tmp_path, monkeypatch) -> None:
+def test_override_needs_no_blocker_comment(tmp_path, monkeypatch) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     _list_opener(fake)
-    task = seed_review_order(
+    seed_review_order(
         store,
         worker,
         fake,
@@ -758,22 +758,6 @@ def test_override_waits_for_the_blocker_comment(tmp_path, monkeypatch) -> None:
         blocker_publish_once=True,
     )
     iid = override_intent(store, worker, OID)
-    assert consume(store, worker, fake, OID, iid) is None
-    assert store.row("activity", iid)["execution_status"] == "pending"
-    assert fact(store, OID, "review_2") is None
-    assert fact(store, OID, "one_review_permitted") is None
-    assert all(
-        rows(store, OID)[key]["status"] == "pending"
-        for key in ("review_2_quality", "review_2_logic")
-    )
-    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "blocked"
-    task["payload"]["coordinator"]["blocker_activity_id"] = "activity-1"
-    store.write(
-        "task",
-        "update",
-        OID,
-        {key: value for key, value in task.items() if not key.startswith("_")},
-    )
     assert consume(store, worker, fake, OID, iid) == [
         "check review_2 overridden by human-owner"
     ]

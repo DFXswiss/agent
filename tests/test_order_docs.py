@@ -143,10 +143,14 @@ def test_new_texts_name_the_concierge_only() -> None:
     assert "concierge" in _read("AGENTS.md")
 
 
-def test_agents_md_names_pull_request_replies_of_orders() -> None:
+def test_agents_md_keeps_order_answers_in_the_agent_system() -> None:
     prose = _ws(_read("AGENTS.md"))
     assert "submitted and answered only through" not in prose
-    assert "`reply_logins`" in prose
+    assert (
+        "The coordinator posts no question, blocker or status comment on the "
+        "pull request of an order, and a pull-request comment does not answer "
+        "an order."
+    ) in prose
 
 
 def test_model_route_readiness_names_the_review_2_waiver() -> None:
@@ -230,8 +234,8 @@ def test_order_states_and_the_done_operation_are_documented() -> None:
         assert "Only an override or cancel" not in prose
     assert (
         "Answers return through `agent order reply`, `agent order override`, "
-        "`agent order cancel`, `agent order done`, or an authorized pull-request "
-        "comment."
+        "`agent order cancel`, `agent order done`, or the orders view of the "
+        "dashboard."
     ) in _ws(_between(_read("DESIGN.md"), "### 19.7", "### 19.8"))
     assert "agent order done --id UUID --reason TEXT" in _between(
         _read("DESIGN.md"), "## 16. CLI surface", "## 17. "

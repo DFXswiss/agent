@@ -1537,10 +1537,10 @@ control's introducer and final both used with parameters between them (`Q[w`
 in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does
 not contain it contiguously in raw form; matching every per-control combination
 would need a non-linear matcher.
-User-facing blockers and questions are
-published on the source issue, or on the pull request of an order, only when
-`execution_status=done` is verified;
-otherwise they remain locally visible (`CoordinatorError` / `StoreError`
+User-facing blockers and questions of an issue task are
+published on the source issue only when `execution_status=done` is verified;
+an order records them only as order events. Unpublished issue blockers and
+questions remain locally visible (`CoordinatorError` / `StoreError`
 subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
 No silent failure.
