@@ -446,6 +446,7 @@ agent key create --id ID                       # Ed25519 key in $AGENT_HOME/keys
 agent key list                                 # ids and public keys under $AGENT_HOME/keys
 agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # $AGENT_HOME/hub-key.json (0600); no silent replacement
 agent key whoami --id ID                       # signed GET /api/key/whoami to the configured hub; prints only a verified answer
+agent key release --id ID --repo OWNER/NAME --pr NUMBER # signed GET /api/key/release; prints only a verified answer of the exact release form; exit 0 released, 3 not released (stderr: not released: <failed>), 1 error
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
@@ -1382,7 +1383,7 @@ This revision records the decision of 2026-11-17 for central operation (§25): d
 
 ## 24. Team record and key identity (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule. Of the first build step (§24.10), the client commands `agent key` exist (§16), and the hub side — the keys file, the signature checks and `GET /api/key/whoami` — is built in agent-core; no key is registered in the keys file yet.
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule. Of the first build step (§24.10), the client commands `agent key` exist (§16), and the hub side — the keys file, the signature checks and `GET /api/key/whoami` — is built in agent-core; no key is registered in the keys file yet. Of the second build step, the hub's `GET /api/key/release` is built in agent-core and the client command `agent key release` exists (§16); it answers `released` for every valid query until the team record exists, and the guard does not use it yet.
 
 Decided on 2026-11-17, after the first version of this section:
 

@@ -1,4 +1,5 @@
-"""Client side of the key protocol: key files, the pinned hub key and the signed whoami call.
+"""Client side of the key protocol: key files, the pinned hub key, the signed whoami call
+and the signed release query.
 
 Every test uses a mocked hub (``httpx.MockTransport``) and a fixed clock;
 nothing touches the network. Tests that open the store run against the real
@@ -15,7 +16,7 @@ import json
 import os
 import stat
 import string
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -140,6 +141,7 @@ class FakeHub:
 
     def __init__(self, client_public: str) -> None:
         self.client_public = Ed25519PublicKey.from_public_bytes(unb64(client_public))
+        self.target = TARGET
         self.requests: list[httpx.Request] = []
         self.status = 200
         self.body = json.dumps(WHOAMI).encode("utf-8")
@@ -195,7 +197,7 @@ class FakeHub:
     def check_request(self, request: httpx.Request) -> None:
         assert request.method == "GET"
         assert request.url.host == HUB_HOST
-        assert request.url.raw_path == TARGET.encode("ascii")
+        assert request.url.raw_path == self.target.encode("ascii")
         assert request.content == b""
         for name in ("Agent-Key", "Agent-Time", "Agent-Nonce", "Agent-Signature"):
             assert len(request.headers.get_list(name)) == 1
@@ -208,7 +210,7 @@ class FakeHub:
                 request.headers["Agent-Key"],
                 "GET",
                 HUB_HOST,
-                TARGET,
+                self.target,
                 request.headers["Agent-Time"],
                 request.headers["Agent-Nonce"],
                 EMPTY_SHA,
@@ -1260,6 +1262,629 @@ def test_cli_whoami_without_a_hub_url_sends_nothing(
     assert cli_refused("whoami", "--id", CLIENT_ID) == "agent: device is not paired"
     assert len(closed) == 1
     assert hub.requests == []
+
+
+# The release query
+
+REPO = "example-org/example-repo"
+RELEASE_TARGET = "/api/key/release?repository=example-org%2Fexample-repo&pull_request=42"
+RELEASED = {
+    "repository": REPO,
+    "pull_request": 42,
+    "released": True,
+    "failed": None,
+    "hub_key": HUB_ID,
+}
+RELEASED_LINE = (
+    '{"failed": null, "hub_key": "hub-test-1", "pull_request": 42, '
+    '"released": true, "repository": "example-org/example-repo"}\n'
+)
+FAILURES = ("task_missing", "task_not_ready", "question_unanswered")
+REPO_MESSAGE = f"--repo must be {keys.REPOSITORY_RULE}; nothing was sent"
+PR_MESSAGE = "--pr must be a number from 1 to 2147483647 without sign or leading zero; nothing was sent"
+BAD_REPOS = (
+    "",
+    "example-org",
+    "example-org/",
+    "/example-repo",
+    "/",
+    "Example-org/example-repo",
+    "example-org/Example-repo",
+    "EXAMPLE-ORG/EXAMPLE-REPO",
+    "-example/example-repo",
+    "example-/example-repo",
+    "ex--ample/example-repo",
+    "-/example-repo",
+    "a" * 40 + "/example-repo",
+    "example_org/example-repo",
+    "example.org/example-repo",
+    "example-org/" + "a" * 101,
+    "example-org/.",
+    "example-org/..",
+    "example-org/example-repo/extra",
+    "example-org//example-repo",
+    "example-org%2Fexample-repo",
+    "example-org/example repo",
+    "example-org/example+repo",
+    "example-org/example%repo",
+    "example-org/example-repo\n",
+    "\nexample-org/example-repo",
+    "exämple/example-repo",
+    "example-org/exämple",
+)
+BAD_PULL_REQUESTS = (
+    "",
+    "0",
+    "00",
+    "01",
+    "+1",
+    "-1",
+    "1.0",
+    "1e3",
+    "0x10",
+    " 1",
+    "1 ",
+    "1\n",
+    "4 2",
+    "٣",
+    "2147483648",
+    "9999999999",
+    "99999999999",
+)
+
+
+def release_body(**changes: object) -> bytes:
+    return json.dumps({**RELEASED, **changes}).encode("utf-8")
+
+
+def release_body_without(field: str) -> bytes:
+    return json.dumps({name: value for name, value in RELEASED.items() if name != field}).encode("utf-8")
+
+
+MALFORMED_RELEASE_ANSWERS = (
+    *(release_body_without(field) for field in RELEASED),
+    release_body(extra="x"),
+    json.dumps({}).encode("utf-8"),
+    release_body(repository=None),
+    release_body(repository=1),
+    release_body(repository=[REPO]),
+    release_body(pull_request="42"),
+    release_body(pull_request=42.0),
+    release_body(pull_request=None),
+    release_body(pull_request=[42]),
+    release_body(released="true"),
+    release_body(released=1),
+    release_body(released=None),
+    release_body(released=False, failed=0),
+    release_body(released=False, failed=False),
+    release_body(released=False, failed=[FAILURES[0]]),
+    release_body(released=False, failed={"failed": FAILURES[0]}),
+    release_body(hub_key=None),
+    release_body(hub_key=1),
+    release_body(failed=FAILURES[0]),
+    release_body(failed=""),
+    release_body(failed=False),
+    release_body(released=False, failed=None),
+    release_body(released=False, failed="unknown"),
+    release_body(released=False, failed="TASK_MISSING"),
+    release_body(released=False, failed="task_missing "),
+    release_body(released=False, failed=""),
+    release_body(repository="example-org/other-repo"),
+    release_body(repository="Example-org/example-repo"),
+    release_body(repository="example-org%2Fexample-repo"),
+    release_body(pull_request=43),
+    release_body(pull_request=-42),
+    release_body(hub_key="hub-other-1"),
+    release_body(hub_key="HUB-TEST-1"),
+    b"[]",
+    b"null",
+    b'"released"',
+    b"42",
+    b"true",
+    b"",
+    b"not json",
+    b"\xff\xff",
+    b'{"repository": ',
+    DEEP_JSON,
+)
+
+
+@pytest.fixture
+def release_hub(hub: FakeHub) -> FakeHub:
+    hub.target = RELEASE_TARGET
+    hub.body = release_body()
+    return hub
+
+
+def call_release(
+    agent_home: Path, hub: FakeHub, repository: str = REPO, pull_request: str = "42"
+) -> dict:
+    pin = keys.load_hub_pin(agent_home)
+    with httpx.Client(transport=httpx.MockTransport(hub)) as client:
+        return keys.release_query(
+            agent_home, CLIENT_ID, pin, HUB_URL, client, lambda: NOW, repository, pull_request
+        )
+
+
+def release_refused(
+    agent_home: Path, hub: FakeHub, repository: str = REPO, pull_request: str = "42"
+) -> str:
+    with pytest.raises(keys.KeyProtocolError) as caught:
+        call_release(agent_home, hub, repository, pull_request)
+    return str(caught.value)
+
+
+@no_pg
+def test_release_sends_the_exact_signed_request_and_accepts_a_release(
+    agent_home: Path, release_hub: FakeHub
+) -> None:
+    assert call_release(agent_home, release_hub) == RELEASED
+    assert len(release_hub.requests) == 1
+    request = release_hub.requests[0]
+    assert request.method == "GET"
+    assert str(request.url) == HUB_URL + RELEASE_TARGET
+    assert request.url.raw_path == RELEASE_TARGET.encode("ascii")
+    assert request.content == b""
+    for name in ("Agent-Key", "Agent-Time", "Agent-Nonce", "Agent-Signature"):
+        assert len(request.headers.get_list(name)) == 1
+    assert request.headers["Agent-Key"] == CLIENT_ID
+    assert request.headers["Agent-Time"] == NOW
+    assert request.headers["Accept-Encoding"] == "identity"
+    nonce = request.headers["Agent-Nonce"]
+    assert len(unb64(nonce)) == 16
+    text = f"agent-request-v1\n{CLIENT_ID}\nGET\n{HUB_HOST}\n{RELEASE_TARGET}\n{NOW}\n{nonce}\n{EMPTY_SHA}"
+    release_hub.client_public.verify(unb64(request.headers["Agent-Signature"]), text.encode("utf-8"))
+
+
+@no_pg
+@pytest.mark.parametrize("failed", FAILURES)
+def test_release_returns_a_verified_answer_that_does_not_release(
+    agent_home: Path, release_hub: FakeHub, failed: str
+) -> None:
+    release_hub.body = release_body(released=False, failed=failed)
+    assert call_release(agent_home, release_hub) == {**RELEASED, "released": False, "failed": failed}
+
+
+@no_pg
+@pytest.mark.parametrize(
+    ("repository", "pull_request", "target"),
+    [
+        ("a/b", "1", "/api/key/release?repository=a%2Fb&pull_request=1"),
+        (
+            "a" * 39 + "/" + "z" * 100,
+            "2147483647",
+            "/api/key/release?repository=" + "a" * 39 + "%2F" + "z" * 100 + "&pull_request=2147483647",
+        ),
+        ("a-b-c/my.repo_name-1", "10", "/api/key/release?repository=a-b-c%2Fmy.repo_name-1&pull_request=10"),
+        ("0/...", "9", "/api/key/release?repository=0%2F...&pull_request=9"),
+        ("x1/.github", "1000000000", "/api/key/release?repository=x1%2F.github&pull_request=1000000000"),
+    ],
+)
+def test_release_accepts_the_bounds_of_the_rules(
+    agent_home: Path, hub: FakeHub, repository: str, pull_request: str, target: str
+) -> None:
+    answer = {**RELEASED, "repository": repository, "pull_request": int(pull_request)}
+    hub.target = target
+    hub.body = json.dumps(answer).encode("utf-8")
+    assert call_release(agent_home, hub, repository, pull_request) == answer
+    assert hub.requests[0].url.raw_path == target.encode("ascii")
+
+
+@no_pg
+@pytest.mark.parametrize("body", MALFORMED_RELEASE_ANSWERS)
+def test_release_refuses_a_verified_answer_of_another_form(
+    agent_home: Path, release_hub: FakeHub, body: bytes
+) -> None:
+    release_hub.body = body
+    assert release_refused(agent_home, release_hub) == keys.UNEXPECTED_FORM
+    assert len(release_hub.requests) == 1
+
+
+@no_pg
+def test_release_refuses_a_pull_request_number_written_as_true(agent_home: Path, hub: FakeHub) -> None:
+    hub.target = "/api/key/release?repository=example-org%2Fexample-repo&pull_request=1"
+    hub.body = release_body(pull_request=True)
+    assert release_refused(agent_home, hub, REPO, "1") == keys.UNEXPECTED_FORM
+
+
+@no_pg
+@pytest.mark.parametrize("repository", BAD_REPOS)
+def test_release_refuses_an_invalid_repo_before_sending(
+    agent_home: Path, release_hub: FakeHub, repository: str
+) -> None:
+    assert release_refused(agent_home, release_hub, repository, "42") == REPO_MESSAGE
+    assert release_hub.requests == []
+
+
+@no_pg
+@pytest.mark.parametrize("pull_request", BAD_PULL_REQUESTS)
+def test_release_refuses_an_invalid_pr_before_sending(
+    agent_home: Path, release_hub: FakeHub, pull_request: str
+) -> None:
+    assert release_refused(agent_home, release_hub, REPO, pull_request) == PR_MESSAGE
+    assert release_hub.requests == []
+
+
+@no_pg
+def test_release_checks_the_repo_before_the_pr(agent_home: Path, release_hub: FakeHub) -> None:
+    assert release_refused(agent_home, release_hub, "Example/x", "0") == REPO_MESSAGE
+    assert release_hub.requests == []
+
+
+# Paths shared by whoami and the release query: the signed GET and its verification
+
+COMMAND_REQUESTS = {
+    "whoami": (TARGET, json.dumps(WHOAMI).encode("utf-8")),
+    "release": (RELEASE_TARGET, release_body()),
+}
+COMMAND_ANSWERS = {"whoami": WHOAMI, "release": RELEASED}
+Handler = Callable[[httpx.Request], httpx.Response]
+
+
+@pytest.fixture(params=sorted(COMMAND_REQUESTS))
+def command(request: pytest.FixtureRequest, hub: FakeHub) -> str:
+    hub.target, hub.body = COMMAND_REQUESTS[request.param]
+    return request.param
+
+
+def call_command(
+    command: str, agent_home: Path, hub: FakeHub, now: str = NOW, handler: Handler | None = None
+) -> dict:
+    pin = keys.load_hub_pin(agent_home)
+    transport = httpx.MockTransport(hub if handler is None else handler)
+    with httpx.Client(transport=transport) as client:
+        if command == "whoami":
+            return keys.whoami(agent_home, CLIENT_ID, pin, HUB_URL, client, lambda: now)
+        return keys.release_query(agent_home, CLIENT_ID, pin, HUB_URL, client, lambda: now, REPO, "42")
+
+
+def command_refused(
+    command: str, agent_home: Path, hub: FakeHub, handler: Handler | None = None
+) -> str:
+    with pytest.raises(keys.KeyProtocolError) as caught:
+        call_command(command, agent_home, hub, handler=handler)
+    return str(caught.value)
+
+
+@no_pg
+def test_signed_get_accepts_the_signed_answer(agent_home: Path, hub: FakeHub, command: str) -> None:
+    assert call_command(command, agent_home, hub) == COMMAND_ANSWERS[command]
+    assert len(hub.requests) == 1
+
+
+@no_pg
+@pytest.mark.parametrize(
+    ("status", "body", "detail"),
+    [
+        (400, b'{"error":"query_invalid"}', "query_invalid"),
+        (403, b'{"error":"scope_missing"}', "scope_missing"),
+        (403, b'{"error":"subject_not_allowed"}', "subject_not_allowed"),
+        (404, b'{"error":"not_found"}', "not_found"),
+        (404, b"", ""),
+        (500, b"internal error", ""),
+    ],
+)
+def test_signed_get_reports_a_signed_refusal_with_its_target(
+    agent_home: Path, hub: FakeHub, command: str, status: int, body: bytes, detail: str
+) -> None:
+    hub.status = status
+    hub.body = body
+    message = command_refused(command, agent_home, hub)
+    assert message == f"hub GET {COMMAND_REQUESTS[command][0]} → HTTP {status}: {detail}"
+
+
+@no_pg
+@pytest.mark.parametrize(
+    ("status", "body", "detail"),
+    [
+        (400, b'{"error":"query_invalid"}', "HTTP 400, error query_invalid"),
+        (401, b'{"error":"key_unknown"}', "HTTP 401, error key_unknown"),
+        (403, b'{"error":"scope_missing"}', "HTTP 403, error scope_missing"),
+        (403, b'{"error":"subject_not_allowed"}', "HTTP 403, error subject_not_allowed"),
+        (404, b"", "HTTP 404"),
+        (200, release_body(), "HTTP 200"),
+    ],
+)
+def test_signed_get_reports_an_unsigned_answer_as_unverified(
+    agent_home: Path, hub: FakeHub, command: str, status: int, body: bytes, detail: str
+) -> None:
+    hub.signed = False
+    hub.status = status
+    hub.body = body
+    message = command_refused(command, agent_home, hub)
+    assert message == f"{keys.NOT_VERIFIED} (unsigned answer; unverified: {detail})"
+
+
+@no_pg
+def test_signed_get_refuses_an_answer_signed_by_another_key(
+    agent_home: Path, hub: FakeHub, command: str
+) -> None:
+    hub.signer = OTHER_PRIVATE
+    message = command_refused(command, agent_home, hub)
+    assert message == f"{keys.NOT_VERIFIED} (the signature does not verify with the pinned hub key)"
+
+
+@no_pg
+def test_signed_get_refuses_a_changed_body(agent_home: Path, hub: FakeHub, command: str) -> None:
+    hub.signed_body = hub.body
+    hub.body = hub.body + b" "
+    message = command_refused(command, agent_home, hub)
+    assert message == f"{keys.NOT_VERIFIED} (the signature does not verify with the pinned hub key)"
+
+
+@no_pg
+@pytest.mark.parametrize("seconds", [121, -121])
+def test_signed_get_refuses_a_stale_answer(
+    agent_home: Path, hub: FakeHub, command: str, seconds: int
+) -> None:
+    hub.hub_time = shifted(seconds)
+    message = command_refused(command, agent_home, hub)
+    assert message == (
+        f"{keys.NOT_VERIFIED} (Agent-Hub-Time is more than 120 seconds from this device's clock)"
+    )
+
+
+@no_pg
+def test_signed_get_refuses_a_replayed_answer(agent_home: Path, hub: FakeHub, command: str) -> None:
+    assert call_command(command, agent_home, hub, now=shifted(-10)) == COMMAND_ANSWERS[command]
+    first_request = hub.requests[0]
+    first_answer = hub(first_request)
+
+    def replay(request: httpx.Request) -> httpx.Response:
+        hub.requests.append(request)
+        return httpx.Response(
+            first_answer.status_code,
+            headers=list(first_answer.headers.multi_items()),
+            content=first_answer.content,
+        )
+
+    message = command_refused(command, agent_home, hub, handler=replay)
+    assert message == f"{keys.NOT_VERIFIED} (the signature does not verify with the pinned hub key)"
+    replayed_to = hub.requests[-1]
+    assert replayed_to.headers["Agent-Nonce"] != first_request.headers["Agent-Nonce"]
+
+
+@no_pg
+def test_signed_get_does_not_follow_a_signed_redirect(agent_home: Path, hub: FakeHub, command: str) -> None:
+    hub.status = 307
+    hub.body = b""
+    hub.extra_headers = [("Location", "https://other.example/")]
+    message = command_refused(command, agent_home, hub)
+    assert message == f"hub GET {COMMAND_REQUESTS[command][0]} → HTTP 307: "
+    assert len(hub.requests) == 1
+    assert hub.requests[0].url.host == HUB_HOST
+
+
+@no_pg
+def test_signed_get_does_not_follow_an_unsigned_redirect(
+    agent_home: Path, hub: FakeHub, command: str
+) -> None:
+    hub.signed = False
+    hub.status = 302
+    hub.body = b""
+    hub.extra_headers = [("Location", "https://other.example/")]
+    message = command_refused(command, agent_home, hub)
+    assert message == f"{keys.NOT_VERIFIED} (unsigned answer; unverified: HTTP 302)"
+    assert len(hub.requests) == 1
+    assert hub.requests[0].url.host == HUB_HOST
+
+
+@no_pg
+def test_signed_get_reports_a_transport_error(agent_home: Path, hub: FakeHub, command: str) -> None:
+    hub.error = httpx.ConnectError("connection refused")
+    assert command_refused(command, agent_home, hub) == "hub request failed: connection refused"
+    assert len(hub.requests) == 1
+
+
+@no_pg
+def test_signed_get_reports_a_connection_that_breaks_while_reading(
+    agent_home: Path, hub: FakeHub, command: str
+) -> None:
+    hub.stream = BrokenStream()
+    assert command_refused(command, agent_home, hub) == "hub request failed: connection reset by peer"
+
+
+# The release command with the device's real store
+
+
+def release_argv(repository: str = REPO, pull_request: str = "42") -> tuple[str, ...]:
+    return ("release", "--id", CLIENT_ID, "--repo", repository, "--pr", pull_request)
+
+
+def test_cli_release_prints_a_released_answer_and_exits_0(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pair(agent_home, HUB_URL)
+    closed = track_store_closes(monkeypatch)
+    monkeypatch.setattr(agent_main, "utcnow", lambda: NOW)
+    mock_hub_client(monkeypatch, release_hub)
+    run_cli(*release_argv())
+    captured = capsys.readouterr()
+    assert captured.out == RELEASED_LINE
+    assert captured.err == ""
+    assert len(closed) == 1
+    assert len(release_hub.requests) == 1
+    assert release_hub.requests[0].url.raw_path == RELEASE_TARGET.encode("ascii")
+
+
+@pytest.mark.parametrize("failed", FAILURES)
+def test_cli_release_exits_3_for_an_answer_that_does_not_release(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failed: str,
+) -> None:
+    release_hub.body = release_body(released=False, failed=failed)
+    pair(agent_home, HUB_URL)
+    monkeypatch.setattr(agent_main, "utcnow", lambda: NOW)
+    mock_hub_client(monkeypatch, release_hub)
+    with pytest.raises(SystemExit) as caught:
+        run_cli(*release_argv())
+    assert caught.value.code == 3
+    captured = capsys.readouterr()
+    assert captured.out == (
+        f'{{"failed": "{failed}", "hub_key": "hub-test-1", "pull_request": 42, '
+        '"released": false, "repository": "example-org/example-repo"}\n'
+    )
+    assert captured.err == f"not released: {failed}\n"
+
+
+def test_cli_release_refuses_a_verified_answer_of_another_form(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    release_hub.body = release_body(hub_key="hub-other-1")
+    pair(agent_home, HUB_URL)
+    monkeypatch.setattr(agent_main, "utcnow", lambda: NOW)
+    mock_hub_client(monkeypatch, release_hub)
+    assert cli_refused(*release_argv()) == f"agent: {keys.UNEXPECTED_FORM}"
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_release_prints_nothing_for_an_unverified_answer(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    release_hub.signer = OTHER_PRIVATE
+    pair(agent_home, HUB_URL)
+    monkeypatch.setattr(agent_main, "utcnow", lambda: NOW)
+    mock_hub_client(monkeypatch, release_hub)
+    assert cli_refused(*release_argv()) == (
+        f"agent: {keys.NOT_VERIFIED} (the signature does not verify with the pinned hub key)"
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_release_reports_a_signed_refusal(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    release_hub.status = 403
+    release_hub.body = b'{"error":"subject_not_allowed"}'
+    pair(agent_home, HUB_URL)
+    monkeypatch.setattr(agent_main, "utcnow", lambda: NOW)
+    mock_hub_client(monkeypatch, release_hub)
+    assert cli_refused(*release_argv()) == (
+        f"agent: hub GET {RELEASE_TARGET} → HTTP 403: subject_not_allowed"
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_release_without_a_pinned_hub_key_sends_nothing(
+    agent_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys.create_key(agent_home, CLIENT_ID)
+    opened: list[dict[str, object]] = []
+    real_open_store = agent_main.open_store
+
+    def recording_open_store(**kwargs: object) -> Store:
+        opened.append(kwargs)
+        return real_open_store(**kwargs)
+
+    def no_send(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr(agent_main, "open_store", recording_open_store)
+    monkeypatch.setattr(httpx.Client, "send", no_send)
+    assert cli_refused(*release_argv()) == "agent: hub key is not pinned"
+    assert opened == []
+
+
+def test_cli_release_without_a_hub_url_sends_nothing(
+    agent_home: Path, release_hub: FakeHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed = track_store_closes(monkeypatch)
+
+    def no_send(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr(httpx.Client, "send", no_send)
+    assert cli_refused(*release_argv()) == "agent: device is not paired"
+    assert len(closed) == 1
+    assert release_hub.requests == []
+
+
+@pytest.mark.parametrize(
+    ("repository", "pull_request", "message"),
+    [
+        *((repository, "42", REPO_MESSAGE) for repository in BAD_REPOS if repository != ""),
+        *((REPO, pull_request, PR_MESSAGE) for pull_request in BAD_PULL_REQUESTS if pull_request != ""),
+    ],
+)
+def test_cli_release_checks_repo_and_pr_before_opening_the_store(
+    agent_home: Path,
+    release_hub: FakeHub,
+    monkeypatch: pytest.MonkeyPatch,
+    repository: str,
+    pull_request: str,
+    message: str,
+) -> None:
+    (agent_home / "hub-key.json").unlink()
+    opened: list[dict[str, object]] = []
+    real_open_store = agent_main.open_store
+
+    def recording_open_store(**kwargs: object) -> Store:
+        opened.append(kwargs)
+        return real_open_store(**kwargs)
+
+    def no_send(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr(agent_main, "open_store", recording_open_store)
+    monkeypatch.setattr(httpx.Client, "send", no_send)
+    assert cli_refused(*release_argv(repository, pull_request)) == f"agent: {message}"
+    assert opened == []
+    assert release_hub.requests == []
+
+
+@no_pg
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (("release",), "agent: --id is required"),
+        (("release", "--id", CLIENT_ID), "agent: --repo is required"),
+        (("release", "--id", CLIENT_ID, "--pr", "42"), "agent: --repo is required"),
+        (("release", "--id", CLIENT_ID, "--repo", REPO), "agent: --pr is required"),
+        (("release", "--repo", REPO, "--pr", "42"), "agent: --id is required"),
+        (("release", "--id", CLIENT_ID, "--repo", "", "--pr", "42"), "agent: --repo is required"),
+        (("release", "--id", CLIENT_ID, "--repo", REPO, "--pr", ""), "agent: --pr is required"),
+        (("release", "--id"), "agent: --id needs a value"),
+        (("release", "--id", CLIENT_ID, "--repo"), "agent: --repo needs a value"),
+        (("release", "--id", CLIENT_ID, "--repo", REPO, "--pr"), "agent: --pr needs a value"),
+        ((*release_argv(), "--pr", "42"), f"agent: {agent_main.KEY_USAGE}"),
+        ((*release_argv(), "--repo", REPO), f"agent: {agent_main.KEY_USAGE}"),
+        ((*release_argv(), "--id", CLIENT_ID), f"agent: {agent_main.KEY_USAGE}"),
+        ((*release_argv(), "--verbose"), f"agent: {agent_main.KEY_USAGE}"),
+        ((*release_argv(), "--replace"), f"agent: {agent_main.KEY_USAGE}"),
+        ((*release_argv(), "extra"), f"agent: {agent_main.KEY_USAGE}"),
+        (("release", "--id", CLIENT_ID, f"--repo={REPO}", "--pr", "42"), f"agent: {agent_main.KEY_USAGE}"),
+        (("release", "--id", CLIENT_ID, "--repository", REPO, "--pr", "42"), f"agent: {agent_main.KEY_USAGE}"),
+    ],
+)
+def test_cli_release_refuses_malformed_arguments(
+    agent_home: Path, argv: tuple[str, ...], expected: str
+) -> None:
+    assert cli_refused(*argv) == expected
+    assert not agent_home.exists()
+
+
+@no_pg
+def test_key_usage_names_the_release_command() -> None:
+    assert agent_main.KEY_USAGE == (
+        "Usage: agent key create --id ID | list | "
+        "pin-hub --id HUB_ID --public-key VALUE [--replace] | whoami --id ID | "
+        "release --id ID --repo OWNER/NAME --pr NUMBER"
+    )
 
 
 # The host line and the configured hub URL
