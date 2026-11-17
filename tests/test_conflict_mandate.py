@@ -61,7 +61,7 @@ from agent_cli.github_accounts import (
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
-    grok_messages_stream,
+    event_stream_output,
     make_session,
     write_accounts,
 )
@@ -443,7 +443,7 @@ class FakeConflictTransport:
         )
         self.lane_output = None
         returncode, output = result if isinstance(result, tuple) else (0, result)
-        return Completed(returncode, grok_messages_stream(output), "")
+        return Completed(returncode, event_stream_output(output), "")
 
     def lane(self, argv: list[str], stdin: str | None = None) -> Completed:
         self.lanes.append((stdin or "") + " " + " ".join(argv))
@@ -1128,7 +1128,7 @@ def test_conflict_loop_resolves_and_pushes_with_lease(tmp_path: Path, monkeypatc
     assert not any("HEAD:" in argument for call in fake.calls for argument in call)
     assert len(fake.pr_comments) == 1
     assert len(fake.lanes) == 1
-    assert "--no-subagents" in fake.lanes[0]
+    assert "--no-shell" in fake.lanes[0]
     assert "--no-git" not in fake.lanes[0]
     assert "STATUS: complete" not in " ".join(" ".join(call) for call in fake.calls)
     assert any(fake_call == ["git", "add", "--", "src/app.py"] for fake_call in fake.calls)
@@ -1328,7 +1328,7 @@ def test_lane_marker_retries_then_blocks_without_push(tmp_path: Path, monkeypatc
             (fake.clone_path / "src").mkdir(parents=True, exist_ok=True)
             (fake.clone_path / "src" / "app.py").write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n", encoding="utf-8")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=bad_lane)
@@ -1432,8 +1432,8 @@ def test_missing_skill_and_unknown_provider_refuse_before_transport(tmp_path: Pa
     patch_account_runners(monkeypatch, fake)
     assert "preflight blocked" in tick(store, worker(tmp_path), runner=fake)[0]
     data = json.loads((store.home / "ai-accounts.json").read_text(encoding="utf-8"))
-    data["models"]["second"] = "claude"
-    data["implementer"] = "codex"
+    data["models"]["second"] = "driver-c"
+    data["implementer"] = "driver-b"
     (store.home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
     store.write(
         "session",
@@ -1448,14 +1448,14 @@ def test_missing_skill_and_unknown_provider_refuse_before_transport(tmp_path: Pa
         },
     )
     lines = tick(store, worker(tmp_path), runner=fake)
-    assert any("codex" in line for line in lines)
+    assert any("driver-b" in line for line in lines)
 
 
 @pytest.mark.parametrize(
     ("implementer", "second", "message"),
     [
-        ("codex", "claude", "codex is refused as implementer provider"),
-        ("deepseek", "claude", "is not supported by the lane launcher"),
+        ("driver-b", "driver-c", "driver-b is refused as implementer provider"),
+        ("driver-e", "driver-c", "is not supported by the lane launcher"),
     ],
 )
 def test_refused_implementer_provider_reads_no_github_account(
@@ -1476,6 +1476,40 @@ def test_refused_implementer_provider_reads_no_github_account(
     assert fake.raw_calls == []
     assert fake.lanes == []
     assert fake.pr_comments == []
+
+
+@pytest.mark.parametrize(
+    ("implementer", "message"),
+    [
+        ("driver-b", "driver-b is refused as implementer provider because it can run commands"),
+        (
+            "driver-e",
+            "implementer provider driver-e is not supported by the lane launcher; "
+            "expected one of: driver-a, driver-b, driver-c, driver-d",
+        ),
+    ],
+)
+def test_placeholder_implementer_refusals_follow_the_driver_configuration(
+    tmp_path: Path, implementer: str, message: str
+) -> None:
+    from driver_fixtures import accounts_document, write_drivers
+    from driver_fixtures import write_accounts as write_placeholder_accounts
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    accounts = accounts_document()
+    accounts["models"] = {"first": "driver-a", "second": "driver-c"}
+    accounts["implementer"] = implementer
+    write_placeholder_accounts(store.home, accounts)
+    write_drivers(store.home)
+    make_session(store, "worker-session", ["conflicts"])
+    fake = FakeConflictTransport(tmp_path)
+    lines = tick(store, worker(tmp_path), runner=fake)
+    assert len(lines) == 1
+    assert lines[0].startswith("preflight blocked: ")
+    assert message in lines[0]
+    assert fake.raw_calls == []
+    assert fake.lanes == []
 
 
 def test_conflicts_error_is_visible() -> None:
@@ -1847,7 +1881,7 @@ def test_github_unreachable_still_aborts_rebase(
         state["down"] = True
         return Completed(
             0,
-            grok_messages_stream(
+            event_stream_output(
                 "STATUS: complete\nRESULT: blocked\nNeeds a product decision.\n"
             ),
             "",
@@ -2070,7 +2104,7 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     assert "repair or remove an unreadable `state.json`" in doc
     assert "`lane-s<stop>-a<attempt>.md`" in doc
     assert "persisted as `conflict_stops` in `state.json`" in doc
-    assert "`grok`, `claude`, or" in doc
+    assert "provider must be one the lane launcher can start" in doc
     assert (
         "The lane specification contains only the conflicted paths, the replayed "
         "commit subject, the base branch, fixed rules, and — on the single retry — "
@@ -2091,8 +2125,8 @@ def test_documentation_describes_unlimited_blocker_retry_and_24_hour_limit() -> 
     ) in doc
     assert "The lane runs in the worktree and can read the repository" in doc
     assert "command output is not valid UTF-8" in doc
-    assert "`codex` is refused because it can run commands" in doc
-    assert "such as `deepseek`" in doc
+    assert "is refused because it can run commands" in doc
+    assert "implementer selection without a lane adapter" in doc
     assert "validated completely" in doc
     assert "unknown keys and wrong types make the state" in doc
     assert "state unreadable: <masked file name> (<reason>)" in doc
@@ -2287,7 +2321,7 @@ def test_lane_blocked_with_remaining_markers_posts_deterministic_blocker(
             )
         return Completed(
             0,
-            grok_messages_stream(
+            event_stream_output(
                 "STATUS: complete\nRESULT: blocked\n"
                 "SUMMARY_EN: A product decision is required. "
                 + "x" * 700
@@ -2468,7 +2502,7 @@ def test_conflicted_file_name_is_rendered_in_code(
                 encoding="utf-8",
             )
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: blocked\nNo decision.\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: blocked\nNo decision.\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=blocked_lane)
@@ -2609,7 +2643,7 @@ def test_missing_account_or_lane_binding_refuses_precisely(
     assert "No GitHub account configured" in tick(store, worker(tmp_path), runner=fake)[0]
     write_accounts(store.home)
     data = json.loads((store.home / "ai-accounts.json").read_text(encoding="utf-8"))
-    data["sessions"]["worker-session"]["lanes"].pop("grok:implementer")
+    data["sessions"]["worker-session"]["lanes"].pop("driver-a:implementer")
     (store.home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
     lines = tick(store, worker(tmp_path), runner=fake)
     assert any("No AI lane configured" in line for line in lines)
@@ -2726,11 +2760,11 @@ def test_preflight_refuses_implementer_outside_lane_vendors(
     fake = FakeConflictTransport(tmp_path)
     patch_account_runners(monkeypatch, fake)
     data = json.loads((store.home / "ai-accounts.json").read_text(encoding="utf-8"))
-    data["implementer"] = "deepseek"
+    data["implementer"] = "driver-e"
     (store.home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
     lines = tick(store, worker(tmp_path), runner=fake)
     assert any("preflight blocked" in line for line in lines)
-    assert any("deepseek" in line and "lane launcher" in line for line in lines)
+    assert any("driver-e" in line and "lane launcher" in line for line in lines)
     assert fake.comments == []
 
 
@@ -2992,7 +3026,7 @@ def test_lane_that_rewrites_git_file_blocks_without_push(
         if fake.clone_path is not None:
             (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
@@ -3012,7 +3046,7 @@ def test_lane_that_rewrites_git_file_still_records_the_lane_run_and_log(
         if fake.clone_path is not None:
             (fake.clone_path / ".git").write_text("gitdir: /rewritten\n", encoding="utf-8")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
@@ -3045,7 +3079,7 @@ def test_lane_rewriting_only_git_file_blocks_without_any_later_git_call(
         fake.calls.clear()
         fake.raw_calls.clear()
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
@@ -5236,7 +5270,7 @@ def test_lane_nonzero_exit_with_complete_status_is_transient(
     def failed_lane(argv: list[str], stdin: str | None = None) -> Completed:
         fake.lane(argv, stdin)
         return Completed(
-            1, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            1, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=failed_lane)
@@ -5255,7 +5289,7 @@ def test_lane_timeout_exit_with_complete_status_is_timeout_not_complete(
     def timed_out_lane(argv: list[str], stdin: str | None = None) -> Completed:
         fake.lane(argv, stdin)
         return Completed(
-            124, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            124, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     lines = tick(store, worker_cfg, runner=fake, lane_runner=timed_out_lane)
@@ -5275,7 +5309,7 @@ def test_lane_duplicate_status_lines_are_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            grok_messages_stream("STATUS: complete\nSTATUS: partial\nRESULT: done\n"),
+            event_stream_output("STATUS: complete\nSTATUS: partial\nRESULT: done\n"),
             "",
         )
 
@@ -5297,7 +5331,7 @@ def test_lane_duplicate_protocol_hidden_in_a_terminal_string_is_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            grok_messages_stream(
+            event_stream_output(
                 "STATUS: complete\nRESULT: done\n"
                 "\x1b]0;\nSTATUS: complete\nRESULT: blocked\n\x07"
             ),
@@ -5321,7 +5355,7 @@ def test_lane_contradicting_status_without_result_is_not_complete(
         fake.lane(argv, stdin)
         return Completed(
             0,
-            grok_messages_stream("STATUS: complete\nSTATUS: partial\n"),
+            event_stream_output("STATUS: complete\nSTATUS: partial\n"),
             "",
         )
 
