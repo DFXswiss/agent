@@ -12,6 +12,8 @@ behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
+Passkey invites, sign-in and signed requests by a certified session key are specified in
+[PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md), which extends sections 5 and 7 of this document.
 
 ## 1. Scope of what is built now
 

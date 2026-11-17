@@ -73,6 +73,8 @@ See [PROTOCOL.md](PROTOCOL.md).
 
 The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hub side of its first build step is built: the keys file `keys.yaml` (changed only by pull request), signed requests under `/api/key/`, the hub's signed answers, and `GET /api/key/whoami`.
 
+Sign-in with passkeys, invites and the certified session key are specified, not yet built, in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md).
+
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
 
 ## Control
