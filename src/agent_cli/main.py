@@ -27,7 +27,6 @@ from urllib.parse import urlparse
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from .ai_accounts import (
-    USAGE_ACCOUNT_PROVIDERS,
     AISubscription,
     AccountError as AIAccountError,
     load_ai_accounts,
@@ -93,7 +92,6 @@ from .model_slots import (
     SLOT_STAGES,
     STAGE_CHOICES,
     STAGE_SLOTS,
-    SUPPORTED_PROVIDERS,
     TASK_MODELS_NOT_CONFIGURED,
     ModelSlots,
     ModelSlotsError,
@@ -138,7 +136,6 @@ from .small_change import (
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .timestamps import parse_utc_timestamp
 from .usage import (
-    VENDOR as GROK_VENDOR,
     AccountUsageError,
     AuthStale,
     is_spend_snapshot,
@@ -2563,15 +2560,6 @@ def _subscriptions_dashboard(
     }
 
 
-# Providers Agent has a usage reader for (Grok billing, usage_accounts); a
-# provider outside this set is never read on any device.
-USAGE_READ_PROVIDERS = USAGE_ACCOUNT_PROVIDERS | {GROK_VENDOR}
-USAGE_PROVIDER_NAMES = {
-    "claude": "Claude",
-    "codex": "Codex",
-    "grok": "Grok",
-    "openrouter": "OpenRouter",
-}
 USAGE_NOT_READ = "not read"
 USAGE_NO_DATA = "no data"
 
@@ -2627,13 +2615,16 @@ def _usage_windows(
     payload: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], int | None, str | None]:
     """Quota windows of one snapshot, the index of its headline window (``None``
-    when the snapshot has none, such as Claude without a weekly window), and a
-    figure without a percentage (OpenRouter without a limit).
+    when the snapshot has none, such as a window snapshot without a weekly
+    window), and a figure without a percentage (a spend snapshot without a
+    limit).
 
-    Each window is ``{"name", "used_percent", "resets_at"}``; a value the
-    snapshot does not report stays ``None``, never 0 %.
+    The snapshot kind is read from the payload, as the subscription table does:
+    a ``windows`` object is a window snapshot, a usage ``account`` a spend
+    snapshot, and a top-level ``used_percent`` a period snapshot. Each window
+    is ``{"name", "used_percent", "resets_at"}``; a value the snapshot does not
+    report stays ``None``, never 0 %.
     """
-    provider = payload.get("provider") or payload.get("vendor")
 
     def percent(value: Any) -> float | None:
         """A finite number, or ``None``; replicated data may hold any JSON number."""
@@ -2654,8 +2645,8 @@ def _usage_windows(
             "resets_at": raw.get("resets_at") if isinstance(raw.get("resets_at"), str) else None,
         }
 
-    if provider == "claude":
-        raw = payload.get("windows") if isinstance(payload.get("windows"), dict) else {}
+    if isinstance(payload.get("windows"), dict):
+        raw = payload["windows"]
         windows = [w for w in (window("5h", raw.get("five_hour")), window("Week", raw.get("weekly"))) if w]
         models = raw.get("weekly_models")
         for item in models if isinstance(models, list) else []:
@@ -2665,21 +2656,7 @@ def _usage_windows(
                 windows.append(found)
         weekly = [i for i, w in enumerate(windows) if w["name"] == "Week"]
         return windows, weekly[0] if weekly else None, None
-    if provider == "grok":
-        period = payload.get("period_type")
-        name = "Period"
-        if isinstance(period, str) and period:
-            name = period.removeprefix("USAGE_PERIOD_TYPE_").replace("_", " ").capitalize()
-        end = payload.get("period_end") if isinstance(payload.get("period_end"), str) else None
-        windows = [{"name": name, "used_percent": percent(payload.get("used_percent")), "resets_at": end}]
-        products = payload.get("products")
-        for item in products if isinstance(products, list) else []:
-            if isinstance(item, dict) and isinstance(item.get("product"), str):
-                windows.append(
-                    {"name": item["product"], "used_percent": percent(item.get("used_percent")), "resets_at": end}
-                )
-        return windows, 0, None
-    if provider == "openrouter":
+    if is_spend_snapshot(payload):
         usage = percent(payload.get("usage_usd"))
         limit = percent(payload.get("limit_usd"))
         remaining = percent(payload.get("limit_remaining_usd"))
@@ -2695,27 +2672,46 @@ def _usage_windows(
             if reset and resets_at is None:
                 text += f" ({reset})"
         return [{"name": "Limit", "used_percent": used, "resets_at": resets_at}], 0, text
+    if "used_percent" in payload:
+        end = payload.get("period_end") if isinstance(payload.get("period_end"), str) else None
+        windows = [{"name": "Period", "used_percent": percent(payload.get("used_percent")), "resets_at": end}]
+        products = payload.get("products")
+        for item in products if isinstance(products, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("product"), str):
+                windows.append(
+                    {"name": item["product"], "used_percent": percent(item.get("used_percent")), "resets_at": end}
+                )
+        return windows, 0, None
     return [], None, None
 
 
 def _usage_overview(
-    subscription_rows: list[dict[str, Any]], now: datetime
+    subscription_rows: list[dict[str, Any]],
+    now: datetime,
+    drivers: Mapping[str, DriverSpec] | None,
 ) -> list[dict[str, Any]]:
     """One compact entry per provider for the dashboard.
 
     Built from the joined subscription rows, so it uses only recorded
-    ``usage.snapshot`` payloads and the inventory. Every known provider has an
-    entry: one without a usage reader on this device is ``not read``, one
-    with a reader but no snapshot is ``no data``. A provider window shows the
-    highest use among its accounts; the headline is the headline window of
-    the most used account.
+    ``usage.snapshot`` payloads and the inventory. Every configured driver and
+    every provider of a row has an entry, named by the driver's
+    ``display_name`` or else by its id. One without a ``usage`` section in
+    ``drivers.json`` and without any recorded snapshot is ``not read``; one
+    with it but no figure is ``no data``. ``drivers`` is ``None`` when
+    ``drivers.json`` cannot be read; then no provider is claimed ``not read``. A provider window shows the
+    highest use among its accounts; the headline is the headline window of the
+    most used account.
     """
     providers = sorted(
-        set(SUPPORTED_PROVIDERS)
+        set(drivers or ())
         | {row["provider"] for row in subscription_rows if isinstance(row.get("provider"), str)}
     )
     overview: list[dict[str, Any]] = []
     for provider in providers:
+        spec = drivers.get(provider) if drivers is not None else None
+        missing = (
+            USAGE_NOT_READ if drivers is not None and (spec is None or spec.usage is None) else USAGE_NO_DATA
+        )
         accounts: list[dict[str, Any]] = []
         windows: dict[str, dict[str, Any]] = {}
         headline: dict[str, Any] | None = None
@@ -2741,7 +2737,7 @@ def _usage_overview(
             }
             accounts.append(account)
             if payload is None:
-                account["status"] = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
+                account["status"] = missing
                 continue
             own, primary, figure = _usage_windows(payload)
             fetched = _usage_time(payload.get("fetched_at"))
@@ -2773,8 +2769,9 @@ def _usage_overview(
                 text = figure
         status: str | None = None
         if headline is None and text is None:
-            status = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
-        name = USAGE_PROVIDER_NAMES.get(provider, provider)
+            # A recorded snapshot was read on some device, even without a figure.
+            status = USAGE_NO_DATA if any(a["has_snapshot"] for a in accounts) else missing
+        name = spec.display_name if spec is not None and spec.display_name else provider
         if headline is not None:
             summary = f"{name} {_usage_percent_text(headline['used_percent'])}"
             if headline["resets_in"]:
@@ -2896,8 +2893,14 @@ def cmd_dashboard(args: list[str]) -> None:
                     store_home if isinstance(store_home, Path) else home(),
                     snap["usage"],
                 )
+                try:
+                    drivers: Mapping[str, DriverSpec] | None = load_driver_configuration(
+                        store_home if isinstance(store_home, Path) else home()
+                    ).drivers
+                except AIAccountError:
+                    drivers = None
                 snap["usage_overview"] = _usage_overview(
-                    snap["subscriptions"]["rows"], datetime.now(timezone.utc)
+                    snap["subscriptions"]["rows"], datetime.now(timezone.utc), drivers
                 )
                 _canonicalize_snapshot_names(snap)
                 self._json(200, snap)
