@@ -49,14 +49,17 @@ class ConnectionStringError(ValueError):
 
 @dataclass(frozen=True)
 class ConnectionString:
-    """A parsed connection string. `host` is as the driver takes it (IPv6 without brackets)."""
+    """A parsed connection string. `host` is as the driver takes it (IPv6 without brackets).
 
-    role: str
+    Every part is a configuration value, so its `repr` shows none of them.
+    """
+
+    role: str = dataclass_field(repr=False)
     password: str = dataclass_field(repr=False)
-    host: str
-    port: int
-    database: str
-    sslmode: str
+    host: str = dataclass_field(repr=False)
+    port: int = dataclass_field(repr=False)
+    database: str = dataclass_field(repr=False)
+    sslmode: str = dataclass_field(repr=False)
 
     def connect_kwargs(self) -> dict[str, Any]:
         """The parameters for the driver. `verify-full` checks against the system trust store."""
@@ -65,6 +68,9 @@ class ConnectionString:
             # Given explicitly as empty, so the variable PGHOSTADDR cannot send the connection to
             # another address than the checked host.
             "hostaddr": "",
+            # Given explicitly as empty, so the variable PGOPTIONS cannot set a parameter of the
+            # session, such as `role`, which would change the role the session acts as.
+            "options": "",
             "port": self.port,
             "dbname": self.database,
             "user": self.role,

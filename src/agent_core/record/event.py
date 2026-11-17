@@ -9,16 +9,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Iterable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from ..signing import (
+    ERROR_KEY_UNKNOWN,
     SIGNATURE_BYTES,
     b64url_decode,
     b64url_encode,
-    format_time,
     parse_time,
     sha256_hex,
     valid_key_id,
@@ -39,12 +40,13 @@ VALUE_PREFIX = "="
 FIRST_PREV_HASH = "-"
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 MAX_POSITION = 9223372036854775807
-# Section 4.5 and check 10 of section 6.7: `signed_at` is at most this far after now (at write
-# time) or after `received_at` (in a fold, section 12.1).
-SIGNED_AT_AHEAD_SECONDS = 120
+# The range of a time of the form `YYYY-MM-DDTHH:MM:SSZ` (section 2), in seconds since the epoch:
+# 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z.
+MIN_TIME = -62135596800
+MAX_TIME = 253402300799
+_EPOCH = datetime(1970, 1, 1)
 
 ERROR_EVENT_INVALID = "event_invalid"
-ERROR_KEY_UNKNOWN = "key_unknown"
 ERROR_EVENT_SIGNATURE_INVALID = "event_signature_invalid"
 ERROR_CHAIN_BROKEN = "chain_broken"
 ERROR_EVENT_TIME_INVALID = "event_time_invalid"
@@ -78,9 +80,10 @@ class Event:
 
     text: bytes = dataclass_field(repr=False)
     event_hash: str
-    event_id: str
+    # Section 13 keeps event ids and object ids out of every log line, so the `repr` hides them.
+    event_id: str = dataclass_field(repr=False)
     object_type: str
-    object_id: str
+    object_id: str = dataclass_field(repr=False)
     actor_key_id: str
     signed_at: int
     prev_hash: str
@@ -125,6 +128,17 @@ def decode_value_token(token: str) -> bytes | None:
     if not value:
         raise RecordRefusal(ERROR_EVENT_INVALID)
     return value
+
+
+def time_text(seconds: object) -> str | None:
+    """Seconds since the epoch as `YYYY-MM-DDTHH:MM:SSZ` (section 2), with a year of four digits.
+
+    None for a value that is not an `int` (a `bool` included) or lies outside MIN_TIME..MAX_TIME.
+    The year is always zero-padded, whatever the platform's `strftime` does with `%Y`.
+    """
+    if type(seconds) is not int or not MIN_TIME <= seconds <= MAX_TIME:
+        return None
+    return (_EPOCH + timedelta(seconds=seconds)).isoformat() + "Z"
 
 
 def event_hash(text: bytes) -> str:
@@ -192,27 +206,45 @@ def build_event_text(
     changes: Iterable[Change],
     key_certificate: bytes | None = None,
 ) -> bytes:
-    """The event text of section 4.2 with the changes in field order; `event_invalid` if it breaks a rule."""
-    ordered = sorted(changes, key=lambda change: change.field)
+    """The event text of section 4.2 with the changes in field order; `event_invalid` if it breaks a rule.
+
+    An argument of the wrong type, such as a `signed_at` that is no `int` or lies outside the
+    range of a time, is a broken rule as well.
+    """
+    invalid = RecordRefusal(ERROR_EVENT_INVALID)
+    given = list(changes)
+    texts = (event_id, object_type, object_id, actor_key_id, prev_hash)
+    if not all(isinstance(text, str) for text in texts):
+        raise invalid
+    if not all(isinstance(change, Change) and isinstance(change.field, str) for change in given):
+        raise invalid
+    signed_at_text = time_text(signed_at)
+    if signed_at_text is None:
+        raise invalid
+    ordered = sorted(given, key=lambda change: change.field)
     lines = [
         EVENT_LABEL,
         event_id,
         object_type,
         object_id,
         actor_key_id,
-        format_time(signed_at),
+        signed_at_text,
         prev_hash,
         _token(key_certificate),
         str(len(ordered)),
     ]
     for change in ordered:
         lines += [change.field, _token(change.old), _token(change.new)]
-    text = "\n".join(lines).encode("utf-8")
+    # `surrogatepass`, so that a lone surrogate gives bytes that `parse_event` refuses, not an
+    # encoding error.
+    text = "\n".join(lines).encode("utf-8", "surrogatepass")
     parse_event(text)
     return text
 
 
-def _token(value: bytes | None) -> str:
+def _token(value: object) -> str:
+    if value is not None and not isinstance(value, bytes):
+        raise RecordRefusal(ERROR_EVENT_INVALID)
     try:
         return encode_value_token(value)
     except ValueError:
@@ -251,14 +283,13 @@ def check_chain(head: ChainHead | None, event: Event) -> None:
         raise RecordRefusal(ERROR_CHAIN_BROKEN)
 
 
-def check_signed_at(head: ChainHead | None, event: Event, latest: int) -> None:
-    """`signed_at` is at most 120 seconds after `latest` and not earlier than the key's last event.
+def check_signed_at(head: ChainHead | None, event: Event) -> None:
+    """Section 4.5: `signed_at` is not earlier than `signed_at` of the key's last accepted event.
 
-    `latest` is now at write time (check 10 of section 6.7) and `received_at` in a fold (section
-    12.1).
+    The bound "at most 120 seconds after now" of check 10 of section 6.7, and its form against
+    `received_at` in section 12.1, are not part of section 4; they come with change 3 of
+    section 16.
     """
-    if event.signed_at > latest + SIGNED_AT_AHEAD_SECONDS:
-        raise RecordRefusal(ERROR_EVENT_TIME_INVALID)
     if head is not None and event.signed_at < head.signed_at:
         raise RecordRefusal(ERROR_EVENT_TIME_INVALID)
 
@@ -270,16 +301,19 @@ def next_received_at(now: int, previous: int | None) -> int:
 
 def record_hash(position: int, received_at: int, event_hash_hex: str, previous: str | None) -> str:
     """Section 4.6: the record hash of one position; `previous` is None exactly at position 1."""
-    if not 1 <= position <= MAX_POSITION:
-        raise ValueError("a position is 1 to 9223372036854775807")
+    if type(position) is not int or not 1 <= position <= MAX_POSITION:
+        raise ValueError("a position is an int from 1 to 9223372036854775807")
     if (previous is None) != (position == 1):
         raise ValueError("only position 1 has no previous record hash")
     if not valid_hash(event_hash_hex) or (previous is not None and not valid_hash(previous)):
         raise ValueError("a hash is 64 lowercase hex characters")
+    received_at_text = time_text(received_at)
+    if received_at_text is None:
+        raise ValueError("received_at is an int within the range of a time")
     lines = [
         RECORD_LABEL,
         str(position),
-        format_time(received_at),
+        received_at_text,
         event_hash_hex,
         FIRST_PREV_HASH if previous is None else previous,
     ]

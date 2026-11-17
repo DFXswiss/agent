@@ -19,6 +19,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from agent_core.keys import KeyEntry, KeyRing
 from agent_core.record.event import (
     MAX_EVENT_BYTES,
+    MAX_TIME,
+    MIN_TIME,
     Change,
     ChainHead,
     Event,
@@ -34,6 +36,7 @@ from agent_core.record.event import (
     parse_event,
     record_hash,
     signature_valid,
+    time_text,
     valid_hash,
     valid_uuid,
     verify_event_signature,
@@ -157,7 +160,7 @@ def test_the_second_example_chains_to_the_first() -> None:
         Change("status", b"open", b"in_progress"),
     )
     check_chain(chain_head(first), second)
-    check_signed_at(chain_head(first), second, seconds("2026-11-17T10:05:01Z"))
+    check_signed_at(chain_head(first), second)
 
 
 def test_the_event_hash_is_the_sha256_of_the_text() -> None:
@@ -221,13 +224,68 @@ def test_the_largest_position_has_a_record_hash() -> None:
         (1, EXAMPLE_1_HASH.upper(), None),
         (1, "-", None),
         (2, EXAMPLE_1_HASH, EXAMPLE_1_HASH[:63]),
+        (True, EXAMPLE_1_HASH, None),
+        (1.0, EXAMPLE_1_HASH, None),
+        ("1", EXAMPLE_1_HASH, None),
+    ],
+    ids=[
+        "position 0",
+        "position above the largest",
+        "previous at position 1",
+        "no previous at position 2",
+        "event hash in uppercase",
+        "event hash -",
+        "previous of 63 characters",
+        "position True",
+        "position as float",
+        "position as text",
     ],
 )
 def test_record_hash_refuses_inputs_outside_section_4_6(
-    position: int, event_hash_hex: str, previous: str | None
+    position: object, event_hash_hex: str, previous: str | None
 ) -> None:
     with pytest.raises(ValueError):
-        record_hash(position, 0, event_hash_hex, previous)
+        record_hash(position, 0, event_hash_hex, previous)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "received_at",
+    [MIN_TIME - 1, MAX_TIME + 1, 10**30, -(10**30), True, 0.0, "0", None],
+    ids=["before year 1", "after year 9999", "huge", "huge negative", "True", "float", "text", "None"],
+)
+def test_record_hash_refuses_a_received_at_that_is_not_a_time(received_at: object) -> None:
+    with pytest.raises(ValueError):
+        record_hash(1, received_at, EXAMPLE_1_HASH, None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (0, "1970-01-01T00:00:00Z"),
+        (-1, "1969-12-31T23:59:59Z"),
+        (MIN_TIME, "0001-01-01T00:00:00Z"),
+        (MAX_TIME, "9999-12-31T23:59:59Z"),
+        (-31000000000, "0987-08-25T16:53:20Z"),
+        (seconds("2026-11-17T10:00:01Z"), "2026-11-17T10:00:01Z"),
+    ],
+)
+def test_time_text_has_a_year_of_four_digits(value: int, text: str) -> None:
+    assert time_text(value) == text
+    # The same text that `datetime` gives for the same moment, which section 2 parses back.
+    assert seconds(text) == value
+
+
+def test_a_received_at_before_the_year_1000_is_hashed_with_four_digits() -> None:
+    received_at = seconds("0987-08-25T16:53:20Z")
+    assert record_hash(1, received_at, EXAMPLE_1_HASH, None) == independent_record_hash(
+        1, "0987-08-25T16:53:20Z", EXAMPLE_1_HASH, "-"
+    )
+    assert record_hash(1, MIN_TIME, EXAMPLE_1_HASH, None) == independent_record_hash(
+        1, "0001-01-01T00:00:00Z", EXAMPLE_1_HASH, "-"
+    )
+    assert record_hash(1, MAX_TIME, EXAMPLE_1_HASH, None) == independent_record_hash(
+        1, "9999-12-31T23:59:59Z", EXAMPLE_1_HASH, "-"
+    )
 
 
 def test_received_at_never_decreases() -> None:
@@ -436,6 +494,75 @@ def test_build_event_text_refuses_what_parse_refuses(changes: list[Change]) -> N
     assert refused.value.error == "event_invalid"
 
 
+BUILD_ARGUMENTS = {
+    "event_id": EVENT_ID,
+    "object_type": "task",
+    "object_id": OBJECT_ID,
+    "actor_key_id": ACTOR,
+    "signed_at": 0,
+    "prev_hash": "-",
+    "changes": [Change("title", None, b"Fix login")],
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("signed_at", MIN_TIME - 1),
+        ("signed_at", MAX_TIME + 1),
+        ("signed_at", 10**30),
+        ("signed_at", -(10**30)),
+        ("signed_at", True),
+        ("signed_at", 1.5),
+        ("signed_at", "0"),
+        ("signed_at", None),
+        ("event_id", None),
+        ("event_id", EVENT_ID.encode("ascii")),
+        ("event_id", "\ud800"),
+        ("object_type", 1),
+        ("actor_key_id", None),
+        ("prev_hash", None),
+        ("changes", ["title"]),
+        ("changes", [Change(1, None, b"a")]),  # type: ignore[arg-type]
+        ("changes", [Change("title", None, "Fix login")]),  # type: ignore[arg-type]
+        ("changes", [Change("title", "-", b"a")]),  # type: ignore[arg-type]
+    ],
+    ids=[
+        "signed_at before year 1",
+        "signed_at after year 9999",
+        "signed_at huge",
+        "signed_at huge negative",
+        "signed_at True",
+        "signed_at float",
+        "signed_at text",
+        "signed_at None",
+        "event_id None",
+        "event_id bytes",
+        "event_id with a lone surrogate",
+        "object_type int",
+        "actor_key_id None",
+        "prev_hash None",
+        "a change that is text",
+        "a field that is an int",
+        "a new value that is text",
+        "an old value that is text",
+    ],
+)
+def test_build_event_text_refuses_an_argument_of_the_wrong_type_or_range(name: str, value: object) -> None:
+    with pytest.raises(RecordRefusal) as refused:
+        build_event_text(**{**BUILD_ARGUMENTS, name: value})  # type: ignore[arg-type]
+    assert refused.value.error == "event_invalid"
+
+
+@pytest.mark.parametrize("signed_at", [MIN_TIME, MAX_TIME, seconds("0987-08-25T16:53:20Z")])
+def test_build_event_text_writes_a_signed_at_with_four_year_digits(signed_at: int) -> None:
+    text = build_event_text(**{**BUILD_ARGUMENTS, "signed_at": signed_at})  # type: ignore[arg-type]
+    event = parse_event(text)
+    assert event.signed_at == signed_at
+    assert text.split(b"\n")[5] == time_text(signed_at).encode("ascii")  # type: ignore[union-attr]
+    assert len(text.split(b"\n")[5]) == 20
+
+
 def test_uuid_and_hash_forms() -> None:
     assert valid_uuid(EVENT_ID)
     assert not valid_uuid("00000000-0000-0000-0000-000000000000")
@@ -452,6 +579,9 @@ def test_no_record_content_in_a_repr_or_a_refusal() -> None:
     assert "Rml4" not in shown
     assert "Fix login" not in shown
     assert "work" not in shown
+    # Section 13: no event id and no object id.
+    assert EVENT_ID not in shown
+    assert OBJECT_ID not in shown
     assert str(RecordRefusal("event_invalid")) == "event_invalid"
 
 
@@ -552,19 +682,19 @@ def test_chain_head_is_the_hash_and_time_of_the_event() -> None:
     assert chain_head(event) == ChainHead(EXAMPLE_1_HASH, seconds("2026-11-17T10:00:00Z"))
 
 
-def test_signed_at_is_at_most_120_seconds_ahead() -> None:
-    event = parse_event(EXAMPLE_1)
-    check_signed_at(None, event, event.signed_at - 120)
-    with pytest.raises(RecordRefusal) as refused:
-        check_signed_at(None, event, event.signed_at - 121)
-    assert refused.value.error == "event_time_invalid"
+def test_the_first_event_of_a_key_has_no_earlier_bound_on_signed_at() -> None:
+    # Section 4.5 bounds `signed_at` only by the key's previous event; the bound against now of
+    # check 10 of section 6.7 is not part of this library (change 3 of section 16).
+    check_signed_at(None, parse_event(EXAMPLE_1))
+    check_signed_at(None, parse_event(replaced(5, "9999-12-31T23:59:59Z")))
 
 
 def test_signed_at_is_not_earlier_than_the_previous_event_of_the_key() -> None:
     event = parse_event(EXAMPLE_2)
-    check_signed_at(ChainHead(EXAMPLE_1_HASH, event.signed_at), event, event.signed_at)
+    check_signed_at(ChainHead(EXAMPLE_1_HASH, event.signed_at), event)
+    check_signed_at(ChainHead(EXAMPLE_1_HASH, event.signed_at - 1), event)
     with pytest.raises(RecordRefusal) as refused:
-        check_signed_at(ChainHead(EXAMPLE_1_HASH, event.signed_at + 1), event, event.signed_at)
+        check_signed_at(ChainHead(EXAMPLE_1_HASH, event.signed_at + 1), event)
     assert refused.value.error == "event_time_invalid"
 
 

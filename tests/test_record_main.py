@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import runpy
 import sys
+from typing import Any
 
+import psycopg
 import pytest
 
 from agent_core.record.__main__ import USAGE, main
@@ -53,11 +55,24 @@ def test_main_runs_migrate(record_db: RecordDatabase, capsys: pytest.CaptureFixt
     ids=["an option", "migrate twice", "an empty argument", "two arguments"],
 )
 def test_main_refuses_an_argument_of_migrate_without_connecting(
-    record_db: RecordDatabase, capsys: pytest.CaptureFixture[str], args: list[str]
+    record_db: RecordDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    args: list[str],
 ) -> None:
+    # Every connection goes through `psycopg.connect`; record each attempt instead of connecting.
+    attempts: list[dict[str, Any]] = []
+
+    def refuse(**kwargs: Any) -> None:
+        attempts.append(kwargs)
+        raise psycopg.OperationalError("no connection in this test")
+
+    monkeypatch.setattr(psycopg, "connect", refuse)
     # With a valid configuration, so that only the argument decides.
     assert main(args, record_db.migrate_env()) == 1
     assert capsys.readouterr() == ("failed config\n", "")
+    assert attempts == []
+    monkeypatch.undo()
     assert not schema_exists(record_db)
 
 

@@ -14,8 +14,9 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import psycopg
 import pytest
@@ -26,6 +27,7 @@ from agent_core.record.__main__ import USAGE
 from agent_core.record.connection import ConnectionStringError, parse_connection_string
 from agent_core.record.migrate import MIGRATE_LOCK, run_migrate, schema_statements
 from tests.conftest import RecordDatabase, schema_exists
+from tests.test_record_connection import MALFORMED
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 TABLES = ("record.schema_version", "record.event", "record.checkpoint")
@@ -295,7 +297,17 @@ def test_a_second_run_changes_nothing(record_db: RecordDatabase) -> None:
     assert catalog(record_db) == before
 
 
-def test_two_runs_at_once_create_the_schema_once(record_db: RecordDatabase) -> None:
+@pytest.mark.parametrize("isolation", [None, "repeatable read", "serializable"])
+def test_two_runs_at_once_create_the_schema_once(record_db: RecordDatabase, isolation: str | None) -> None:
+    if isolation is not None:
+        # A default isolation of the owner role must not make the run that waited for the lock
+        # miss the schema the other run committed: `migrate` sets READ COMMITTED itself.
+        with record_db.admin() as admin:
+            admin.execute(
+                sql.SQL("ALTER ROLE {} SET default_transaction_isolation = {}").format(
+                    sql.Identifier(record_db.owner_role), sql.Literal(isolation)
+                )
+            )
     results: list[tuple[str, int]] = []
     env = record_db.migrate_env()
     runs = [threading.Thread(target=lambda: results.append(run_migrate(env))) for _ in range(2)]
@@ -417,6 +429,28 @@ def test_migrate_fails_at_config(record_db: RecordDatabase, fault: str) -> None:
         assert grants(admin, "database") == set()
 
 
+@pytest.mark.parametrize("variable", ["AGENT_CORE_RECORD_OWNER_DATABASE", "AGENT_CORE_RECORD_DATABASE"])
+def test_migrate_fails_at_config_for_each_malformed_connection_string_of_section_15(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    # Section 14: each malformed connection string of section 15, through `migrate`, in either
+    # variable while the other one is valid. No case may connect.
+    attempts: list[str] = []
+
+    def refuse(**kwargs: Any) -> None:
+        attempts.append("connect")
+        raise psycopg.OperationalError("no connection in this test")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(psycopg, "connect", refuse)
+        results = {
+            name: run_migrate({**record_db.migrate_env(), variable: text}) for name, text in MALFORMED
+        }
+    assert results == {name: ("failed config", 1) for name, _ in MALFORMED}
+    assert attempts == []
+    assert not schema_exists(record_db)
+
+
 @pytest.mark.parametrize("version", [150007, 159999])
 def test_migrate_fails_at_config_for_a_libpq_below_16(
     record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, version: int
@@ -448,6 +482,94 @@ def test_migrate_fails_at_owner_when_the_owner_cannot_connect(record_db: RecordD
     }
     assert run_migrate(env) == ("failed owner", 1)
     assert not schema_exists(record_db)
+
+
+@contextmanager
+def another_role(db: RecordDatabase) -> Iterator[str]:
+    """A role without LOGIN for one test, dropped at its end with everything it owns."""
+    name = f"t_other_{secrets.token_hex(6)}"
+    with db.admin() as admin:
+        admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN NOSUPERUSER").format(sql.Identifier(name)))
+    try:
+        yield name
+    finally:
+        with db.admin() as admin:
+            admin.execute(
+                sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
+                    sql.Identifier(db.name), sql.Identifier(db.owner_role)
+                )
+            )
+            admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(name)))
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(name)))
+
+
+def superuser_owner_acting_as(db: RecordDatabase, other: str) -> None:
+    """The owner role becomes a superuser; `other`, no superuser, becomes the database owner.
+
+    A check of `current_user` instead of the login role would pass step `owner` whenever the
+    session acts as `other`.
+    """
+    with db.admin() as admin:
+        admin.execute(sql.SQL("ALTER ROLE {} SUPERUSER").format(sql.Identifier(db.owner_role)))
+        admin.execute(
+            sql.SQL("ALTER DATABASE {} OWNER TO {}").format(sql.Identifier(db.name), sql.Identifier(other))
+        )
+
+
+def test_migrate_checks_the_login_role_not_a_role_set_for_it(record_db: RecordDatabase) -> None:
+    with another_role(record_db) as other:
+        superuser_owner_acting_as(record_db, other)
+        with record_db.admin() as admin:
+            admin.execute(
+                sql.SQL("ALTER ROLE {} SET role = {}").format(
+                    sql.Identifier(record_db.owner_role), sql.Literal(other)
+                )
+            )
+        assert run_migrate(record_db.migrate_env()) == ("failed owner", 1)
+        assert not schema_exists(record_db)
+
+
+def test_migrate_checks_the_login_role_not_a_role_set_through_pgoptions(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with another_role(record_db) as other:
+        superuser_owner_acting_as(record_db, other)
+        # Only around the run, so that the administrator's connections never see the variable.
+        with monkeypatch.context() as patched:
+            patched.setenv("PGOPTIONS", f"-c role={other}")
+            result = run_migrate(record_db.migrate_env())
+        assert result == ("failed owner", 1)
+        assert not schema_exists(record_db)
+
+
+def test_pgoptions_does_not_reach_the_session(record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A parameter the server does not know ends the connection at login if it reaches the server.
+    with monkeypatch.context() as patched:
+        patched.setenv("PGOPTIONS", "-c t_no_such_parameter=1")
+        result = run_migrate(record_db.migrate_env())
+    assert result == ("migrated 1", 0)
+
+
+def test_migrate_acts_as_the_owner_role_when_a_role_is_set_for_it(record_db: RecordDatabase) -> None:
+    # Section 11.4 refuses only an owner role that is a superuser or does not own the database.
+    # A `role` setting of an owner role that passes both checks does not fail the run; the run
+    # drops it and creates every object as the owner role it connected with.
+    with another_role(record_db) as other:
+        with record_db.admin() as admin:
+            admin.execute(
+                sql.SQL("GRANT {} TO {}").format(sql.Identifier(other), sql.Identifier(record_db.owner_role))
+            )
+            admin.execute(
+                sql.SQL("ALTER ROLE {} SET role = {}").format(
+                    sql.Identifier(record_db.owner_role), sql.Literal(other)
+                )
+            )
+        migrated(record_db)
+        state = catalog(record_db)
+        owner = record_db.owner_role
+        assert ("record", owner) in state["schemas"]
+        assert {row[2] for row in state["relations"]} == {owner}
+        assert state["functions"] == [("refuse_change", owner, "plpgsql", "trigger")]
 
 
 def test_migrate_fails_for_an_unknown_schema_version(record_db: RecordDatabase) -> None:
@@ -490,25 +612,65 @@ def test_migrate_fails_without_the_writer_role_and_changes_nothing(record_db: Re
         assert grants(admin, "database") == set()
 
 
+def alter_writer(db: RecordDatabase, attribute: str) -> None:
+    with db.admin() as admin:
+        admin.execute(sql.SQL("ALTER ROLE {} {}").format(sql.Identifier(db.writer_role), sql.SQL(attribute)))
+
+
 @pytest.mark.parametrize("attribute", ["NOLOGIN", "SUPERUSER"])
-def test_migrate_fails_for_a_writer_that_cannot_log_in_or_is_a_superuser(
+def test_a_first_run_applies_the_schema_whatever_the_attributes_of_the_writer(
     record_db: RecordDatabase, attribute: str
 ) -> None:
-    with record_db.admin() as admin:
-        admin.execute(
-            sql.SQL("ALTER ROLE {} {}").format(sql.Identifier(record_db.writer_role), sql.SQL(attribute))
-        )
-    assert run_migrate(record_db.migrate_env()) == ("failed migrate", 1)
-    assert not schema_exists(record_db)
-    with record_db.admin() as admin:
-        assert grants(admin, "database") == set()
-
-
-def test_a_second_run_fails_when_the_writer_can_no_longer_log_in(record_db: RecordDatabase) -> None:
+    # Section 11.4 step 3 applies the schema whenever `record.schema_version` does not exist; the
+    # attributes of the writer are checked by the hub's start step `writer` (change 3), not here.
+    alter_writer(record_db, attribute)
     migrated(record_db)
     with record_db.admin() as admin:
-        admin.execute(sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(record_db.writer_role)))
+        assert grants(admin, "database") >= {(record_db.writer_role, "CONNECT", False)}
+
+
+@pytest.mark.parametrize("attribute", ["NOLOGIN", "SUPERUSER"])
+def test_a_second_run_is_unchanged_whatever_the_attributes_of_the_writer(
+    record_db: RecordDatabase, attribute: str
+) -> None:
+    # Section 11.4 step 3 does nothing when the schema holds exactly the known versions.
+    migrated(record_db)
+    alter_writer(record_db, attribute)
+    assert run_migrate(record_db.migrate_env()) == ("unchanged 1", 0)
+
+
+def test_a_second_run_is_unchanged_without_the_writer_role(record_db: RecordDatabase) -> None:
+    migrated(record_db)
+    with record_db.admin() as admin:
+        admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(record_db.writer_role)))
+        admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(record_db.writer_role)))
+    assert run_migrate(record_db.migrate_env()) == ("unchanged 1", 0)
+
+
+def test_a_second_run_is_unchanged_even_when_a_table_is_missing(record_db: RecordDatabase) -> None:
+    # Step 3 decides only on the versions in `record.schema_version`; the hub's start steps
+    # `writer` and `verify` (change 3) find a damaged schema.
+    migrated(record_db)
+    with record_db.admin() as admin:
+        admin.execute("DROP TABLE record.checkpoint")
+    assert run_migrate(record_db.migrate_env()) == ("unchanged 1", 0)
+    with record_db.admin() as admin:
+        assert admin.execute("SELECT to_regclass('record.checkpoint') IS NULL").fetchone() == (True,)
+
+
+@pytest.mark.parametrize("versions", [[2], [0], [2, 3]], ids=["2", "0", "2 and 3"])
+def test_migrate_fails_for_only_unknown_schema_versions(record_db: RecordDatabase, versions: list[int]) -> None:
+    # Both an unknown version and the lack of the known one.
+    migrated(record_db)
+    with record_db.admin() as admin:
+        admin.execute("DELETE FROM record.schema_version")
+        for version in versions:
+            admin.execute(
+                "INSERT INTO record.schema_version (version, applied_at) VALUES (%s, now())", (version,)
+            )
     assert run_migrate(record_db.migrate_env()) == ("failed migrate", 1)
+    with record_db.admin() as admin:
+        assert [row[0] for row in admin.execute("SELECT version FROM record.schema_version ORDER BY 1")] == versions
 
 
 def writer_named_public(db: RecordDatabase) -> dict[str, str]:
@@ -916,6 +1078,30 @@ def test_the_command_prints_failed_and_no_secret(record_db: RecordDatabase) -> N
     )
     assert (wrong.stdout, wrong.stderr, wrong.returncode) == ("failed config\n", "", 1)
     assert_no_secret(record_db, owner.stdout, owner.stderr, wrong.stdout, wrong.stderr)
+
+
+def test_the_command_prints_no_part_of_a_database_error(record_db: RecordDatabase) -> None:
+    # A login the server refuses: its message names the role, which the line must not contain.
+    missing_role = record_db.owner_role + "_missing"
+    refused = run_cli(
+        ["migrate"],
+        {
+            **record_db.migrate_env(),
+            "AGENT_CORE_RECORD_OWNER_DATABASE": record_db.url(missing_role, record_db.owner_password),
+        },
+    )
+    assert (refused.stdout, refused.stderr, refused.returncode) == ("failed owner\n", "", 1)
+    # A failure inside step `migrate`: the schema cannot be applied for a writer role that does
+    # not exist.
+    with record_db.admin() as admin:
+        admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(record_db.writer_role)))
+    failed = run_cli(["migrate"], record_db.migrate_env())
+    assert (failed.stdout, failed.stderr, failed.returncode) == ("failed migrate\n", "", 1)
+    outputs = (refused.stdout, refused.stderr, failed.stdout, failed.stderr)
+    assert_no_secret(record_db, *outputs)
+    for output in outputs:
+        for value in (missing_role, record_db.owner_role, record_db.writer_role, record_db.name):
+            assert value not in output
 
 
 def test_the_command_without_variables() -> None:

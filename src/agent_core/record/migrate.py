@@ -77,24 +77,27 @@ $$""",
     "INSERT INTO record.schema_version (version, applied_at) VALUES ({version}, now())",
 )
 
-# Step `owner`: the owner role is no superuser and owns the database.
+# Step `owner`, checked for the role named in the owner's connection string: the session logged
+# in as that role, and that role is no superuser and owns the database. `session_user` is the
+# login role; `current_user` can differ from it at login through a `role` setting of the role or
+# the database, which is why the session first drops any such role with `SET ROLE NONE`.
 _OWNER_CHECK = """
-SELECT r.rolsuper, d.datdba = r.oid
+SELECT session_user = r.rolname, r.rolsuper, d.datdba = r.oid
 FROM pg_roles r JOIN pg_database d ON d.datname = current_database()
-WHERE r.rolname = current_user
+WHERE r.rolname = %s
 """
 
-# Step `migrate`: the writer role exists as a role of its own, can log in and is no superuser.
-# The pseudo-role PUBLIC has no row in `pg_roles`.
-_WRITER_CHECK = "SELECT rolcanlogin, rolsuper FROM pg_roles WHERE rolname = %s"
+# Step `migrate`, before the schema is applied: the writer role exists as a role of its own. The
+# pseudo-role PUBLIC has no row in `pg_roles`, so nothing is ever granted to PUBLIC.
+_WRITER_EXISTS = "SELECT count(*) FROM pg_roles WHERE rolname = %s"
 
 
 class _UnknownVersion(Exception):
     """`record.schema_version` holds a version the code does not know, or lacks one it knows."""
 
 
-class _BadWriter(Exception):
-    """The writer role does not exist, cannot log in, or is a superuser."""
+class _MissingWriter(Exception):
+    """The writer role does not exist."""
 
 
 def schema_statements(database: str, owner: str, writer: str) -> list[sql.Composed]:
@@ -110,17 +113,21 @@ def schema_statements(database: str, owner: str, writer: str) -> list[sql.Compos
     return [sql.SQL(statement).format(**names) for statement in SCHEMA_STATEMENTS]
 
 
-def _check_writer(connection: psycopg.Connection[Any], writer: str) -> None:
-    row = connection.execute(_WRITER_CHECK, (writer,)).fetchone()
-    if row is None:
-        raise _BadWriter()
-    can_login, superuser = row
-    if not can_login or superuser:
-        raise _BadWriter()
+def _check_writer_exists(connection: psycopg.Connection[Any], writer: str) -> None:
+    (count,) = connection.execute(_WRITER_EXISTS, (writer,)).fetchone()
+    if count != 1:
+        raise _MissingWriter()
 
 
 def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
-    """Steps `config`, `owner` and `migrate` of section 11.4: the printed line and the exit code."""
+    """Steps `config`, `owner` and `migrate` of section 11.4: the printed line and the exit code.
+
+    Step `migrate` succeeds exactly in the two cases of section 11.4: it applies the schema when
+    `record.schema_version` does not exist (and fails when a statement of section 11.3 fails), and
+    it does nothing when that table holds exactly the known versions. It fails when the table
+    holds an unknown version or lacks a known one, and when it waits longer than LOCK_TIMEOUT_MS
+    for the migration lock or a catalog lock.
+    """
     try:
         owner, writer = migrate_config(environ)
     except ConnectionStringError:
@@ -130,20 +137,29 @@ def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
     step = STEP_OWNER
     try:
         with owner.connect(autocommit=True) as connection:
-            superuser, owns_database = connection.execute(_OWNER_CHECK).fetchone()
-            if superuser or not owns_database:
+            # The run acts as the owner role it connected with, never as a role that a `role`
+            # setting of the role or the database switched to at login.
+            connection.execute("SET ROLE NONE")
+            is_login_role, superuser, owns_database = connection.execute(
+                _OWNER_CHECK, (owner.role,)
+            ).fetchone()
+            if not is_login_role or superuser or not owns_database:
                 return _failed(STEP_OWNER)
             step = STEP_MIGRATE
             with connection.transaction():
+                # The first statement, so that a `default_transaction_isolation` of the role or
+                # the database cannot make a run that waited for the lock miss the schema a
+                # concurrent run committed in the meantime.
+                connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 connection.execute(
                     "SELECT set_config('lock_timeout', %s, true)", (f"{LOCK_TIMEOUT_MS}ms",)
                 )
                 connection.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
-                _check_writer(connection, writer.role)
                 exists = connection.execute(
                     "SELECT to_regclass('record.schema_version') IS NOT NULL"
                 ).fetchone()
                 if not exists[0]:
+                    _check_writer_exists(connection, writer.role)
                     for statement in schema_statements(owner.database, owner.role, writer.role):
                         connection.execute(statement)
                     return f"migrated {SCHEMA_VERSION}", 0

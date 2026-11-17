@@ -243,10 +243,21 @@ def test_the_password_never_appears_in_a_repr() -> None:
     assert PASSWORD not in str(parsed)
 
 
+def test_no_part_of_a_connection_string_appears_in_a_repr() -> None:
+    parsed = parse_connection_string(
+        url("db.example.org", "verify-full", role="t_role_x", port=":6543", database="t_database_y")
+    )
+    for shown in (repr(parsed), str(parsed)):
+        for part in ("t_role_x", "db.example.org", "6543", "t_database_y", "verify-full", PASSWORD):
+            assert part not in shown
+    assert repr(parsed) == "ConnectionString()"
+
+
 def test_connect_kwargs_for_require() -> None:
     assert parse_connection_string(url()).connect_kwargs() == {
         "host": "db.example.org",
         "hostaddr": "",
+        "options": "",
         "port": 5432,
         "dbname": "record",
         "user": "record_writer",
@@ -275,6 +286,7 @@ def test_verify_full_passes_sslrootcert_system_to_the_driver(monkeypatch: pytest
         {
             "host": "db.example.org",
             "hostaddr": "",
+            "options": "",
             "port": 5432,
             "dbname": "record",
             "user": "record_writer",
