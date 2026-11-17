@@ -461,6 +461,6 @@ def test_agent_run_refuses_a_pool_role_without_an_agent_row(
                 "--no-tmux", "--cwd", str(tmp_path),
             ],
         )
-    assert str(refused.value) == POOL_REFUSAL
+    assert str(refused.value) == f"agent: {POOL_REFUSAL}"
     assert _agents(tmp_path, tid) == agents_before
     assert not any(agent.get("role") == "implementer" for agent in _agents(tmp_path, tid))
