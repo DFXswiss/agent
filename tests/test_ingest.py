@@ -9,6 +9,8 @@ import pytest
 from agent_cli.ingest import (
     ListingFailed,
     Skill,
+    _comment_author,
+    _skill_of,
     allowed_skills,
     catalog_skills,
     default_skill,
@@ -109,6 +111,16 @@ def test_catalog_skills_is_none_when_unreadable(catalog: object) -> None:
     assert catalog_skills(catalog) is None
 
 
+def test_skill_of_ignores_an_entry_that_is_not_an_object() -> None:
+    # The catalogue reader refuses a non-object entry, but `_skill_of` is also
+    # called on entries directly: a value that is not an object names no skill.
+    assert _skill_of(None) is None
+    assert _skill_of("not an entry") is None
+    assert _skill_of({"id": "pr-review", "queue_type": "pr-ready"}) == Skill(
+        "pr-review", "pr-ready"
+    )
+
+
 def test_default_skill_is_found_case_insensitively_and_trimmed() -> None:
     policy = {"default_skill_on_mention": " PR-Review "}
     assert default_skill(policy, CATALOG) == Skill("pr-review", "pr-ready")
@@ -125,6 +137,13 @@ def test_default_skill_is_found_case_insensitively_and_trimmed() -> None:
 )
 def test_default_skill_is_none_when_the_policy_names_no_catalogue_skill(
     policy: dict[str, Any],
+) -> None:
+    assert default_skill(policy, CATALOG) is None
+
+
+@pytest.mark.parametrize("policy", [None, [], "policy"])
+def test_default_skill_is_none_when_the_policy_is_not_an_object(
+    policy: object,
 ) -> None:
     assert default_skill(policy, CATALOG) is None
 
@@ -154,6 +173,26 @@ def test_allowed_skills_ignores_a_skill_without_a_queue_type() -> None:
     skills, unknown = allowed_skills({"job_types_allow": ["pr-ready"]}, catalog)
     assert skills == []
     assert unknown == ["pr-ready"]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [None, {}, {"job_types_allow": None}, {"job_types_allow": "pr-ready"}],
+)
+def test_allowed_skills_is_empty_when_the_policy_allows_no_list(
+    policy: object,
+) -> None:
+    # Admission treats a missing allow-list as "admits nothing", so there is no
+    # matched skill and no unknown type to report either.
+    assert allowed_skills(policy, CATALOG) == ([], [])
+
+
+def test_allowed_skills_ignores_unusable_allow_list_entries() -> None:
+    skills, unknown = allowed_skills(
+        {"job_types_allow": [7, "", "   "]}, CATALOG
+    )
+    assert skills == []
+    assert unknown == []
 
 
 # ------------------------------------------------------------ resolve_skill
@@ -221,6 +260,34 @@ def test_a_non_slash_command_prefix_is_matched_as_a_body_phrase() -> None:
     assert resolve_skill("@theo-vane all ready now", catalog) == Skill("ready", None)
 
 
+@pytest.mark.parametrize("body", [None, "", 7])
+def test_resolve_skill_is_none_for_an_empty_or_non_string_body(
+    body: object,
+) -> None:
+    assert resolve_skill(body, CATALOG) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("catalog", [None, [], {"skills": 7}])
+def test_resolve_skill_is_none_when_the_catalogue_is_unreadable(
+    catalog: object,
+) -> None:
+    assert resolve_skill("@theo-vane /review", catalog) is None
+
+
+def test_a_weaker_later_candidate_does_not_replace_the_best() -> None:
+    # The earlier, longer pattern wins; the shorter one is evaluated and
+    # rejected, so the loop continues with the best candidate unchanged.
+    catalog = {
+        "skills": [
+            {"id": "long", "body_patterns": ["please review"]},
+            {"id": "short", "body_patterns": ["review"]},
+        ]
+    }
+    assert resolve_skill("@theo-vane please review", catalog) == Skill(
+        "long", None
+    )
+
+
 def test_an_entry_without_a_usable_id_is_ignored() -> None:
     catalog = {
         "skills": [
@@ -264,6 +331,8 @@ def test_a_notification_yields_its_repo_and_number() -> None:
         {"repository": {"full_name": "owner/name"}, "subject": {"url": ".../0"}},
         {"repository": {"full_name": "/name"}, "subject": {"url": ".../1"}},
         {"repository": "owner/name", "subject": {"url": ".../1"}},
+        {"repository": {"full_name": "owner/name"}, "subject": {}},
+        {"repository": {"full_name": "owner/name"}, "subject": {"url": 7}},
     ],
 )
 def test_an_unusable_notification_yields_nothing(item: object) -> None:
@@ -291,6 +360,16 @@ def test_a_thread_id_with_a_trailing_newline_is_not_usable() -> None:
     # `$` also matches before a trailing newline, so a `match`-based check would
     # accept "1001\n" and put the newline into the request path.
     assert notification_thread_id({"id": "1001\n"}) is None
+
+
+def test_comment_author_is_none_when_the_comment_is_not_an_object() -> None:
+    assert _comment_author(None) is None
+    assert _comment_author("a comment") is None
+
+
+def test_comment_author_reads_a_login_from_a_usable_user() -> None:
+    assert _comment_author({"user": {"login": "alice"}}) == "alice"
+    assert _comment_author({"user": "alice"}) is None
 
 
 def test_mark_read_argv_uses_the_thread_id() -> None:
@@ -356,6 +435,7 @@ def _runner(
     mark_read_rc: int = 0,
     head_sha: str = HEAD,
     head_rc: int = 0,
+    comments_raw: str | None = None,
     calls: list[list[str]] | None = None,
 ):
     def run(argv: list[str]) -> Completed:
@@ -370,6 +450,8 @@ def _runner(
         if "--jq .head.sha" in joined:
             return Completed(head_rc, head_sha, "")
         if "/comments" in joined:
+            if comments_raw is not None:
+                return Completed(comments_rc, comments_raw, "")
             return Completed(comments_rc, json.dumps([comments]), "")
         if ".private" in joined:
             return Completed(private_rc, private, "")
@@ -960,6 +1042,244 @@ def test_a_fresh_row_starts_queued_with_no_attempts() -> None:
     assert row["queue_type"] == "pr-ready"
     assert row["trigger"] == "comment:owner/name:7:1"
     assert row["head_sha"] == HEAD
+
+
+def test_a_notification_that_names_no_target_is_skipped(tmp_path: Path) -> None:
+    # A notification without a usable repository and subject cannot be turned
+    # into a request, so it is skipped before any thread is read.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(notifications=[{}], comments=[], calls=calls),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert calls == [["gh", "api", "--paginate", "--slurp", "notifications"]]
+
+
+def test_a_comment_listing_that_is_not_json_is_skipped(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[],
+                comments_raw="{not json",
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+@pytest.mark.parametrize("user", [{"login": 7}, {"login": ""}, "alice"])
+def test_a_comment_without_a_usable_author_is_skipped(
+    tmp_path: Path, user: object
+) -> None:
+    # The login becomes the recorded actor; a missing or non-string one cannot
+    # be admitted, so the thread stays unread.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[
+                    {
+                        "id": 1,
+                        "body": "@theo-vane please review",
+                        "user": user,
+                    }
+                ],
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_an_unreadable_head_still_creates_the_job_with_no_head(
+    tmp_path: Path,
+) -> None:
+    # An unknown head is the fail-closed answer: the job is still created, but
+    # it records no head that a later pass could mistake for a known one.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review")],
+                head_rc=1,
+                calls=calls,
+            ),
+        )
+        assert len(created) == 1
+        assert requeued == []
+        assert skipped == 0
+        saved = _jobs(store)
+        assert len(saved) == 1
+        assert saved[0]["head_sha"] is None
+    finally:
+        store.close()
+    assert len(_head_calls(calls)) == 1
+    assert len(_mark_read_calls(calls)) == 1
+
+
+def test_a_row_in_an_unexpected_state_is_skipped(tmp_path: Path) -> None:
+    # Only `failed` and `done` are decided further; any other stored state is
+    # not a request this pass may act on.
+    store = Store(tmp_path)
+    seen: list[Any] = []
+    calls: list[list[str]] = []
+    try:
+        row = _insert(store, state="cancelled")
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                calls=calls,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert seen == []
+        assert store.row("job", row["id"])["state"] == "cancelled"
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_failed_row_whose_id_cannot_be_read_is_skipped(
+    tmp_path: Path,
+) -> None:
+    # `retry_payload` needs the stored id; without a usable one the row cannot
+    # be re-queued, so the mention stays unread for a later pass.
+    store = Store(tmp_path)
+    seen: list[Any] = []
+    try:
+        row = _insert(store, state="failed")
+        payload = {k: v for k, v in row.items() if k != "id"}
+        store.write("job", "update", row["id"], payload)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert seen == []
+    finally:
+        store.close()
+
+
+def test_a_done_job_whose_duplicate_cannot_be_recorded_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unchanged head is a duplicate. If recording that comment fails, the
+    # thread stays unread and the pass reports a skip.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        _insert(
+            store,
+            state="done",
+            head_sha=HEAD,
+            trigger="comment:owner/name:7:1",
+        )
+
+        def fail_write(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(store, "write", fail_write)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=2)],
+                head_sha=HEAD,
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_done_row_whose_id_cannot_be_read_is_skipped_when_the_head_moved(
+    tmp_path: Path,
+) -> None:
+    # The head moved, but a row without an id cannot be re-queued; the pass
+    # skips it instead of inventing an identity.
+    store = Store(tmp_path)
+    seen: list[Any] = []
+    try:
+        row = _insert(store, state="done", head_sha=OTHER_HEAD)
+        payload = {k: v for k, v in row.items() if k != "id"}
+        store.write("job", "update", row["id"], payload)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                head_sha=HEAD,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert seen == []
+    finally:
+        store.close()
+
+
+def test_an_unparseable_stored_trigger_whose_write_fails_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A row with no parseable trigger is consumed rather than retried. If that
+    # record fails, the mention is skipped and the thread stays unread.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        _insert(
+            store,
+            state="failed",
+            trigger="comment:owner/name:7:not-an-id",
+        )
+
+        def fail_write(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(store, "write", fail_write)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
 
 
 # ------------------------------------------------- existing rows

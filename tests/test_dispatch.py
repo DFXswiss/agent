@@ -872,6 +872,64 @@ def test_a_fetch_failure_leaves_the_job_queued_and_counts_it_skipped(tmp_path: P
         store.close()
 
 
+def test_a_refspec_failure_leaves_the_job_queued_and_counts_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # Without the refspec, fetch cannot land in refs/remotes/origin; the row
+    # stays queued for a later pass.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, refspec_rc=1)
+        )
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        assert not any("fetch --prune" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_a_ref_that_is_not_numeric_leaves_the_job_queued_and_counts_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # A malformed `ref` cannot be looked up; the row is skipped rather than
+    # checked out from a guessed commit.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7a",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(store, _runner(calls=calls))
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        joined = [" ".join(argv) for argv in calls]
+        assert not any("worktree add" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+    finally:
+        store.close()
+
+
 # ------------------------------------------------- choosing the commit
 
 

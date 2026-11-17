@@ -363,23 +363,25 @@ def _consume_mention(
     """Record a handled comment on its row, then mark the thread read.
 
     `Store.write` replaces the whole row, so every stored field is kept and
-    only the driver's `_` keys are dropped. A different trigger is written
-    first: a mention handled without a new job still has to be recorded, or a
-    later failure or head change that makes the thread unread again selects the
+    only the driver's `_` keys are dropped. The trigger is written first: a
+    mention handled without a new job still has to be recorded, or a later
+    failure or head change that makes the thread unread again selects the
     same comment and queues it a second time. A failed write leaves the thread
     unread and reports us as skipped, so the next pass tries again.
+
+    Every caller has already established that the mention's trigger differs
+    from the stored one, so the write is unconditional.
 
     `ingest` holds the runner lock, which every command that writes job rows
     shares, so this read-modify-write cannot race them.
     """
-    if row.get("trigger") != trigger:
-        updated = _strip(row)
-        updated["trigger"] = trigger
-        updated["updated_at"] = utcnow()
-        try:
-            store.write("job", "update", row_id, updated)
-        except (Exception, SystemExit):
-            return False
+    updated = _strip(row)
+    updated["trigger"] = trigger
+    updated["updated_at"] = utcnow()
+    try:
+        store.write("job", "update", row_id, updated)
+    except (Exception, SystemExit):
+        return False
     _mark_thread_read(item, runner)
     return True
 
@@ -653,7 +655,8 @@ def scan_mentions(
             payload["trigger"] = trigger
             payload["actor"] = actor
             payload["queue_type"] = skill.queue_type
-        elif state == "done":
+        else:
+            # The state guard above admits only `failed` and `done` here.
             old_head = existing.get("head_sha")
             if (
                 head_sha is None
@@ -695,9 +698,6 @@ def scan_mentions(
                     "session_id": session_id,
                 }
             )
-        else:
-            skipped += 1
-            continue
 
         try:
             accepted = requeue(existing, payload)
