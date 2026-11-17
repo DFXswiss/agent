@@ -187,6 +187,7 @@ def test_redact_and_fingerprint() -> None:
     ],
     ids=("separatorless-word", "keyword-prefix"),
 )
+@pytest.mark.timing
 def test_error_redaction_is_linear_on_large_words(
     raw: str, contains_secret: bool
 ) -> None:
@@ -201,6 +202,7 @@ def test_error_redaction_is_linear_on_large_words(
 
 
 @pytest.mark.no_pg
+@pytest.mark.timing
 def test_error_redaction_is_linear_on_a_control_run_after_a_secret_key() -> None:
     for size in (20_000, 1_000_000):
         raw = "ERROR password" + "\x01" * size + "x=hunter2 visible"
@@ -213,6 +215,7 @@ def test_error_redaction_is_linear_on_a_control_run_after_a_secret_key() -> None
 
 
 @pytest.mark.no_pg
+@pytest.mark.timing
 def test_error_redaction_is_linear_on_repeated_assignments_in_one_token() -> None:
     size = 20_000
     for raw in (

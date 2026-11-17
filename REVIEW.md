@@ -33,3 +33,11 @@ Each pass lane is read-only. Its prompt contains this reminder: `Read CONTRIBUTI
 Quality judges the diff against these files, read at the base revision. Logic judges whether the diff is sound and complete, and whether it adds a second mechanism for a job these files say to reuse. A missing issue is not a defect.
 
 A missed reuse is a defect unless the pull request names the element and the different job, as the deviation section says. A hard requirement, or a contradiction of `CONTRIBUTING.md`, stays a defect even when the pull request discusses it. Zero defects means no such violation remains.
+
+## Test coverage
+
+The rule [Complete test coverage is mandatory](CONTRIBUTING.md#complete-test-coverage-is-mandatory) is a hard requirement. Each of these is a defect:
+
+- A function the pull request adds or changes is not fully covered, line and branch, by the tests of the same pull request.
+- The pull request lowers `fail_under` in `pyproject.toml`, or the floor value of its measured total (the total minus 0.1, rounded down to one decimal) is above `fail_under` and `fail_under` is not raised to it.
+- A test offered as coverage replaces the function it claims to cover, or calls an external service instead of a mock.

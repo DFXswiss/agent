@@ -12,6 +12,42 @@
 - The static script runs `pytest` on the exact clean signed final head before Ready for review. Model lanes never execute tests themselves. Tests need PostgreSQL (`AGENT_TEST_PG` or a local `initdb`). Full pytest is not a gate for the first draft publication.
 - Pytest (or any green local suite) is a **check**, not Ready for review and not completion.
 
+## Complete test coverage is mandatory
+
+This rule is binding for every pull request and every contributor. It takes precedence over any softer wording elsewhere in this repository's documentation. No deviation from it can be declared or granted.
+
+### Every function is fully covered
+
+Every function must be fully covered by tests: every line and every branch. A function without complete tests is not done.
+
+### Changing a function means covering it
+
+If you change an existing function that is not yet fully covered, you cover it completely in the same pull request. "It was untested before" is not an excuse; touching it makes you responsible for it.
+
+### 100 % is the goal, and everyone works towards it
+
+Complete test coverage is the goal of this repository. Every pull request helps to reach 100 %. Excuses for not having raised the coverage of an element you changed are not accepted.
+
+### What 100 % means
+
+100 % test coverage means that what a user and a paired device do — running a CLI command, calling a dashboard endpoint, syncing with the hub, running a lane, posting a review — is completely exercised by tests through the real code path. For these tests:
+
+- A **real PostgreSQL** runs inside the test (`AGENT_TEST_PG` or a local `initdb`). The store is never replaced by a fake.
+- The tests are **self-contained**. They do not call GitHub, a model provider, the hub, or any other deployed service.
+- **All external services are fully mocked**: GitHub, model and subscription providers, the hub, and every other outbound integration. Every response form a service is known to return (success, each error, each empty or partial shape) is simulated and exercised by a test. Fixtures contain no personal data and no secrets.
+- A test that replaces the function it claims to cover is not coverage of that function.
+
+### The coverage floor
+
+CI measures line and branch coverage of `src/agent_cli` with `coverage` on every pull request (`.github/workflows/test.yml`, settings under `[tool.coverage]` in `pyproject.toml`). Runs of the same code have measured totals 0.01 apart (86.18 and 86.19), so the floor keeps a margin of 0.1: the floor value of a measured total is that total minus 0.1, rounded down to one decimal. `fail_under` holds that floor value. A pull request never lowers it. A pull request whose floor value is above `fail_under` raises `fail_under` to it in the same change.
+
+Tests marked `timing` assert wall-clock bounds. Coverage tracing slows the measured code, so CI runs them in a separate step without it. Run the same measurement locally with:
+
+```sh
+coverage erase && coverage run -m pytest -m "not timing" && coverage combine && coverage report
+pytest -m timing
+```
+
 ## Local CI report (A38)
 
 Pull requests in this repository follow the A38 process defined in
