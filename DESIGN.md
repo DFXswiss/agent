@@ -1370,6 +1370,8 @@ This revision records the decision of 2026-11-17 to build the team record in age
 
 This revision records the decision of 2026-11-17 to store the team record in PostgreSQL, with a database role that may only insert and read events (§24.8).
 
+This revision adds the proposal for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not decided and not implemented.
+
 ## 24. Team record and key identity (decided, not implemented)
 
 Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule.
@@ -1511,3 +1513,154 @@ When the matching part ships, its pull request changes these rows in the same di
 - No private repository, internal hostname or internal infrastructure is named here or in code (CONTRIBUTING.md).
 - Every implementation pull request carries tests for its signature checks, chain checks and refusal paths, not only the success path.
 - Build order: keys file with scopes and signature verification first, then the authenticated release query with a hub-signed answer for external programs, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
+
+## 25. Central operation (proposed, not decided)
+
+Status: proposed on 2026-11-17, not decided and not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record) and changes nothing until a human decides it and each part ships. The open decisions are listed in §25.15.
+
+### 25.1 Goal
+
+A staff member connects a device to the hub once and can then leave it alone. From the hub they hand work to it, answer its questions, watch every running session in full detail and see what the whole team is doing. Tasks, the team log, pull requests, devices, sessions, AI usage and the key figures of the team's servers are in one overview. Nothing that was commanded can later be impossible to reconstruct.
+
+The hub is the normal route, not the only one. Direct access to a device (for example a remote shell) stays allowed as an override. Whatever is done that way is still recorded by the device and synced (§25.7).
+
+Handing work over is the default and stays voluntary. The client never forces a session on a controlling device to hand work to another device; that session may do the work itself.
+
+### 25.2 The device is the principal
+
+The hub's technical counterpart is a **device**, not a code-host account and not an AI model.
+
+- A device proves itself with its own key pair (§24.2). The key is created on the device and never leaves it. Connecting a device is the login.
+- Every device is assigned to exactly one staff member. The assignment is an entry in the keys file (§24.2) and changes by pull request.
+- A device reports an **inventory**: the AI accounts and subscriptions configured on it, the code-host accounts it can act as, and the runtimes it offers (for example containers or virtual machines). The inventory holds names and states, never a credential.
+- AI accounts are assigned to devices. Which account a device may use is device configuration ([docs/ai-accounts.md](docs/ai-accounts.md)); the hub shows it and does not choose it.
+- Devices connect outbound to the hub. No device opens a port, and nobody reaches a device's local store from outside (§3).
+
+### 25.3 Two device levels
+
+| Level | May do |
+|---|---|
+| `executor` | Runs work it was given. Cannot give work to any device. |
+| `controller` | Everything an executor may do, and may give work to executors of the same staff member. |
+
+The level is a scope on the device key. A staff member signed in with a passkey has controller rights over all of their own devices.
+
+### 25.4 Rights
+
+- A staff member may **write** to all of their own devices without restriction: submit work, answer questions, type into a session, start and stop sessions.
+- A staff member may **read** everything of every other team member: tasks, sessions in full detail, logs, usage. Team scope follows §6.
+- Nobody writes to a device of another staff member. Agent devices keep the owner rule that exists today.
+
+### 25.5 Work goes through the hub
+
+- A **task** says what has to be done (§25.6). An **order** is one attempt to do it on one device and links to its task.
+- Submitting an order is a signed event addressed to one executor. The hub verifies, stores and delivers it. The device accepts or refuses it and queues accepted orders one after another, exactly as local orders work today (§19.10). Order state stays derived on the device and is synced.
+- The hub never authors work, never picks a device, grants no lease and moves no work when a device disappears. A human or a controller device chooses the executor.
+- When a session needs a decision, the device records a **question** with its allowed answers. The owner answers on the website, in the phone app or through their own AI; the answer is a signed event. The first valid answer wins, a second one is refused.
+- During a hub outage an executor keeps working on accepted orders and keeps recording locally. Orders may still be submitted on the device itself. Sync catches up afterwards without a gap.
+
+### 25.6 Tasks and the team log replace outside trackers
+
+Every piece of work the team wants done is a task in the team record. Issues on a code host, an outside planning tool and hand-kept lists in repositories are no longer where tasks live.
+
+| Object | Fields (minimum) |
+|---|---|
+| Task | title, description, kind (for example `task`, `security issue`), repository reference, assignee, urgency 1–10, status, links to orders and pull requests |
+| Log entry | text, author, repository reference, optional link to a task |
+| Repository reference | organisation and repository, both optional when the work has no clear home |
+
+- The security issue of §24.4 is a task kind with its extra fields; its workflow stays.
+- A log entry is something everyone should know. It is written once and never edited; a correction is a new entry.
+- **Repository registry.** One file in the hub's repository lists each organisation and where it is hosted (a public code host or the team's own git server). Every repository reference resolves through it. Moving an organisation to another host is one change in that file.
+- Task status is `to do`, `in progress`, `ready for review`, `done`, `closed`. "Unassigned" and "no activity for 60 minutes" are derived views, not states.
+- Existing issues and lists are imported once as signed events that name their source. After the import the old place gets a pointer and is no longer edited.
+
+### 25.7 Everything is recorded
+
+Three stores with three different rules:
+
+| Store | Holds | Rule |
+|---|---|---|
+| Team record (§24) | Tasks, log entries, orders, questions, answers, every command | Signed by the actor, chained, never deleted, no secrets and no personal data |
+| Session log | Everything a session shows and receives: output, input, prompts, tool calls, decisions | Recorded on the device first, synced completely and without gaps, append-only |
+| Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
+
+- Every command is in the team record with the key that signed it. A command that is not recorded is not executed.
+- This replaces the rule of §17 that live terminal bytes are never stored. They become part of the session log.
+- A session log can contain a secret or personal data that appeared on a screen. That is why it is a separate store and not part of the chain that can never be deleted. The device redacts known secret patterns before anything leaves it. How long session logs are kept is an open decision (§25.15).
+
+### 25.8 Watching and steering a session
+
+On the hub a viewer picks a staff member, then a device, then a session, and sees it in the same detail as at the terminal of that device: the full history from the session log and the live stream.
+
+The owner may type into the session and answer questions that pop up. Every input is a recorded command (§25.7). Other team members watch only.
+
+So that typing does not need a passkey touch per keystroke, the browser creates a non-exportable session key at sign-in; the passkey signs that key once, and the session key signs each write. The record names both.
+
+### 25.9 Overview
+
+The start page shows the whole team at once:
+
+- Tasks: done, in progress, in progress without activity for 60 minutes, ready for review, to do and not started, to do and unassigned.
+- Pull requests: draft, ready for review, merged, closed. They are read from the code host and never owned (§24.5).
+- Devices: connected, working, idle. Sessions: working, waiting for an answer, idle.
+- AI usage: tokens and cost per device, per account and per day.
+- Device health and server key figures (§25.10).
+- Every figure can be opened down to the single task, session or event, and viewed for a past date (§24.6).
+
+### 25.10 Monitoring sources
+
+The hub shows data it does not own through read-only adapters:
+
+- **Device health** (processor, memory, disk) from the team's metrics system, per device.
+- **Server key figures**, for example the number of error log lines in the last 60 minutes, from the team's infrastructure monitoring.
+
+An adapter only reads, holds a read-only credential in the hub's configuration and shows each value with its fetch time. Such a value is a cache, never a second truth. Which sources exist is deployment configuration; this public repository names none.
+
+### 25.11 AI usage and an optional central account
+
+Usage per device and per day comes from the usage snapshots devices already record.
+
+Optional, later, and not part of the core: the team holds one central account at a model broker and the hub hands each device its own sub-key with a spending limit. The model traffic then still goes from the device straight to the broker, and the hub neither carries nor sees it. Passing all model traffic through the hub is the rejected variant: the hub would become a single point of failure for every session.
+
+### 25.12 One interface for people and for AI
+
+- Every function is an operation of one documented API. The website and the phone app are clients of that API and of nothing else.
+- Nothing exists only in the website and nothing only in the API. A test fails the build when a website function has no API operation or the reverse.
+- A staff member's own AI uses the same API with the key of one of their controller devices. It has that device's rights and every action is recorded under that key.
+- The website can be installed on a phone as an app. It sends a push notification when a session has a question or an order ends. A push carries no content, only that something is waiting. The push services of the phone makers transport the encrypted notification; they decide no identity and can read nothing.
+
+### 25.13 What this changes in the locked decisions
+
+| Place | Today | With §25 |
+|---|---|---|
+| §2 Write owner | The device that created a row | Unchanged. A device still writes its own rows; commands to it are signed events of its owner |
+| §2 Identity, §5 | Code-host login, device token | Device key assigned to a staff member; the level is a scope |
+| §3 Task as the product center | Rejected | Tasks become the center of the team record; the session store stays the center of a device |
+| §3 Plane (or any issue tracker) as the store | Rejected | Still rejected; tasks live in the team record and outside trackers are retired |
+| §2 website-origin exception, §17 `agent assign` | The hub creates an issue on the code host | Replaced by tasks and orders once they ship |
+| §17 Live terminal bytes | Ephemeral, never stored | Stored in the session log |
+| §20 Website as an operations console | Refused | Accepted for watching, answering and handing over work by the owner |
+
+### 25.14 What stays refused
+
+- The hub authoring work, choosing a device, granting leases or moving work between devices.
+- A capability scheduler.
+- Autonomous merge. A human merges.
+- Opening a port on a device or exposing a local store.
+- A function that exists in only one front end.
+
+### 25.15 Open decisions
+
+Each is decided by a human before the part it affects is built:
+
+- How long session logs are kept, and whether they follow the never-delete rule of the team record.
+- Whether anyone besides the owner (for example a team lead) may write to a device.
+- Whether a controller device may give work only to executors of the same staff member, or also to others with their consent.
+- Whether sessions on a controller device that were not handed over are recorded in the same full detail.
+- Whether push through the phone makers' services is acceptable under the rule against third-party dependencies (§24.2 covers identity only).
+- Whether the optional central AI account (§25.11) is wanted.
+
+### 25.16 Build order
+
+After the steps of §24.10: device keys with levels and inventory; tasks, log entries and the repository registry, with the one-time import; orders and questions through the hub; the session log and the full session view; the overview; monitoring adapters; the phone app with push; the API parity test from the first of these steps on.
