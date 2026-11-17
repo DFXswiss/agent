@@ -202,6 +202,7 @@ def _get_document(
     client: httpx.Client, driver: str, request: UsageRequest, token: str
 ) -> dict[str, Any]:
     label = f"{driver} usage request {request.name}"
+    error_name: str | None = None
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -209,15 +210,21 @@ def _get_document(
     }
     try:
         response = client.get(request.url, headers=headers)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, UnicodeError) as exc:
+        error_name = type(exc).__name__
+    if error_name is not None:
         # The exception text may repeat request details; only its kind is shown.
-        raise StoreError(f"{label} failed: {type(exc).__name__}") from None
+        # Raising after the block keeps the original out of __cause__ and __context__.
+        raise StoreError(f"{label} failed: {error_name}")
     if response.status_code != 200:
         raise StoreError(f"{label} returned HTTP {response.status_code}")
+    invalid_json = False
     try:
         data = response.json()
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        raise StoreError(f"{label} returned invalid JSON") from None
+        invalid_json = True
+    if invalid_json:
+        raise StoreError(f"{label} returned invalid JSON")
     if not isinstance(data, dict):
         raise StoreError(f"{label} response is not an object")
     return data
@@ -1252,5 +1259,3 @@ def scan_window_usage(
     if errors:
         raise AccountUsageError(errors, created)
     return created
-
-
