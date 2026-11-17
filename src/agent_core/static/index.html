@@ -162,6 +162,7 @@
       <p id="pair-msg"></p>
     </div>
     <div class="kpis">
+      <div class="kpi" id="kpi-security" hidden><span>Open security issues</span><b id="k-security">–</b></div>
       <div class="kpi"><span>Open PRs</span><b id="k-prs">–</b></div>
       <div class="kpi"><span>Visible people</span><b id="k-people">–</b></div>
       <div class="kpi"><span>Open tasks</span><b id="k-tasks">–</b></div>
@@ -281,6 +282,9 @@
     let stateInflight = null;
     let stateGen = 0;
     let prsInflight = null;
+    let securityInflight = false;
+    let securityLoadedAt = 0;
+    const SECURITY_REFRESH_MS = 60000;
     let prsGen = 0;
     let usageInflight = null;
     let usageGen = 0;
@@ -403,6 +407,9 @@
       document.getElementById("k-agents").textContent = "–";
       document.getElementById("k-pings").textContent = "–";
       document.getElementById("k-prs").textContent = "–";
+      document.getElementById("k-security").textContent = "–";
+      securityLoadedAt = 0;
+      document.getElementById("kpi-security").hidden = true;
       document.getElementById("k-usage").textContent = "–";
       document.getElementById("prs-sub").textContent = "Open PRs authored or assigned to people you can see.";
       document.getElementById("stamp").textContent = "";
@@ -1004,6 +1011,7 @@
       }
       kickState();
       kickPrs();
+      kickSecurity();
     }
 
     function kickState() {
@@ -1065,6 +1073,30 @@
         usageInflight = null;
       });
       return p;
+    }
+
+    // Count of open security issues from the team's tracker. Hidden when the hub has no tracker
+    // or the viewer is on no team. Refreshes at most once a minute; the hub caches as well.
+    function kickSecurity() {
+      if (securityInflight || Date.now() - securityLoadedAt < SECURITY_REFRESH_MS) return;
+      securityInflight = true;
+      const box = document.getElementById("kpi-security");
+      const val = document.getElementById("k-security");
+      jsonGet("/api/security", new AbortController(), 25000).then(data => {
+        securityLoadedAt = Date.now();
+        if (!data.configured) { box.hidden = true; return; }
+        box.hidden = false;
+        const n = esc(data.open);
+        val.innerHTML = data.link
+          ? `<a href="${esc(data.link)}" target="_blank" rel="noopener" title="${esc(data.in_progress)} in progress, ${esc(data.done)} done">${n}</a>`
+          : n;
+      }).catch(e => {
+        securityLoadedAt = Date.now();
+        if (String(e).includes("HTTP 403")) { box.hidden = true; return; }
+        box.hidden = false;
+        val.textContent = "–";
+        val.title = e.name === "AbortError" ? "Timed out loading security issues." : String(e);
+      }).finally(() => { securityInflight = false; });
     }
 
     function kickPrs() {

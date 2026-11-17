@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -32,6 +33,7 @@ from .github import (
     valid_repository_name,
 )
 from .teams import Roster, load_roster, visible_logins
+from .security import PlaneSecurityTracker, SecurityTracker, SecurityTrackerError
 from .tokens import TokenError, issue, parse
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -101,8 +103,16 @@ class AssignmentCreateBody(BaseModel):
 
 
 class Hub:
-    def __init__(self, cfg: Config, github: GitHub, store: Store, roster: Roster) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        github: GitHub,
+        store: Store,
+        roster: Roster,
+        security: SecurityTracker | None = None,
+    ) -> None:
         self.cfg = cfg
+        self.security = security
         self.github = github
         self.store = store
         self.roster = roster
@@ -212,11 +222,18 @@ def can_control(hub: Hub, login: str, origin_device_id: str) -> bool:
     return device_login == actor or hub.roster.owns_agent(actor, device_login)
 
 
-def create_app(cfg: Config, github: GitHub | None = None, store: Store | None = None) -> FastAPI:
+def create_app(
+    cfg: Config,
+    github: GitHub | None = None,
+    store: Store | None = None,
+    security: SecurityTracker | None = None,
+) -> FastAPI:
     roster = load_roster(cfg.teams_path)
+    if security is None and cfg.security_tracker_enabled:
+        security = PlaneSecurityTracker(cfg.security_tracker_url, cfg.security_tracker_token)
     app_store = store if store is not None else Store(cfg.database)
     try:
-        hub = Hub(cfg, github or RealGitHub(cfg), app_store, roster)
+        hub = Hub(cfg, github or RealGitHub(cfg), app_store, roster, security)
     except BaseException:
         if store is None:
             app_store.close()
@@ -1208,6 +1225,24 @@ def create_app(cfg: Config, github: GitHub | None = None, store: Store | None = 
     def api_usage(request: Request) -> dict[str, Any]:
         login = hub.session_login(request)
         return _usage_response(hub, login)
+
+    @app.get("/api/security")
+    def api_security(request: Request) -> dict[str, Any]:
+        login = hub.session_login(request)
+        if not _teams_for(login, hub.teams):
+            raise HTTPException(status_code=403, detail="security counts are for team members only")
+        if hub.security is None:
+            return {"generated_at": utcnow(), "configured": False}
+        try:
+            counts = hub.security.counts()
+        except (SecurityTrackerError, httpx.HTTPError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "generated_at": utcnow(),
+            "configured": True,
+            "link": hub.cfg.security_tracker_link,
+            **counts.as_dict(),
+        }
 
     @app.get("/api/state")
     def api_state(request: Request) -> dict[str, Any]:

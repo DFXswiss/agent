@@ -85,6 +85,20 @@ Every assignment creation must include `deviation: {"declared": false}`. This is
 
 Assignment and reply writes accept an optional lowercase UUID `request_id`. User bodies cannot contain the reserved `<!-- agent-core-request:` marker line. The dashboard keeps the same UUID and exact request payload in `sessionStorage` across reloads and sign-in renewal after a timeout or network error, and the hub appends `<!-- agent-core-request:<request_id> -->` to the GitHub issue or comment. The hub binds the id to a fingerprint of the normalized request and reserves each actor, activity type, and request id while the write is in progress; a concurrent request returns 409, as does reuse with different content. A later retry searches back to the reservation's first-reserve time and reuses only an actor-authored marker match with the expected marker-free body, preventing duplicate issues and comments after an ambiguous timeout. Recording the activity and completing its reservation are one transaction, so a superseded lease owner cannot publish a second event.
 
+## Security issue count
+
+The dashboard can show how many security issues are open, read from one Plane project. The hub only reads and counts; it stores nothing and writes nothing back. Only people on a team see the number (`GET /api/security`, otherwise 403). Plane state groups count as: backlog and unstarted = open, started = in progress, completed = done; cancelled is not counted. The hub caches the counts for 60 seconds.
+
+Set all three variables or none. A partial set aborts the start.
+
+| Variable | Value |
+| --- | --- |
+| `AGENT_CORE_SECURITY_TRACKER_URL` | Project API base, `https://<plane>/api/v1/workspaces/<slug>/projects/<project-id>` |
+| `AGENT_CORE_SECURITY_TRACKER_TOKEN` | Plane API token (secret) with read access to that project |
+| `AGENT_CORE_SECURITY_TRACKER_LINK` | Link the number opens, usually the project's issue list in Plane |
+
+Without the variables the tile stays hidden.
+
 ## Tests
 
 Node.js is required for the dashboard and session page tests.
