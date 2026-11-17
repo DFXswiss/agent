@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .coordinator_common import redact
 from .github_accounts import AccountError, load_accounts
+from .runner_status import STATUS_MARKER_RE
 from .runtime import Completed
 from .store import Store
 from .text_sanitize import redact_terminal_interleaved_secret
@@ -984,11 +985,13 @@ def _run_comment_post(
 ) -> str:
     """Post one comment, or edit the newest matching own comment.
 
-    `edit_marker`, when present in the payload, must be a single-line HTML
-    comment contained in `body` and is incompatible with `exact_body`. Every
-    status activity of one job generation carries the same `edit_marker`: the
+    `edit_marker`, when present in the payload, must be the runner's status
+    marker (`STATUS_MARKER_RE`, exactly what `runner_status.status_marker`
+    produces), contained in `body`, and is incompatible with `exact_body`.
+    Every status activity of one job generation carries the same marker: the
     first posts the comment, and later ones edit the newest comment of the
-    posting account that carries it instead of adding another.
+    posting account that carries it instead of adding another. No other HTML
+    comment is accepted, so an activity cannot edit another module's comment.
     """
     rid = str(row["id"])
     payload = row.get("payload")
@@ -1023,12 +1026,7 @@ def _run_comment_post(
         raw_edit_marker = payload.get("edit_marker")
         if (
             not isinstance(raw_edit_marker, str)
-            or raw_edit_marker == ""
-            or "\n" in raw_edit_marker
-            or "\r" in raw_edit_marker
-            or not raw_edit_marker.startswith("<!--")
-            or not raw_edit_marker.endswith("-->")
-            or len(raw_edit_marker) <= 7
+            or STATUS_MARKER_RE.fullmatch(raw_edit_marker) is None
             or raw_edit_marker not in body
             or exact_body
         ):
@@ -1037,8 +1035,9 @@ def _run_comment_post(
                 row,
                 status="error",
                 error=(
-                    "comment.post edit_marker must be a single-line HTML "
-                    "comment present in body and exact_body must be false"
+                    "comment.post edit_marker must be the runner status "
+                    "marker <!-- agent-runner-job:<job id>:<UTC timestamp> "
+                    "--> present in body and exact_body must be false"
                 ),
             )
             return f"comment.post {rid} error"

@@ -25,6 +25,7 @@ check pass every job. This module only posts; the ordering is enforced by
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -48,6 +49,17 @@ REPORTED_OUTCOMES = frozenset(
 MAX_REPORT_ATTEMPTS = 5
 
 _KINDS = ("announce", "outcome")
+
+# The exact marker `status_marker` produces, and the only `edit_marker` the
+# GitHub executor accepts. Keeping one compiled pattern for the producer and
+# the validator means a lane cannot pass another module's HTML comment as an
+# `edit_marker` and overwrite that comment. The job id uses the safe alphabet,
+# without the `--` an HTML comment cannot contain; the generation is a UTC
+# timestamp.
+STATUS_MARKER_RE = re.compile(
+    r"<!-- agent-runner-job:(?![^:]*--)[A-Za-z0-9_-]+:"
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z -->"
+)
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -84,19 +96,20 @@ def status_marker(job_id: str, created_at: str) -> str:
     comment; a later one edits the newest own comment that carries it, so the
     job keeps one status comment instead of one per activity.
 
-    Both parts are interpolated into an HTML comment, so a value that could
-    close it or break the line is refused rather than producing a marker the
+    Both parts are interpolated into an HTML comment, so the result must match
+    `STATUS_MARKER_RE`; a job id outside the safe alphabet or a generation that
+    is not a UTC timestamp is refused rather than producing a marker the
     executor would reject later.
     """
-    for value in (job_id, created_at):
-        if not isinstance(value, str) or not value:
-            raise ValueError("job id and generation (created_at) must be non-empty strings")
-        if "--" in value or ">" in value or "\n" in value or "\r" in value:
-            raise ValueError(
-                "job id and generation (created_at) must not contain '--', '>' "
-                "or a line break"
-            )
-    return f"<!-- agent-runner-job:{job_id}:{created_at} -->"
+    if not isinstance(job_id, str) or not isinstance(created_at, str):
+        raise ValueError("job id and generation (created_at) must be strings")
+    marker = f"<!-- agent-runner-job:{job_id}:{created_at} -->"
+    if STATUS_MARKER_RE.fullmatch(marker) is None:
+        raise ValueError(
+            "job id must be [A-Za-z0-9_-]+ without '--' and generation "
+            "(created_at) must be a UTC timestamp like 2026-01-01T00:00:00Z"
+        )
+    return marker
 
 
 def announce_body(job_id: str, attempts: int, *, marker: str) -> str:

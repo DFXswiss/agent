@@ -137,10 +137,14 @@ land after the baseline and count as the job's output. Either undelivered case
 is reported as `announce failed <job-id>` on standard error. The comment is a
 `comment.post` activity, never a direct `gh` call.
 
-All status activities of one job generation share an `edit_marker`. The
-announcement creates the comment the first time it runs; every later status
-activity (a retry's announcement or a failure outcome) edits that same comment
-in place, so the issue or pull request keeps one status comment per job. The
+All status activities of one job generation share an `edit_marker`, the only
+marker the executor accepts:
+`<!-- agent-runner-job:<job id>:<UTC timestamp> -->`. The job id matches
+`[A-Za-z0-9_-]+` without `--`, and the timestamp has the form
+`YYYY-MM-DDTHH:MM:SSZ`. The announcement creates the comment the first time it
+runs; every later status activity (a retry's announcement or a failure
+outcome) edits that same comment in place, so the issue or pull request keeps
+one status comment per job. The
 announcement still has to precede the output baseline: the first announcement
 is what creates the comment, and an edit never creates a new comment id, so a
 later edit can never count as new output.

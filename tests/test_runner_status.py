@@ -283,7 +283,14 @@ def test_status_marker_differs_by_generation() -> None:
         ("job--1", _CREATED_AT),
         ("job>1", _CREATED_AT),
         ("job\n1", _CREATED_AT),
+        ("job/1", _CREATED_AT),
+        ("job 1", _CREATED_AT),
+        ("job.1", _CREATED_AT),
         ("job-1", f"{_CREATED_AT}\n"),
+        ("job-1", "2026-11-17"),
+        ("job-1", "now"),
+        ("job-1", "2026-01-01T00:00:00"),
+        ("job-1", "2026-01-01 00:00:00Z"),
     ],
 )
 def test_status_marker_rejects_an_unusable_part(
@@ -291,6 +298,21 @@ def test_status_marker_rejects_an_unusable_part(
 ) -> None:
     with pytest.raises(ValueError):
         runner_status.status_marker(job_id, created_at)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "created_at"),
+    [
+        ("job-1", _CREATED_AT),
+        ("JOB_2", "2026-11-17T23:59:59Z"),
+        ("a" * 64, "2020-02-29T00:00:00Z"),
+    ],
+)
+def test_status_marker_fully_matches_the_shared_pattern(
+    job_id: str, created_at: str
+) -> None:
+    marker = runner_status.status_marker(job_id, created_at)
+    assert runner_status.STATUS_MARKER_RE.fullmatch(marker) is not None
 
 
 # ------------------------------------------------------------- activity ids

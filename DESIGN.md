@@ -328,7 +328,7 @@ v1 types (mechanism only):
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; device daemon knock child) |
 | `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
 | `issue.assigned.ack` | `issue` | script | — (releases the next queued knock; supervise only) |
-| `comment.post` | — | AI (target + body; an optional `edit_marker` edits the newest own comment carrying it instead of posting a new one) | script |
+| `comment.post` | — | AI (target + body; an optional `edit_marker`, only the runner status marker `<!-- agent-runner-job:<job id>:<UTC timestamp> -->`, edits the newest own comment carrying it instead of posting a new one) | script |
 | `review.post` | — | gate record (repo, number, body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |

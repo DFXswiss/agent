@@ -1786,6 +1786,52 @@ def test_comment_post_edit_marker_adopts_this_activitys_comment_without_patch(
 @pytest.mark.parametrize(
     ("body", "payload_extra"),
     [
+        # Only the runner's own status marker may be edited. Another module's
+        # fixed marker is a single-line HTML comment, so the old generic check
+        # would have accepted it and let this activity overwrite that comment.
+        (
+            "text\n<!-- A38-REVIEW:v1 -->",
+            {"edit_marker": "<!-- A38-REVIEW:v1 -->"},
+        ),
+        (
+            "text\n<!-- /A38-REVIEW:v1 -->",
+            {"edit_marker": "<!-- /A38-REVIEW:v1 -->"},
+        ),
+        (
+            "text\n<!-- DFX-LOCAL-CI:v1 -->",
+            {"edit_marker": "<!-- DFX-LOCAL-CI:v1 -->"},
+        ),
+        (
+            "text\n<!-- PR-GUARD:A38:v1 -->",
+            {"edit_marker": "<!-- PR-GUARD:A38:v1 -->"},
+        ),
+        ("text\n<!-- note -->", {"edit_marker": "<!-- note -->"}),
+        # The status marker's shape, but a job id or generation outside the
+        # grammar it is produced with.
+        (
+            "text\n<!-- agent-runner-job:job/1:2026-01-01T00:00:00Z -->",
+            {
+                "edit_marker": (
+                    "<!-- agent-runner-job:job/1:2026-01-01T00:00:00Z -->"
+                )
+            },
+        ),
+        (
+            "text\n<!-- agent-runner-job::2026-01-01T00:00:00Z -->",
+            {
+                "edit_marker": (
+                    "<!-- agent-runner-job::2026-01-01T00:00:00Z -->"
+                )
+            },
+        ),
+        (
+            "text\n<!-- agent-runner-job:job-1:2026-11-17 -->",
+            {"edit_marker": "<!-- agent-runner-job:job-1:2026-11-17 -->"},
+        ),
+        (
+            "text\n<!-- agent-runner-job:job-1:now -->",
+            {"edit_marker": "<!-- agent-runner-job:job-1:now -->"},
+        ),
         ("plain text", {"edit_marker": "<!-- not in the body -->"}),
         (
             "text\n<!-- broken\nmarker -->",
