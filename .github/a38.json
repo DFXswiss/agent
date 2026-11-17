@@ -1,0 +1,61 @@
+{
+  "schema": "a38/v1",
+  "standard": "A38",
+  "documentation": "docs/a38.md",
+  "mode": "enforce",
+  "jobs": [
+    {
+      "id": "pytest",
+      "name": "pytest",
+      "timeout_s": 1800,
+      "workflow": ".github/workflows/test.yml",
+      "job": "pytest",
+      "executor": {
+        "adapter": "commands",
+        "config": {
+          "env": {
+            "CI": "true"
+          },
+          "steps": [
+            [
+              "python3",
+              "-m",
+              "pip",
+              "install",
+              "-q",
+              "-e",
+              ".[test]"
+            ],
+            [
+              "python3",
+              "-m",
+              "pytest"
+            ]
+          ]
+        }
+      }
+    }
+  ],
+  "exclusions": [
+    {
+      "workflow": ".github/workflows/agent-core-dev.yaml",
+      "job": "build-and-push",
+      "reason": "Publishes the development Docker image after a push to develop and notifies the image publish endpoint; runs on the merged branch with registry credentials, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/agent-core-prd.yaml",
+      "job": "build-and-push",
+      "reason": "Publishes the production Docker image after a push to main and notifies the image publish endpoint; a release step with registry credentials, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/auto-release-pr.yaml",
+      "job": "create-release-pr",
+      "reason": "Repository housekeeping after a push to develop: opens the develop to main release pull request through the GitHub API; measures nothing about the change, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/a38-guard.yml",
+      "job": "guard",
+      "reason": "The report guard itself: trusted pinned workflow that audits A38 reports; not a pull-request test."
+    }
+  ]
+}
