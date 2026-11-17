@@ -54,7 +54,7 @@ The Playwright tests under `e2e/` render every page of the local dashboard (`age
 
 **These tests are a local development and code-review aid. They intentionally do NOT run in CI** and are not part of the A38 report.
 
-Their purpose is review quality: when a change affects a dashboard page, the author regenerates the affected screenshots locally and commits them together with the change. The reviewer then sees the visual difference (before → after) directly in the pull-request diff, instead of having to infer it from the HTML and JavaScript. Running them in CI would add no value for that purpose and would be flaky — the baselines are platform- and font-dependent — needlessly blocking pull requests.
+Their purpose is review quality: when a change affects a dashboard page, the affected screenshots are regenerated locally and committed together with the change. The reviewer then sees the visual difference (before → after) directly in the pull-request diff, instead of having to infer it from the HTML and JavaScript. Running them in CI would add no value for that purpose and would be flaky — the baselines are platform- and font-dependent — needlessly blocking pull requests.
 
 The pages come from the real dashboard server. `e2e/dashboard_server.py` starts a throwaway PostgreSQL cluster as the tests do, seeds a fresh `AGENT_HOME` with the placeholder fixtures under `tests/` (no personal data, no secrets, no network), freezes the server clock and serves the dashboard; the spec sets the browser clock to the same instant, so elapsed times and countdowns never change between runs. `playwright.config.ts` starts one seeded and one empty dashboard on ports 17845 and 17846.
 
@@ -78,8 +78,9 @@ The pages come from the real dashboard server. `e2e/dashboard_server.py` starts 
 
 ### Rules
 
+- Only whoever may run tests for the pull request regenerates baselines: a human, or the static script that owns test execution. Model lanes never run Playwright, as they never run tests.
 - Regenerate only the screenshots your change actually affects — never update all baselines at once.
-- A pull request that changes a dashboard page (`src/agent_cli/static/*.html`, or the data `/api/state` and `/api/orders/` return to it) commits the new or updated baselines in the same change. A pull request that adds a page or a visual variant adds its test and baseline; a page without a baseline gets one.
+- A pull request that changes a dashboard page (`src/agent_cli/static/*.html`, or the data `/api/state` and `/api/orders/` return to it) commits the new or updated baselines in the same change. A pull request that adds a page or a visual variant adds its test and baseline; a page without a baseline gets one. When no human or script of the pull request's workflow can run Playwright, as for a coordinator order today, the pull request says so in its description and a human regenerates the baselines before merge.
 - Seed data lives in `e2e/dashboard_server.py` and reuses the fixtures under `tests/`; it stays free of personal data and secrets (accounts `@example.com`, placeholder drivers and logins).
 - Baselines are platform-specific (`*-chromium-darwin.png`); generate them on the same platform as the existing ones (macOS).
 - These tests are not a regression gate and do not fail the build.
