@@ -1067,6 +1067,15 @@ def _cmd_doctor(args: list[str]) -> None:
             ai.require_lane_execution()
         except AccountError as exc:
             problems.append(str(exc))
+    if catalog is not None:
+        # A catalogue id is used as written: it becomes the job type and the
+        # `runner.json` key, so only a lower-case id without surrounding spaces
+        # resolves its own settings. `ingest` ignores any other id, which makes
+        # the mismatch silent; report it here instead.
+        for entry in ingest.catalog_skills(catalog) or []:
+            raw_id = entry.get("id")
+            if isinstance(raw_id, str) and raw_id != raw_id.strip().lower():
+                problems.append(f"skill id {raw_id} is not lower-case")
     if policy is not None:
         # A policy allows queue types; the catalogue names the skill each one
         # maps to, and the skill id is what the worker is keyed by. Only a

@@ -3159,6 +3159,43 @@ def test_doctor_reports_a_healthy_installation(
     assert capsys.readouterr().out.strip() == "doctor ok"
 
 
+def test_doctor_reports_a_non_canonical_catalogue_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The id is used as written, so an upper-case one resolves no worker
+    # settings; ingest ignores it. Doctor reports it rather than calling the
+    # installation healthy.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.skills_catalog.write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {"id": "PR-Review", "queue_type": "pr-ready"},
+                    {"id": "pr-review", "queue_type": "pr-ready"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: _completed(0, "example-bot\n"),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "doctor problem: skill id PR-Review is not lower-case" in out
+    assert "doctor 1 problems" in out
+
+
 def test_doctor_reports_every_problem_and_exits_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

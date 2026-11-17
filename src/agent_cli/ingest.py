@@ -130,11 +130,24 @@ def catalog_skills(catalog: Any) -> list[dict[str, Any]] | None:
 
 
 def _skill_of(entry: Any) -> Skill | None:
-    """One catalogue entry as a `Skill`, or None when it names nothing."""
+    """One catalogue entry as a `Skill`, or None when it names nothing.
+
+    Only a canonical id names a skill: a non-empty string equal to
+    `id.strip().lower()`. The id is used as written — it becomes the row's
+    `job_type` and the key `finalize.done_kind` and `_budget` look up in
+    `runner.json`, and `health.unresolved_skills` checks the catalogue id as
+    written — so an id in any other spelling would never find its own entry.
+    An upper-case or padded id therefore names no skill, exactly as a missing
+    id does: `resolve_skill`, `default_skill` and `allowed_skills` ignore it.
+    """
     if not isinstance(entry, dict):
         return None
     raw_id = entry.get("id")
-    if not isinstance(raw_id, str) or not raw_id.strip():
+    if (
+        not isinstance(raw_id, str)
+        or not raw_id
+        or raw_id != raw_id.strip().lower()
+    ):
         return None
     raw_queue = entry.get("queue_type")
     queue_type = (
@@ -570,9 +583,9 @@ def scan_mentions(
         if skill is None:
             skipped += 1
             continue
-        # `done_kind` looks the job type up case-sensitively, so the row must
-        # carry the catalogue id the same way `job_id` already compares it.
-        job_type = skill.id.strip().lower()
+        # `_skill_of` admits only a canonical id, so `skill.id` is already the
+        # spelling `done_kind` and the `runner.json` keys use.
+        job_type = skill.id
 
         private = bool(_repo_is_private(repo, runner))
         verdict: Verdict = admits(
