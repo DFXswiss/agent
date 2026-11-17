@@ -611,10 +611,10 @@ def draft_pr_body(
     """Draft text. The reused and added list and its headings appear only when the script posts a list.
 
     An order's DE block is German. With a change summary that is not the
-    English title, that sentence follows the order label. Without one, or when
-    the stored sentence is only that title, the block names the order and
-    leaves the English title in the EN block. A refresh replaces a stale
-    English DE line.
+    English title, the full stored sentence follows the order label. Without
+    one, or when the stored sentence is only that title, the block names the
+    order and leaves the English title in the EN block. A refresh replaces a
+    published description that still has that English title.
     """
     details = ""
     if reused or added:
@@ -748,10 +748,12 @@ def refresh_draft_body(
 ) -> list[str]:
     """Replace a draft description from the stored German sentence. The script calls GitHub.
 
-    An order whose stored sentence is German text, and not the English title,
-    replaces an already published description with that sentence even when the
-    reused and added list is absent. The published description is read back;
-    its DE line has to be that sentence.
+    An order uses the full stored German sentence, not the English title.
+    That sentence replaces an already published description even when the
+    reused and added list is absent. A missing sentence, or a sentence that
+    is only the English title, still replaces a published description whose
+    DE line is that title. The published description is read back; its DE
+    line has to be the line just written.
     """
     c = coord(task)
     reused = task.get("reused_lines")
@@ -764,12 +766,11 @@ def refresh_draft_body(
     )
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     summary_de = _stored_de_summary(task, has_lists=has_lists)
-    if summary_de is None and not has_lists:
-        return []
-    if not has_lists and source.get("kind") != ORDER_KIND:
+    order = source.get("kind") == ORDER_KIND
+    if not has_lists and not order:
         return []
     if not isinstance(source.get("repo"), str) or (
-        source.get("number") is None and source.get("kind") != ORDER_KIND
+        source.get("number") is None and not order
     ):
         return []
     number = as_int(c.get("pr_number") or task.get("ref"))
@@ -784,11 +785,14 @@ def refresh_draft_body(
         [str(line) for line in added] if has_lists else None,
         summary_de,
     )
-    if not has_lists and not _order_de_has_sentence(source, body):
-        return []
     posted = f"posted reused and added list on {target}#{number}"
     replaced = f"replaced draft description on {target}#{number}"
     live = _published_pr_body(store, worker, runner, target, number)
+    if not has_lists and not _order_de_has_sentence(source, body):
+        live_de = _description_de_line(live) if isinstance(live, str) else None
+        wanted_de = _description_de_line(body)
+        if live_de is None or live_de == wanted_de:
+            return []
     if _published_description_matches(live, body):
         return [posted] if has_lists else []
     # A done pr.body row with this body is not run again. A live description

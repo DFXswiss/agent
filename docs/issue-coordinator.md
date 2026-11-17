@@ -525,9 +525,12 @@ A record of a check lane is closed the same way, but closing it does not retry t
    pushes it, and opens the draft through `pr.open`. Crash after commit/push before draft reconciles
    without starting another implementer. `task.ref` holds the **PR** number
    only (never the issue number). An order draft's `DE:` line is the stored
-   full German change-summary sentence, and pushing an existing draft replaces
-   the published description with that sentence and then reads the published
-   description to require that `DE:` line.
+   full German change-summary sentence. Pushing an existing draft replaces
+   the published description with that sentence, including a description
+   whose `DE:` line is still the English title, and then reads the published
+   description to require that `DE:` line. A missing sentence, or a sentence
+   that is only the English title, does not leave that title in the published
+   description: the read `DE:` line names the order and does not repeat it.
 6. **Tests** run only via script `check_argv` on the exact clean signed head
    (cwd = worktree). Failure routes bounded output to the implementer. Stale
    passes from another head are not reused. A check command that times out with

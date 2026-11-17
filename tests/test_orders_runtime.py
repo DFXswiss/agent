@@ -509,6 +509,35 @@ def test_refresh_replaces_a_published_order_description_without_a_list(
     assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
 
 
+def test_refresh_replaces_a_published_english_title_without_a_german_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    fake.pr["body"] = (
+        "EN:\nDraft for order 11111111: Add a widget.\n\n"
+        "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
+    )
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "replaced draft description on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == "Entwurf für Auftrag 11111111."
+    assert "Add a widget" not in published.split("DE:\n", 1)[1]
+    fake.pr["body"] = _ENGLISH_TITLE_IN_DE
+    task["change_summary_de"] = "Add a widget."
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "replaced draft description on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == "Entwurf für Auftrag 11111111."
+    assert "Wait for the GitHub" not in published.split("DE:\n", 1)[1]
+    assert store.row("task", OID)["change_summary_de"] == "Add a widget."
+
+
 class _StalePrBody(FakeGh):
     """A pull-request edit that reports success and leaves the published body."""
 
