@@ -610,8 +610,12 @@ other column is a state rule.
   the task to `done` in the same event". The condition of the rule `merged` held when the task
   reached `merged`, and `links` cannot change in `merged` (section 6.6), so it still holds. An
   event that changes `completion` from `verified` to `merged` on a task in `merged` with `links`
-  and does not set `done` is refused with `transition_invalid`. A task in `merged` without
-  `links` keeps its status; its assignee then sets `done` by row 12.
+  and changes `status` neither to `done` (row 13) nor to `in_progress` (row 14) is refused with
+  `transition_invalid`. An event that changes `completion` from `verified` to `merged` and sets
+  the task back to `in_progress` matches row 14, which puts no condition on `completion`; it is
+  accepted when row 14 holds, and the task is then in `in_progress` under the rule `merged`. A
+  task in `merged` without `links` keeps its status when the event does not change `status`; its
+  assignee then sets `done` by row 12.
 - An event that changes `completion` of a task in `done` without changing `status` is valid and
   leaves the status `done`.
 - Row 10 is DESIGN.md §24.11 for a task without a linked pull request, and for a task that was
@@ -626,6 +630,11 @@ other column is a state rule.
 - An event that changes `verification`, whether it sets a value or removes it (`new` is `-`),
   without matching row 11 is refused with `transition_invalid`. Row 11 sets a value; no row
   removes one, so a value of `verification` is never removed.
+- Row 11 needs a change of `verification`, and `old` and `new` of a change differ (section 4.2).
+  When row 14 set a task back after an earlier confirmation, the next confirmation by row 11
+  therefore writes a `verification` text that differs, byte for byte, from the current one; an
+  event that repeats the current text is refused with `event_invalid` at check 3 of section 6.7.
+  The earlier text stays readable in the events of the task.
 
 ### 6.5 Actor rules
 
@@ -909,7 +918,11 @@ A task of kind `security` has the same members; there `repository`, `short_name`
 
 - `comments` is the number of comments of the task.
 - `created` names the event that created the object, `changed` the last event of the object;
-  `key` is its `actor_key_id` and `handle` the `handle` of that key's entry.
+  `key` is its `actor_key_id` and `handle` the `handle` of that key's entry in the keys file that
+  the answering process loaded at start (section 11.6), not the `handle` the entry had when the
+  event was written. Only `key` is fixed by the event: after a keys-file change of an entry's
+  `handle` (section 6.1 allows it), `handle` shows the new value for every past event of that
+  key, and two processes with different keys files can show different handles for one event.
 
 A comment has exactly the members `type`, `id`, `task`, `body` and `created`, in this order,
 and no `changed`, because a comment is never changed:
@@ -1038,8 +1051,11 @@ its own keys file (section 11.6) or from the comparison with the head of its own
 ### 7.10 `GET /api/key/record/checkpoints`
 
 Lists the checkpoints (section 12.2) of every hub key id, newest first: by position descending,
-and at the same position by hub key id descending in byte order. The pair of position and hub
-key id is unique (section 11.3), so the order is total.
+and at the same position by hub key id descending in byte order. Every comparison of hub key ids
+in this document is in byte order; a statement that sorts or compares them in the database uses
+`COLLATE "C"` (for example `ORDER BY position DESC, hub_key_id COLLATE "C" DESC`), never the
+collation of the database. The pair of position and hub key id is unique (section 11.3), so the
+order is total.
 
 | Parameter | Form | Default |
 |---|---|---|
@@ -1221,10 +1237,22 @@ hub's code). The no-delete rule is enforced by the database twice: the writer ro
 refuses `UPDATE`, `DELETE` and `TRUNCATE` on both tables for every role. The triggers are enabled
 `ALWAYS`, so they fire also in a session whose `session_replication_role` is `replica`, for
 example after a superuser ran `ALTER ROLE <writer> SET session_replication_role = replica`. The
-owner and a database superuser can still disable that trigger or drop a table; neither is
-available to the hub. That
-is why the record is verified at every start and every 10 minutes, checkpoints are signed, and
-backups are kept off-site (section 12).
+owner and a database superuser can still disable that trigger or drop a table. The hub holds the
+connection of neither, and the writer role can do neither itself: both need ownership of the
+table or superuser rights, and the writer owns no table and holds no right beyond the table
+above. It could have them done by running code with the rights of the owner role or of a
+superuser, through a function that runs with the rights of its owner (`SECURITY DEFINER`); and
+its reads and inserts could be changed or cut short by row-level security, by a rule or by a
+further trigger on a record table; in
+PostgreSQL 15 and later the owner of the database, here the owner role, also owns the schema
+`public` (through `pg_database_owner`) and can create such a function there. Step `writer` of
+the start (section 11.4) therefore refuses a writer that can execute any `SECURITY DEFINER`
+function outside the schemas `pg_catalog` and `information_schema`, and refuses row-level
+security, a policy, a rule or a trigger other than the four of section 11.3 on the three record
+tables. That check sees the catalog only at start and in `restore`: such an object that the
+owner role or a superuser creates while the hub runs is found at the next start, and its effect
+on stored rows by verification. That is why the record is verified at every start and every 10
+minutes, checkpoints are signed, and backups are kept off-site (section 12).
 
 ### 11.3 Schema
 
@@ -1360,12 +1388,17 @@ The arguments after a known command are checked by that command: by step `config
 and by `refused config` for `export`, `verify` and `restore` (section 12.3).
 
 **The start of the hub.** The hub does not start, and logs the line `record start failed <step>`
-without any value from the configuration, when a step of this sequence fails. For every step
-other than `verify` this is the only line of the record part about the failure; step `verify`
-logs one line before it (step 4). The hub opens its database connection in step `schema`, with
-the connect timeout of section 15; a failure of the database, also a failed connection and a
-connection that the timeout ends, fails the step in which it occurs (`schema`, `writer` or
-`verify`), is logged only by this line, and is never logged as a failed verification.
+without any value from the configuration, when a step of this sequence fails. `<step>` is one of
+`config`, `schema`, `writer`, `verify` and `verify_read`. `record start failed verify` means that
+the stored record failed verification; it is always directly preceded by the line
+`record verify failed <position> <failure>` (step 4), and it is the only start line with a line
+before it. For every other value, `record start failed <step>` is the only line of the record
+part about the failure. The hub opens its database connection in step `schema`, with the connect
+timeout of section 15; a failure of the database, also a failed connection and a connection that
+the timeout ends, fails the step in which it occurs and is logged only by this line: in step
+`schema` as `schema`, in step `writer` as `writer`, and in step `verify` (for example a
+connection lost while the snapshot is read) as `verify_read`, never as `verify` and never as a
+failed verification.
 
 1. `config`: `AGENT_CORE_RECORD_DATABASE` is present and has the form of section 15, including
    its name rules,
@@ -1375,8 +1408,10 @@ connection that the timeout ends, fails the step in which it occurs (`schema`, `
    exactly the versions this code expects (in this version: exactly one row, version 1). A missing
    schema, a missing version or an unknown version fails this step. The hub never creates or
    changes the schema.
-3. `writer`: the role has exactly the writer rights of section 11.2 and nothing else. The hub
-   reads the catalog of the server and fails this step unless all of these hold:
+3. `writer`: the role has exactly the writer rights of section 11.2 and nothing else, and no
+   function, row-level security, policy, rule or further trigger of section 11.2 can widen them
+   or cut its reads short. The hub reads the catalog of the server and fails this step unless all
+   of these hold:
    - `current_user` is the role of the connection string (the hub passes that name to the
      comparison as a parameter of the statement, and composes every role or database name that
      enters a statement text as an identifier with the driver, section 15), and in `pg_roles` its `rolsuper`,
@@ -1400,7 +1435,16 @@ connection that the timeout ends, fails the step in which it occurs (`schema`, `
      (`pg_attribute.attacl`).
    - The four triggers of section 11.3 exist and are enabled `ALWAYS` (`tgenabled` is `A`). A
      trigger enabled only for the origin role (`O`), only for replicas (`R`) or disabled (`D`)
-     fails this step.
+     fails this step. `pg_trigger` holds no other row for the three record tables, internal
+     triggers included.
+   - No function or procedure of `pg_proc` of this database outside the schemas `pg_catalog` and
+     `information_schema` has `prosecdef` true while the role can execute it
+     (`has_function_privilege` with `EXECUTE`, which counts a right held directly, through
+     `PUBLIC` or through a role), whoever owns it and whichever schema holds it. An extension
+     that installs such a function into another schema therefore fails this step too.
+   - For each of the three record tables, `pg_class.relrowsecurity` and
+     `pg_class.relforcerowsecurity` are false, `pg_policy` has no row, and `pg_rewrite` has no
+     row.
 
    The check of `pg_auth_members` does not rely on how `has_table_privilege` reports the rights
    of a predefined role: a membership fails this step whatever role it names.
@@ -1409,7 +1453,9 @@ connection that the timeout ends, fails the step in which it occurs (`schema`, `
    section 12.1 has no effect. On success it logs `record verified <position> <record hash>`
    (`0 -` for an empty record), and this run is the first run of the periodic verification of
    section 12.1. When the verification fails, it logs `record verify failed <position>
-   <failure>` and then `record start failed verify`.
+   <failure>` and then `record start failed verify`. When a database operation of this step
+   fails, it logs only `record start failed verify_read`; that says nothing about the soundness
+   of the record.
 
 ### 11.5 The append transaction
 
@@ -1481,6 +1527,17 @@ section 11.5: an append and a checkpoint attempt take the advisory lock first. T
 state therefore never run at once in one process, and no event is folded twice: the incremental
 fold reads only positions above the head of the state, and the apply of step 5 applies an event
 only at the head plus 1.
+
+**Connections.** A holder of the state lock never waits for a database connection either. Every
+request or attempt that runs an incremental fold takes the one database connection it reads
+through before it takes the state lock, and keeps it until it has released the state lock: a
+`GET` endpoint and the release query take it from the pool before the state lock, and an append
+and a checkpoint attempt already hold it for their transaction. The build at start reads through
+the connection of step `schema`. The apply of step 5 of section 11.5 and the read of the head by
+a full verification use no database connection. A request that finds the pool exhausted
+therefore waits without holding the state lock, and an append that holds the advisory lock and
+waits for the state lock waits only for a holder that needs neither the advisory lock nor
+another connection.
 
 **Clock.** The state holds no time of the process's clock other than the `received_at` values of
 the events it folded, so a clock that is set back changes nothing in it. An append reads the
@@ -1567,7 +1624,8 @@ position of the snapshot plus 1). The verification at start (section 11.4), offl
 order, each against the rows of the table from `position_gap` to `event_refused` in the order of
 the table, then, where it applies, the end of the snapshot against the head of the state in
 memory (`position_gap`, above), and then the checkpoints in the order of the file or of the
-database (hub key id, then position). The first failure ends the run. The **position of a failure**, printed by `verify` and
+database: by hub key id in byte order, then by position (in the database
+`ORDER BY hub_key_id COLLATE "C", position`). The first failure ends the run. The **position of a failure**, printed by `verify` and
 `restore` and answered by section 7.9, is:
 
 - for `file_invalid`, as section 12.3 defines it
@@ -1593,9 +1651,10 @@ the one snapshot below: first at start (step `verify` of section 11.4), then aga
 after the previous run started, or when the previous run ends if that is later. The 10 minutes
 are measured on a monotonic clock. A periodic run reads beside the requests; the process keeps
 answering from its state while it runs. It does not count for the limit of section 7.9. A
-database failure in a periodic run, also a failed connection, is not a broken record: the process
-logs `record database error <step> <SQLSTATE or ->`, with `<step>` `connect` or `read`, and runs
-again at the next interval.
+database failure in a periodic run after the run at start, also a failed connection, is not a
+broken record: the process logs `record database error <step> <SQLSTATE or ->`, with `<step>`
+`connect` or `read`, and runs again at the next interval. A database failure in the run at start
+stops the start with `record start failed verify_read` (section 11.4).
 
 When the stored rows themselves break a row of the table above, so that every process finds the
 failure in them, and one process finds it, every other process on the same database finds it at
@@ -1762,7 +1821,7 @@ step 4 commits:
 | `failed <position> <failure>` | 1 | step 1 (c): the file fails the rest of the verification; as for `verify` |
 | `refused schema_missing (run python -m agent_core.record migrate first)` | 1 | step 2: the schema `record` does not exist |
 | `refused schema_version` | 1 | step 2: the schema holds another version than this code expects |
-| `refused writer_rights` | 1 | step 2: the role does not have exactly the writer rights |
+| `refused writer_rights` | 1 | step 2: step `writer` of section 11.4 fails: the role does not have exactly the writer rights, or a function, row-level security, a policy, a rule or a further trigger of that step is present |
 | `refused not_empty` | 1 | step 3 |
 | `refused database` | 1 | a database operation failed, also the connection of step 2 when it failed or the connect timeout of section 15 ended it |
 
@@ -1774,7 +1833,9 @@ The export file is JSON Lines, UTF-8, one JSON object per line, written without 
    event line and no checkpoint line follows.
 2. One line per event in position order:
    `{"type":"event","position":1,"received_at":"…","event_hash":"…","record_hash":"…","event":"<base64url>","signature":"<base64url>"}`
-3. One line per checkpoint, ordered by hub key id and position:
+3. One line per checkpoint, ordered by hub key id in byte order, then by position
+   (`ORDER BY hub_key_id COLLATE "C", position`), so that the order does not depend on the
+   collation of the database:
    `{"type":"checkpoint","position":21,"record_hash":"…","published_at":"…","signed_by":"hub-1","signature":"<base64url>"}`
 
 Every line ends with one `\n`. `verify` and `restore` refuse a file with `failed <position>
@@ -1795,11 +1856,14 @@ file_invalid` when any of these holds:
   order of hub key id in byte order and then of position, which also refuses the same pair twice
 - the header's `position` and `record_hash` differ from the `position` and `record_hash` of the
   last event line, or are not `0` and `null` when the file has no event line
+- a checkpoint line follows the header in a file without event lines
 
 `<position>` is `0` when the fault is in the whole file (it is not valid UTF-8, is empty or does
 not end with `\n`; an empty line is a fault of a line), in the header, or in the header's
-agreement with the event lines (the last item of the list); for every other fault it is the
-number of event lines before the faulty line plus 1.
+agreement with the other lines (the last two items of the list); for every other fault it is the
+number of event lines before the faulty line plus 1. When a file has several faults, the first
+item of the list that the file breaks decides, and within that item the first faulty line of the
+file.
 
 The export is the full event list and is verifiable offline with the public keys file and the
 public teams file alone (DESIGN.md §24.8).
@@ -1872,10 +1936,10 @@ lines and no others:
 | Line | When |
 |---|---|
 | `record verified <position> <record hash or ->` | after the verification at start |
-| `record start failed <step>` | a start step of the hub in section 11.4 failed; `<step>` is one of `config`, `schema`, `writer`, `verify` |
+| `record start failed <step>` | a start step of the hub in section 11.4 failed; `<step>` is one of `config`, `schema`, `writer`, `verify` (the stored record failed verification; directly after `record verify failed`) and `verify_read` (a database operation of step `verify` failed; the record may be sound) |
 | `record checkpoint <position> <record hash>` | a checkpoint was written |
 | `record verify failed <position> <failure>` | a verification failed at start (followed by `record start failed verify`), in a periodic run, in a checkpoint attempt, or in the incremental fold of a request to `GET /api/key/release` (section 12.1) |
-| `record database error <step> <SQLSTATE or ->` | a database operation, also a connection, failed in a periodic verification (`connect` or `read`), in a checkpoint attempt (`checkpoint`), or in a request to `GET /api/key/release` (`connect` or `read`); a database failure at start is logged only by `record start failed <step>` |
+| `record database error <step> <SQLSTATE or ->` | a database operation, also a connection, failed in a periodic verification other than the run at start (`connect` or `read`), in a checkpoint attempt (`checkpoint`), or in a request to `GET /api/key/release` (`connect` or `read`); a database failure at start, also in the run of step `verify`, is logged only by `record start failed <step>` (`schema`, `writer` or `verify_read`) |
 
 A request to `GET /api/key/release` keeps the log line of KEY-PROTOCOL.md section 5 unchanged;
 when its incremental fold or a database operation fails, the record part writes in addition
@@ -1959,7 +2023,7 @@ The database and the start:
   periodic run logs `record database error connect -`, `export` prints `refused database` (exit
   1, no file left behind) and `restore` prints `refused database` (exit 1)
 - each start failure of the hub in section 11.4 logs `record start failed <step>` as its only
-  line of the record part, except step `verify`, and the hub does not start:
+  line of the record part, except a failed verification (`verify`), and the hub does not start:
   `AGENT_CORE_RECORD_DATABASE` missing, empty or malformed (`config`);
   `AGENT_CORE_RECORD_OWNER_DATABASE` set in the hub's environment, also empty (`config`); a
   reported libpq version below 16 (`config`); an unreachable database (`schema`); a database on
@@ -1979,9 +2043,18 @@ The database and the start:
   `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` and `TRIGGER` on each of the three
   record tables, granted to `PUBLIC` after `migrate`, and a right on one column of
   `record.event` granted to `PUBLIC`; each trigger disabled (`D`), enabled for the origin role
-  only (`O`) and enabled for replicas only (`R`) (`writer`); and a stored record that fails
+  only (`O`) and enabled for replicas only (`R`); a fifth trigger on `record.event`; a
+  `SECURITY DEFINER` function in the schema `public` owned by the owner role and executable
+  through `PUBLIC`, and one in the schema `record` executable only by the writer (each
+  refused), while a `SECURITY DEFINER` function whose `EXECUTE` is revoked from `PUBLIC` and not
+  granted to the writer is accepted; row-level security enabled on each of the three record
+  tables, row-level security forced on each, a policy on `record.event` while row-level
+  security is disabled, and a rule on `record.event` (`writer`); a stored record that fails
   verification (`verify`), which logs `record verify failed <position> <failure>` and then
-  `record start failed verify`, exactly these two lines of the record part
+  `record start failed verify`, exactly these two lines of the record part; and a sound stored
+  record whose read in step `verify` fails because a test hook ends the connection during the
+  read (`verify_read`), which logs only `record start failed verify_read` and no
+  `record verify failed` line
 - an append transaction, a checkpoint attempt, `restore` and `migrate` run at `READ COMMITTED`
   also when `default_transaction_isolation` is `repeatable read` for their role
 - the hub never connects with the owner role: a start, every endpoint and a checkpoint against a
@@ -2069,6 +2142,11 @@ The chain:
 - two parallel appends of two keys get consecutive positions and both are accepted, also with
   `default_transaction_isolation` set to `repeatable read` for the writer role
 - two hub instances on one database: each folds the other's events before it answers
+- connections (section 11.6), with a pool of three connections in one hub instance, through
+  test hooks: a `GET` holds the state lock in its fold, one append holds the advisory lock and
+  waits for the state lock, a second append waits for the advisory lock, and a second `GET`
+  finds the pool exhausted and waits without holding the state lock; the first `GET` answers,
+  both appends are accepted, and the second `GET` is answered after them
 - the state lock (section 11.6), through test hooks in one hub instance: a `GET` whose
   incremental fold runs between the commit and step 5 of an append folds the new event, and step
   5 then changes nothing; two appends of one instance whose steps 5 and folds interleave; in each
@@ -2098,8 +2176,8 @@ value and the verification failure it maps to (section 12.1, "Reducer errors in 
 written `<error value>` / `<failure>`, for example `value_invalid` / `event_invalid` or
 `transition_invalid` / `event_refused`. A case of the endpoint names the value of its answer.
 
-- each row of section 6.4 accepted, and for each status every other target refused with
-  `transition_invalid`; each row's "Who" refused with `change_not_allowed` for every other actor
+- each row of section 6.4 accepted, and for each status every target that no row of section 6.4
+  reaches from that status by its state conditions refused with `transition_invalid`; each row's "Who" refused with `change_not_allowed` for every other actor
   that reaches check 18 of section 6.7, except where an earlier check refuses first: a create
   by a watcher (rows 1 and 2) gets `object_not_found` at check 12 (a), and a key without the
   scope of the endpoint gets `scope_missing` at check 9 of KEY-PROTOCOL.md section 5
@@ -2110,8 +2188,10 @@ written `<error value>` / `<failure>`, for example `value_invalid` / `event_inva
   the task (`change_not_allowed`) and makes row 10 or row 12 (`change_not_allowed`)
 - the defaults of `status` and `completion` per kind; a create with `status` `merged`, and one
   with `status` `done` (both `transition_invalid`)
-- row 10 from `open` (`transition_invalid`), and the same task set by its assignee to
-  `in_progress` and then to `done` (both accepted)
+- row 10 from `open` on a task without `links` (`transition_invalid`), and the same task set by
+  its assignee to `in_progress` and then to `done` (both accepted); the same event from `open`
+  on a task with `links` under `completion` `merged`, which row 8 matches by its state
+  conditions, gets `change_not_allowed` at check 18
 - a security issue started by an event that sets the actor as assignee (accepted), that sets
   another handle (refused), and taken over by another handle (refused); handed over by its
   assignee (accepted)
@@ -2139,9 +2219,16 @@ written `<error value>` / `<failure>`, for example `value_invalid` / `event_inva
 - check 12 (d) of section 6.7: a comment create whose `task` value is not a UUID gets
   `object_not_found`, not `value_invalid`; a create whose `object_id` is that of an existing
   object the actor does not see gets `object_not_found`
-- row 13 with `done` in the same event (accepted) and without it (refused); row 12 on a task
-  without links; a rule change on a `done` task keeps `done`
-- row 14 sets `completed_links`; row 10 with links equal to `completed_links` (accepted) and
+- row 13 with `done` in the same event (accepted) and without a change of `status` (refused with
+  `transition_invalid`); row 12 on a task without links; a rule change on a `done` task keeps
+  `done`
+- row 14 sets `completed_links`; row 14 on a task in `merged` with `links` and `completion`
+  `verified`, in an event that also changes `completion` from `verified` to `merged` (accepted:
+  the task is in `in_progress` under `completion` `merged`), through the endpoint and in the
+  fold directly; in the fold directly, because no staff key signs in this step, a confirmation
+  by row 11 after row 14 and row 9 or 10 brought the task back to `merged`, with the earlier
+  `verification` text (refused as `event_invalid`, because `old` equals `new`) and with a new
+  text (accepted); row 10 with links equal to `completed_links` (accepted) and
   after a change of links (refused); rows 11, 12 and 13 leave `completed_links` unchanged, so a
   task that never went through row 14 answers `"completed_links":[]` after each of them
 - `links_frozen` in `merged` and `done`; `field_required` for each required field, for
@@ -2177,6 +2264,9 @@ Visibility:
 - `GET /api/key/record/events?object=` with the id of a task answers the events of the task and
   none of its comments
 - a `GET` endpoint with a request body answers as without it
+- after a restart with a keys file that changes the `handle` of an entry (and its team roster),
+  `created.handle` and `changed.handle` of the objects that key wrote before show the new handle,
+  and `key` is unchanged (section 7.5)
 - a `service` key that sees a task through one link reads all its links, also those outside its
   `subjects`
 - the `prev_hash` exception of section 3: a key without `record:security` reads a visible event of
@@ -2201,6 +2291,9 @@ The watcher:
   kind `work` (`field_not_allowed`); `kind` (`field_immutable`)
 - a link outside its `subjects` (`subject_not_allowed`, not `change_not_allowed`); a task that
   does not exist and the id of an existing comment (both `object_not_found`)
+- a watcher without `record:security`, whose `subjects` hold the task's `repository` and links,
+  writes row 9 on a task of kind `security` (`object_not_found` at check 12 (d), the same status
+  and body as for a task that does not exist)
 - an event without a change of `status` (`change_not_allowed`)
 - a writer key on `/watch` and a watcher key on `/events` get `scope_missing`
 - two watcher keys of one handle on one `device` for two teams: the keys file loads with
@@ -2337,14 +2430,21 @@ Integrity and backup:
   checkpoint lines out of order and the same checkpoint twice, a position written as `1.0`,
   `1e0`, `-0`, `01` or a string in an event line and in the header (`0` for the header), a
   header whose `position` or
-  `record_hash` differs from the last event line (`0`), and a header that is not `0` and `null`
-  without event lines (`0`)
+  `record_hash` differs from the last event line (`0`), a header that is not `0` and `null`
+  without event lines (`0`), and a checkpoint line after a header `0` and `null` in a file
+  without event lines (`0`), also when its hub key id is not given with `--hub-key`
+- checkpoints of two hub key ids whose order in the collation of the test database differs from
+  byte order (`hub-2` and `hub1`, in a test database created with the collation `en_US.utf8`):
+  `export` writes the checkpoint lines in byte order, offline `verify` with both `--hub-key`
+  values prints `verified`, `restore` restores the file, and `GET /api/key/record/checkpoints`
+  pages them in the order of section 7.10
 - `restore` after `migrate` into an empty database, and a start against it of a hub with its own
   hub key id and seed (section 12.4); then each refusal of
   section 12.3, each asserting the printed line, exit 1, and that `record.event` and
   `record.checkpoint` stay empty and no schema is created: a database on which `migrate` never
   ran (the `schema_missing` line); a schema with an unknown version (`refused schema_version`); a
-  writer with a right beyond section 11.2 (`refused writer_rights`); a non-empty database
+  writer with a right beyond section 11.2, and a `SECURITY DEFINER` function executable through
+  `PUBLIC` (each `refused writer_rights`); a non-empty database
   (`refused not_empty`, and its rows stay unchanged); an unreachable database (`refused
   database`); a changed file (`failed <position> <failure>`); a checkpoint whose hub key id is not
   given (`refused hub_key_missing`), also when the file fails the rest of the verification, which
@@ -2448,7 +2548,7 @@ database; it has no SQLSTATE, so `<SQLSTATE or ->` is `-`:
 | Program and moment | Line | Exit or answer |
 |---|---|---|
 | the hub, at start (step `schema` of section 11.4) | `record start failed schema` | the hub does not start |
-| the hub, in a periodic verification (section 12.1) | `record database error connect -` | the process keeps running and runs again at the next interval |
+| the hub, in a periodic verification after the run at start (section 12.1) | `record database error connect -` | the process keeps running and runs again at the next interval |
 | the hub, in a checkpoint attempt (section 12.2) | `record database error checkpoint -` | no checkpoint is written |
 | the hub, in a request under `/api/key/record/` (section 13) | the request line with `database_error connect -` | signed `500` `{"error":"internal"}` |
 | the hub, in a request to `GET /api/key/release` (section 13) | `record database error connect -`, beside its line of KEY-PROTOCOL.md section 5 | signed `500` `{"error":"internal"}` |
@@ -2549,7 +2649,9 @@ Each environment then goes through these steps in this order:
 3. Change 3 is deployed. An operator reads `unchanged 1` of the migration service and the hub's
    start line `record verified 0 -`. A line `record start failed config`, `schema` or `writer`
    of the hub means change 2 is incomplete; `record start failed verify` means the stored
-   record failed verification, and the line before it names the failure.
+   record failed verification, and the line `record verify failed` directly before it names the
+   failure; `record start failed verify_read` means a database operation failed while the start
+   read the record, and says nothing about the record itself (section 11.4).
 4. The deployment enables the daily export and its three copies (section 12.4) and runs the first
    restore test.
 5. Keys file pull requests give writers `record:read` and `record:write`, and a watcher its key
@@ -2600,7 +2702,7 @@ confirms or changes each one.
     the objects of its own team; a `service` key sees only tasks touching its `subjects` (§3).
     A key that sees a task sees all of it: a `service` key that sees a task through one link
     also reads its links into repositories outside its `subjects` (§3). The three exceptions are
-    decisions 40, 41 and 59, with decision 73.
+    decisions 40, 41 and 59, with decisions 46, 72, 73 and 86.
 13. New scope `record:watch` for the watcher, because a `service` key cannot hold `record:write`;
     watchers write through their own endpoint `POST /api/key/record/watch` (§3, §7.3, §8).
 14. `record:write`, `record:watch` and `record:security` require `record:read` in the keys file
@@ -2641,7 +2743,9 @@ confirms or changes each one.
     record endpoints and the release query until restart; the state belongs to one process, and
     the rest of the hub in that process (session store, pairing, sync, whoami) keeps working. A
     failed verification at start stops the start and logs `record verify failed <position>
-    <failure>` and then `record start failed verify` (§7.9, §9, §11.4, §12.1, §13).
+    <failure>` and then `record start failed verify`; a database failure while the start reads
+    the record stops the start with the single line `record start failed verify_read` (decision
+    93) (§7.9, §9, §11.4, §12.1, §13).
 27. New endpoints refuse any query parameter they do not define, instead of ignoring the query
     (§7.1).
 28. Page sizes: events 1 to 100 (default 100); tasks, comments and checkpoints 1 to 200 (default
@@ -2655,8 +2759,8 @@ confirms or changes each one.
 30. PostgreSQL 16 or later, `psycopg` 3 with libpq 16 or later; passwords are 64 lowercase hex
     characters; `sslmode` is required and one of `disable`, `require`, `verify-full`; `disable`
     only for a loopback address (`127.0.0.0/8` or `[::1]`) or exactly the name `localhost`,
-    otherwise refused by the configuration check; a host name without a dot needs `require` or
-    `verify-full`, so the compose file's database serves TLS. Of the two alternatives of the
+    otherwise refused by the configuration check; any other host name, also one without a dot,
+    needs `require` or `verify-full`, so the compose file's database serves TLS. Of the two alternatives of the
     reviews (rely on the deployment for dotless names, or refuse them), the stricter is taken.
     `verify-full` checks against the system trust store (`sslrootcert=system`); a private
     certificate authority is not supported in this step (§11.1, §15).
@@ -2681,7 +2785,10 @@ confirms or changes each one.
     membership and no right, and the migration grants its rights and nothing else. Membership is
     checked in `pg_auth_members`, not through `has_table_privilege`; rights of `PUBLIC` are read
     from the access lists with `aclexplode` and `pg_attribute.attacl`, because a grant to
-    `PUBLIC` leaves no row in `pg_shdepend` (§11.2, §11.4, §15, §16).
+    `PUBLIC` leaves no row in `pg_shdepend`. The start also refuses a writer that can execute a
+    `SECURITY DEFINER` function outside `pg_catalog` and `information_schema`, and row-level
+    security, a policy, a rule or a fifth trigger on the record tables (decision 94) (§11.2,
+    §11.4, §15, §16).
 36. The database is owned by the owner role, so that it can create the schema; the migration
     revokes every right of `PUBLIC` on the database, on the schema `record`, on its three tables
     and on `record.refuse_change()`, and grants the writer `SELECT` on `record.schema_version`
@@ -2766,7 +2873,10 @@ confirms or changes each one.
     nothing when the fold or that check fails or while the process is in `record_unverified`
     (§11.6, §12.2).
 55. `verification` changes only by row 11, which sets a value; an event that sets or removes it
-    otherwise is refused with `transition_invalid`, so a value is never removed (§5.2, §6.4).
+    otherwise is refused with `transition_invalid`, so a value is never removed. The limit is
+    accepted that a confirmation by row 11 after row 14 set the task back must write a text that
+    differs from the current one, because `old` and `new` of a change differ; the earlier text
+    stays in the events (§4.2, §5.2, §6.4).
 56. Offline `verify` takes the teams file (`--teams`) and `restore` reads `AGENT_CORE_TEAMS`,
     because the keys file loader needs the roster; the export is verifiable offline with the
     public keys file and the public teams file (§12.3).
@@ -2849,7 +2959,9 @@ confirms or changes each one.
     every incremental fold, and the apply after the commit of an append) runs under it; a reading
     endpoint holds it from its fold until it has read its answer; the apply after a commit applies
     the event only when its position is the head of the state plus 1. A holder of the state lock
-    never waits for the advisory lock. The append transaction, the checkpoint attempt, `restore`
+    never waits for the advisory lock, and never waits for a database connection: whoever folds
+    takes its connection before the state lock (decision 97). The append transaction, the
+    checkpoint attempt, `restore`
     and `migrate` run explicitly at `READ COMMITTED`, so that a server default of `REPEATABLE
     READ` cannot hide an append committed while they waited for their lock (§11.4, §11.5, §11.6,
     §12.2, §12.3).
@@ -2862,7 +2974,8 @@ confirms or changes each one.
     (§11.2, §11.3, §11.4).
 78. The hub opens its database connection at start in step `schema`; a database failure at start,
     also a failed connection, fails the step in which it occurs and is logged only by
-    `record start failed <step>`. A failed connection in a periodic run is logged as
+    `record start failed <step>`, in step `verify` as `verify_read` (decision 93). A failed
+    connection in a periodic run after the run at start is logged as
     `record database error connect` (§11.4, §12.1, §13).
 79. A record object that a key does not see is answered with the same status and body as one that
     does not exist; this document makes no promise about the time an answer takes (§3).
@@ -2939,3 +3052,36 @@ confirms or changes each one.
     on request, which uses the state before the failing event (decision 73). The scope
     `record:security` with `record:watch` lets a watcher write only its events of §8 on tasks of
     kind `security`, never a comment (§3, §7.9).
+93. A database failure while step `verify` of the start reads the record gives its own line
+    `record start failed verify_read`, so that `record start failed verify` always means a broken
+    record and always follows a `record verify failed` line. Of the two alternatives of the
+    review (a new step value, or a sentence that tells the operator to look for the line
+    before), the new step value is taken, because the line alone then names the cause and the
+    hub never reports a sound record as broken (§11.4, §12.1, §13, §16).
+94. Step `writer` of the start, and so `restore`, refuses a writer that can execute any
+    `SECURITY DEFINER` function of the database outside `pg_catalog` and `information_schema`,
+    whoever owns it, and refuses row-level security (enabled or forced), any policy, any rule
+    and any trigger other than the four of §11.3 on the three record tables. Of the two
+    possibilities of the review hint (only definer functions owned by the owner role, or every
+    definer function the writer can execute), the stricter is taken. The limit is accepted that
+    the check sees the catalog only at start and in `restore`: such an object created while the
+    hub runs is found at the next start, and its effect on stored rows by verification (§11.2,
+    §11.4, §14).
+95. Hub key ids are compared and sorted in byte order everywhere; every statement that sorts or
+    compares them in the database uses `COLLATE "C"`, so that `export` writes checkpoint lines in
+    the order that `verify` and `restore` require, whatever the collation of the database
+    (§7.10, §12.1, §12.3).
+96. `handle` in `created` and `changed` of an object is read from the keys file that the
+    answering process loaded at start, not fixed by the event. The limit is accepted that a
+    later change of an entry's `handle` changes the shown handle of every past event of that key;
+    only `key` is fixed by the event (§6.1, §7.5).
+97. A request or attempt that runs an incremental fold takes its database connection before the
+    state lock, and the holder of the state lock never waits for a connection, so an exhausted
+    pool never blocks an append that holds the advisory lock behind a fold (§11.5, §11.6).
+98. An event that changes `completion` from `verified` to `merged` on a task in `merged` with
+    `links` is accepted when it also sets `done` (row 13) or, by row 14, `in_progress`; without a
+    change of `status`, or with any other target, it is refused with `transition_invalid` (§6.4).
+99. An export file with a checkpoint line but no event line is refused with `file_invalid` at
+    position `0`, also when the checkpoint's hub key id is not given with `--hub-key`. When a
+    file has several faults, the first item of the list of §12.3 that it breaks, and within
+    that item the first faulty line, gives the position (§12.3).
