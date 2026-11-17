@@ -89,7 +89,7 @@ Devices always connect outward to the hub. No device opens a port.
 | Read: tasks, sessions in full detail, logs, usage | Yes | Yes |
 | Write: submit orders, answer questions, type into a session, start and stop | Yes, without restriction | Only with a grant your colleague signed |
 
-Everyone can see what everyone else is working on. Nobody can interfere with a colleague's
+Everyone on your team can see what everyone else on it is working on. Nobody can interfere with a colleague's
 device unless that colleague allowed exactly that.
 
 ## 5. Handing work over
@@ -224,8 +224,9 @@ there.
 - A command that cannot be written to the device's local log is not executed.
 - **Executors hide nothing.** Every AI session on an executor runs inside this system and is
   recorded in full. Direct logins to the account that runs sessions are recorded too. A local
-  administrator login is not recorded as a session; every administrator change to the allow
-  list, the device key or the recording software leaves a signed entry.
+  administrator login is not recorded as a session. The client writes a signed entry for every
+  change to the allow list, the device key or the recording software that it makes or notices.
+  An administrator of a device can get around that and is trusted like its owner.
 - **Your controller may work outside.** You may start an AI session on your controller that
   does not use this system. It is then not recorded and not visible.
 - A session log can contain a password or a name that appeared on the screen by mistake. Such
@@ -293,7 +294,7 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 | You join | The administrator sends you an invite link. You open it and create your passkey; it counts once its public key was added by pull request. Then you connect your devices. |
 | You add a passkey | The administrator sends you an invite link for it, as for your first one. |
 | You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
-| You leave | Your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
+| You leave | Your open orders are ended and your devices sync completely. Then your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
 | A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |
 | A device changes owner | It is connected again by hand as a new device with a new key; the old key is revoked. |
 | A passkey is lost | A pull request revokes it, and your devices stop obeying it. You remove it from your devices from a controller device. |
@@ -336,7 +337,7 @@ Each step is its own pull request and follows the steps of the
 | **Task** | What has to be done |
 | **Order** | One attempt to do a task on one executor |
 | **Question** | A decision a running session needs |
-| **Command** | Any signed instruction that reaches a device through the hub |
+| **Command** | A signed instruction that reaches a device through the hub to act on a session or on work: an order, an answer, typed input, start, stop |
 | **Allow list** | The file on a device that lists the keys it obeys |
 | **Grant** | A signed permission by an owner for someone else's key |
 | **Session key** | A short-lived key in your browser, certified by your passkey |
@@ -353,8 +354,8 @@ Only if you signed a grant for exactly that. Everyone can watch.
 
 **Can I still log in to my executor directly?**
 Yes. A login to the account that runs sessions is recorded like everything else on an
-executor. A local administrator login is not recorded as a session, but every change it makes
-to the allow list, the device key or the recording software leaves a signed entry (section 8).
+executor. A local administrator login is not recorded as a session; an administrator of a device is
+trusted like its owner (section 8).
 
 **Is everything I do on my laptop recorded?**
 Only sessions that use this system. A session you start outside it on your controller is

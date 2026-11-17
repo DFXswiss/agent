@@ -158,7 +158,8 @@ sequenceDiagram
 
 An agent (the `agent` CLI, scripts, model sessions) has an **Ed25519 key**, the same kind of key
 SSH uses. It is generated on the device where the agent runs and stays there, readable only by
-its owner.
+a separate system account that sessions cannot reach
+([central-operation.md](central-operation.md#6-why-a-device-believes-a-command)).
 
 - **At least one key per device.** A key is never copied to another device. A new device means
   a new key.
@@ -321,7 +322,7 @@ Every question about history can be answered from the chain alone:
 | What exactly? | `changes`: each field with old and new value |
 | When? | `signed_at` (writer) and `received_at` (hub) |
 | Is it genuine? | The signature, checked against the registered public key |
-| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them; the newest events of a key can be held back unnoticed only until a later event of that key or the next published fingerprint covers them |
+| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them; the newest events of a key can be held back unnoticed until a later event of that key points to them, or until their writer finds them missing from a published fingerprint |
 
 Unlike an ordinary audit log, nobody has to trust that the log was kept honestly. Anyone with
 the public keys can check it.
