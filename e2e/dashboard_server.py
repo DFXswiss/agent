@@ -35,9 +35,9 @@ from agent_cli import main as main_mod  # noqa: E402
 from agent_cli import store as store_mod  # noqa: E402
 from agent_cli.pg import create_database, ensure_cluster, stop_cluster  # noqa: E402
 
-# The instant every page is rendered at. e2e/dashboard.spec.ts sets the browser
-# clock to the same instant, and test_dashboard_html.OVERVIEW_NOW uses it too.
-NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
+# The instant every page is rendered at, the one the usage overview tests use.
+# e2e/servers.ts sets the browser clock to the same instant.
+from test_dashboard_html import OVERVIEW_NOW as NOW  # noqa: E402
 
 DEVICE_ID = "5d2c8f1e-7a43-4b9e-9c1d-2f6a8e0b3c47"
 OTHER_DEVICE_ID = "a9e4b7c2-1f38-4d6a-8b05-6c3e9d2f7a18"
