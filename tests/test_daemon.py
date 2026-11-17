@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,11 +19,13 @@ from agent_cli.daemon import (
     child_specs,
     existing_service_agent_pg_bin,
     hub_configured,
+    install_and_start_service,
     kept_service_agent_pg_bin,
     run_supervisor,
     service_extra_env,
     service_unit_text,
 )
+from agent_cli.runtime import Completed
 from agent_cli.main import main
 from agent_cli.store import Store, StoreError
 
@@ -1065,3 +1068,312 @@ def test_existing_service_agent_pg_bin_linux_last_assignment_wins_and_reset() ->
     assert existing_service_agent_pg_bin(text2, "linux") is None
     text3 = "[Service]\nEnvironment=AGENT_PG_BIN='/unterminated\n"
     assert existing_service_agent_pg_bin(text3, "linux") is None
+
+
+_ABSENT_STDERR = 'Could not find service "swiss.dfx.agent" in domain for user gui: 501'
+_RUNNING_STDOUT = "state = running\npid = 4242\n"
+_STILL_REMOVING = "Bootstrap failed: 5: Input/output error"
+
+
+class _ReloadClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _absent() -> Completed:
+    return Completed(113, "", _ABSENT_STDERR)
+
+
+def _running() -> Completed:
+    return Completed(0, _RUNNING_STDOUT, "")
+
+
+def _install_darwin(
+    home: Path,
+    runner: Callable[[list[str]], Completed],
+    clock: _ReloadClock,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    install_and_start_service(
+        home=home,
+        program=["/usr/bin/agent", "daemon"],
+        platform="darwin",
+        run_argv=runner,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep if sleep is None else sleep,
+    )
+
+
+def _launchd_label() -> str:
+    return f"gui/{os.getuid()}/{SERVICE_LABEL}"
+
+
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+@pytest.mark.no_pg
+def test_darwin_install_bootstraps_only_after_asynchronous_bootout(tmp_path: Path) -> None:
+    listed_left = {"n": 3}
+    bootstrapped = {"ok": False}
+    kinds: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            kinds.append("bootout")
+            assert argv == ["launchctl", "bootout", _launchd_label()]
+            return Completed(0, "", "")
+        if command == "print":
+            assert argv == ["launchctl", "print", _launchd_label()]
+            if bootstrapped["ok"]:
+                kinds.append("running")
+                return _running()
+            if listed_left["n"] > 0:
+                listed_left["n"] -= 1
+                kinds.append("listed")
+                return Completed(0, "state = running\npid = 99\n", "")
+            kinds.append("absent")
+            return _absent()
+        if command == "bootstrap":
+            kinds.append("bootstrap")
+            bootstrapped["ok"] = True
+            assert argv == [
+                "launchctl",
+                "bootstrap",
+                _launchd_domain(),
+                str(tmp_path / "daemon.service"),
+            ]
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    _install_darwin(tmp_path, runner, clock)
+    assert kinds == ["bootout", "listed", "listed", "listed", "absent", "bootstrap", "running"]
+    assert clock.now < 30
+    text = (tmp_path / "daemon.service").read_text(encoding="utf-8")
+    assert SERVICE_LABEL in text
+
+
+@pytest.mark.no_pg
+def test_darwin_install_retries_one_transient_bootstrap_failure(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+    kinds: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            kinds.append("bootout")
+            return Completed(0, "", "")
+        if command == "print":
+            if bootstraps["n"] >= 2:
+                kinds.append("running")
+                return _running()
+            kinds.append("absent")
+            return _absent()
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            if bootstraps["n"] == 1:
+                kinds.append("bootstrap-fail")
+                return Completed(5, "", _STILL_REMOVING)
+            kinds.append("bootstrap-ok")
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    _install_darwin(tmp_path, runner, clock)
+    assert kinds == ["bootout", "absent", "bootstrap-fail", "absent", "bootstrap-ok", "running"]
+    assert bootstraps["n"] == 2
+    assert clock.now < 30
+
+
+@pytest.mark.no_pg
+def test_darwin_install_persistent_bootstrap_failure_exits_with_launchctl_output(
+    tmp_path: Path,
+) -> None:
+    bootstraps = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            return Completed(0, "", "")
+        if command == "print":
+            return _absent()
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            return Completed(5, "", _STILL_REMOVING)
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+
+    def jump(_seconds: float) -> None:
+        clock.now += 10.0
+
+    with pytest.raises(StoreError) as exc_info:
+        _install_darwin(tmp_path, runner, clock, sleep=jump)
+    message = str(exc_info.value)
+    assert _STILL_REMOVING in message
+    assert "observed service state: not loaded" in message
+    assert _ABSENT_STDERR in message
+    assert bootstraps["n"] == 3
+    assert clock.now == 30.0
+
+
+@pytest.mark.no_pg
+def test_darwin_install_of_unloaded_service_bootstraps_without_waiting(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        command = argv[1]
+        if command == "bootout":
+            return Completed(3, "", _ABSENT_STDERR)
+        if command == "print":
+            if not any(item[1] == "bootstrap" for item in calls):
+                return _absent()
+            return _running()
+        if command == "bootstrap":
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    def refuse_sleep(seconds: float) -> None:
+        raise AssertionError(f"sleep {seconds} although the service was already absent")
+
+    clock = _ReloadClock()
+    _install_darwin(tmp_path, runner, clock, sleep=refuse_sleep)
+    label = _launchd_label()
+    assert calls == [
+        ["launchctl", "bootout", label],
+        ["launchctl", "print", label],
+        ["launchctl", "bootstrap", _launchd_domain(), str(tmp_path / "daemon.service")],
+        ["launchctl", "print", label],
+    ]
+
+
+@pytest.mark.no_pg
+def test_darwin_install_does_not_bootstrap_when_bootout_stays_listed(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            return Completed(0, "", "")
+        if command == "print":
+            return Completed(0, "state = running\npid = 99\n", "")
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    with pytest.raises(StoreError) as exc_info:
+        _install_darwin(tmp_path, runner, clock)
+    message = str(exc_info.value)
+    assert f"launchd still knows {_launchd_label()} after bootout" in message
+    assert "observed service state: running pid=99" in message
+    assert "pid = 99" in message
+    assert bootstraps["n"] == 0
+    assert clock.now >= 29
+
+
+@pytest.mark.no_pg
+def test_darwin_install_reports_bootstrap_failure_that_is_not_removal(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            return Completed(0, "", "")
+        if command == "print":
+            return _absent()
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            return Completed(5, "", "Bootstrap failed: 125: Invalid property list")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    with pytest.raises(StoreError) as exc_info:
+        _install_darwin(tmp_path, runner, clock)
+    message = str(exc_info.value)
+    assert "Bootstrap failed: 125: Invalid property list" in message
+    assert "observed service state: not loaded" in message
+    assert _ABSENT_STDERR in message
+    assert bootstraps["n"] == 1
+    assert clock.now == 0.0
+
+
+@pytest.mark.no_pg
+def test_darwin_install_exits_when_bootstrapped_service_has_no_process(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            return Completed(0, "", "")
+        if command == "print":
+            if bootstraps["n"] == 0:
+                return _absent()
+            return Completed(0, "state = spawn scheduled\n", "")
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            return Completed(0, "service bootstrapped\n", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+
+    def jump(_seconds: float) -> None:
+        clock.now += 31.0
+
+    with pytest.raises(StoreError) as exc_info:
+        _install_darwin(tmp_path, runner, clock, sleep=jump)
+    message = str(exc_info.value)
+    assert "launchctl bootstrap did not leave the service loaded with a running process" in message
+    assert "service bootstrapped" in message
+    assert "observed service state: loaded without a running process" in message
+    assert "state = spawn scheduled" in message
+    assert bootstraps["n"] == 1
+
+
+@pytest.mark.no_pg
+def test_darwin_install_accepts_pid_after_post_bootstrap_absent_print(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+    prints = {"n": 0}
+    kinds: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            kinds.append("bootout")
+            assert argv == ["launchctl", "bootout", _launchd_label()]
+            return Completed(0, "", "")
+        if command == "print":
+            prints["n"] += 1
+            assert argv == ["launchctl", "print", _launchd_label()]
+            if prints["n"] <= 2:
+                kinds.append("absent")
+                return _absent()
+            kinds.append("running")
+            return _running()
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            kinds.append("bootstrap")
+            assert argv == [
+                "launchctl",
+                "bootstrap",
+                _launchd_domain(),
+                str(tmp_path / "daemon.service"),
+            ]
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    _install_darwin(tmp_path, runner, clock)
+    assert kinds == ["bootout", "absent", "bootstrap", "absent", "running"]
+    assert bootstraps["n"] == 1
+    assert clock.now < 30
