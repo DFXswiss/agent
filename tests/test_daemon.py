@@ -1338,3 +1338,42 @@ def test_darwin_install_exits_when_bootstrapped_service_has_no_process(tmp_path:
     assert "observed service state: loaded without a running process" in message
     assert "state = spawn scheduled" in message
     assert bootstraps["n"] == 1
+
+
+@pytest.mark.no_pg
+def test_darwin_install_accepts_pid_after_post_bootstrap_absent_print(tmp_path: Path) -> None:
+    bootstraps = {"n": 0}
+    prints = {"n": 0}
+    kinds: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        command = argv[1]
+        if command == "bootout":
+            kinds.append("bootout")
+            assert argv == ["launchctl", "bootout", _launchd_label()]
+            return Completed(0, "", "")
+        if command == "print":
+            prints["n"] += 1
+            assert argv == ["launchctl", "print", _launchd_label()]
+            if prints["n"] <= 2:
+                kinds.append("absent")
+                return _absent()
+            kinds.append("running")
+            return _running()
+        if command == "bootstrap":
+            bootstraps["n"] += 1
+            kinds.append("bootstrap")
+            assert argv == [
+                "launchctl",
+                "bootstrap",
+                _launchd_domain(),
+                str(tmp_path / "daemon.service"),
+            ]
+            return Completed(0, "", "")
+        raise AssertionError(argv)
+
+    clock = _ReloadClock()
+    _install_darwin(tmp_path, runner, clock)
+    assert kinds == ["bootout", "absent", "bootstrap", "absent", "running"]
+    assert bootstraps["n"] == 1
+    assert clock.now < 30

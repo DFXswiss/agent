@@ -539,11 +539,16 @@ def _reload_darwin_service(
 ) -> None:
     """Leave gui/<uid>/swiss.dfx.agent loaded with a running process.
 
-    bootout returns before launchd removes the service. This waits, bounded by
-    LAUNCHD_RELOAD_BOUND_S, until print no longer knows it, then bootstraps.
-    A bootstrap that fails because the previous instance is still being removed
-    is retried inside that same bound. The command fails with the launchctl
-    output and the observed service state instead of leaving the service unloaded.
+    bootout returns before launchd removes the service. Until the first
+    bootstrap that returns 0, this waits, bounded by LAUNCHD_RELOAD_BOUND_S,
+    until print no longer knows the service, then bootstraps. A bootstrap that
+    fails because the previous instance is still being removed is retried inside
+    that same bound. If print first shows the service gone only when that bound
+    has elapsed, no further bootstrap runs. After a bootstrap that returns 0, a
+    print with a running pid is success immediately, including when the print
+    before it still said the service was absent. Another bootstrap runs only
+    while the service is still absent and time remains. Failure reports the
+    launchctl output and the observed service state.
     """
     deadline = now_fn() + LAUNCHD_RELOAD_BOUND_S
     bootout = _runner_result(runner(["launchctl", "bootout", label]))
@@ -557,6 +562,9 @@ def _reload_darwin_service(
 
     def print_service() -> Completed:
         return _runner_result(runner(["launchctl", "print", label]))
+
+    def pause() -> None:
+        sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
 
     def wait_until_absent() -> Completed:
         while True:
@@ -576,47 +584,60 @@ def _reload_darwin_service(
                 else:
                     detail = f"launchd still knows {label} after bootout"
                 _raise_launchd_failure(detail, observed)
-            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+            pause()
 
-    while True:
+    def bootstrap_service() -> Completed:
+        return _runner_result(runner(["launchctl", "bootstrap", domain, str(path)]))
+
+    def retryable_bootstrap_failure(completed: Completed) -> bool:
+        if completed.returncode == 0:
+            return False
+        detail = _launchctl_detail(completed, "launchctl bootstrap failed")
+        if not _bootstrap_still_removing(completed) or remaining() <= 0:
+            _raise_launchd_failure(detail, print_service())
+        return True
+
+    while last_bootstrap is None or last_bootstrap.returncode != 0:
         observed = wait_until_absent()
+        # Absent only as the bound elapses: do not bootstrap again.
         if remaining() <= 0:
             detail = "reload bound elapsed before launchctl bootstrap"
             if last_bootstrap is not None:
                 detail = _launchctl_detail(last_bootstrap, detail)
             _raise_launchd_failure(detail, observed)
-        last_bootstrap = _runner_result(
-            runner(["launchctl", "bootstrap", domain, str(path)])
-        )
-        if last_bootstrap.returncode != 0:
-            detail = _launchctl_detail(last_bootstrap, "launchctl bootstrap failed")
-            if not _bootstrap_still_removing(last_bootstrap) or remaining() <= 0:
-                _raise_launchd_failure(detail, print_service())
-            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
-            continue
-        while True:
-            observed = print_service()
-            if _running_pid(observed) is not None:
-                return
-            if _launchd_absent(observed):
-                if remaining() <= 0:
-                    _raise_launchd_failure(
-                        _verify_failure_detail(last_bootstrap),
-                        observed,
-                    )
-                sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
-                break
-            if observed.returncode != 0:
-                _raise_launchd_failure(
-                    _launchctl_detail(observed, "launchctl print failed"),
-                    observed,
-                )
+        last_bootstrap = bootstrap_service()
+        if retryable_bootstrap_failure(last_bootstrap):
+            pause()
+
+    # wait_until_absent stays above. Here a running pid is success even when
+    # the previous print still said the service was absent.
+    absent_once = False
+    while True:
+        observed = print_service()
+        if _running_pid(observed) is not None:
+            return
+        if _launchd_absent(observed):
             if remaining() <= 0:
-                _raise_launchd_failure(
-                    _verify_failure_detail(last_bootstrap),
-                    observed,
-                )
-            sleep_fn(min(LAUNCHD_RELOAD_POLL_S, remaining()))
+                _raise_launchd_failure(_verify_failure_detail(last_bootstrap), observed)
+            if not absent_once:
+                absent_once = True
+                pause()
+                continue
+            absent_once = False
+            last_bootstrap = bootstrap_service()
+            if retryable_bootstrap_failure(last_bootstrap):
+                absent_once = True
+                pause()
+            continue
+        absent_once = False
+        if observed.returncode != 0:
+            _raise_launchd_failure(
+                _launchctl_detail(observed, "launchctl print failed"),
+                observed,
+            )
+        if remaining() <= 0:
+            _raise_launchd_failure(_verify_failure_detail(last_bootstrap), observed)
+        pause()
 
 
 def install_and_start_service(

@@ -783,11 +783,18 @@ the workflow is enabled on a deployment:
   service) reloads a running LaunchAgent without leaving it unloaded. After
   `launchctl bootout gui/<uid>/swiss.dfx.agent` it waits, bounded at 30 seconds,
   until launchd no longer knows the service, then runs `launchctl bootstrap` on
-  the new plist. A bootstrap that fails because the previous instance is still
-  being removed is retried within that bound. Install then requires the service
-  to be loaded with a running process; otherwise it exits non-zero with the
-  launchctl output and the observed service state. A service that was not loaded
-  is installed directly. The Linux systemd enable path is unchanged.
+  the new plist. That wait runs only before the first bootstrap that returns
+  success. A bootstrap that fails because the previous instance is still being
+  removed is retried within that bound, and only while the service is absent.
+  If the service is absent only once that bound has elapsed, install does not
+  bootstrap again and reports that abort. After a successful bootstrap, a
+  running pid is success immediately, including when one print in between still
+  says the service is absent. Another bootstrap runs only while the service is
+  still absent and time remains. Install requires the service to be loaded with
+  a running process; otherwise it exits non-zero with the launchctl output and
+  the observed service state. A service that was not loaded still runs bootout
+  and is bootstrapped without waiting for a removal. The Linux systemd enable
+  path is unchanged.
 - `agent init --no-service` creates the same local store and identity without
   installing a user service, so a headless host's system supervisor can run the
   unchanged `agent daemon` process with the printed argv and environment. It is
