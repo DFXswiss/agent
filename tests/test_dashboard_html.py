@@ -21,9 +21,11 @@ from agent_cli.main import (
 )
 from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
-from agent_cli.usage import _openrouter_snapshot, claude_snapshot, snapshot_from_payloads
-from test_usage import SETTINGS, _credits, _openrouter_body
-from test_usage_claude import usage_body
+from agent_cli.drivers import parse_driver_document
+from agent_cli.usage import period_snapshot, spend_snapshot
+from driver_fixtures import WINDOWS_DRIVER_ID, driver_document, windows_driver
+from test_usage import PERIOD_DRIVER, SPEND_DRIVER, _key_body, _period_documents, _usage
+from test_usage_windows import mapped, usage_body
 
 pytestmark = pytest.mark.no_pg
 
@@ -363,30 +365,44 @@ console.log(JSON.stringify({
 
 
 OVERVIEW_NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
+# Period, spend and windows usage drivers; driver-b, driver-c and driver-e have no usage section.
+OVERVIEW_DRIVERS = parse_driver_document(
+    {**driver_document(), "drivers": {**driver_document()["drivers"], WINDOWS_DRIVER_ID: windows_driver()}}
+).drivers
 
 
 def _recorded(payload: dict, device: str = "device-a") -> dict:
     return {"type": "usage.snapshot", "_origin_device_id": device, "payload": payload}
 
 
+def _spend(body: dict, fetched_at: str = "2026-11-17T09:00:00+00:00") -> dict:
+    return spend_snapshot(SPEND_DRIVER, _usage(SPEND_DRIVER), "router-a", {"key": body}, fetched_at)
+
+
 def _overview_rows() -> list[dict]:
     """Subscription rows built from the payloads usage.py stores."""
-    seat_1 = claude_snapshot("seat-1@example.com", "max_20x", usage_body(), "2026-11-17T09:56:00+00:00")
-    seat_3 = claude_snapshot(
-        "seat-3@example.com", "max_5x", usage_body(weekly=32.0), "2026-11-17T08:00:00+00:00"
+    seat_1 = mapped("seat-1@example.com", "max_20x", usage_body(), "2026-11-17T09:56:00+00:00")
+    seat_3 = mapped("seat-3@example.com", "max_5x", usage_body(weekly=32.0), "2026-11-17T08:00:00+00:00")
+    period = period_snapshot(
+        PERIOD_DRIVER,
+        _usage(PERIOD_DRIVER),
+        _period_documents(used=0.0),
+        "2026-11-17T09:59:30+00:00",
+        "period@example.com",
     )
-    grok = snapshot_from_payloads(
-        _credits(used=0.0), SETTINGS, "2026-11-17T09:59:30+00:00", "grok@example.com"
-    )
-    grok["period_end"] = "2026-11-20T14:00:00+00:00"
-    router = _openrouter_snapshot("router-a", _openrouter_body(), "2026-11-17T09:00:00+00:00")
-    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, grok, router)])
+    period["period_end"] = "2026-11-20T14:00:00+00:00"
+    spend = _spend(_key_body())
+    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, period, spend)])
     inventory = (
-        AISubscription("claude", "seat-1@example.com", "Team seat 1"),
-        AISubscription("claude", "seat-2@example.com"),
-        AISubscription("codex", "seat-1@example.com"),
+        AISubscription(WINDOWS_DRIVER_ID, "seat-1@example.com", "Team seat 1"),
+        AISubscription(WINDOWS_DRIVER_ID, "seat-2@example.com"),
+        AISubscription("driver-b", "seat-1@example.com"),
     )
     return _subscription_dashboard_rows(inventory, usage)
+
+
+def _overview(rows: list[dict]) -> dict[str, dict]:
+    return {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW, OVERVIEW_DRIVERS)}
 
 
 def test_usage_duration_text() -> None:
@@ -398,122 +414,130 @@ def test_usage_duration_text() -> None:
 
 
 def test_usage_overview_one_entry_per_provider() -> None:
-    overview = {entry["provider"]: entry for entry in _usage_overview(_overview_rows(), OVERVIEW_NOW)}
-    assert list(overview) == ["claude", "codex", "grok", "openrouter"]
+    overview = _overview(_overview_rows())
+    assert list(overview) == ["driver-a", "driver-b", "driver-c", "driver-d", "driver-e", WINDOWS_DRIVER_ID]
 
-    claude = overview["claude"]
-    # The headline is the weekly window of the most used account.
-    assert (claude["used_percent"], claude["window"], claude["resets_in"]) == (32.0, "Week", "6 d 0 h")
-    assert claude["summary"] == "Claude 32% 6 d 0 h"
-    assert claude["status"] is None and claude["recorded"] == "2026-11-17T09:56:00+00:00"
-    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+    windows = overview[WINDOWS_DRIVER_ID]
+    # The name is the driver's display_name; the headline is the weekly window of the most used account.
+    assert windows["name"] == "Login"
+    assert (windows["used_percent"], windows["window"], windows["resets_in"]) == (32.0, "Week", "6 d 0 h")
+    assert windows["summary"] == "Login 32% 6 d 0 h"
+    assert windows["status"] is None and windows["recorded"] == "2026-11-17T09:56:00+00:00"
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in windows["windows"]] == [
         ("Week", 32.0, "6 d 0 h"),
-        ("Week Fable", 21.0, "6 d 0 h"),
+        ("Week model-x", 21.0, "6 d 0 h"),
     ]
     assert [
-        (a["account"], a["label"], a["used_percent"], a["status"], a["recorded"]) for a in claude["accounts"]
+        (a["account"], a["label"], a["used_percent"], a["status"], a["recorded"]) for a in windows["accounts"]
     ] == [
         ("seat-1@example.com", "Team seat 1", 14.0, None, "2026-11-17T09:56:00+00:00"),
         ("seat-2@example.com", None, None, "no data", None),
         ("seat-3@example.com", None, 32.0, None, "2026-11-17T08:00:00+00:00"),
     ]
 
-    assert [a["has_snapshot"] for a in claude["accounts"]] == [True, False, True]
+    assert [a["has_snapshot"] for a in windows["accounts"]] == [True, False, True]
 
-    codex = overview["codex"]
-    assert codex["status"] == "not read" and codex["used_percent"] is None
-    assert codex["summary"] == "Codex not read"
-    assert [(a["account"], a["status"]) for a in codex["accounts"]] == [("seat-1@example.com", "not read")]
+    # A driver without a usage section in drivers.json is not read.
+    unread = overview["driver-b"]
+    assert unread["status"] == "not read" and unread["used_percent"] is None
+    assert unread["summary"] == "Vendor B not read"
+    assert [(a["account"], a["status"]) for a in unread["accounts"]] == [("seat-1@example.com", "not read")]
+    # A driver without a display_name is named by its id.
+    assert overview["driver-e"]["summary"] == "driver-e not read"
 
-    grok = overview["grok"]
-    assert grok["summary"] == "Grok 0% 3 d 4 h"
-    assert grok["used_percent"] == 0.0 and grok["recorded"] == "2026-11-17T09:59:30+00:00"
-    assert [(w["name"], w["used_percent"]) for w in grok["windows"]] == [("Weekly", 0.0), ("GrokBuild", 0.0)]
+    period = overview["driver-a"]
+    assert period["summary"] == "Vendor A 0% 3 d 4 h"
+    assert period["used_percent"] == 0.0 and period["recorded"] == "2026-11-17T09:59:30+00:00"
+    assert [(w["name"], w["used_percent"]) for w in period["windows"]] == [("Period", 0.0), ("product-a", 0.0)]
 
-    router = overview["openrouter"]
-    assert router["summary"] == "OpenRouter 12.5% 13 d 14 h"
-    assert router["accounts"][0]["text"] == "$1.25 / $10"
+    spend = overview["driver-d"]
+    assert spend["summary"] == "Vendor D 12.5% 13 d 14 h"
+    assert spend["accounts"][0]["text"] == "$1.25 / $10"
 
 
 def test_usage_overview_without_data_never_shows_zero() -> None:
-    overview = {entry["provider"]: entry for entry in _usage_overview([], OVERVIEW_NOW)}
+    overview = _overview([])
     assert [(p, e["status"], e["summary"]) for p, e in overview.items()] == [
-        ("claude", "no data", "Claude no data"),
-        ("codex", "not read", "Codex not read"),
-        ("grok", "no data", "Grok no data"),
-        ("openrouter", "no data", "OpenRouter no data"),
+        ("driver-a", "no data", "Vendor A no data"),
+        ("driver-b", "not read", "Vendor B not read"),
+        ("driver-c", "not read", "Vendor C not read"),
+        ("driver-d", "no data", "Vendor D no data"),
+        ("driver-e", "not read", "driver-e not read"),
+        (WINDOWS_DRIVER_ID, "no data", "Login no data"),
     ]
-    unlimited = _openrouter_body()
+    unlimited = _key_body()
     unlimited["data"].update({"limit": None, "limit_remaining": None, "limit_reset": "monthly"})
-    claude = claude_snapshot("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x")
-    rows = _subscription_dashboard_rows(
-        (),
-        [
-            _recorded(_openrouter_snapshot("router-a", unlimited, "2026-11-17T09:00:00+00:00")),
-            _recorded(claude),
-        ],
-    )
-    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
-    router = overview["openrouter"]
-    assert router["used_percent"] is None and router["status"] is None
-    assert router["summary"] == "OpenRouter $1.25 / unlimited (monthly)"
-    assert overview["claude"]["status"] == "no data"
-    assert overview["claude"]["accounts"][0]["used_percent"] is None
-    assert overview["claude"]["accounts"][0]["status"] == "no data"
-    assert overview["claude"]["accounts"][0]["recorded"] is None
+    empty = mapped("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x")
+    rows = _subscription_dashboard_rows((), [_recorded(_spend(unlimited)), _recorded(empty)])
+    overview = _overview(rows)
+    spend = overview["driver-d"]
+    assert spend["used_percent"] is None and spend["status"] is None
+    assert spend["summary"] == "Vendor D $1.25 / unlimited (monthly)"
+    windows = overview[WINDOWS_DRIVER_ID]
+    assert windows["status"] == "no data"
+    assert windows["accounts"][0]["used_percent"] is None
+    assert windows["accounts"][0]["status"] == "no data"
+    assert windows["accounts"][0]["recorded"] is None
 
 
-def test_usage_overview_claude_headline_is_weekly_only() -> None:
+def test_usage_overview_without_readable_drivers_claims_no_provider_unread() -> None:
+    # drivers.json could not be read: only recorded providers, and none is "not read".
+    rows = _subscription_dashboard_rows((AISubscription("driver-b", "seat-1@example.com"),), [])
+    overview = _usage_overview(rows, OVERVIEW_NOW, None)
+    assert [(e["provider"], e["status"], e["summary"]) for e in overview] == [
+        ("driver-b", "no data", "driver-b no data")
+    ]
+    assert overview[0]["accounts"][0]["status"] == "no data"
+
+    # A provider without a usage section whose snapshot another device recorded is no data, not "not read".
+    stray = {**mapped("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x"), "provider": "driver-b"}
+    rows = _subscription_dashboard_rows((), [_recorded(stray)])
+    assert _overview(rows)["driver-b"]["status"] == "no data"
+
+
+def test_usage_overview_windows_headline_is_weekly_only() -> None:
     body = usage_body(five_hour={"utilization": 80.0, "resets_at": "2026-11-17T12:00:00+00:00"})
     body.update({"seven_day": None, "limits": []})
-    only_five_hour = claude_snapshot("seat-1@example.com", None, body, "2026-11-17T09:56:00+00:00")
+    only_five_hour = mapped("seat-1@example.com", None, body, "2026-11-17T09:56:00+00:00")
     rows = _subscription_dashboard_rows((), [_recorded(only_five_hour)])
-    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
-    assert claude["provider"] == "claude"
+    windows = _overview(rows)[WINDOWS_DRIVER_ID]
     # The five-hour window is shown, but never as the weekly headline.
-    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in windows["windows"]] == [
         ("5h", 80.0, "2 h 0 min")
     ]
-    assert claude["used_percent"] is None and claude["window"] is None
-    assert claude["status"] == "no data" and claude["summary"] == "Claude no data"
-    assert claude["accounts"][0]["used_percent"] is None
-    assert claude["accounts"][0]["status"] == "no data"
+    assert windows["used_percent"] is None and windows["window"] is None
+    assert windows["status"] == "no data" and windows["summary"] == "Login no data"
+    assert windows["accounts"][0]["used_percent"] is None
+    assert windows["accounts"][0]["status"] == "no data"
 
-    weekly = claude_snapshot("seat-2@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    weekly = mapped("seat-2@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
     rows = _subscription_dashboard_rows((), [_recorded(only_five_hour), _recorded(weekly)])
-    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
-    assert claude["summary"] == "Claude 14% 6 d 0 h"
+    assert _overview(rows)[WINDOWS_DRIVER_ID]["summary"] == "Login 14% 6 d 0 h"
 
 
 def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
     edge = "0001-01-01T00:00:00+14:00"
-    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), edge)
+    snapshot = mapped("seat-1@example.com", None, usage_body(), edge)
     snapshot["windows"]["weekly"]["resets_at"] = edge
     rows = _subscription_dashboard_rows((), [_recorded(snapshot)])
-    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
-    assert claude["used_percent"] == 14.0 and claude["resets_in"] is None
-    assert claude["recorded"] is None and claude["summary"] == "Claude 14%"
+    windows = _overview(rows)[WINDOWS_DRIVER_ID]
+    assert windows["used_percent"] == 14.0 and windows["resets_in"] is None
+    assert windows["recorded"] is None and windows["summary"] == "Login 14%"
 
 
 def test_usage_overview_ignores_numbers_outside_the_float_range() -> None:
-    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    snapshot = mapped("seat-1@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
     snapshot["windows"]["weekly"]["used_percent"] = 10**400
     snapshot["windows"]["weekly_models"][0]["used_percent"] = float("inf")
-    router = _openrouter_body()
-    router["data"].update({"limit": 1e308, "limit_remaining": -1e308})
-    rows = _subscription_dashboard_rows(
-        (),
-        [
-            _recorded(snapshot),
-            _recorded(_openrouter_snapshot("router-a", router, "2026-11-17T09:00:00+00:00")),
-        ],
-    )
-    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
-    claude = overview["claude"]
-    assert [(w["name"], w["used_percent"]) for w in claude["windows"]] == [("Week", None), ("Week Fable", None)]
-    assert claude["used_percent"] is None and claude["status"] == "no data"
-    assert overview["openrouter"]["used_percent"] is None
-    assert overview["openrouter"]["summary"] == "OpenRouter $1.25 / $1e+308"
+    key = _key_body()
+    key["data"].update({"limit": 1e308, "limit_remaining": -1e308})
+    rows = _subscription_dashboard_rows((), [_recorded(snapshot), _recorded(_spend(key))])
+    overview = _overview(rows)
+    windows = overview[WINDOWS_DRIVER_ID]
+    assert [(w["name"], w["used_percent"]) for w in windows["windows"]] == [("Week", None), ("Week model-x", None)]
+    assert windows["used_percent"] is None and windows["status"] == "no data"
+    assert overview["driver-d"]["used_percent"] is None
+    assert overview["driver-d"]["summary"] == "Vendor D $1.25 / $1e+308"
     json.dumps(list(overview.values()), allow_nan=False)
 
 
@@ -543,14 +567,14 @@ def test_usage_overview_renders_in_node() -> None:
     )
     # The shared block brings stateIcon and stateCellAttributes.
     helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
-    overview = _usage_overview(_overview_rows(), OVERVIEW_NOW)
-    overview[0]["accounts"][0]["label"] = "<b>seat</b>"
+    overview = list(_overview(_overview_rows()).values())
+    overview[-1]["accounts"][0]["label"] = "<b>seat</b>"
     harness = helpers + "\n" + functions + f"""
 const overview = {json.dumps(overview)};
 const NOW = Date.parse("2026-11-17T10:00:00Z");
 console.log(JSON.stringify({{
   closed: usageOverviewHtml(overview, new Set(), false, false, NOW),
-  open: usageOverviewHtml(overview, new Set(["claude"]), false, false, NOW),
+  open: usageOverviewHtml(overview, new Set(["driver-w"]), false, false, NOW),
   detailed: usageOverviewHtml(overview, new Set(), true, false, NOW),
   sorted: usageOverviewHtml(overview, new Set(), false, true, NOW),
   none: usageOverviewHtml([], new Set(), false, false, NOW),
@@ -562,10 +586,10 @@ console.log(JSON.stringify({{
     assert completed.returncode == 0, completed.stderr
     out = json.loads(completed.stdout)
     closed = out["closed"]
-    assert closed.count('<details class="usage-provider"') == 4
+    assert closed.count('<details class="usage-provider"') == 6
     assert " open>" not in closed
     assert (
-        '<summary><span class="usage-line"><span><b>Claude</b></span><span>6 d 0 h</span>'
+        '<summary><span class="usage-line"><span><b>Login</b></span><span>6 d 0 h</span>'
         '<meter min="0" max="100" low="70" high="90" optimum="0" value="32" title="32%"></meter>'
         "<span>32%</span></span></summary>"
     ) in closed
@@ -584,17 +608,17 @@ console.log(JSON.stringify({{
         f'<span class="state-icon" role="img" aria-label="no data">{no_data}&#xFE0E;</span></span>'
     ) in out["open"]
     assert out["open"].count("No usage: no paired device polls this login") == 1
-    assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
+    assert "0%" not in closed.split('data-provider="driver-b"', 1)[1].split("</summary>", 1)[0]
     # The browser renders the age of the raw timestamp with the shared elapsedText.
     assert '<span class="usage-muted" title="2026-11-17T09:56:00+00:00">recorded 4 min ago</span>' in closed
     assert "recorded 2 h ago" in closed
     assert '<p class="usage-muted" title="2026-11-17T09:59:30+00:00">recorded 30 s ago</p>' in closed
     assert "&lt;b&gt;seat&lt;/b&gt;" in closed and "<b>seat</b>" not in closed
-    assert '<details class="usage-provider" data-provider="claude" open>' in out["open"]
+    assert '<details class="usage-provider" data-provider="driver-w" open>' in out["open"]
     assert out["open"].count(" open>") == 1
-    assert out["detailed"].count(" open>") == 4
-    order = re.findall(r'data-provider="([a-z]+)"', out["sorted"])
-    assert order == ["claude", "openrouter", "grok", "codex"]
+    assert out["detailed"].count(" open>") == 6
+    order = re.findall(r'data-provider="([a-z-]+)"', out["sorted"])
+    assert order == ["driver-w", "driver-d", "driver-a", "driver-b", "driver-c", "driver-e"]
     assert out["none"] == '<p class="usage-muted">—</p>'
 
 
@@ -611,7 +635,7 @@ def test_usage_summary_renders_in_node() -> None:
         + section_function(index, "usageSummaryHtml")
         + f"""
 console.log(JSON.stringify({{
-  line: usageSummaryHtml({json.dumps(_usage_overview(_overview_rows(), OVERVIEW_NOW))}),
+  line: usageSummaryHtml({json.dumps(list(_overview(_overview_rows()).values()))}),
   none: usageSummaryHtml([]),
 }}));
 """
@@ -622,11 +646,13 @@ console.log(JSON.stringify({{
     assert completed.returncode == 0, completed.stderr
     out = json.loads(completed.stdout)
     not_read = state_icons(index)["not read"]
-    assert out["line"] == (
-        "Claude 32% 6 d 0 h · Codex "
+    icon = (
         '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
         f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
-        " · Grok 0% 3 d 4 h · OpenRouter 12.5% 13 d 14 h"
+    )
+    assert out["line"] == (
+        f"Vendor A 0% 3 d 4 h · Vendor B {icon} · Vendor C {icon}"
+        f" · Vendor D 12.5% 13 d 14 h · driver-e {icon} · Login 32% 6 d 0 h"
     )
     assert out["none"] == "—"
 

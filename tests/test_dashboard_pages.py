@@ -5,6 +5,7 @@ import http.client
 import pytest
 
 from agent_cli import main as main_mod
+from driver_fixtures import DECLARED_DRIVERS, write_drivers
 from test_dashboard_control import _running_dashboard
 
 pytestmark = pytest.mark.no_pg
@@ -108,6 +109,7 @@ def _state(port: int) -> dict:
 def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
     import json
 
+    write_drivers(tmp_path)
     monkeypatch.setattr(main_mod, "open_store", lambda: _StateStore(tmp_path))
     with _running_dashboard(monkeypatch) as port:
         state = _state(port)
@@ -116,11 +118,11 @@ def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
         assert [row["listed"] for row in state["subscriptions"]["rows"]] == [False]
         assert len(state["usage"]) == 1
         overview = {entry["provider"]: entry for entry in state["usage_overview"]}
-        assert {"claude", "codex", "grok", "openrouter"} <= set(overview)
-        # A snapshot without windows is no data, not 0 %.
-        assert overview["claude"]["status"] == "no data"
-        assert [a["account"] for a in overview["claude"]["accounts"]] == ["seat-1@example.com"]
-        assert overview["codex"]["summary"] == "Codex not read"
+        assert list(overview) == list(DECLARED_DRIVERS)
+        # A snapshot without a figure is no data, not 0 %.
+        assert overview["driver-a"]["status"] == "no data"
+        assert [a["account"] for a in overview["driver-a"]["accounts"]] == ["seat-1@example.com"]
+        assert overview["driver-b"]["summary"] == "Vendor B not read"
 
         path = tmp_path / "ai-subscriptions.json"
         path.write_text(
