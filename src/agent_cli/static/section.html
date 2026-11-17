@@ -488,7 +488,7 @@
     tick();
     setInterval(tick, 2000);
 
-    // events and ack from the main page order view. This file stays self-contained.
+    // This document does not load the main page script. events and ack use this copy.
     const ORDER_VIEW = {
       "events": {"mode":"read","method":"GET","path":"/api/orders/events","params":[{"name":"after","flag":"--after","kind":"int","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"wake_only","flag":"--wake-only","kind":"bool","required":false},{"name":"unacked","flag":"--unacked","kind":"bool","required":false}],"fields":["cursor","events"],"nested":{"events":["id","seq","order_id","kind","wake","digest","pr_url","phase","round","check","failed_kind","notify_session","at","acked","answers","opinion"]}},
       "ack": {"mode":"write","method":"POST","path":"/api/orders/ack","params":[{"name":"event_id","flag":"--event","kind":"line","required":true}],"fields":["event","acked"],"nested":{}}
