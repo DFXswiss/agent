@@ -1054,6 +1054,26 @@ def test_usage_overview_names_windows_of_other_lengths() -> None:
     assert entry["summary"] == "Vendor R 40%"
 
 
+def test_usage_overview_skips_malformed_windows_of_other_lengths() -> None:
+    """Replicated data may hold anything; only integer window lengths are named."""
+    rpc = _rpc(
+        rpc_result(primary=rpc_window(40, 10080, None)),
+        "rpc-1@example.com",
+        "2026-11-17T09:56:00+00:00",
+    )
+    rpc["windows"]["other"] = [
+        "junk",
+        {"window_minutes": True, "used_percent": 2},
+        {"window_minutes": "300", "used_percent": 3},
+        {"window_minutes": 1440, "used_percent": 1},
+    ]
+    entry = _overview(_subscription_dashboard_rows((), [_recorded(rpc)]))[RPC_DRIVER_ID]
+    assert [(w["name"], w["used_percent"]) for w in entry["windows"]] == [
+        ("Week", 40.0),
+        ("1440 min", 1.0),
+    ]
+
+
 def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
     edge = "0001-01-01T00:00:00+14:00"
     snapshot = mapped("seat-1@example.com", None, usage_body(), edge)

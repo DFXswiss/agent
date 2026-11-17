@@ -2746,14 +2746,17 @@ def _usage_windows(
             return None
         return number if math.isfinite(number) else None
 
-    def window(name: str, raw: Any) -> dict[str, Any] | None:
-        if not isinstance(raw, dict):
-            return None
+    def entry(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         return {
             "name": name,
             "used_percent": percent(raw.get("used_percent")),
             "resets_at": raw.get("resets_at") if isinstance(raw.get("resets_at"), str) else None,
         }
+
+    def window(name: str, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        return entry(name, raw)
 
     if isinstance(payload.get("windows"), dict):
         raw = payload["windows"]
@@ -2767,12 +2770,12 @@ def _usage_windows(
         # Windows of a length the rpc adapter maps to no named window.
         others = raw.get("other")
         for item in others if isinstance(others, list) else []:
-            minutes = item.get("window_minutes") if isinstance(item, dict) else None
+            if not isinstance(item, dict):
+                continue
+            minutes = item.get("window_minutes")
             if isinstance(minutes, bool) or not isinstance(minutes, int):
                 continue
-            found = window(f"{minutes} min", item)
-            if found:
-                windows.append(found)
+            windows.append(entry(f"{minutes} min", item))
         weekly = [i for i, w in enumerate(windows) if w["name"] == "Week"]
         return windows, weekly[0] if weekly else None, None
     if is_spend_snapshot(payload):

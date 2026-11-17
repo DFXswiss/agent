@@ -966,25 +966,17 @@ def account_file_path(
     return Path(config_dir) / account_file.file
 
 
-def _login_account_file(spec: DriverSpec, config_dir: str) -> Path:
-    usage = _windows_spec(spec)
-    account_file = usage.account_file
-    if account_file is None:
-        raise StoreError(f"{spec.id} windows usage section is incomplete")
-    return account_file_path(spec, account_file, config_dir)
-
-
 def load_login_account(spec: DriverSpec, config_dir: str) -> str:
     """The login's identity string from the configured account file."""
     usage = _windows_spec(spec)
     credential = usage.credential
-    account_file = usage.account_file
-    if account_file is None or credential.label is None or credential.renew is None:
-        raise StoreError(f"{spec.id} windows usage section is incomplete")
+    # ``_windows_spec`` guarantees these fields; the asserts only narrow the types.
+    assert usage.account_file is not None
+    assert credential.label is not None and credential.renew is not None
     return read_account_identity(
         credential.label,
-        account_file,
-        _login_account_file(spec, config_dir),
+        usage.account_file,
+        account_file_path(spec, usage.account_file, config_dir),
         f"run {credential.renew} auth login",
     )
 
