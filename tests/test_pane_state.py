@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_cli.grok_pane import (
+from agent_cli.pane_state import (
     grok_pane_is_idle,
     grok_pane_is_working,
     grok_permission_prompt,

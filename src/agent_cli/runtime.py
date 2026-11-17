@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .grok_pane import grok_pane_is_working
+from .pane_state import grok_pane_is_working
 from .lane import LANE_STRIP_ENV
 from .store import StoreError
 

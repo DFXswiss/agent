@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .grok_pane import grok_pane_is_working, grok_permission_prompt, strip_ansi
+from .pane_state import grok_pane_is_working, grok_permission_prompt, strip_ansi
 from .telegram_act import TELEGRAM_IDLE_TICKS
 from .runtime import Completed, Runtime
 from .store import Store, StoreError, utcnow

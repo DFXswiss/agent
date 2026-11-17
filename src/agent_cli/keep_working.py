@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .grok_pane import grok_pane_is_idle, grok_pane_is_working, grok_permission_prompt
+from .pane_state import grok_pane_is_idle, grok_pane_is_working, grok_permission_prompt
 from .runtime import Runtime
 
 STANDING = (

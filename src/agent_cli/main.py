@@ -5431,7 +5431,7 @@ def cmd_supervise(args: list[str]) -> None:
                 print(f"issue.assigned {assigned_id}")
                 queued = True
             pane = runtime_capture(sid) if runtime_exists(sid) else ""
-            from .grok_pane import grok_pane_is_working
+            from .pane_state import grok_pane_is_working
             from .telegram_act import notify_status
 
             working = grok_pane_is_working(pane)
