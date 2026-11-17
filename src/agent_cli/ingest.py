@@ -583,6 +583,13 @@ def scan_mentions(
         existing = store.row("job", row_id)
 
         if existing is not None:
+            if existing.get("id") != row_id:
+                # The row was stored under this key but carries another id. Its
+                # id is what the cleanup and the worker use as a path, so acting
+                # on it could touch files the key does not name. Leave the
+                # thread unread for a pass that can see a consistent row.
+                skipped += 1
+                continue
             if existing.get("_origin_device_id") != device_id:
                 # Another device owns this job; do not act on its row and leave
                 # the thread alone so that device's pass can decide.
@@ -648,10 +655,10 @@ def scan_mentions(
             continue
 
         if state == "failed":
+            # The id is the lookup key (any other id was skipped above), and
+            # both admitted states may move to `queued`, so `retry_payload`
+            # cannot return None here.
             payload = retry_payload(existing)
-            if payload is None:
-                skipped += 1
-                continue
             payload["trigger"] = trigger
             payload["actor"] = actor
             payload["queue_type"] = skill.queue_type
@@ -673,9 +680,6 @@ def scan_mentions(
                     skipped += 1
                 continue
             payload = retry_payload(existing)
-            if payload is None:
-                skipped += 1
-                continue
             now = utcnow()
             created_at = existing.get("created_at")
             if isinstance(created_at, str) and now <= created_at:
