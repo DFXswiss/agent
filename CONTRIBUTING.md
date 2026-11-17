@@ -60,7 +60,7 @@ The pages come from the real dashboard server. `e2e/dashboard_server.py` starts 
 
 ### Workflow
 
-1. Once: a virtual environment with the test extras and the Playwright package (PostgreSQL as for `pytest`):
+1. Once: a virtual environment with the test extras and the Playwright package. The seed script starts its own PostgreSQL cluster, so a local `initdb` (PostgreSQL 16) must be installed; `AGENT_TEST_PG` is not used:
    ```sh
    python3 -m venv .venv && .venv/bin/pip install -e ".[test]"
    npm ci
