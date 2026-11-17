@@ -776,7 +776,12 @@ the workflow is enabled on a deployment:
   acceptance comment before starting the session.
 - [`daemon.py`](src/agent_cli/daemon.py) starts knock, dashboard, CLI bridge, and
   paired sync, plus each explicitly configured coordinator worker. Changes to
-  the daemon's worker set require a daemon restart. It does not start the legacy
+  the daemon's worker set require a daemon restart. A daemon or coordinator
+  restart does not interrupt a running model lane whose process record is
+  already durable. A stop before that record is written ends the lane. The
+  coordinator started afterwards adopts that lane by its saved process id and
+  start time, waits for it, and records its result once. Check and test jobs
+  still stop with the coordinator. The daemon does not start the legacy
   `agent watch assigned --follow`. Legacy dispatch and `supervise` refuse
   sessions selected for the coordinator.
 - `agent init --no-service` creates the same local store and identity without

@@ -1192,6 +1192,40 @@ def _open_surface_repair_round(
     task["state"] = "implementing"
 
 
+def _prepare_surface_repair(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    round_num: int,
+    rule: str,
+    line: int,
+) -> tuple[int, dict[str, Any]] | None:
+    """Open the next surface-repair round, or None when its budget is spent.
+
+    The task's current round advances here. The caller saves ``surface_repair``
+    with the rest of its checkpoint.
+    """
+    c = coord(task)
+    attempts = _surface_repair_attempts(c, round_num)
+    next_round = round_num + 1
+    if (
+        attempts >= SURFACE_REPAIR_LIMIT
+        or not _surface_repair_within_budget(c, next_round)
+    ):
+        return None
+    attempts += 1
+    _open_surface_repair_round(store, task, next_round)
+    return (
+        next_round,
+        {
+            "round": next_round,
+            "attempts": attempts,
+            "rule": rule,
+            "line": line,
+        },
+    )
+
+
 def _spec_context(
     c: dict[str, Any], extra: str = "", *, text: str | None = None
 ) -> str:
@@ -1896,28 +1930,22 @@ def phase_implement(
             )
         except MalformedSurfaceCheckpoint as exc:
             # Repair the checkpoint first; block only after the bounded reruns.
-            c = coord(task)
-            attempts = _surface_repair_attempts(c, round_num)
-            next_round = round_num + 1
-            if (
-                attempts >= SURFACE_REPAIR_LIMIT
-                or not _surface_repair_within_budget(c, next_round)
-            ):
+            prepared = _prepare_surface_repair(
+                store,
+                task,
+                round_num=round_num,
+                rule=exc.rule,
+                line=exc.line,
+            )
+            if prepared is None:
                 raise
-            attempts += 1
-            _open_surface_repair_round(store, task, next_round)
-            round_num = next_round
+            round_num, marker = prepared
             tr = _find_round(store, task["id"], round_num)
             c = coord(task)
-            c["surface_repair"] = {
-                "round": next_round,
-                "attempts": attempts,
-                "rule": exc.rule,
-                "line": exc.line,
-            }
+            c["surface_repair"] = marker
             save_task(store, task)
             instruction = base_instruction + _surface_repair_message(
-                exc.rule, exc.line, attempts
+                exc.rule, exc.line, int(marker["attempts"])
             )
             record_round_findings(store, tr, c)
             continue

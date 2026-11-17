@@ -14,7 +14,7 @@ The same coordinator runs local orders under the rules of
 |---|---|
 | Configuration schema (`coordinator_config.py`, `$AGENT_HOME/coordinator.json`) | Implemented. Absent/empty config enables **no** worker. |
 | Runtime `coordinator.tick` / `coordinator_runtime` (+ `coordinator_*.py` helpers) | Implemented in this repository. |
-| CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
+| CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Restarting the daemon or a coordinator worker does not interrupt a running model lane whose process record is already durable: the next coordinator adopts it and records its result once. A stop before that record ends the lane. Check and test jobs still stop with their coordinator. Legacy assignment dispatch and `supervise` refuse these sessions. |
 | Orders, precondition registry, check lanes, dashboard order routes | Implemented in this repository. A worker accepts orders only with `"orders": true`. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
@@ -493,15 +493,28 @@ pair.
    After the retries it becomes a resumable `lane-failed` blocker with fixed
    text `Model lane interrupted in <phase>; not a code rejection.`. Exception
    text is never published. Before a real lane start, `no_live_lane` checks the
-   saved process id and start time. A live process makes the task wait; one past
-   `lane_timeout` is killed. A working row with no live process and no result is
-   closed with `recovered: no live process` and retried under the same bound.
-A record of a check lane is closed the same way, but closing it does not retry the phase: the check counts its own attempts.
+   saved process id and start time. Implement, inner review, gate and
+   pull-request review lanes write stdout and stderr into the task control
+   directory while they run. SIGTERM or SIGINT to `agent daemon` or to
+   `agent coordinate --follow` does not kill the process group of a lane whose
+   process record is already durable. A stop before that record is written ends
+   the lane. The coordinator started afterwards recognises the same process id
+   and start time, waits for the lane and records its result once. It does not close that
+   row with `recovered: no live process`, does not start the lane again, and
+   does not raise the `lane-failed` blocker. A lane that already finished is
+   collected from those files on the next start and recorded once.
+   `lane_timeout` is measured from the lane's original start; a lane past it is
+   killed and recorded as a timeout. Cancelling an order still kills the
+   recorded lane. A working row with no adoptable capture, no live process and
+   no result is closed with `recovered: no live process` and retried under the
+   same bound.
+   A record of a check lane is closed the same way, but closing it does not retry the phase: the check counts its own attempts. Check and test jobs are not adopted, so a coordinator stop still kills them.
    A finished reviewer result awaiting its transaction is replayed. A legacy
    `uncertain_lane` flag is removed on the next visit unless a lane is alive,
    and the phase retries under the same bound.
    Each real implementer or reviewer lane start records its process id and
-   start time in a small file in the task control directory; a check lane
+   start time in a small file in the task control directory. A captured model
+   lane marks that file so a later process can adopt it. A check lane
    records none, so its working row always reads as having no live process.
    No code sets `uncertain_lane` any more.
    Incomplete, invalid-result, and blocked implementer outcomes stage the task
@@ -988,9 +1001,13 @@ replies (`reply_logins` only), listed with
 (not blindly `implement` for CI authorization / incomplete review / checkout
 blockers, and not at all for terminal failed / done / uncertain /
 closed-unmerged / non-human-merge outcomes). An `order.reply` row is consumed
-like an authorized comment reply. Before any model start, `no_live_lane` makes
-the task wait for a live process, kills one past `lane_timeout`, and recovers a
-working row with no process or result under the same bound. Inner and PR reviewers receive a
+like an authorized comment reply. Before any model start, `no_live_lane` adopts
+a model lane that is still running, or that finished while the coordinator was
+stopped, and records that result once from its durable output. The wait uses
+the original `lane_timeout` from the lane's start; a lane past it is killed.
+Cancelling an order still kills the recorded lane. A working row with no
+adoptable process and no result is recovered and retried under the same bound.
+Check and test jobs are still killed when the coordinator stops. Inner and PR reviewers receive a
 script-generated merge-base diff artifact (`base...head`) outside the worktree,
 so commits added only to the base branch are not presented as pull-request
 deletions.

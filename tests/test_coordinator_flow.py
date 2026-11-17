@@ -942,6 +942,117 @@ def test_two_failed_surface_repairs_block_with_the_named_reason(
     assert len(agents) == 3
 
 
+def test_adopted_malformed_surface_is_recorded_and_repaired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A captured implementer with a bad surface list is repaired, not phase-errored."""
+    import subprocess
+    import sys
+
+    from agent_cli.coordinator_common import coord
+    from agent_cli.coordinator_lanes import recover_working_lanes
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store, worker = _surface_repair_fixture(
+        tmp_path, "aa000001-0000-4000-8000-0000000003a3"
+    )
+    tid = "aa000001-0000-4000-8000-0000000003a3"
+    _patch_surface_repair_flow(monkeypatch)
+    agent_id = "agent-adopted-surface"
+    store.write(
+        "agent",
+        "insert",
+        agent_id,
+        {
+            "id": agent_id,
+            "task_id": tid,
+            "session_id": worker.session_id,
+            "round": 1,
+            "role": "implementer",
+            "vendor": "grok",
+            "provider": "grok",
+            "model": "grok-model",
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+        },
+    )
+    from agent_cli import coordinator_lanes
+
+    paths = coordinator_lanes._lane_capture_paths(worker, tid, agent_id)
+    paths["stdout"].parent.mkdir(parents=True, exist_ok=True)
+    paths["stdout"].write_text(
+        grok_messages_stream(MALFORMED_SURFACE_OUTPUT), encoding="utf-8"
+    )
+    paths["stderr"].write_text("", encoding="utf-8")
+    paths["status"].write_text(json.dumps({"returncode": 0}), encoding="utf-8")
+    dead = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+    )
+    dead.kill()
+    dead.wait(timeout=5)
+    coordinator_lanes.lane_process_path(worker, tid, agent_id).write_text(
+        json.dumps(
+            {
+                "capture": True,
+                "pid": dead.pid,
+                "lstart": "dead",
+                "started_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = store.row("task", tid)
+    assert task is not None
+    assert recover_working_lanes(store, worker, task) == "none"
+    task = store.row("task", tid)
+    assert task is not None
+    saved_c = coord(task)
+    assert saved_c.get("phase") == "implement"
+    assert "blocker" not in saved_c
+    assert "lane_outcome" not in saved_c
+    repair = saved_c.get("surface_repair")
+    assert isinstance(repair, dict)
+    assert repair["round"] == 2
+    assert repair["attempts"] == 1
+    assert repair["line"] == 1
+    assert task["current_round"] == 2
+    adopted = store.row("agent", agent_id)
+    assert adopted is not None
+    assert adopted["status"] == "done"
+    runs = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == tid
+    ]
+    assert len(runs) == 1
+    assert runs[0]["payload"]["status"] == "complete"
+    assert runs[0]["payload"]["returncode"] == 0
+    assert "RESULT: done" in str(runs[0]["payload"].get("final_text") or "")
+    calls: list[int] = []
+
+    def lane(_argv, _stdin):
+        calls.append(1)
+        return Completed(0, grok_messages_stream(VALID_SURFACE_OUTPUT), "")
+
+    lines = phase_implement(
+        store, worker, task, lambda _argv: Completed(0, "", ""), lane
+    )
+    assert lines[0] == "implementer done round=2"
+    assert len(calls) == 1
+    assert coord(store.row("task", tid) or {})["phase"] == "inner_review"
+    prompts = [
+        str(row.get("prompt") or "")
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+    ]
+    assert sum("Repair the surface checkpoint" in prompt for prompt in prompts) == 1
+    assert any("Offending line position within its section: 1" in prompt for prompt in prompts)
+    assert not paths["status"].exists()
+
+
 def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
