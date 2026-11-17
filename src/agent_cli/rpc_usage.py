@@ -6,9 +6,10 @@ the account's configuration directory in the driver's ``home_env`` (left unset
 for the driver's ``home_default_dir``), sends ``initialize`` with the configured
 ``initialize_params``, the ``initialized`` notification and the configured
 ``method``, and maps the limits object of the answer to a ``usage.snapshot``
-shaped like a ``windows`` snapshot. Agent never reads the login tokens: the
-program authenticates itself. The identity comes from the adapter's
-``account_file``, optionally from one claim of an ID token's payload.
+shaped like a ``windows`` snapshot. Agent sends no token and stores none: the
+program authenticates itself. Agent reads the adapter's ``account_file`` only
+for the login identity, optionally by decoding one claim of the ID token's
+payload without a signature check.
 """
 
 from __future__ import annotations
@@ -338,8 +339,10 @@ def rpc_snapshot(
     snapshot window its length maps to in ``windows_by_minutes``; an unmapped
     length, or a second window of a length already taken, goes to
     ``windows.other`` with ``window_minutes``. A window the result does not
-    report stays ``null``, never 0 %. ``limit_reached`` is true for any value
-    other than null or false. Nothing else of the result is stored.
+    report stays ``null``, never 0 %. ``limit_reached`` is null when the
+    result does not report it, false for false and true for any other value;
+    ``reset_credits_available`` is null when the result does not report it.
+    Nothing else of the result is stored.
     """
     label = spec.label
     fields = spec.fields
@@ -374,13 +377,15 @@ def rpc_snapshot(
         else:
             windows["other"].append({"window_minutes": minutes, **window})
     reached = _lookup(limits, fields.limit_reached, label, limits_name)
+    # Not reported stays null: a renamed or dropped field is no statement.
+    limit_reached = None if reached is None else reached is not False
     count = _lookup(result, fields.reset_credits_count, label, "result")
-    if count is None:
-        count = 0
-    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+    if count is not None and (
+        isinstance(count, bool) or not isinstance(count, int) or count < 0
+    ):
         raise StoreError(
             f"{label} {_name(fields.reset_credits_count, 'result')} "
-            "must be a non-negative integer"
+            "must be a non-negative integer or null"
         )
     return {
         "vendor": driver,
@@ -388,7 +393,7 @@ def rpc_snapshot(
         "account_email": _text("account_email", account_email),
         "tier": tier,
         "windows": windows,
-        "limit_reached": reached is not None and reached is not False,
+        "limit_reached": limit_reached,
         "reset_credits_available": count,
         "fetched_at": fetched_at,
     }

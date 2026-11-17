@@ -336,7 +336,7 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
-| `usage.snapshot` | — | script | — (configured period-usage, key-spend or windows GET of a driver's usage adapter, on this device; no TUI knock). A missing or expired login of the usage session is not a scan failure: `agent watch session-usage` prints `usage.snapshot skipped`. A missing or expired windows login is not a scan failure either: `agent watch window-usage` prints `usage.snapshot skipped <account>: <reason>`. Usage-account failures, including HTTP 429, are reported and never stored as zero values. |
+| `usage.snapshot` | — | script | — (configured period-usage, key-spend or windows GET of a driver's usage adapter, or rpc read from the driver's own local server, on this device; no TUI knock). A missing or expired login of the usage session is not a scan failure: `agent watch session-usage` prints `usage.snapshot skipped`. A missing or expired windows login, or a missing rpc login, is not a scan failure either: `agent watch window-usage` prints `usage.snapshot skipped <account>: <reason>`. Usage-account failures, including HTTP 429, are reported and never stored as zero values. |
 | `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; a usage adapter with `proxy_from_environment: false` uses `trust_env=False`. A windows adapter follows its configured `proxy_from_environment` setting. |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
@@ -452,8 +452,7 @@ agent watch pr-merged                          # one scan; device daemon covers 
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch session-usage                      # one scan; knock child (under the device daemon) polls every 60s
 agent watch account-usage                      # one scan of explicitly configured usage accounts
-agent watch window-usage                       # one scan of explicitly configured window-usage accounts
-agent watch rpc-usage                          # one scan of explicitly configured rpc-usage accounts (driver's own local server)
+agent watch window-usage                       # one scan of explicitly configured window-usage accounts (windows GET and rpc read)
 agent watch token-keepalive                    # one keep-alive pass over window-usage accounts; needs token_keepalive
 agent account-login ACCOUNT --email ADDRESS [--no-mailbox]  # sign a subscription into the account's profile
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
@@ -891,8 +890,10 @@ the pane markers. The repository ships no driver table and no driver default;
 a missing or incomplete description fails loudly.
 Window-usage reads are a usage adapter; their login, requests and response keys
 come from that driver's `drivers.json` configuration. Rpc-usage reads are one
-too: the program, JSON-RPC method and answer keys come from `drivers.json`, and
-Agent reads no token for them.
+too: the program, JSON-RPC method and answer keys come from `drivers.json`.
+Agent sends no token for them and stores none, and reads the account file only
+for the login identity, decoding the identity claim of the ID token without a
+signature check when one is configured.
 Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid

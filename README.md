@@ -201,8 +201,7 @@ agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon c
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch session-usage # one scan of the usage session's period usage into usage.snapshot
 agent watch account-usage # one scan of the configured usage accounts' key USD usage
-agent watch window-usage # one scan of configured window usage (5h, weekly, per model)
-agent watch rpc-usage   # one scan of configured rpc usage, read from each driver's own local server
+agent watch window-usage # one scan of configured window usage (5h, weekly, per model; windows and rpc adapters)
 agent watch token-keepalive # one keep-alive pass over window-usage accounts; needs token_keepalive
 agent account-login ACCOUNT --email ADDRESS [--no-mailbox] # sign a subscription into the account's profile
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
@@ -268,9 +267,11 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from their driver's `spend` usage
 adapter. `agent watch window-usage` reads the login of each selected account
 whose driver has a `windows` usage adapter and stores changed five-hour, weekly
-and per-model weekly percentages. `agent watch rpc-usage` asks the driver's own
+and per-model weekly percentages. In the same scan it asks the driver's own
 local JSON-RPC server for each selected account whose driver has an `rpc` usage
-adapter and stores the same windows; Agent reads no token for it;
+adapter and stores the same windows; Agent sends no token for it and stores
+none, and reads the account file only to decode the identity claim of the ID
+token, without a signature check;
 see [AI accounts](docs/ai-accounts.md). Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final

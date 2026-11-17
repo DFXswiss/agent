@@ -506,9 +506,9 @@ The selected session must exist locally, be owned and active.
 The optional top-level `usage_accounts` is a list of explicitly named
 accounts whose driver has a `spend`, `windows` or `rpc` usage adapter.
 Missing/null/`[]` disables account polling. An account whose driver has a
-`windows` adapter is read by `agent watch window-usage`, one whose driver has
-an `rpc` adapter by `agent watch rpc-usage`; any other selected account must
-have a `spend` adapter and is read by `agent watch account-usage`. Unknown
+`windows` or an `rpc` adapter is read by `agent watch window-usage`; any other
+selected account must have a `spend` adapter and is read by
+`agent watch account-usage`. Unknown
 names, accounts whose driver has none of these adapters and duplicate names
 are rejected,
 for example with `usage_accounts account <name> uses driver <driver>, which has
@@ -524,9 +524,8 @@ and the bearer key cannot be routed through an intercepting proxy.
 The device daemon polls `usage_accounts` on the same 60-second tick as the
 period-usage read. Each scanner reads only its own accounts. A `windows` or
 `rpc` account is read no more often than its adapter's `poll_seconds`
-(1-86400 seconds); without pacing, as in `agent watch window-usage` and
-`agent watch rpc-usage`, every selected account of that kind is read
-immediately. A rate-limit answer is reported as
+(1-86400 seconds); without pacing, as in `agent watch window-usage`, every
+selected account of that kind is read immediately. A rate-limit answer is reported as
 `usage.snapshot error: <account>: <label> returned HTTP 429`, followed by
 `; retry after <N> s` when its `Retry-After` header gives a usable number of
 seconds, and postpones the next read of that account by its `Retry-After` when
@@ -575,12 +574,16 @@ from the adapter's configured requests as `usage.snapshot`:
   A snapshot is stored only when a value other than `fetched_at` changed. The
   token is never stored or logged.
 
-Each `rpc` account also uses the login of its `config_dir`, but Agent never
-reads a token at all: it asks the driver's own local JSON-RPC server, which
-authenticates itself with that login. The operator logs in there with the
-driver's own tool. `agent watch rpc-usage` reads every selected rpc account
-immediately and records changed usage windows as `usage.snapshot`, with the
-same output as `agent watch window-usage`:
+Each `rpc` account also uses the login of its `config_dir`, but Agent sends no
+token and stores none: it asks the driver's own local JSON-RPC server, which
+authenticates itself with that login. Agent reads the account file only for
+the login identity, decoding the identity claim of the ID token without a
+signature check when one is configured. The operator logs in there with the
+driver's own tool. In the same scan as the `windows` accounts, `agent watch
+window-usage` reads every selected rpc account immediately and records changed
+usage windows as `usage.snapshot`, with the same output lines. A failing
+`windows` account does not stop the `rpc` accounts, and the reverse; any
+failure makes the command exit 1:
 
 - Identity: the adapter's `account_file`, as for `windows`. With
   `account_file.jwt_field` and `account_file.jwt_claim` the identity is that
@@ -612,10 +615,11 @@ same output as `agent watch window-usage`:
   `other` with its `window_minutes`. Each window has `used_percent` and
   `resets_at` (epoch seconds in the answer, stored as UTC rounded to the
   nearest minute); a window the answer reports as null or not at all is
-  `null`, not 0 %. `limit_reached` is true when `fields.limit_reached` holds
-  any value other than null or false, and `reset_credits_available` is the
-  non-negative integer at `fields.reset_credits_count` (0 when absent or
-  null). Nothing else of the answer is stored. A snapshot is stored only when
+  `null`, not 0 %. `limit_reached` is false when `fields.limit_reached` holds
+  false, true for any other value, and `null` when the answer reports it as
+  null or not at all. `reset_credits_available` is the non-negative integer at
+  `fields.reset_credits_count`, and `null`, not 0, when the answer reports it
+  as null or not at all. Nothing else of the answer is stored. A snapshot is stored only when
   a value other than `fetched_at` changed.
 - Check time: every successful rpc read records the device's
   `usage.checked.*` time for that account, like a `windows` or `spend` read,
@@ -1384,8 +1388,10 @@ only ...`), and a missing or wrong value fails as `<path>.<key> is required`,
 
 #### rpc adapters
 
-An `rpc` usage section makes no HTTPS request and reads no credential. It
-starts the driver's own local JSON-RPC server and asks it (see
+An `rpc` usage section makes no HTTPS request; Agent sends no token and stores
+none, and reads the account file only for the login identity, decoding the
+identity claim of the ID token without a signature check when one is
+configured. It starts the driver's own local JSON-RPC server and asks it (see
 [Required fields](#required-fields) for the exchange and the snapshot). It has
 exactly these keys, all required:
 
@@ -1408,8 +1414,8 @@ A step of a pointer that is null or absent reads as no value; a step that is
 neither an object nor null fails as `<label> <name> must be an object or null`.
 A window without `window_minutes` as a positive integer, a `used_percent` that
 is not a finite number, a `resets_at` that is no valid time, a `plan` that is
-not a string, and a `reset_credits_count` that is not a non-negative integer
-fail with errors naming the label and the field. A driver whose `rpc` section
+not a string, and a `reset_credits_count` that is neither a non-negative
+integer nor null fail with errors naming the label and the field. A driver whose `rpc` section
 lacks `home_env` fails as `drivers.<id>.usage snapshot rpc requires home_env`.
 The lock key of an rpc snapshot is `usage.snapshot:<driver>:<email>` with the
 e-mail case-folded, as for `windows`.
@@ -1422,7 +1428,7 @@ file or entry field fails (`<driver> credential entry field <field> is missing
 or invalid`). On the `usage_accounts` path, a missing or empty key file is an
 error of that account (`<driver> key missing`); `agent watch account-usage`
 records the other accounts, prints `usage.snapshot error: ...` per failed
-account and exits 1. On the `windows` path, `agent watch window-usage` records
+account and exits 1. On the `windows` and `rpc` paths, `agent watch window-usage` records
 the other accounts, prints `usage.snapshot skipped <account>: <reason>` for a
 missing or expired login, prints `usage.snapshot error: ...` per failed account,
 and exits 1 on an error. The lock keys are `usage.snapshot:<driver>` and

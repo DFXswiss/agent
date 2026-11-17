@@ -507,16 +507,21 @@ def test_snapshot_keeps_null_windows_null() -> None:
         "other": [],
     }
     assert mapped["tier"] is None
-    assert mapped["limit_reached"] is False
-    assert mapped["reset_credits_available"] == 0
+    # Not reported is null, never "no limit reached" or "0 free resets".
+    assert mapped["limit_reached"] is None
+    assert mapped["reset_credits_available"] is None
     raw["resetCredits"] = {"credits": []}
-    assert snapshot(raw)["reset_credits_available"] == 0
+    assert snapshot(raw)["reset_credits_available"] is None
     raw["resetCredits"] = None
+    assert snapshot(raw)["reset_credits_available"] is None
+    raw["resetCredits"] = {"availableCount": 0}
     assert snapshot(raw)["reset_credits_available"] == 0
     raw["limits"]["plan"] = " "
     raw["limits"]["reachedType"] = False
     assert snapshot(raw)["tier"] is None
     assert snapshot(raw)["limit_reached"] is False
+    del raw["limits"]["reachedType"]
+    assert snapshot(raw)["limit_reached"] is None
     del raw["limits"]["primary"]
     assert snapshot(raw)["windows"]["five_hour"] is None
 
@@ -547,11 +552,11 @@ def test_reset_is_rounded_to_the_nearest_minute(offset: int, expected: int) -> N
         ({"limits": limits(), "resetCredits": []}, "result.resetCredits must be an object or null"),
         (
             {"limits": limits(), "resetCredits": {"availableCount": -1}},
-            "availableCount must be a non-negative integer",
+            "availableCount must be a non-negative integer or null",
         ),
         (
             {"limits": limits(), "resetCredits": {"availableCount": True}},
-            "availableCount must be a non-negative integer",
+            "availableCount must be a non-negative integer or null",
         ),
     ],
 )

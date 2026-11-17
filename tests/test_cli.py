@@ -3272,6 +3272,7 @@ def test_watch_window_usage_changed_unchanged_skipped_and_error(
 
         return fake
 
+    monkeypatch.setattr("agent_cli.main.scan_rpc_usage", scan([], []))
     monkeypatch.setattr(
         "agent_cli.main.scan_window_usage",
         scan(["11111111-1111-1111-1111-111111111111"], []),
@@ -3313,14 +3314,14 @@ def test_watch_window_usage_changed_unchanged_skipped_and_error(
     assert captured.err == "usage.snapshot error: seat: Login usage returned HTTP 401\n"
 
 
-def test_watch_rpc_usage_reads_only_the_rpc_scanner(
+def test_watch_window_usage_also_reads_the_rpc_scanner(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     capsys.readouterr()
 
     def forbidden(_store: object, **_kwargs: object) -> list[str]:
-        raise AssertionError("watch rpc-usage reads only rpc accounts")
+        raise AssertionError("watch window-usage reads only window-shaped accounts")
 
     def scan(result: list[str], reasons: list[str]):
         def fake(_store: object, *, skipped: list[str]) -> list[str]:
@@ -3329,34 +3330,80 @@ def test_watch_rpc_usage_reads_only_the_rpc_scanner(
 
         return fake
 
-    monkeypatch.setattr("agent_cli.main.scan_window_usage", forbidden)
     monkeypatch.setattr("agent_cli.main.scan_account_usage", forbidden)
+    monkeypatch.setattr(
+        "agent_cli.main.scan_window_usage",
+        scan(["77777777-7777-7777-7777-777777777777"], ["seat: login token expired"]),
+    )
     monkeypatch.setattr(
         "agent_cli.main.scan_rpc_usage",
         scan(["88888888-8888-8888-8888-888888888888"], ["gone: Seat usage account file not found"]),
     )
-    run(tmp_path, ["watch", "rpc-usage"])
+    run(tmp_path, ["watch", "window-usage"])
     captured = capsys.readouterr()
     assert captured.out == (
+        "usage.snapshot 77777777-7777-7777-7777-777777777777\n"
         "usage.snapshot 88888888-8888-8888-8888-888888888888\n"
+        "usage.snapshot skipped seat: login token expired\n"
         "usage.snapshot skipped gone: Seat usage account file not found\n"
     )
     assert captured.err == ""
 
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", scan([], []))
     monkeypatch.setattr("agent_cli.main.scan_rpc_usage", scan([], []))
-    run(tmp_path, ["watch", "rpc-usage"])
+    run(tmp_path, ["watch", "window-usage"])
     assert capsys.readouterr().out == "usage.snapshot none\n"
 
-    def fail_scan(_store: object, *, skipped: list[str]) -> list[str]:
+    # A failing scanner does not stop the other one; the command still exits 1.
+    def fail_window(_store: object, *, skipped: list[str]) -> list[str]:
+        raise AccountUsageError(
+            ["seat: Login usage returned HTTP 401"],
+            ["22222222-2222-2222-2222-222222222222"],
+        )
+
+    def fail_rpc(_store: object, *, skipped: list[str]) -> list[str]:
         raise AccountUsageError(["seat: Seat usage timed out after 30 s"], [])
 
-    monkeypatch.setattr("agent_cli.main.scan_rpc_usage", fail_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", fail_window)
+    monkeypatch.setattr(
+        "agent_cli.main.scan_rpc_usage",
+        scan(["99999999-9999-9999-9999-999999999999"], []),
+    )
     with pytest.raises(SystemExit) as info:
-        run(tmp_path, ["watch", "rpc-usage"])
+        run(tmp_path, ["watch", "window-usage"])
+    assert info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "usage.snapshot 22222222-2222-2222-2222-222222222222\n"
+        "usage.snapshot 99999999-9999-9999-9999-999999999999\n"
+    )
+    assert captured.err == "usage.snapshot error: seat: Login usage returned HTTP 401\n"
+
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", scan([], []))
+    monkeypatch.setattr("agent_cli.main.scan_rpc_usage", fail_rpc)
+    with pytest.raises(SystemExit) as info:
+        run(tmp_path, ["watch", "window-usage"])
     assert info.value.code == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "usage.snapshot error: seat: Seat usage timed out after 30 s\n"
+
+
+def test_watch_has_no_separate_rpc_usage_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+
+    def forbidden(_store: object, **_kwargs: object) -> list[str]:
+        raise AssertionError("an unknown watch target reads no account")
+
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", forbidden)
+    monkeypatch.setattr("agent_cli.main.scan_rpc_usage", forbidden)
+    with pytest.raises(SystemExit) as info:
+        run(tmp_path, ["watch", "rpc-usage"])
+    assert "rpc-usage" not in str(info.value.code)
+    assert "window-usage" in str(info.value.code)
 
 
 def test_knock_daemon_polls_window_usage_on_the_usage_clock(

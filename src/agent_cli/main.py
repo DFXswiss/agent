@@ -5806,7 +5806,7 @@ def cmd_pg(args: list[str]) -> None:
 WATCH_USAGE = (
     "Usage: agent watch "
     "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|"
-    "rpc-usage|token-keepalive|errors|error-fix"
+    "token-keepalive|errors|error-fix"
 )
 
 
@@ -5818,7 +5818,6 @@ def cmd_watch(args: list[str]) -> None:
         "session-usage",
         "account-usage",
         "window-usage",
-        "rpc-usage",
         "token-keepalive",
         "errors",
         "error-fix",
@@ -5878,26 +5877,31 @@ def cmd_watch(args: list[str]) -> None:
             if not activity_ids:
                 print("usage.snapshot none")
             return
-        if args[0] in ("window-usage", "rpc-usage"):
+        if args[0] == "window-usage":
+            # Every window-shaped usage adapter: the windows GET and the rpc
+            # read. A failing scanner does not stop the other one.
             skipped: list[str] = []
-            try:
-                if args[0] == "rpc-usage":
-                    activity_ids = scan_rpc_usage(store, skipped=skipped)
-                else:
-                    activity_ids = scan_window_usage(store, skipped=skipped)
-            except AccountUsageError as exc:
-                for activity_id in exc.activity_ids:
-                    print(f"usage.snapshot {activity_id}")
-                for message in skipped:
-                    print(f"usage.snapshot skipped {message}")
-                for message in exc.errors:
-                    print(f"usage.snapshot error: {message}", file=sys.stderr)
-                raise SystemExit(1) from None
-            for activity_id in activity_ids:
+            snapshot_ids: list[str] = []
+            scan_errors: list[str] = []
+            scanners: tuple[Callable[..., list[str]], ...] = (
+                scan_window_usage,
+                scan_rpc_usage,
+            )
+            for scan_windows in scanners:
+                try:
+                    snapshot_ids.extend(scan_windows(store, skipped=skipped))
+                except AccountUsageError as exc:
+                    snapshot_ids.extend(exc.activity_ids)
+                    scan_errors.extend(exc.errors)
+            for activity_id in snapshot_ids:
                 print(f"usage.snapshot {activity_id}")
             for message in skipped:
                 print(f"usage.snapshot skipped {message}")
-            if not activity_ids and not skipped:
+            for message in scan_errors:
+                print(f"usage.snapshot error: {message}", file=sys.stderr)
+            if scan_errors:
+                raise SystemExit(1)
+            if not snapshot_ids and not skipped:
                 print("usage.snapshot none")
             return
         if args[0] == "assigned":
