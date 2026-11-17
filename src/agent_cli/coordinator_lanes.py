@@ -2276,12 +2276,14 @@ def launch_lane(
                             status_path=str(capture["status"]),
                             pid_path=str(capture["pid"]),
                         )
-                except Exception as exc:
+                except BaseException as exc:
                     # A delegated implementer can change git metadata and then
                     # raise. Restore it before the exception leaves this block.
+                    # An interrupt or exit is re-raised unchanged, never a
+                    # LaneFailedError.
                     if git_snapshot is not None:
                         changed, complete = restore_git_metadata(git_snapshot)
-                        if changed:
+                        if changed and isinstance(exc, Exception):
                             raise LaneFailedError(
                                 DELEGATED_GIT_METADATA_CHANGED
                                 if complete

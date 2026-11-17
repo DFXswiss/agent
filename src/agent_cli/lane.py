@@ -1181,12 +1181,13 @@ def launch(
                 )
             else:
                 completed = _default_runner(argv, stdin_text, cwd)
-        except Exception as exc:
+        except BaseException as exc:
             # A delegated implementer can change git metadata and then raise.
-            # Restore it before the exception leaves this function.
+            # Restore it before the exception leaves this function. An
+            # interrupt or exit is re-raised unchanged, never a lane result.
             if git_snapshot is not None:
                 changed, complete = restore_git_metadata(git_snapshot)
-                if changed:
+                if changed and isinstance(exc, Exception):
                     return delegated_git_metadata_result(
                         role=role,
                         vendor=vendor,
