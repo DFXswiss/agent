@@ -1349,9 +1349,17 @@ dashboard.
 
 This revision records the proposed concept for a team record with key identity (§24): signed append-only events for tasks, security issues and discussions, no third-party identity, no deletion, and a time axis. It is not implemented; §§2–12 stay in force until each part ships.
 
-## 24. Team record and key identity (proposed concept, not implemented)
+This revision records the decision of 2026-11-17 to build the team record in agent-core and to use no outside tracker, and lists the questions still open in §24.
 
-Status: proposed direction under discussion, not built. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+## 24. Team record and key identity (decided, not implemented)
+
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+
+Still open, each decided by a human before the part it affects is built:
+
+- Whether staff passkeys may be synced by the platform or must be bound to one device (§24.2, sign-in without GitHub).
+- What "released" means in the answer to a release query (§24.10, step 2).
+- Whether content readable by the network edge in transit is acceptable, or which objects need end-to-end protection (§24.2).
 
 ### 24.1 Purpose
 
