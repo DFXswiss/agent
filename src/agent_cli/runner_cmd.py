@@ -495,22 +495,24 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
         try:
             own = OwnJobs(store, work_root=paths.work)
 
-            def announce(row: dict[str, Any]) -> bool:
+            def announce(row: dict[str, Any]) -> bool | None:
                 # The real store, not `own`: the executor needs its lock,
                 # its home and its activity rows, which the job view lacks.
-                done = runner_status.post_status(
+                done = runner_status.announce_status(
                     store,
                     run_argv,
                     row=row,
-                    kind="announce",
                     body=runner_status.announce_body(row["id"], row["attempts"]),
                     home=_agent_home(),
                     expected_login=login,
                     execute_activity=github_act.execute_activity,
                 )
-                if done:
+                if done is True:
                     announced.append(str(row["id"]))
                 else:
+                    # False (safely unposted) and None (may still be posted)
+                    # are both undelivered; the dispatch decision uses the
+                    # distinction, the operator sees one line for either.
                     announce_failed.append(str(row["id"]))
                 return done
 
@@ -540,8 +542,8 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
     for job_id in announced:
         print(f"job.announced {job_id}")
     for job_id in announce_failed:
-        # An announcement that could not be posted does not stop the job, so
-        # this line is informational and the exit status stays unchanged.
+        # An undelivered announcement is informational; dispatch itself decides
+        # whether the job may start, and the exit status stays unchanged.
         print(f"announce failed {job_id}", file=sys.stderr)
     for job_id in started:
         print(f"job.started {job_id}")
@@ -671,7 +673,6 @@ def _cmd_supervise(args: list[str]) -> None:
                 own,
                 store,
                 run_argv,
-                runner_config=runner_config,
                 home=_agent_home(),
                 expected_login=login,
                 execute_activity=github_act.execute_activity,
@@ -825,6 +826,7 @@ def remove_job_worktree(
 
 
 def _cmd_retry(args: list[str]) -> None:
+    from . import runner_status
     from .main import die, open_store
 
     if len(args) != 1 or args[0].startswith("-"):
@@ -852,6 +854,15 @@ def _cmd_retry(args: list[str]) -> None:
             if payload is None:
                 die(
                     f"job {job_id} cannot be retried from state {row.get('state')}"
+                )
+            # A pending status activity of the attempt being retried would be
+            # posted by a later scan after the new attempt's baseline and be
+            # counted as its output. Retire those before touching anything
+            # else; a refused retry leaves both the row and its evidence alone.
+            if not runner_status.retire_status_activities(store, row):
+                die(
+                    f"job {job_id}: a status comment of the previous attempt "
+                    "could not be retired"
                 )
             problem = remove_job_worktree(paths, job_id, row, run_argv)
             if problem is not None:

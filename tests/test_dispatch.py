@@ -94,7 +94,7 @@ def _dispatch(
     runner: Callable[[list[str]], Completed],
     *,
     max_concurrent: int = 1,
-    announce: Callable[[dict[str, Any]], bool] | None = None,
+    announce: Callable[[dict[str, Any]], bool | None] | None = None,
 ) -> tuple[list[str], int]:
     return dispatch_queued(
         store,
@@ -415,12 +415,11 @@ def test_an_already_announced_row_is_not_announced_again(tmp_path: Path) -> None
         store.close()
 
 
-@pytest.mark.parametrize("broken", ["false", "raise"])
-def test_a_broken_announcement_does_not_stop_the_job(
-    tmp_path: Path, broken: str
+def test_a_safely_unposted_announcement_does_not_stop_the_job(
+    tmp_path: Path,
 ) -> None:
-    # The user asked for the work; a comment that cannot be posted must not
-    # make it not happen.
+    # False means the comment was not posted and cannot be posted later, so
+    # the user still gets the work they asked for.
     store = Store(tmp_path)
     try:
         row = job_row(
@@ -433,9 +432,7 @@ def test_a_broken_announcement_does_not_stop_the_job(
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
 
-        def announce(_row: dict[str, Any]) -> bool:
-            if broken == "raise":
-                raise RuntimeError("gh unavailable")
+        def announce(_row: dict[str, Any]) -> bool | None:
             return False
 
         started, skipped = _dispatch(
@@ -447,6 +444,52 @@ def test_a_broken_announcement_does_not_stop_the_job(
         saved = store.row("job", row["id"])
         assert saved is not None
         assert saved["state"] == "running"
+        assert saved.get("announced") is not True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("unsafe", ["none", "raise"])
+def test_an_unsafe_announcement_leaves_the_job_queued(
+    tmp_path: Path, unsafe: str
+) -> None:
+    # None, like an exception, means the activity may still be posted by a
+    # later scan. Starting the job now would let that comment land after the
+    # output baseline and be counted as the job's own output.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        def announce(_row: dict[str, Any]) -> bool | None:
+            if unsafe == "raise":
+                raise RuntimeError("gh unavailable")
+            return None
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        # No baseline was taken and no worker was started.
+        assert not any("graphql" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+        # The prepared worktree was removed and pruned, exactly as on a
+        # baseline failure.
+        assert any("worktree remove" in command for command in joined)
+        assert any("worktree prune" in command for command in joined)
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
         assert saved.get("announced") is not True
     finally:
         store.close()

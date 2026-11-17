@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.finalize import (
-    budget,
+    _budget,
     done_kind,
     finalize_running,
     judge,
@@ -789,8 +789,59 @@ def test_overdue_worker_is_killed_and_recorded_timeout(tmp_path: Path) -> None:
         saved = store.row("job", row["id"])
         assert saved["state"] == "failed"
         assert saved["outcome"] == "timeout"
+        # The budget the watchdog applied is recorded for the outcome text.
+        assert saved["limit_minutes"] == 1
         assert saved["work_performed"] == "n_a"
         assert any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_a_timeout_records_the_limit_the_watchdog_applied(tmp_path: Path) -> None:
+    # The row carries the limit used, so a later outcome comment does not
+    # report whatever the configuration says by then.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        runner_config = {
+            "skills": {"pr-review": {"timeout_minutes": 12, "stall_minutes": 10}}
+        }
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            runner_config=runner_config,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved["outcome"] == "timeout"
+        assert saved["limit_minutes"] == 12
     finally:
         store.close()
 
@@ -840,6 +891,7 @@ def test_worker_inside_budget_but_stalled_is_killed(tmp_path: Path) -> None:
         saved = store.row("job", row["id"])
         assert saved["state"] == "failed"
         assert saved["outcome"] == "stalled"
+        assert saved["limit_minutes"] == 1
         assert any("kill-session" in " ".join(argv) for argv in calls)
     finally:
         store.close()
@@ -1105,7 +1157,7 @@ def test_budget_falls_back_to_defaults_when_the_skill_has_no_setting() -> None:
     # one the original resolves both budgets through. Without it a
     # defaults-only configuration skips every running job forever.
     runner_config = {"defaults": {"timeout_minutes": 60}}
-    assert budget(runner_config, "pr-review", "timeout_minutes") == 60
+    assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
 
 
 def test_budget_prefers_the_skills_own_setting_over_defaults() -> None:
@@ -1113,7 +1165,7 @@ def test_budget_prefers_the_skills_own_setting_over_defaults() -> None:
         "skills": {"pr-review": {"timeout_minutes": 15}},
         "defaults": {"timeout_minutes": 60},
     }
-    assert budget(runner_config, "pr-review", "timeout_minutes") == 15
+    assert _budget(runner_config, "pr-review", "timeout_minutes") == 15
 
 
 def test_budget_does_not_substitute_defaults_for_a_malformed_skill_setting() -> None:
@@ -1123,7 +1175,7 @@ def test_budget_does_not_substitute_defaults_for_a_malformed_skill_setting() -> 
         "skills": {"pr-review": {"timeout_minutes": "soon"}},
         "defaults": {"timeout_minutes": 60},
     }
-    assert budget(runner_config, "pr-review", "timeout_minutes") is None
+    assert _budget(runner_config, "pr-review", "timeout_minutes") is None
 
 
 def test_defaults_only_runner_config_resolves_budgets_and_takes_a_stall_baseline(

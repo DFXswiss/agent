@@ -294,6 +294,7 @@ def test_retry_payload_resets_the_previous_attempt_fields_to_none() -> None:
         "finished": "2026-01-15T10:05:00Z",
         "exit_code": 1,
         "outcome": "failed",
+        "limit_minutes": 12,
         "done_kind": "error",
         "work_performed": True,
         "contract_followed": False,
@@ -306,6 +307,7 @@ def test_retry_payload_resets_the_previous_attempt_fields_to_none() -> None:
     assert result["finished"] is None
     assert result["exit_code"] is None
     assert result["outcome"] is None
+    assert result["limit_minutes"] is None
     assert result["done_kind"] is None
     assert result["work_performed"] is None
     assert result["contract_followed"] is None
@@ -336,7 +338,7 @@ def test_retry_payload_drops_report_attempts() -> None:
     assert "report_attempts" not in result
 
 
-# The original deletes these three keys while nulling the nine beside them,
+# The original deletes these three keys while nulling the ten beside them,
 # and the port keeps that shape. Behaviour is the same either way — the stall
 # check rejects a None exactly as it rejects a missing key — so what this pins
 # is the stored shape: no progress keys until a real measurement writes them.

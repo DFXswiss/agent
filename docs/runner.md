@@ -130,10 +130,12 @@ one comment on the issue or pull request: `Working on this now: job <id>.`, with
 ` (attempt N)` on a retry. The order is worktree → announcement → baseline. A
 baseline taken before the announcement would miss the bot's own comment, and the
 silent-failure check in `supervise` would count it as new output and pass every
-job. An
-announcement that cannot be posted does not stop the job; it is reported as
-`announce failed <job-id>` on standard error. The comment is a `comment.post`
-activity, never a direct `gh` call.
+job. An announcement that was not posted but is safely retired does not stop
+the job. If it may still be posted later, the job stays queued and its worktree
+is removed, exactly as on a baseline failure: that comment would otherwise
+land after the baseline and count as the job's output. Either undelivered case
+is reported as `announce failed <job-id>` on standard error. The comment is a
+`comment.post` activity, never a direct `gh` call.
 
 The row records `pull_request` (whether the probe answered that the number is a
 pull request) and `announced` once the announcement ended `done`. Writing
@@ -263,7 +265,11 @@ previous attempt's result fields, and removes its log files and leftover
 worktree. The worktree is removed through `git worktree remove` and
 `worktree prune`. Only if the directory still exists is a recursive delete
 used, and only when the resolved path is strictly inside `state/work` and is
-not a symlink; anything else is refused rather than deleted.
+not a symlink; anything else is refused rather than deleted. Before the
+worktree is touched, a status activity of the previous attempt that is still
+`pending` is retired, so a later scan cannot post it after the new attempt's
+baseline and have it counted as that attempt's output; a status comment that
+cannot be retired refuses the retry and leaves the row unchanged.
 
 Output: `job.retried <job-id>`.
 

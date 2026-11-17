@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import finalize, github_accounts, workspace
+from . import github_accounts, workspace
 from .github_accounts import AccountError as GitHubAccountError
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
@@ -104,14 +104,8 @@ def outcome_body(
             and not isinstance(exit_code, bool)
             and exit_code != 0
         ):
-            english = (
-                f"Job `{job_id}` ended with exit code {exit_code}; "
-                "nothing was published."
-            )
-            german = (
-                f"Auftrag `{job_id}` endete mit Fehlercode {exit_code}; "
-                "es wurde nichts veröffentlicht."
-            )
+            english = f"Job `{job_id}` ended with exit code {exit_code}."
+            german = f"Auftrag `{job_id}` endete mit Fehlercode {exit_code}."
         else:
             english = f"Job `{job_id}` ended without publishing a result."
             german = f"Auftrag `{job_id}` endete, ohne ein Ergebnis zu veröffentlichen."
@@ -230,22 +224,20 @@ def _ref_number(ref: Any) -> int | None:
     return None
 
 
-def _retire_unposted_announcement(store: Store, activity_id: str) -> bool:
-    """Make sure a failed announcement can never be posted later.
+def _retire_activity(
+    store: Store, activity_id: str, *, error: str
+) -> bool | None:
+    """Retire one pending status activity; report whether it may still run.
 
-    `post_status` returns False when the executor raises or leaves the row
-    pending, but the activity itself can stay `pending`. A scheduled
-    `scan_github` executes every pending GitHub activity of this device, so it
-    would post the announcement after dispatch took the output baseline, and
-    `finalize` would count the runner's own comment as the job's output. Under
-    the executor's per-activity lock, a still-pending row owned by this device
-    is retired to `error`, which a later scan does not execute. A row that is
-    already `done` posted its comment before the baseline and is left alone.
+    Under the executor's per-activity lock, a still-pending row owned by this
+    device is rewritten to `execution_status: "error"`, which a later scan
+    does not execute. A row that is absent, already `done`, or no longer
+    `pending` needs no write and cannot be executed again.
 
-    Outcome activities are deliberately not retired: a later pass re-opens and
-    retries them, and the executor's marker keeps a retry to one comment.
-
-    Returns True only when the row ended `done`; any failure returns False.
+    Returns True when the row is `done` (the comment was posted), False when
+    it is safe but was not posted (absent, not pending, or retired here), and
+    None when it may still be executed later: a pending row owned by another
+    device, or a retirement write that raised.
     """
     try:
         # Imported here rather than at module top: `github_act` is the
@@ -260,21 +252,80 @@ def _retire_unposted_announcement(store: Store, activity_id: str) -> bool:
                 return False
             if current.get("execution_status") == "done":
                 return True
-            if (
-                current.get("execution_status") != "pending"
-                or current.get("_origin_device_id") != store.device_id()
-            ):
+            if current.get("execution_status") != "pending":
                 return False
+            if current.get("_origin_device_id") != store.device_id():
+                return None
             updated = _strip(current)
             updated["execution_status"] = "error"
-            updated["error"] = "announcement not posted before the job started"
+            updated["error"] = error
             store.write("activity", "update", activity_id, updated)
             return False
+    except (Exception, SystemExit):
+        return None
+
+
+def _retire_unposted_announcement(
+    store: Store, activity_id: str
+) -> bool | None:
+    """Make sure a failed announcement can never be posted later.
+
+    `post_status` returns False when the executor raises or leaves the row
+    pending, but the activity itself can stay `pending`. A scheduled
+    `scan_github` executes every pending GitHub activity of this device, so it
+    would post the announcement after dispatch took the output baseline, and
+    `finalize` would count the runner's own comment as the job's output.
+
+    Returns True when the row ended `done`, False when it is safe but was not
+    posted, and None when it may still be posted later.
+    """
+    return _retire_activity(
+        store,
+        activity_id,
+        error="announcement not posted before the job started",
+    )
+
+
+def retire_status_activities(store: Store, row: dict[str, Any]) -> bool:
+    """Retire the previous attempt's status activities before a retry.
+
+    A retry writes a new attempt's row, but an announcement or outcome
+    activity of the attempt being retried can still be `pending` after an
+    interrupted dispatch or supervise. A later scan would post it after the
+    new attempt's baseline, and `finalize` would count it as the new attempt's
+    output. Under each activity's own lock, such a row is retired exactly as
+    an unposted announcement is. A row that is absent, done or no longer
+    pending is fine and left alone, as is a pending row this device retires.
+
+    Returns True only when both activities are fine; a pending row owned by
+    another device, a raising write, or any other exception returns False.
+    """
+    try:
+        job_id = row.get("id")
+        attempts = row.get("attempts")
+        if (
+            not isinstance(job_id, str)
+            or not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+        ):
+            return False
+        for kind in _KINDS:
+            activity_id = status_activity_id(kind, job_id, attempts)
+            if (
+                _retire_activity(
+                    store,
+                    activity_id,
+                    error="superseded by a retry of the job",
+                )
+                is None
+            ):
+                return False
+        return True
     except (Exception, SystemExit):
         return False
 
 
-def post_status(
+def _post_status(
     store: Store,
     runner: Callable[[list[str]], Completed],
     *,
@@ -286,13 +337,16 @@ def post_status(
     execute_activity: Callable[
         [Store, Callable[[list[str]], Completed], str], str | None
     ],
-) -> bool:
-    """Post one status comment for `row`; True only when it ended `done`.
+) -> bool | None:
+    """Post one status comment for `row`.
+
+    An outcome returns True only when it ended `done` and False otherwise; a
+    failed outcome is retried by the next pass. An announcement also has the
+    third result None: the comment was not posted but its activity may still
+    be executed by a later scan.
 
     Every input that could name the wrong target or post under the wrong
-    account fails closed with False rather than raising. A failed comment is
-    retried by the next pass (for an outcome) or simply does not stop the job
-    (for an announcement).
+    account fails closed with False rather than raising.
     """
     try:
         if not isinstance(row, dict):
@@ -367,7 +421,100 @@ def post_status(
             return _retire_unposted_announcement(store, activity_id)
         return False
     except (Exception, SystemExit):
+        # An announcement that failed unexpectedly may have left a pending
+        # row behind, so it is unsafe rather than safely unposted.
+        return None if kind == "announce" else False
+
+
+def announce_status(
+    store: Store,
+    runner: Callable[[list[str]], Completed],
+    *,
+    row: dict[str, Any],
+    body: str,
+    home: Path,
+    expected_login: str,
+    execute_activity: Callable[
+        [Store, Callable[[list[str]], Completed], str], str | None
+    ],
+) -> bool | None:
+    """Post one announcement for `row`, with the third result.
+
+    Returns True when the comment ended `done`, False when it was not posted
+    and can no longer be posted, and None when its activity may still be
+    executed later. Dispatch only starts a job on True or False: an
+    announcement that can still appear after the output baseline would be
+    counted by `finalize` as the job's own output.
+
+    Every result short of a posted comment ends with the locked check on this
+    attempt's activity row, because an earlier interrupted dispatch can have
+    left that row `pending`. `_post_status` returns False on paths that never
+    look at the row (a rejected input, a raising queue write); treating that
+    as safe would let a later scan post the old announcement after the
+    baseline.
+    """
+    posted = _post_status(
+        store,
+        runner,
+        row=row,
+        kind="announce",
+        body=body,
+        home=home,
+        expected_login=expected_login,
+        execute_activity=execute_activity,
+    )
+    if posted is True:
+        return True
+    if not isinstance(row, dict):
         return False
+    job_id = row.get("id")
+    attempts = row.get("attempts")
+    if (
+        not isinstance(job_id, str)
+        or not job_id
+        or not isinstance(attempts, int)
+        or isinstance(attempts, bool)
+    ):
+        # No non-empty id or valid attempt means no activity row can exist.
+        return False
+    try:
+        activity_id = status_activity_id("announce", job_id, attempts)
+    except (Exception, SystemExit):
+        return None
+    return _retire_unposted_announcement(store, activity_id)
+
+
+def post_status(
+    store: Store,
+    runner: Callable[[list[str]], Completed],
+    *,
+    row: dict[str, Any],
+    kind: str,
+    body: str,
+    home: Path,
+    expected_login: str,
+    execute_activity: Callable[
+        [Store, Callable[[list[str]], Completed], str], str | None
+    ],
+) -> bool:
+    """Post one status comment for `row`; True only when it ended `done`.
+
+    This bool result is what an outcome needs: a failed comment is retried by
+    the next pass. An announcement must go through `announce_status`, whose
+    third result says the comment may still be posted later; collapsing that
+    to False here would let dispatch start a job whose comment can still land
+    after the baseline.
+    """
+    return _post_status(
+        store,
+        runner,
+        row=row,
+        kind=kind,
+        body=body,
+        home=home,
+        expected_login=expected_login,
+        execute_activity=execute_activity,
+    ) is True
 
 
 def report_outcomes(
@@ -375,7 +522,6 @@ def report_outcomes(
     store: Store,
     runner: Callable[[list[str]], Completed],
     *,
-    runner_config: Any,
     home: Path,
     expected_login: str,
     execute_activity: Callable[
@@ -388,6 +534,11 @@ def report_outcomes(
     this device's jobs. `store` is the real store: the activity row and the
     executor's per-row lock, account binding and home live there, and a
     restricted job view provides none of them.
+
+    The minutes in the text come from the row's `limit_minutes`, which
+    finalize recorded when it applied the budget. Reading the current
+    configuration instead would report a limit the watchdog never used after
+    the setting changed.
 
     Returns (reported ids, failed ids). Only a row whose `reported` is exactly
     False is considered: a row written before this change has no such key and
@@ -430,15 +581,9 @@ def report_outcomes(
             if isinstance(raw_exit, int) and not isinstance(raw_exit, bool):
                 exit_code = raw_exit
             minutes: int | None = None
-            if outcome in ("timeout", "stalled"):
-                job_type = row.get("job_type")
-                if isinstance(job_type, str):
-                    key = (
-                        "timeout_minutes"
-                        if outcome == "timeout"
-                        else "stall_minutes"
-                    )
-                    minutes = finalize.budget(runner_config, job_type, key)
+            raw_minutes = row.get("limit_minutes")
+            if isinstance(raw_minutes, int) and not isinstance(raw_minutes, bool):
+                minutes = raw_minutes
             body = outcome_body(
                 job_id, outcome, exit_code=exit_code, minutes=minutes
             )

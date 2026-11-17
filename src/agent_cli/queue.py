@@ -160,6 +160,7 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         "finished",
         "exit_code",
         "outcome",
+        "limit_minutes",
         "done_kind",
         "work_performed",
         "contract_followed",
@@ -171,7 +172,7 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     out["reported"] = False
     out["announced"] = False
     # Removed, not set to None — the one distinction the original draws
-    # here, nulling the nine fields above but deleting these three. It is
+    # here, nulling the ten fields above but deleting these three. It is
     # not a behavioural difference: the stall check rejects a None the
     # same way it rejects a missing key, and the caller reads both with
     # .get(). Keeping the shape means a stored row carries no progress

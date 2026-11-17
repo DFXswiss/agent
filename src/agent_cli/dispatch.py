@@ -80,7 +80,7 @@ def dispatch_queued(
     work_root: str,
     wrapper: str,
     max_concurrent: int,
-    announce: Callable[[dict[str, Any]], bool] | None = None,
+    announce: Callable[[dict[str, Any]], bool | None] | None = None,
 ) -> tuple[list[str], int]:
     """Start as many queued jobs as capacity allows.
 
@@ -88,11 +88,13 @@ def dispatch_queued(
     ends only that one job; the rest of the queue stays processable.
 
     `announce` posts the "working on this" comment. It runs right after the
-    worktree exists and before the output baseline, and a failure or an
-    exception does not stop the job: the original runner started the work
-    regardless. The returned bool says whether the comment was delivered, so
-    the row can record that it was announced and a later pass does not post a
-    second one.
+    worktree exists and before the output baseline. True means the comment was
+    delivered, so the row records that it was announced and a later pass does
+    not post a second one. False means it was not posted and cannot be posted
+    later; that does not stop the job. None, and an exception, mean the
+    activity may still be executed by a later scan: starting the job would let
+    that comment land after the baseline, where finalize would count it as the
+    job's own output, so the row stays queued.
     """
     if not isinstance(max_concurrent, int) or isinstance(max_concurrent, bool) or max_concurrent < 1:
         raise ValueError("max_concurrent must be a positive int")
@@ -215,8 +217,18 @@ def dispatch_queued(
             try:
                 announced = announce(row)
             except Exception:
-                # A broken announcement must not stop work the user asked for.
-                announced = False
+                # The callback could not report a safe outcome, so the
+                # activity may still be posted later.
+                announced = None
+            if announced is None:
+                # The announcement may still be posted by a later scan. A
+                # baseline taken now would not hold it, and finalize would
+                # count it as the job's own output. Leave the row queued and
+                # clean up exactly as the baseline-failure path does.
+                runner(workspace.worktree_remove_argv(bare, worktree))
+                runner(workspace.worktree_prune_argv(bare))
+                skipped += 1
+                continue
             if announced:
                 # Write at once: a later baseline failure leaves the job
                 # queued, and the next pass must not announce it again. If this

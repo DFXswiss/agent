@@ -22,7 +22,13 @@ import pytest
 
 import agent_cli.runner_cmd as runner_cmd
 import agent_cli.runner_worker as runner_worker
-from agent_cli import dispatch, github_accounts, github_act, lane
+from agent_cli import (
+    dispatch,
+    github_accounts,
+    github_act,
+    lane,
+    runner_status,
+)
 from agent_cli.ingest import job_id, job_row
 from agent_cli.runtime import Completed
 from agent_cli.runner_cmd import (
@@ -1570,6 +1576,109 @@ def test_retry_requeues_and_removes_the_previous_attempt(
     assert f"job.retried {row['id']}" in capsys.readouterr().out
 
 
+def test_retry_retires_a_pending_status_activity_of_the_previous_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pending outcome activity would be posted by a later scan after the new
+    # attempt's baseline and counted as its output.
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    activity_id = runner_status.status_activity_id("outcome", row["id"], 0)
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+    finally:
+        store.close()
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv", lambda _argv: _completed()
+    )
+
+    cmd_runner(["retry", row["id"]])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        activity = store.row("activity", activity_id)
+    finally:
+        store.close()
+    assert saved is not None
+    assert saved["state"] == "queued"
+    assert saved["attempts"] == 1
+    assert activity is not None
+    assert activity["execution_status"] == "error"
+    assert activity["error"] == "superseded by a retry of the job"
+
+
+def test_retry_refuses_when_a_status_activity_cannot_be_retired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pending row owned by another device cannot be retired here. Starting
+    # the retry would let that comment land after the new attempt's baseline.
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    activity_id = runner_status.status_activity_id("outcome", row["id"], 0)
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": activity_id,
+                "payload": {
+                    "id": activity_id,
+                    "session_id": "s",
+                    "type": "comment.post",
+                    "execution_status": "pending",
+                    "payload": {"body": "previous"},
+                },
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+    finally:
+        store.close()
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="could not be retired"):
+        cmd_runner(["retry", row["id"]])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        activity = store.row("activity", activity_id)
+    finally:
+        store.close()
+    assert saved is not None
+    assert saved["state"] == "failed"
+    assert saved["attempts"] == 0
+    assert activity is not None
+    assert activity["execution_status"] == "pending"
+    # The refusal came before the worktree removal, so no git command ran.
+    assert calls == []
+
+
 def test_retry_refuses_a_job_owned_by_another_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1885,6 +1994,42 @@ def test_supervise_reports_a_failed_job_and_prints_it(
         assert saved["reported"] is True
     finally:
         store.close()
+
+
+def test_supervise_reports_the_limit_the_watchdog_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The job was finalized under a 12-minute limit; the configuration now
+    # says 30. The comment must report the limit the job actually had.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"defaults": {"timeout_minutes": 30}})
+    (home / "runner").mkdir(parents=True, exist_ok=True)
+    (home / "runner" / "policy.json").write_text(
+        json.dumps({"expected_gh_user": "example-bot"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _failed_status_row()
+    row.update({"outcome": "timeout", "exit_code": None, "limit_minutes": 12})
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+    finally:
+        store.close()
+
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _supervise_runner())
+    _install_status_github(monkeypatch)
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "agent_cli.github_act.execute_activity", _done_status_executor(seen)
+    )
+
+    cmd_runner(["supervise"])
+
+    assert f"job.reported {row['id']}" in capsys.readouterr().out
+    assert len(seen) == 1
+    body = seen[0]["payload"]["body"]
+    assert "12 minutes" in body
+    assert "30 minutes" not in body
 
 
 def test_a_failed_report_is_printed_without_changing_the_exit_status(

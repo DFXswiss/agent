@@ -105,6 +105,26 @@ def _post(
     )
 
 
+def _announce(
+    store: Store,
+    row: Any,
+    *,
+    home: Path,
+    body: str = "Working on this now.",
+    expected_login: str = "example-bot",
+    execute: Any = None,
+) -> bool | None:
+    return runner_status.announce_status(
+        store,
+        _runner,
+        row=row,
+        body=body,
+        home=home,
+        expected_login=expected_login,
+        execute_activity=execute or _done_executor(),
+    )
+
+
 # --------------------------------------------------------------------- bodies
 
 
@@ -134,8 +154,8 @@ def test_announce_body_numbers_a_retry_in_both_languages(attempts: int) -> None:
             "agent_failed",
             1,
             None,
-            "Job `job-1` ended with exit code 1; nothing was published.",
-            "Fehlercode 1; es wurde nichts veröffentlicht.",
+            "Job `job-1` ended with exit code 1.",
+            "Auftrag `job-1` endete mit Fehlercode 1.",
         ),
         (
             "agent_failed",
@@ -577,6 +597,160 @@ def test_post_status_leaves_a_done_announcement_alone(
     assert "error" not in saved
 
 
+def _insert_pending_announcement(store: Store) -> str:
+    """Leave this attempt's announcement pending, as an interrupted dispatch does."""
+    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": "s",
+            "type": "comment.post",
+            "execution_status": "pending",
+            "payload": {"body": "previous"},
+        },
+    )
+    return activity_id
+
+
+def test_announce_status_retires_a_leftover_row_when_queueing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An earlier interrupted dispatch left the row pending. Queueing cannot
+    # re-open it, so the False from `_post_status` must still retire the row or
+    # a later scan posts the old announcement after the baseline.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    activity_id = _insert_pending_announcement(store)
+    original_write = store.write
+    updates = 0
+
+    def write(table: str, op: str, row_id: str, payload: dict[str, Any]) -> None:
+        nonlocal updates
+        if table == "activity" and op == "update":
+            updates += 1
+            if updates == 1:
+                raise RuntimeError("db unavailable")
+        original_write(table, op, row_id, payload)
+
+    monkeypatch.setattr(store, "write", write)
+    try:
+        assert _announce(store, _row(), home=tmp_path) is False
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "error"
+    assert saved["error"] == "announcement not posted before the job started"
+
+
+def test_announce_status_retires_a_leftover_row_without_an_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Validation rejects the post before it looks at the activity, but the
+    # leftover row can still be executed by a later scan.
+    _install_account(monkeypatch, present=False)
+    store = Store(tmp_path)
+    activity_id = _insert_pending_announcement(store)
+    try:
+        assert _announce(store, _row(), home=tmp_path) is False
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "error"
+    assert saved["error"] == "announcement not posted before the job started"
+
+
+def test_announce_status_reports_unsafe_when_every_update_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Neither queueing nor the retirement write can touch the row, so it stays
+    # pending and a later scan may still post it. Dispatch must not start.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    activity_id = _insert_pending_announcement(store)
+    original_write = store.write
+
+    def write(table: str, op: str, row_id: str, payload: dict[str, Any]) -> None:
+        if table == "activity" and op == "update":
+            raise RuntimeError("db unavailable")
+        original_write(table, op, row_id, payload)
+
+    monkeypatch.setattr(store, "write", write)
+    try:
+        assert _announce(store, _row(), home=tmp_path) is None
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "pending"
+
+
+def test_announce_status_reports_the_comment_was_posted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    try:
+        assert _announce(store, _row(), home=tmp_path) is True
+    finally:
+        store.close()
+
+
+def test_announce_status_reports_a_safely_retired_announcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The executor left the row pending; the retirement write makes it safe,
+    # so dispatch may start the job.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+
+    def unfinished_execute(_store: Store, _runner: Any, _activity_id: str) -> str:
+        return "comment.post pending"
+
+    try:
+        assert _announce(store, _row(), home=tmp_path, execute=unfinished_execute) is False
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "error"
+    assert saved["error"] == "announcement not posted before the job started"
+
+
+def test_announce_status_reports_unsafe_when_the_retirement_write_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The row is still pending and the retirement could not write, so a later
+    # scan may post it after the baseline. Dispatch must not start the job.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    original_write = store.write
+
+    def write(table: str, op: str, row_id: str, payload: dict[str, Any]) -> None:
+        # Queueing inserts the activity; only the retirement update fails.
+        if table == "activity" and op == "update":
+            raise RuntimeError("db unavailable")
+        original_write(table, op, row_id, payload)
+
+    def unfinished_execute(_store: Store, _runner: Any, _activity_id: str) -> str:
+        return "comment.post pending"
+
+    monkeypatch.setattr(store, "write", write)
+    try:
+        assert _announce(store, _row(), home=tmp_path, execute=unfinished_execute) is None
+    finally:
+        store.close()
+
+
 def test_post_status_does_not_retire_an_outcome_activity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -644,6 +818,132 @@ def test_post_status_adopts_an_already_done_activity_without_executing_it(
     assert executed == []
 
 
+# -------------------------------------------------- retire_status_activities
+
+
+def _status_activity_id(kind: str, *, attempts: int = 0) -> str:
+    return runner_status.status_activity_id(kind, "job-1", attempts)
+
+
+def _activity_payload(activity_id: str, status: str) -> dict[str, Any]:
+    return {
+        "id": activity_id,
+        "session_id": "s",
+        "type": "comment.post",
+        "execution_status": status,
+        "payload": {"body": "previous"},
+    }
+
+
+def test_retire_status_activities_retires_both_pending_activities(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    try:
+        ids = [_status_activity_id(kind) for kind in ("announce", "outcome")]
+        for activity_id in ids:
+            store.write(
+                "activity", "insert", activity_id, _activity_payload(activity_id, "pending")
+            )
+
+        assert runner_status.retire_status_activities(
+            store, {"id": "job-1", "attempts": 0}
+        ) is True
+
+        for activity_id in ids:
+            saved = store.row("activity", activity_id)
+            assert saved is not None
+            assert saved["execution_status"] == "error"
+            assert saved["error"] == "superseded by a retry of the job"
+    finally:
+        store.close()
+
+
+def test_retire_status_activities_leaves_a_done_activity_alone(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    activity_id = _status_activity_id("announce")
+    try:
+        store.write(
+            "activity", "insert", activity_id, _activity_payload(activity_id, "done")
+        )
+
+        # The outcome activity is absent; both rows are fine.
+        assert runner_status.retire_status_activities(
+            store, {"id": "job-1", "attempts": 0}
+        ) is True
+
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "done"
+    assert "error" not in saved
+
+
+def test_retire_status_activities_accepts_absent_activities(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        assert runner_status.retire_status_activities(
+            store, {"id": "job-1", "attempts": 3}
+        ) is True
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
+def test_retire_status_activities_refuses_a_foreign_pending_activity(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    activity_id = _status_activity_id("outcome")
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": activity_id,
+                "payload": _activity_payload(activity_id, "pending"),
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+
+        assert runner_status.retire_status_activities(
+            store, {"id": "job-1", "attempts": 0}
+        ) is False
+
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "pending"
+
+
+def test_retire_status_activities_reports_a_raising_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    activity_id = _status_activity_id("announce")
+
+    def write(table: str, op: str, row_id: str, payload: dict[str, Any]) -> None:
+        raise RuntimeError("db unavailable")
+
+    try:
+        store.write(
+            "activity", "insert", activity_id, _activity_payload(activity_id, "pending")
+        )
+        monkeypatch.setattr(store, "write", write)
+
+        assert runner_status.retire_status_activities(
+            store, {"id": "job-1", "attempts": 0}
+        ) is False
+    finally:
+        store.close()
+
+
 # ------------------------------------------------------------ report_outcomes
 
 
@@ -671,7 +971,6 @@ def _report(
     store: Store,
     *,
     home: Path,
-    runner_config: Any = None,
     expected_login: str = "example-bot",
     execute: Any = None,
 ) -> tuple[list[str], list[str]]:
@@ -679,7 +978,6 @@ def _report(
         store,
         store,
         _runner,
-        runner_config=runner_config if runner_config is not None else {},
         home=home,
         expected_login=expected_login,
         execute_activity=execute or _done_executor(),
@@ -850,28 +1148,27 @@ def test_report_outcomes_stops_at_the_report_attempt_limit(
 
 
 @pytest.mark.parametrize(
-    ("outcome", "key", "minutes"),
-    [("timeout", "timeout_minutes", 12), ("stalled", "stall_minutes", 7)],
+    ("outcome", "minutes"),
+    [("timeout", 12), ("stalled", 7)],
 )
-def test_report_outcomes_uses_the_budget_the_watchdog_applied(
+def test_report_outcomes_uses_the_limit_the_watchdog_applied(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     outcome: str,
-    key: str,
     minutes: int,
 ) -> None:
+    # The row's `limit_minutes` is what the watchdog used. Reading the current
+    # runner configuration would report a limit the job never had.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    row = _failed_row("7", outcome=outcome)
+    row = _failed_row("7", outcome=outcome, limit_minutes=minutes)
     seen: list[dict[str, Any]] = []
-    runner_config = {"skills": {"pr-review": {key: minutes}}}
     try:
         store.write("job", "insert", row["id"], row)
 
         reported, failed = _report(
             store,
             home=tmp_path,
-            runner_config=runner_config,
             execute=_done_executor(seen),
         )
     finally:
@@ -880,6 +1177,29 @@ def test_report_outcomes_uses_the_budget_the_watchdog_applied(
     assert reported == [row["id"]]
     assert failed == []
     assert f"{minutes} minutes" in seen[0]["payload"]["body"]
+
+
+def test_report_outcomes_omits_the_minutes_without_a_recorded_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    row = _failed_row("7", outcome="timeout")
+    seen: list[dict[str, Any]] = []
+    try:
+        store.write("job", "insert", row["id"], row)
+
+        reported, failed = _report(
+            store,
+            home=tmp_path,
+            execute=_done_executor(seen),
+        )
+    finally:
+        store.close()
+
+    assert reported == [row["id"]]
+    assert failed == []
+    assert "exceeded its time limit and was stopped" in seen[0]["payload"]["body"]
 
 
 def test_report_outcomes_counts_a_failed_write_and_leaves_the_row_alone(

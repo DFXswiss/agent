@@ -25,7 +25,7 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def budget(runner_config: Any, job_type: str, key: str) -> int | None:
+def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
     """Return a non-negative int budget or None if missing or invalid (bool rejected).
 
     A skill without its own setting inherits the value from `defaults` —
@@ -205,6 +205,7 @@ def finalize_running(
             skipped += 1
             continue
 
+        limit_minutes: int | None = None
         exit_code = exit_code_of(job_id)
         if exit_code is not None:
             outcome = "success" if exit_code == 0 else "agent_failed"
@@ -219,7 +220,7 @@ def finalize_running(
                 # watchdog as well, so a job that has blown its limit would
                 # run forever over a setting that check does not need. The
                 # original orders it this way for the same reason.
-                timeout_minutes = budget(runner_config, job_type, "timeout_minutes")
+                timeout_minutes = _budget(runner_config, job_type, "timeout_minutes")
                 if timeout_minutes is None:
                     skipped += 1
                     continue
@@ -230,8 +231,9 @@ def finalize_running(
                 if overdue:
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "timeout"
+                    limit_minutes = timeout_minutes
                 else:
-                    stall_minutes = budget(runner_config, job_type, "stall_minutes")
+                    stall_minutes = _budget(runner_config, job_type, "stall_minutes")
                     if stall_minutes is None:
                         skipped += 1
                         continue
@@ -285,6 +287,7 @@ def finalize_running(
                     # verdict == "stalled"
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "stalled"
+                    limit_minutes = stall_minutes
             else:
                 outcome = "crashed"
 
@@ -344,6 +347,10 @@ def finalize_running(
                 "updated_at": utcnow(),
             }
         )
+        if limit_minutes is not None:
+            # The budget the watchdog actually applied, so the outcome
+            # comment does not report whatever the configuration says later.
+            updated["limit_minutes"] = limit_minutes
         if final_state == "failed":
             # `supervise` posts the outcome comment for this row. A done row
             # keeps no report marker: its posted review is the output.
