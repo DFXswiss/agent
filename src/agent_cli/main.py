@@ -6301,13 +6301,15 @@ def cmd_key(args: list[str]) -> None:
             finally:
                 store.close()
             if not hub_url:
-                die("hub URL is not configured; run agent pair --hub URL")
+                die("device is not paired")
             with httpx.Client(timeout=30.0, follow_redirects=False) as client:
                 answer = keys.whoami(home(), key_id, pin, hub_url, client, utcnow)
             print(json.dumps(answer, indent=2))
             return
     except keys.KeyProtocolError as exc:
         die(str(exc))
+    except OSError as exc:
+        die(f"key files under {home()}: {exc}")
     die(f"unknown key command: {sub}")
 
 

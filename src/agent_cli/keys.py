@@ -399,7 +399,7 @@ def _error_value(body: bytes) -> str | None:
     """The ``error`` value of a ``{"error": "..."}`` body when it is a plain refusal word."""
     try:
         data = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(data, dict) or set(data) != {"error"}:
         return None
@@ -543,7 +543,7 @@ def whoami(
         raise KeyProtocolError(f"hub refused the request: {detail}")
     try:
         answer = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise KeyProtocolError("hub answer is not JSON") from None
     if not isinstance(answer, dict):
         raise KeyProtocolError("hub answer is not a JSON object")

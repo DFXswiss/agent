@@ -682,3 +682,23 @@ def test_decode_public_key_refuses_bad_values(bad_key: str) -> None:
 
 def test_decode_public_key_accepts_a_real_key() -> None:
     assert public_text_of(keys.decode_public_key(HUB_PUBLIC)) == HUB_PUBLIC
+
+
+def test_cli_whoami_without_a_hub_url_sends_nothing(
+    agent_home: Path, hub: FakeHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = FakeStore("")
+
+    def no_send(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr(agent_main, "open_store", lambda **kwargs: store)
+    monkeypatch.setattr(httpx.Client, "send", no_send)
+    assert cli_refused("whoami", "--id", CLIENT_ID) == "agent: device is not paired"
+    assert store.closed
+
+
+def test_cli_list_reports_a_keys_path_that_is_a_file(agent_home: Path) -> None:
+    agent_home.mkdir(parents=True, exist_ok=True)
+    (agent_home / "keys").write_text("not a directory", encoding="utf-8")
+    assert cli_refused("list").startswith(f"agent: key files under {agent_home}: ")
