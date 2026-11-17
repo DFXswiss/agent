@@ -68,7 +68,7 @@
       <label><input type="checkbox" id="usage-sort" /> sort by used</label>
     </div>
     <div id="usage-overview"></div>
-    <table id="usage"><thead><tr><th>Provider</th><th>Account</th><th>Label</th><th>Status</th><th>Note</th><th>Listed</th><th>Tier</th><th>Used</th><th>Reset</th><th>Owner</th><th>Fetched</th></tr></thead><tbody></tbody></table>
+    <table id="usage"><thead><tr><th>Provider</th><th>Account</th><th>Label</th><th>Status</th><th>Note</th><th>Listed</th><th>Tier</th><th>Used</th><th>Reset</th><th>Owner</th><th>Checked</th><th>Changed</th></tr></thead><tbody></tbody></table>
   </section>
 
   <section class="dashboard-section" data-section="sessions">
@@ -282,7 +282,7 @@
     }
     /* DASHBOARD_COMMON_END */
 
-    const SUBSCRIPTION_COLUMNS = 11;
+    const SUBSCRIPTION_COLUMNS = 12;
     const NO_USAGE = "No usage: no paired device polls this login";
     const NO_INVENTORY = "No subscription inventory: $AGENT_HOME/ai-subscriptions.json is absent";
 
@@ -320,12 +320,22 @@
       };
     }
 
+    // A cell with the elapsed time since an ISO time ("4 min ago", by the shared
+    // elapsedText) and the exact time as its title; "—" without a time, the
+    // escaped text for a value that is no time.
+    function ageCell(value, now) {
+      if (value === null || value === undefined || value === "") return "<td>—</td>";
+      if (typeof value !== "string" || Number.isNaN(timestampMs(value))) return `<td>${idOrText(value)}</td>`;
+      return `<td title="${esc(value)}">${esc(elapsedText(value, now))} ago</td>`;
+    }
+
     // One row of the subscription overview: an inventory entry, its usage, or both.
-    function subscriptionRowHtml(row) {
+    // Checked is the last successful read on this device, Changed the newest snapshot.
+    function subscriptionRowHtml(row, now) {
       const ev = row.usage || {};
       const p = ev.payload || {};
       const cells = row.usage ? usageCells(p) : { used: esc(NO_USAGE), reset: "" };
-      return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td${stateCellAttributes(row.status)}>${stateIcon(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td><td>${idOrText(p.fetched_at)}</td></tr>`;
+      return `<tr><td>${idOrText(row.provider)}</td><td>${idOrText(row.account)}</td><td>${idOrText(row.label)}</td><td${stateCellAttributes(row.status)}>${stateIcon(row.status)}</td><td>${idOrText(row.note)}</td><td>${row.listed ? "listed" : "not listed"}</td><td>${idOrText(p.tier)}</td><td>${cells.used}</td><td>${cells.reset}</td><td>${idOrText(ev._origin_device_id)}</td>${ageCell(row.checked_at, now)}${ageCell(p.fetched_at, now)}</tr>`;
     }
 
     // The table row without subscriptions: "absent" only when there is no file;
@@ -337,9 +347,13 @@
       return empty(SUBSCRIPTION_COLUMNS);
     }
 
-    // The error line text for an invalid inventory file, or null.
+    // The error line text for an invalid inventory file or unreadable check
+    // times, or null.
     function subscriptionsErrorText(subscriptions) {
-      return subscriptions.error ? "ai-subscriptions.json: " + subscriptions.error : null;
+      const lines = [];
+      if (subscriptions.error) lines.push("ai-subscriptions.json: " + subscriptions.error);
+      if (subscriptions.check_error) lines.push("usage checks: " + subscriptions.check_error);
+      return lines.length ? lines.join("; ") : null;
     }
 
     // A bar of 0–100 % used; the meter turns amber from 70 % and red from 90 %.
@@ -372,7 +386,9 @@
         const windows = (p.windows || []).map(w => usageLineHtml(esc(w.name), w.resets_in, w.used_percent, "")).join("");
         const accounts = (p.accounts || []).map(a => {
           const label = a.label ? ` <span class="usage-muted">${esc(a.label)}</span>` : "";
-          const age = a.recorded ? `<br><span class="usage-muted" title="${esc(a.recorded)}">recorded ${esc(elapsedText(a.recorded, now))} ago</span>` : "";
+          // checked: the last successful read on this device; recorded: the last change.
+          const checked = a.checked_at ? `<br><span class="usage-muted" title="${esc(a.checked_at)}">checked ${esc(elapsedText(a.checked_at, now))} ago</span>` : "";
+          const age = checked + (a.recorded ? `<br><span class="usage-muted" title="${esc(a.recorded)}">recorded ${esc(elapsedText(a.recorded, now))} ago</span>` : "");
           // A listed account without any snapshot explains itself on its name as the table below does.
           const nameTitle = a.status === "no data" && !a.has_snapshot ? NO_USAGE : null;
           return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text, a.status, nameTitle);
@@ -492,7 +508,9 @@
         renderUsageOverview();
 
         const subscriptions = data.subscriptions || {};
-        setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(subscriptionRowHtml).join("")
+        // Ages are computed against the time of this refresh, so every tick re-renders them.
+        const now = Date.now();
+        setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(row => subscriptionRowHtml(row, now)).join("")
           || subscriptionsEmptyHtml(subscriptions));
 
         sessionsById = {};

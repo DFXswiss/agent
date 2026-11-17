@@ -698,6 +698,97 @@ def test_scan_skips_stale_logins_quietly_and_reports_errors(tmp_path: Path) -> N
         store.close()
 
 
+def _checked(store: Store, account_name: str) -> str | None:
+    return store.meta(f"usage.checked.{WINDOWS_DRIVER_ID}.{account_name}")
+
+
+def test_scan_records_the_check_time_of_every_successful_read(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        _session(store, "s-windows", WINDOWS_DRIVER_ID)
+        seat = tmp_path / "seat"
+        write_login(seat, email="Seat-1@Example.com")
+        _config(
+            store,
+            {"seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(seat)}},
+            ["seat"],
+        )
+        assert _checked(store, "seat") is None
+
+        def fetch(_token: str) -> dict[str, Any]:
+            return usage_body()
+
+        assert len(
+            scan_window_usage(
+                store, fetch=fetch, read_keychain=no_keychain, now=lambda: "2026-11-16T12:00:00Z"
+            )
+        ) == 1
+        assert _checked(store, "seat") == "2026-11-16T12:00:00Z"
+
+        # Unchanged usage stores no snapshot, but the check still counts.
+        assert scan_window_usage(
+            store, fetch=fetch, read_keychain=no_keychain, now=lambda: "2026-11-16T12:15:00Z"
+        ) == []
+        assert _checked(store, "seat") == "2026-11-16T12:15:00Z"
+        snapshots = _window_snapshots(store)
+        assert [row["payload"]["fetched_at"] for row in snapshots] == ["2026-11-16T12:00:00Z"]
+    finally:
+        store.close()
+
+
+def test_scan_records_no_check_time_for_skipped_failed_or_rate_limited_reads(
+    tmp_path: Path,
+) -> None:
+    store = _paced_store(tmp_path, ["stale", "broken", "limited", "good"], stale=("stale",))
+    try:
+        reads, clock = _Reads(), _Clock()
+        reads.fail["token-broken"] = StoreError(f"{WINDOWS_LABEL} returned HTTP 500")
+        reads.fail["token-limited"] = UsageRateLimited(f"{WINDOWS_LABEL} returned HTTP 429", 60.0)
+        skipped: list[str] = []
+        with pytest.raises(AccountUsageError) as info:
+            scan_window_usage(
+                store,
+                fetch=reads.fetch,
+                read_keychain=reads.read_keychain,
+                now=lambda: "2026-11-16T12:00:00Z",
+                skipped=skipped,
+                clock=clock,
+            )
+        assert [line.split(":", 1)[0] for line in skipped] == ["stale"]
+        assert [line.split(":", 1)[0] for line in info.value.errors] == ["broken", "limited"]
+        assert _checked(store, "stale") is None
+        assert _checked(store, "broken") is None
+        assert _checked(store, "limited") is None
+        assert _checked(store, "good") == "2026-11-16T12:00:00Z"
+        # The key names the configured account, never the login's address.
+        assert _checked(store, "good@example.com") is None
+    finally:
+        store.close()
+
+
+def test_scan_records_no_check_time_for_a_malformed_answer(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        _session(store, "s-windows", WINDOWS_DRIVER_ID)
+        seat = tmp_path / "seat"
+        write_login(seat)
+        _config(
+            store,
+            {"seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(seat)}},
+            ["seat"],
+        )
+        with pytest.raises(AccountUsageError):
+            scan_window_usage(
+                store,
+                fetch=lambda _token: {"limits": "not a list"},
+                read_keychain=no_keychain,
+                now=lambda: "2026-11-16T12:00:00Z",
+            )
+        assert _checked(store, "seat") is None
+    finally:
+        store.close()
+
+
 def test_each_scanner_reads_only_its_own_adapter(tmp_path: Path) -> None:
     store = Store(tmp_path)
     try:

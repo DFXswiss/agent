@@ -606,7 +606,28 @@ their reset times. `status` is shown as an icon from the dashboard's state
 mapping with the word as the cell's title; a word the mapping does not know
 gets the neutral fallback icon. A file that does not validate is shown as an error on that
 page; the rest of the dashboard keeps working. `/api/state` delivers the joined
-rows as `subscriptions` (`configured`, `error`, `rows`).
+rows as `subscriptions` (`configured`, `error`, `check_error`, `rows`).
+
+Two columns show ages relative to the browser's clock, re-computed on every
+refresh in the dashboard's shared elapsed-time format ("45 s ago",
+"4 min ago", "2 h ago", "3 d ago"; a time in the future counts as "0 s ago"),
+with the exact UTC time as the cell's title and `—` when there is none:
+
+- **Checked**: the last successful usage read of the account on this device,
+  whether or not its usage changed. After every successful read of a
+  `usage_accounts` account (snapshot stored or unchanged) the poller writes the
+  read time to the local meta key `usage.checked.<provider>.<account name>`;
+  the key holds the configured account name, never a token or an e-mail
+  address. Skipped, failed and rate-limited reads write nothing. A row gets
+  this value (`checked_at` in `rows`) when it shows that account: a row of a
+  `spend` driver by the account name, only for this device's snapshot, a row
+  of a `windows` driver by the identity of the account's login. Rows of other
+  drivers and accounts this device does not poll show `—`. When
+  `ai-accounts.json` or a login's account file cannot be read, the reason is
+  shown on the page's error line (`check_error`).
+- **Changed**: the `fetched_at` of the newest snapshot, which is stored only
+  when a value other than `fetched_at` changed, so it is the last change, not
+  the last check.
 
 Above that table the page shows one compact line per provider: every driver of
 `drivers.json` and every provider of the inventory or of a recorded snapshot,
@@ -625,8 +646,11 @@ Opening a provider lists each quota window (`windows`: five hours, weekly and
 the weekly windows per model named in the snapshot; `period`: the period and
 each product) with its reset and bar, then each account with its own bar and
 the age of its newest snapshot (`recorded 4 min ago`). A snapshot is stored
-only when a value changed, so that age is the time of the last change. With
-several accounts a provider window shows the highest use among them.
+only when a value changed, so that age is the time of the last change. An
+account this device polls also shows `checked 30 s ago` (`checked_at` of the
+account entry): `checked` is the last successful read, `recorded` the last
+change. With several accounts a provider window shows the highest use among
+them.
 `detailed` opens every provider, `sort by used` orders providers by the
 headline percentage. The main page shows one summary line, for example
 `Vendor A 32% 5 d 19 h · Vendor B ⊗ · Vendor D 12.5% 3 d 4 h`, where a status

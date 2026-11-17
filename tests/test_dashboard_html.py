@@ -23,7 +23,14 @@ from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
 from agent_cli.drivers import parse_driver_document
 from agent_cli.usage import period_snapshot, spend_snapshot
-from driver_fixtures import WINDOWS_DRIVER_ID, driver_document, windows_driver
+from driver_fixtures import (
+    WINDOWS_ACCOUNT_FILE,
+    WINDOWS_CREDENTIAL_LABEL,
+    WINDOWS_DRIVER_ID,
+    driver_document,
+    windows_driver,
+    write_drivers,
+)
 from test_usage import PERIOD_DRIVER, SPEND_DRIVER, _key_body, _period_documents, _usage
 from test_usage_windows import mapped, usage_body
 
@@ -53,8 +60,11 @@ def test_dashboard_html_contains_usage_table() -> None:
     assert 'typeof p.used_percent === "number"' in html
     assert (
         'setHtml(document.querySelector("#usage tbody"), '
-        "(subscriptions.rows || []).map(subscriptionRowHtml)"
+        "(subscriptions.rows || []).map(row => subscriptionRowHtml(row, now))"
     ) in html
+    # The ages are computed against the time of each refresh tick.
+    tick = html.split("async function tick() {", 1)[1]
+    assert tick.index("const now = Date.now();") < tick.index("subscriptionRowHtml(row, now)")
     assert ".reverse(" not in html
 
 
@@ -231,27 +241,183 @@ def test_subscription_rows_without_inventory_keep_every_snapshot() -> None:
     ]
 
 
+def _no_meta(_key: str) -> str | None:
+    return None
+
+
 def test_subscriptions_dashboard_reports_file_state_as_data(tmp_path: Path) -> None:
     snapshot = _snapshot("driver-a", "login@example.com")
-    assert _subscriptions_dashboard(tmp_path, [snapshot]) == {
+    assert _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a") == {
         "configured": False,
         "error": None,
-        "rows": _subscription_dashboard_rows((), [snapshot]),
+        "check_error": None,
+        "rows": [
+            {**row, "checked_at": None}
+            for row in _subscription_dashboard_rows((), [snapshot])
+        ],
     }
     path = tmp_path / "ai-subscriptions.json"
     path.write_text(
         json.dumps({"subscriptions": [{"provider": "driver-a", "account": "login@example.com"}]}),
         encoding="utf-8",
     )
-    state = _subscriptions_dashboard(tmp_path, [snapshot])
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
     assert state["configured"] is True and state["error"] is None
     assert state["rows"][0]["listed"] is True and state["rows"][0]["usage"] == snapshot
 
     path.write_text(json.dumps({"subscriptions": [{"provider": "Driver-A"}]}), encoding="utf-8")
-    state = _subscriptions_dashboard(tmp_path, [snapshot])
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
     assert state["configured"] is False
     assert "provider must be a lowercase token" in state["error"]
     assert [row["listed"] for row in state["rows"]] == [False]
+
+
+def _usage_accounts_config(
+    home: Path, accounts: dict[str, dict[str, str]], selected: list[str]
+) -> None:
+    """Placeholder drivers with a windows driver, and the given usage accounts."""
+    document = driver_document()
+    document["drivers"][WINDOWS_DRIVER_ID] = windows_driver()
+    write_drivers(home, document)
+    (home / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "accounts": accounts,
+                "usage_accounts": selected,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _login(config_dir: Path, email: str) -> None:
+    config_dir.mkdir()
+    (config_dir / WINDOWS_ACCOUNT_FILE).write_text(
+        json.dumps({"loginAccount": {"emailAddress": email}}), encoding="utf-8"
+    )
+
+
+def test_subscription_rows_carry_the_check_time_of_their_configured_account(
+    tmp_path: Path,
+) -> None:
+    _login(tmp_path / "seat", "Seat-1@Example.com")
+    (tmp_path / "logged-out").mkdir()
+    _usage_accounts_config(
+        tmp_path,
+        {
+            "seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(tmp_path / "seat")},
+            "logged-out": {
+                "provider": WINDOWS_DRIVER_ID,
+                "config_dir": str(tmp_path / "logged-out"),
+            },
+            "spend-a": {"provider": "driver-d", "config_dir": str(tmp_path / "spend-a")},
+            "spend-b": {"provider": "driver-d", "config_dir": str(tmp_path / "spend-b")},
+        },
+        ["seat", "logged-out", "spend-a", "spend-b"],
+    )
+    times = {
+        f"usage.checked.{WINDOWS_DRIVER_ID}.seat": "2026-11-16T12:30:00Z",
+        f"usage.checked.{WINDOWS_DRIVER_ID}.logged-out": "2026-11-16T12:31:00Z",
+        "usage.checked.driver-d.spend-a": "2026-11-16T12:32:00Z",
+    }
+    keys: list[str] = []
+
+    def meta(key: str) -> str | None:
+        keys.append(key)
+        return times.get(key)
+
+    seat = _snapshot(
+        WINDOWS_DRIVER_ID, "seat-1@example.com", "device-b", fetched_at="2026-11-16T09:00:00Z"
+    )
+    spend_here = _snapshot("driver-d", "spend-a", "device-a")
+    spend_there = _snapshot("driver-d", "spend-a", "device-b")
+    spend_unchecked = _snapshot("driver-d", "spend-b", "device-a")
+    unread = _snapshot("driver-a", "login@example.com")
+    usage = [seat, spend_here, spend_there, spend_unchecked, unread]
+
+    state = _subscriptions_dashboard(tmp_path, usage, meta, "device-a")
+
+    assert state["check_error"] is None
+    assert [(row["account"], row["checked_at"]) for row in state["rows"]] == [
+        # A windows login is one subscription: this device's check applies to
+        # the newest snapshot of that login from any device.
+        ("seat-1@example.com", "2026-11-16T12:30:00Z"),
+        # Spend account names are device-local; another device's name is not ours.
+        ("spend-a", "2026-11-16T12:32:00Z"),
+        ("spend-a", None),
+        ("spend-b", None),
+        ("login@example.com", None),
+    ]
+    # Existing fields stay; the snapshot time stays the last change.
+    assert state["rows"][0]["usage"]["payload"]["fetched_at"] == "2026-11-16T09:00:00Z"
+    # The keys name configured accounts, never a login address.
+    assert sorted(keys) == sorted(
+        f"usage.checked.{provider}.{name}"
+        for provider, name in (
+            (WINDOWS_DRIVER_ID, "seat"),
+            (WINDOWS_DRIVER_ID, "logged-out"),
+            ("driver-d", "spend-a"),
+            ("driver-d", "spend-b"),
+        )
+    )
+    assert not any("@" in key for key in keys)
+
+    # A listed windows subscription matches by its account even without a
+    # snapshot; a listed spend account without a snapshot of this device does not.
+    inventory = tmp_path / "ai-subscriptions.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "subscriptions": [
+                    {"provider": WINDOWS_DRIVER_ID, "account": "SEAT-1@example.com"},
+                    {"provider": "driver-d", "account": "spend-a"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = _subscriptions_dashboard(tmp_path, [], meta, "device-a")
+    assert [(row["usage"], row["checked_at"]) for row in state["rows"]] == [
+        (None, "2026-11-16T12:30:00Z"),
+        (None, None),
+    ]
+
+    # The overview carries the same check time on each account entry.
+    state = _subscriptions_dashboard(tmp_path, usage, meta, "device-a")
+    overview = _overview(state["rows"])
+    assert [
+        (a["account"], a["checked_at"]) for a in overview[WINDOWS_DRIVER_ID]["accounts"]
+    ] == [("SEAT-1@example.com", "2026-11-16T12:30:00Z")]
+    assert [(a["account"], a["checked_at"]) for a in overview["driver-d"]["accounts"]] == [
+        ("spend-a", "2026-11-16T12:32:00Z"),
+        ("spend-a", None),
+        ("spend-b", None),
+    ]
+
+
+def test_subscription_check_times_report_unreadable_configuration(tmp_path: Path) -> None:
+    snapshot = _snapshot("driver-a", "login@example.com")
+    (tmp_path / "ai-accounts.json").write_text("{", encoding="utf-8")
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
+    assert state["check_error"] == "Cannot read ai-accounts.json"
+    assert [row["checked_at"] for row in state["rows"]] == [None]
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / WINDOWS_ACCOUNT_FILE).write_text("{", encoding="utf-8")
+    _usage_accounts_config(
+        tmp_path,
+        {"broken": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(broken)}},
+        ["broken"],
+    )
+    state = _subscriptions_dashboard(
+        tmp_path, [snapshot], lambda _key: "2026-11-16T12:30:00Z", "device-a"
+    )
+    assert state["check_error"] == (
+        f"broken: {WINDOWS_CREDENTIAL_LABEL} account file is not valid JSON"
+    )
+    assert [row["checked_at"] for row in state["rows"]] == [None]
 
 
 def test_subscriptions_section_markup() -> None:
@@ -261,10 +427,22 @@ def test_subscriptions_section_markup() -> None:
     assert '<a href="/usage">Subscriptions</a>' in html
     assert '<a href="/usage">Subscriptions</a>' in PAGE.read_text(encoding="utf-8")
     header = html.split('<table id="usage"><thead><tr>', 1)[1].split("</tr>", 1)[0]
-    assert header.count("<th>") == 11
+    assert header.count("<th>") == 12
     for column in ("Provider", "Account", "Label", "Status", "Note", "Listed", "Tier", "Used", "Reset"):
         assert f"<th>{column}</th>" in header
-    assert "const SUBSCRIPTION_COLUMNS = 11;" in html
+    # The raw snapshot time is replaced by two ages: last check and last change.
+    assert header.endswith("<th>Owner</th><th>Checked</th><th>Changed</th>")
+    assert "<th>Fetched</th>" not in html
+    assert "${ageCell(row.checked_at, now)}${ageCell(p.fetched_at, now)}</tr>" in html
+    assert "<td>${idOrText(p.fetched_at)}</td>" not in html
+    # Both ages use the shared elapsedText; the page adds no second age helper.
+    assert "function ageText(" not in html
+    cell = section_function(html, "ageCell")
+    assert 'return "<td>—</td>";' in cell
+    assert "return `<td>${idOrText(value)}</td>`;" in cell
+    assert "Number.isNaN(timestampMs(value))" in cell
+    assert 'return `<td title="${esc(value)}">${esc(elapsedText(value, now))} ago</td>`;' in cell
+    assert "const SUBSCRIPTION_COLUMNS = 12;" in html
     # A file error reuses the page's error line, only on this section.
     assert "const inventoryError = subscriptionsErrorText(subscriptions);" in html
     assert 'if (section === "usage" && inventoryError) {' in html
@@ -292,6 +470,7 @@ def test_subscription_rows_render_in_node() -> None:
             "percentText",
             "windowLines",
             "usageCells",
+            "ageCell",
             "subscriptionRowHtml",
             "subscriptionsEmptyHtml",
             "subscriptionsErrorText",
@@ -300,8 +479,10 @@ def test_subscription_rows_render_in_node() -> None:
     # The shared block brings idOrText, stateIcon and stateCellAttributes.
     shared = "const document = { addEventListener() {} };\n" + common_block(html)
     harness = helpers + "\n" + shared + "\n" + functions + """
+const now = Date.parse("2026-11-16T12:04:30Z");
 const windowed = {
   provider: "driver-a", account: "seat-1@example.com", label: "Seat <1>", status: "active", note: "a & b", listed: true,
+  checked_at: "2026-11-16T12:04:00Z",
   usage: { _origin_device_id: "device-a", payload: {
     provider: "driver-a", vendor: "driver-a", account_email: "seat-1@example.com", tier: "max_20x", fetched_at: "2026-11-16T12:00:00Z",
     windows: {
@@ -311,14 +492,26 @@ const windowed = {
     },
   } },
 };
-const missing = { provider: "driver-a", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, usage: null };
-const stray = { provider: "driver-d", account: "router-a", listed: false,
+const missing = { provider: "driver-a", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, checked_at: null, usage: null };
+const stray = { provider: "driver-d", account: "router-a", listed: false, checked_at: null,
   usage: { _origin_device_id: "device-b", payload: { provider: "driver-d", account: "router-a", usage_usd: 1.25, limit_usd: null, limit_reset: "monthly" } } };
 console.log(JSON.stringify({
-  windowed: subscriptionRowHtml(windowed),
-  missing: subscriptionRowHtml(missing),
-  stray: subscriptionRowHtml(stray),
-  unknownStatus: subscriptionRowHtml({ ...missing, status: "on-hold" }),
+  cells: [
+    ageCell("2026-11-16T12:04:00Z", now),
+    ageCell("2026-11-16T12:05:00Z", now),
+    ageCell("2026-11-16T12:00:00", now),
+    ageCell(null, now),
+    ageCell(undefined, now),
+    ageCell("", now),
+    ageCell("<not a time>", now),
+  ],
+  windowed: subscriptionRowHtml(windowed, now),
+  older: subscriptionRowHtml({ ...windowed, checked_at: "2026-11-14T09:00:00Z" }, now),
+  missing: subscriptionRowHtml(missing, now),
+  stray: subscriptionRowHtml(stray, now),
+  unknownStatus: subscriptionRowHtml({ ...missing, status: "on-hold" }, now),
+  checkError: subscriptionsErrorText({ configured: true, error: null, check_error: "seat: <broken>", rows: [] }),
+  bothErrors: subscriptionsErrorText({ configured: false, error: "subscriptions must be a list", check_error: "seat: broken", rows: [] }),
   absent: subscriptionsEmptyHtml({ configured: false, error: null, rows: [] }),
   absentError: subscriptionsErrorText({ configured: false, error: null, rows: [] }),
   invalid: subscriptionsEmptyHtml({ configured: false, error: "subscriptions must be a list", rows: [] }),
@@ -349,7 +542,35 @@ console.log(JSON.stringify({
     assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Model B&lt;/b&gt;: 21.5%</td>" in windowed
     assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Model B&lt;/b&gt;: —</td>" in windowed
     assert "<b>" not in windowed
-    assert out["missing"].count("<td>") == 11
+    assert out["cells"] == [
+        '<td title="2026-11-16T12:04:00Z">30 s ago</td>',
+        # A time in the future (clock skew) is never a negative age.
+        '<td title="2026-11-16T12:05:00Z">0 s ago</td>',
+        # A time without a zone designator is UTC, as the shared timestampMs reads it.
+        '<td title="2026-11-16T12:00:00">4 min ago</td>',
+        "<td>—</td>",
+        "<td>—</td>",
+        "<td>—</td>",
+        "<td>&lt;not a time&gt;</td>",
+    ]
+    # Checked (row.checked_at) then Changed (the snapshot's fetched_at), each
+    # with the exact time as its title.
+    assert windowed.endswith(
+        '<td title="2026-11-16T12:04:00Z">30 s ago</td>'
+        '<td title="2026-11-16T12:00:00Z">4 min ago</td></tr>'
+    )
+    assert out["older"].endswith(
+        '<td title="2026-11-14T09:00:00Z">2 d ago</td>'
+        '<td title="2026-11-16T12:00:00Z">4 min ago</td></tr>'
+    )
+    assert out["missing"].endswith("<td>—</td><td>—</td></tr>")
+    assert out["stray"].endswith("<td>—</td><td>—</td></tr>")
+    assert out["checkError"] == "usage checks: seat: <broken>"
+    assert out["bothErrors"] == (
+        "ai-subscriptions.json: subscriptions must be a list; usage checks: seat: broken"
+    )
+    assert out["missing"].count("<td>") == 12
+    assert windowed.count("<td") == 12
     assert "<td>No usage: no paired device polls this login</td>" in out["missing"]
     assert "0%" not in out["missing"]
     assert "<td>not listed</td>" in out["stray"]
@@ -359,9 +580,9 @@ console.log(JSON.stringify({
     assert absent in out["absent"]
     assert out["absentError"] is None
     assert absent not in out["invalid"]
-    assert out["invalid"] == "<tr><td colspan='11'>—</td></tr>"
+    assert out["invalid"] == "<tr><td colspan='12'>—</td></tr>"
     assert out["invalidError"] == "ai-subscriptions.json: subscriptions must be a list"
-    assert out["configuredEmpty"] == "<tr><td colspan='11'>—</td></tr>"
+    assert out["configuredEmpty"] == "<tr><td colspan='12'>—</td></tr>"
 
 
 OVERVIEW_NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
@@ -620,6 +841,83 @@ console.log(JSON.stringify({{
     order = re.findall(r'data-provider="([a-z-]+)"', out["sorted"])
     assert order == ["driver-w", "driver-d", "driver-a", "driver-b", "driver-c", "driver-e"]
     assert out["none"] == '<p class="usage-muted">—</p>'
+
+
+def test_usage_overview_shows_when_each_account_was_checked() -> None:
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    overview_html = section_function(html, "usageOverviewHtml")
+    assert "checked ${esc(elapsedText(a.checked_at, now))} ago" in overview_html
+    assert 'title="${esc(a.checked_at)}"' in overview_html
+    if NODE is None:
+        pytest.skip("node is not installed; the static checks above cover the source")
+    script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
+    helpers = "\n".join(
+        line for line in script.splitlines() if line.startswith(("    function esc(", "    const NO_USAGE"))
+    )
+    functions = "\n".join(
+        section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
+    )
+    helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
+
+    def account(name: str, checked_at: str | None, recorded: str | None) -> dict:
+        return {
+            "account": name,
+            "label": None,
+            "listed": True,
+            "origin": "device-a",
+            "has_snapshot": recorded is not None,
+            "status": None if recorded else "no data",
+            "used_percent": 10.0 if recorded else None,
+            "resets_in": None,
+            "text": None,
+            "recorded": recorded,
+            "checked_at": checked_at,
+        }
+
+    overview = [
+        {
+            "provider": "driver-w",
+            "name": "Login",
+            "status": None,
+            "used_percent": 10.0,
+            "window": "Week",
+            "resets_in": None,
+            "text": None,
+            "summary": "Login 10%",
+            "recorded": "2026-11-17T09:56:00Z",
+            "windows": [],
+            "accounts": [
+                account("seat-1@example.com", "2026-11-17T09:59:30Z", "2026-11-17T09:56:00Z"),
+                account("seat-2@example.com", None, "2026-11-17T08:00:00Z"),
+                account("seat-3@example.com", "2026-11-17T09:58:00Z", None),
+            ],
+        }
+    ]
+    harness = helpers + "\n" + functions + f"""
+const NOW = Date.parse("2026-11-17T10:00:00Z");
+console.log(JSON.stringify(usageOverviewHtml({json.dumps(overview)}, new Set(), true, false, NOW)));
+"""
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    shown = json.loads(completed.stdout)
+    # checked (the last successful read) comes before recorded (the last change).
+    assert (
+        'seat-1@example.com<br><span class="usage-muted" title="2026-11-17T09:59:30Z">'
+        'checked 30 s ago</span><br><span class="usage-muted" title="2026-11-17T09:56:00Z">'
+        "recorded 4 min ago</span>"
+    ) in shown
+    # Without a check time nothing is shown for it.
+    assert (
+        'seat-2@example.com<br><span class="usage-muted" title="2026-11-17T08:00:00Z">'
+        "recorded 2 h ago</span>"
+    ) in shown
+    assert (
+        'seat-3@example.com<br><span class="usage-muted" title="2026-11-17T09:58:00Z">'
+        "checked 2 min ago</span></span>"
+    ) in shown
+    assert shown.count("checked ") == 2
 
 
 def test_usage_summary_renders_in_node() -> None:

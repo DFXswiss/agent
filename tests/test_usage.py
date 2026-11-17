@@ -607,6 +607,59 @@ def test_scan_account_usage_missing_key_and_malformed_data(tmp_path: Path) -> No
         scan_account_usage(store, fetch=lambda *_args: {"key": {"data": []}})
 
 
+CHECKED_KEY = f"usage.checked.{SPEND_DRIVER}.{SPEND_ACCOUNT}"
+
+
+def test_scan_account_usage_records_the_check_time_of_every_successful_read(
+    tmp_path: Path,
+) -> None:
+    store, _ = _spend_store(tmp_path)
+    _owned_session(store, "s-spend", SPEND_DRIVER)
+    assert store.meta(CHECKED_KEY) is None
+
+    created = scan_account_usage(
+        store, fetch=lambda *_args: {"key": _key_body()}, now=lambda: "2026-11-04T10:00:00Z"
+    )
+    assert len(created) == 1
+    assert store.meta(CHECKED_KEY) == "2026-11-04T10:00:00Z"
+
+    # Unchanged usage stores no snapshot, but the check still counts.
+    assert scan_account_usage(
+        store, fetch=lambda *_args: {"key": _key_body()}, now=lambda: "2026-11-04T10:01:00Z"
+    ) == []
+    assert store.meta(CHECKED_KEY) == "2026-11-04T10:01:00Z"
+    assert [row["payload"]["fetched_at"] for row in _snapshots(store)] == [
+        "2026-11-04T10:00:00Z"
+    ]
+    # The key names the configured account, never the token.
+    assert "spend-secret" not in CHECKED_KEY
+
+
+def test_scan_account_usage_records_no_check_time_for_failed_reads(tmp_path: Path) -> None:
+    store, directories = _spend_store(tmp_path, key=False)
+    _owned_session(store, "s-spend", SPEND_DRIVER)
+
+    with pytest.raises(AccountUsageError, match="driver-d key missing"):
+        scan_account_usage(
+            store, fetch=lambda *_args: {"key": _key_body()}, now=lambda: "2026-11-04T10:00:00Z"
+        )
+    assert store.meta(CHECKED_KEY) is None
+
+    _key(directories[SPEND_DRIVER])
+    with pytest.raises(AccountUsageError, match="usage_usd at /key/data/usage is missing"):
+        scan_account_usage(
+            store, fetch=lambda *_args: {"key": {"data": []}}, now=lambda: "2026-11-04T10:00:00Z"
+        )
+    assert store.meta(CHECKED_KEY) is None
+
+    def failing_fetch(*_args: object) -> dict[str, Any]:
+        raise StoreError("driver-d usage request key returned HTTP 500")
+
+    with pytest.raises(AccountUsageError, match="HTTP 500"):
+        scan_account_usage(store, fetch=failing_fetch, now=lambda: "2026-11-04T10:00:00Z")
+    assert store.meta(CHECKED_KEY) is None
+
+
 def test_scan_account_usage_keeps_scanning_after_a_failing_account(tmp_path: Path) -> None:
     directories = _configure(
         tmp_path,
