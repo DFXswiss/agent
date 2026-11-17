@@ -25,7 +25,9 @@ from agent_cli.coordinator_orders import (
     reconcile_order_events,
     sweep_terminal_orders,
 )
+from agent_cli.drivers import RecordedNames
 from agent_cli.main import main
+from agent_cli.model_slots import install_recorded_names
 from agent_cli.preconditions import CHECKS
 from agent_cli.store import Store
 from test_coordinator_support import (
@@ -1144,6 +1146,38 @@ def test_show_while_blocked_lists_the_phase_bound_checks_of_the_resume_phase(
         "no_live_lane",
     ]
     assert device.store.row("task", blocked) == before
+
+
+def test_show_canonicalizes_a_stored_resume_phase_of_a_blocked_order(
+    device, capsys
+) -> None:
+    blocked = str(uuid.uuid4())
+    seed_order_task(
+        device.store,
+        device.worker,
+        blocked,
+        phase="blocked",
+        resume_phase="pr_gates_driver-b",
+        blocker="Needs a decision",
+    )
+    before = device.store.row("task", blocked)
+    install_recorded_names(RecordedNames("driver-a", "driver-b"))
+    try:
+        order("show", "--id", blocked, "--json")
+        result = json.loads(capsys.readouterr().out)
+        assert result["phase"] == "blocked"
+        assert result["action"] == "second_review"
+        assert [item["key"] for item in result["checks"]] == [
+            "order_active",
+            "review_1_quality",
+            "review_1_logic",
+            "head_signed_clean",
+            "checkout_owned",
+            "no_live_lane",
+        ]
+        assert device.store.row("task", blocked) == before
+    finally:
+        install_recorded_names(None)
 
 
 def test_show_unknown_and_foreign_ids(device) -> None:

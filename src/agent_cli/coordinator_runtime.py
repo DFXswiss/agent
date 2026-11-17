@@ -3428,11 +3428,14 @@ def advance_one(
     lines: list[str] = []
     blocked: dict[str, str] = {}
     tasks = _open_tasks(store, worker.session_id, blocked)
+    reported: set[str] = set()
 
     def visit(task: dict[str, Any], **kwargs: Any) -> list[str]:
         # A task whose checklist could not be reconciled reports why instead.
-        refusal = blocked.get(str(task["id"]))
+        tid = str(task["id"])
+        refusal = blocked.get(tid)
         if refusal is not None:
+            reported.add(tid)
             return [refusal]
         return _advance_guarded(
             store, worker, task, runner=runner, lane_runner=lane_runner, **kwargs
@@ -3493,5 +3496,12 @@ def advance_one(
             runnable = [queued[0]]
     candidates = [t for t in runnable if str(t["id"]) not in touched]
     if candidates:  # 2. one phase of the oldest runnable task
-        lines.extend(visit(candidates[0]))
+        for task in candidates:
+            tid = str(task["id"])
+            if tid in blocked and tid not in reported:
+                lines.append(blocked[tid])
+                reported.add(tid)
+        ready = [t for t in candidates if str(t["id"]) not in blocked]
+        if ready:
+            lines.extend(visit(ready[0]))
     return lines
