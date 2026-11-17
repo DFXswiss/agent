@@ -13,7 +13,8 @@ behind it are in
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
 Passkey invites, sign-in and signed requests by a certified session key are specified in
-[PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md), which extends sections 5 and 7 of this document.
+[PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md), which extends sections 2, 5 and 7 of this document,
+adds endpoints under `/api/key/`, and refuses a public URL whose host is an IP address.
 
 ## 1. Scope of what is built now
 
