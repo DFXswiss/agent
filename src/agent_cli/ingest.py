@@ -465,7 +465,7 @@ def scan_mentions(
     policy: Any,
     catalog: Any,
     device_id: str,
-    requeue: Callable[[dict[str, Any], dict[str, Any]], bool],
+    requeue: Callable[[str, dict[str, Any], dict[str, Any]], bool],
 ) -> tuple[list[str], list[str], int]:
     """Insert or re-queue a job for every notification this instance admits.
 
@@ -704,7 +704,10 @@ def scan_mentions(
             )
 
         try:
-            accepted = requeue(existing, payload)
+            # The key the row was found under goes with it: the callback
+            # refuses a row whose stored id differs, so the check that keeps a
+            # re-queue off another job's files lives in one place.
+            accepted = requeue(row_id, existing, payload)
         except Exception:
             # A re-queue that failed leaves the previous attempt's evidence
             # partly removed; the row is unchanged, so the next pass tries

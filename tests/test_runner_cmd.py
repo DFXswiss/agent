@@ -404,7 +404,7 @@ def test_ingest_passes_the_policy_to_scan_mentions(
         policy: Any,
         catalog: Any,
         device_id: str,
-        requeue: Callable[[dict[str, Any], dict[str, Any]], bool],
+        requeue: Callable[[str, dict[str, Any], dict[str, Any]], bool],
     ) -> tuple[list[str], list[str], int]:
         seen.update(
             session_id=session_id,
@@ -2027,6 +2027,83 @@ def test_retry_reports_a_missing_job(
         cmd_runner(["retry", "missing-job"])
 
 
+def test_retry_refuses_a_row_stored_under_another_key_and_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `retry A` loads the row stored under key A, but `retry_payload` keeps the
+    # row's own id. A row under A carrying id B would pass every check that
+    # compares the row with itself, and the retry would then remove B's
+    # worktree and logs and overwrite B's row. The lookup key is checked too.
+    home = tmp_path / "home"
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    key_a = job_id("owner/name", "7", "pr-review")
+    key_b = job_id("owner/name", "8", "pr-review")
+    row_b = _job_row()
+    row_b.update(
+        {
+            "id": key_b,
+            "state": "failed",
+            "finished": "2020-01-01T00:00:00Z",
+            "attempts": 1,
+        }
+    )
+    row_a = _job_row()
+    row_a.update(
+        {
+            "id": key_b,
+            "state": "failed",
+            "finished": "2020-01-01T00:00:00Z",
+            "attempts": 0,
+        }
+    )
+    store = Store(home)
+    try:
+        store.write("job", "insert", key_b, row_b)
+        store.write("job", "insert", key_a, row_a)
+        original_a = store.row("job", key_a)
+        original_b = store.row("job", key_b)
+    finally:
+        store.close()
+    assert original_a is not None
+    assert original_b is not None
+    files = [
+        logs / f"{key_b}{suffix}"
+        for suffix in (".exit", ".transcript", ".prompt")
+    ]
+    for path in files:
+        path.write_text("keep", encoding="utf-8")
+    worktree = runner_dir / "state" / "work" / key_b
+    worktree.mkdir(parents=True)
+    (worktree / "keep.txt").write_text("keep", encoding="utf-8")
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match=f"job {key_a}: row id {key_b} does not match the lookup key",
+    ):
+        cmd_runner(["retry", key_a])
+
+    store = Store(home)
+    try:
+        assert store.row("job", key_a) == original_a
+        assert store.row("job", key_b) == original_b
+    finally:
+        store.close()
+    for path in files:
+        assert path.read_text(encoding="utf-8") == "keep"
+    assert (worktree / "keep.txt").read_text(encoding="utf-8") == "keep"
+    # The refusal came before the worktree removal, so no git command ran.
+    assert calls == []
+
+
 def test_requeue_job_refuses_a_stored_row_without_a_usable_id(
     tmp_path: Path,
 ) -> None:
@@ -2046,6 +2123,7 @@ def test_requeue_job_refuses_a_stored_row_without_a_usable_id(
             row,
             {"id": "job-without-id", "state": "queued"},
             lambda _argv: _completed(),
+            expected_id="job-without-id",
         )
         assert problem == "job has no usable id"
         assert store.row("job", "job-without-id") == row
@@ -2110,6 +2188,7 @@ def test_requeue_job_refuses_an_unsafe_id_before_any_side_effect(
             original,
             {"id": "../escape", "state": "queued"},
             lambda argv: (calls.append(list(argv)), _completed())[1],
+            expected_id="stored-key",
         )
 
         assert problem == "job has no usable id"
@@ -2182,10 +2261,85 @@ def test_requeue_job_refuses_a_payload_for_another_id_before_any_side_effect(
             original,
             {"id": "another-job", "state": "queued"},
             lambda argv: (calls.append(list(argv)), _completed())[1],
+            expected_id=row["id"],
         )
 
         assert problem == f"job {row['id']}: payload id does not match the row"
         assert store.row("job", row["id"]) == original
+        activity = store.row("activity", activity_id)
+        assert activity is not None
+        assert activity["execution_status"] == "pending"
+        assert calls == []
+        assert all(
+            sentinel.read_text(encoding="utf-8") == "keep"
+            for sentinel in sentinels
+        )
+        assert (worktree / "keep").read_text(encoding="utf-8") == "keep"
+    finally:
+        store.close()
+
+
+def test_requeue_job_refuses_a_row_stored_under_another_key(
+    tmp_path: Path,
+) -> None:
+    # The caller looked the row up under one key. A row carrying another id
+    # names the files the cleanup removes and the row the write replaces, so
+    # acting on it would touch a job the caller did not name.
+    home = tmp_path / "home"
+    paths = runner_paths(home / "runner")
+    paths.logs.mkdir(parents=True)
+    paths.work.mkdir(parents=True)
+    row = _job_row()
+    row.update(
+        {
+            "id": "job-b",
+            "state": "failed",
+            "finished": "2020-01-01T00:00:00Z",
+            "attempts": 0,
+        }
+    )
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], 0
+    )
+    store = Store(home)
+    calls: list[list[str]] = []
+    try:
+        store.write("job", "insert", "job-a", row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+        sentinels = [
+            paths.logs / f"{row['id']}{suffix}"
+            for suffix in (".exit", ".transcript", ".prompt")
+        ]
+        for sentinel in sentinels:
+            sentinel.write_text("keep", encoding="utf-8")
+        worktree = paths.work / row["id"]
+        worktree.mkdir()
+        (worktree / "keep").write_text("keep", encoding="utf-8")
+        original = store.row("job", "job-a")
+        assert original is not None
+
+        problem = runner_cmd._requeue_job(
+            paths,
+            store,
+            original,
+            {"id": row["id"], "state": "queued"},
+            lambda argv: (calls.append(list(argv)), _completed())[1],
+            expected_id="job-a",
+        )
+
+        assert problem == "job job-a: row id job-b does not match the lookup key"
+        assert store.row("job", "job-a") == original
         activity = store.row("activity", activity_id)
         assert activity is not None
         assert activity["execution_status"] == "pending"
