@@ -10,7 +10,7 @@ import pytest
 from agent_cli.dispatch import dispatch_queued, running_slots, session_name, worktree_path
 from agent_cli.ingest import job_row
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 
 
 def _runner(
@@ -377,6 +377,151 @@ def test_a_baseline_failure_keeps_the_announcement_marker(tmp_path: Path) -> Non
         assert saved["state"] == "queued"
         assert saved["announced"] is True
         assert saved["pull_request"] is True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreError("db down"), RuntimeError("db down")],
+    ids=["store-error", "runtime-error"],
+)
+def test_a_failed_announced_marker_write_cleans_the_worktree_and_skips_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # `StoreError` is a `SystemExit`, so an `except Exception` lets it escape
+    # and strand the worktree just added; the next pass then fails the job as
+    # workspace_failed. The row must stay queued and the worktree be cleaned
+    # up exactly as on a baseline failure.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        original_write = store.write
+
+        def write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            if (
+                table == "job"
+                and op == "update"
+                and payload.get("announced") is True
+            ):
+                raise error
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", write)
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        # No baseline was taken and no worker was started.
+        assert not any("graphql" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+        remove_at = next(
+            i for i, command in enumerate(joined) if "worktree remove" in command
+        )
+        prune_at = next(
+            i for i, command in enumerate(joined) if "worktree prune" in command
+        )
+        assert remove_at < prune_at
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved.get("announced") is not True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreError("db down"), RuntimeError("db down")],
+    ids=["store-error", "runtime-error"],
+)
+def test_a_failed_marker_write_does_not_stop_a_later_queued_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # The skipped job must not abort the pass: the other queued row still
+    # starts. The failing row must be dispatched first, so that replacing the
+    # `continue` with a `break` is visible. `rows()` orders by
+    # `updated_at DESC, row_id DESC`, and the store stamps a second-resolution
+    # `utcnow()` itself, so the failing row is inserted last and owns the
+    # higher id to win both the timestamp and the tie-break.
+    store = Store(tmp_path)
+    try:
+        later = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        failing = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="8",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        assert failing["id"] > later["id"]
+        store.write("job", "insert", later["id"], later)
+        store.write("job", "insert", failing["id"], failing)
+        assert [row["id"] for row in store.rows("job")] == [
+            failing["id"],
+            later["id"],
+        ]
+        calls: list[list[str]] = []
+        marker_attempts: list[str] = []
+        original_write = store.write
+
+        def write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            # The marker write is the update that sets `announced` while the
+            # row is still queued; the later running-state write carries the
+            # flag too and is not a marker attempt.
+            if (
+                table == "job"
+                and op == "update"
+                and payload.get("announced") is True
+                and payload.get("state") == "queued"
+            ):
+                marker_attempts.append(row_id)
+                if row_id == failing["id"]:
+                    raise error
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", write)
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls),
+            max_concurrent=2,
+            announce=announce,
+        )
+
+        assert marker_attempts == [failing["id"], later["id"]]
+        assert started == [later["id"]]
+        assert skipped == 1
+        assert store.row("job", failing["id"])["state"] == "queued"
+        assert store.row("job", later["id"])["state"] == "running"
     finally:
         store.close()
 

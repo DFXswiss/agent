@@ -15,7 +15,7 @@ import pytest
 from agent_cli import github_accounts, runner_status
 from agent_cli.ingest import job_row
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 
 
 # --------------------------------------------------------------------- fakes
@@ -1402,6 +1402,58 @@ def test_report_outcomes_counts_a_failed_write_and_leaves_the_row_alone(
     assert saved is not None
     assert saved["reported"] is False
     assert "report_attempts" not in saved
+
+
+def test_report_outcomes_counts_a_store_error_write_and_reports_the_next_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `StoreError` is a `SystemExit`: a bare `except Exception` lets it escape
+    # and abort the pass, so the remaining rows never get their comment. The
+    # failing row must be processed first, so that replacing the `continue`
+    # with a `break` is visible. `rows()` orders by
+    # `updated_at DESC, row_id DESC`, and the store stamps a second-resolution
+    # `utcnow()` itself, so the failing row is inserted last and owns the
+    # higher id to win both the timestamp and the tie-break.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    later = _failed_row("7")
+    failing = _failed_row("8")
+    assert failing["id"] > later["id"]
+    store.write("job", "insert", later["id"], later)
+    store.write("job", "insert", failing["id"], failing)
+    assert [row["id"] for row in store.rows("job")] == [
+        failing["id"],
+        later["id"],
+    ]
+    original_write = store.write
+    job_writes: list[str] = []
+
+    def write(
+        table: str, op: str, row_id: str, payload: dict[str, Any]
+    ) -> None:
+        # The activity write still succeeds; only the first job marker fails.
+        if table == "job":
+            job_writes.append(row_id)
+            if op == "update" and row_id == failing["id"]:
+                raise StoreError("db down")
+        original_write(table, op, row_id, payload)
+
+    monkeypatch.setattr(store, "write", write)
+    try:
+        reported, failed = _report(store, home=tmp_path)
+        saved_failing = store.row("job", failing["id"])
+        saved_later = store.row("job", later["id"])
+    finally:
+        store.close()
+
+    assert job_writes == [failing["id"], later["id"]]
+    assert reported == [later["id"]]
+    assert failed == [failing["id"]]
+    assert saved_failing is not None
+    assert saved_failing["reported"] is False
+    assert "report_attempts" not in saved_failing
+    assert saved_later is not None
+    assert saved_later["reported"] is True
 
 
 def test_report_outcomes_continues_after_one_row_raises(

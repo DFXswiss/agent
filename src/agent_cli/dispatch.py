@@ -231,14 +231,20 @@ def dispatch_queued(
                 continue
             if announced:
                 # Write at once: a later baseline failure leaves the job
-                # queued, and the next pass must not announce it again. If this
-                # write fails, carry on — the deterministic activity id already
-                # prevents a second comment.
+                # queued, and the next pass must not announce it again. A
+                # failed write must not strand the worktree, so clean it up
+                # exactly as the baseline-failure path does and leave the row
+                # queued. The next pass finds the announcement activity
+                # already `done`, so it posts no second comment and writes the
+                # marker then.
                 row["announced"] = True
                 try:
                     store.write("job", "update", job_id, _strip(row))
-                except Exception:
-                    pass
+                except (Exception, SystemExit):
+                    runner(workspace.worktree_remove_argv(bare, worktree))
+                    runner(workspace.worktree_prune_argv(bare))
+                    skipped += 1
+                    continue
 
         completed = runner(outputs.baseline_argv(repo, ref))
         baseline_output_ids = None

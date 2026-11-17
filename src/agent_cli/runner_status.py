@@ -638,7 +638,7 @@ def report_outcomes(
             updated["report_attempts"] = attempts + 1
         try:
             jobs.write("job", "update", job_id, updated)
-        except Exception:
+        except (Exception, SystemExit):
             # The row is unchanged (the write is transactional), so the next
             # pass tries this id again.
             failed.append(job_id)

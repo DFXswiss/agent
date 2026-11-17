@@ -140,8 +140,10 @@ is reported as `announce failed <job-id>` on standard error. The comment is a
 The row records `pull_request` (whether the probe answered that the number is a
 pull request) and `announced` once the announcement ended `done`. Writing
 `announced` at once means a later baseline failure, which leaves the job
-queued, does not announce it again on the next pass. The deterministic activity
-id prevents a second comment even if that write itself fails.
+queued, does not announce it again on the next pass. If that write fails, the
+job is left queued and its worktree is removed and pruned, as on a baseline
+failure. The next pass finds the deterministic announcement activity already
+`done`, posts no second comment, and sets the marker then.
 
 Output: `job.announced <job-id>` per delivered announcement, `job.started
 <job-id>` per job, or `job.started none`; an undelivered announcement is
