@@ -21,6 +21,8 @@ from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5, uuid4
 
 from .a38 import A38Error, load_policy, report_fact_reasons, verify_report
+from .ai_accounts import AccountError as AIAccountError
+from .ai_accounts import load_driver_configuration
 from .a38_guard import POLICY_PATH, status_context_enforce
 from .a38_review import (
     REVIEW_BEGIN,
@@ -62,6 +64,7 @@ from .coordinator_common import (
     target_repo,
 )
 from .coordinator_config import WorkerConfig
+from .drivers import DRIVERS_HINT
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     control_dir,
@@ -103,12 +106,6 @@ from .readme_only import (
 )
 from .store import Store, utcnow
 
-PROVIDER_DISPLAY = {
-    "grok": "xAI",
-    "codex": "OpenAI",
-    "claude": "Anthropic",
-    "openrouter": "OpenRouter",
-}
 SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
@@ -1398,7 +1395,7 @@ def _finalize_report_evidence(
             if live_state in ("MERGED", "CLOSED"):
                 committed_c["phase"] = "await_merge"
             else:
-                committed_c["phase"] = "pr_gates_grok"
+                committed_c["phase"] = "pr_gates_first"
                 committed_task["state"] = "pr-review"
             save_task(store, committed_task)
     task.clear()
@@ -2125,6 +2122,19 @@ def _own_row_matches(
     )
 
 
+def _driver_display_name(store: Store, driver: str, stage: str) -> str:
+    """Attribution name of the driver recorded on ``stage``, from drivers.json."""
+    try:
+        spec = load_driver_configuration(store.home).drivers.get(driver)
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    if spec is None or spec.display_name is None:
+        raise CoordinatorError(
+            f"driver {driver} recorded on {stage} has no display_name ({DRIVERS_HINT})"
+        )
+    return spec.display_name
+
+
 def _first_comment_body(
     store: Store,
     worker: WorkerConfig,
@@ -2166,7 +2176,7 @@ def _first_comment_body(
                 "id": lane_id,
                 "result": "pass",
                 "status": "complete",
-                "provider": PROVIDER_DISPLAY[provider],
+                "provider": _driver_display_name(store, provider, "review-1"),
                 "model": model,
                 "model_number": model,
                 "prompt": prompt,
@@ -2337,7 +2347,7 @@ def phase_first_comment(
         if str(exc).startswith("first review ") and str(exc).endswith(
             " prompt evidence missing"
         ):
-            c["phase"] = "pr_gates_grok"
+            c["phase"] = "pr_gates_first"
             save_task(store, task)
             return [f"{exc}; re-running gate"]
         raise
@@ -2383,7 +2393,7 @@ def phase_first_comment(
     save_task(store, task)
     if request_plan is not None:
         _write_second_review_request_pings(store, task, request_plan)
-    c["phase"] = "pr_gates_codex" if model_second else "await_second_review"
+    c["phase"] = "pr_gates_second" if model_second else "await_second_review"
     save_task(store, task)
     verb = "already posted" if already_posted else "posted"
     return [f"first A38 review comment {verb} on {head[:7]}"]
@@ -2436,7 +2446,7 @@ def phase_second_comment(
                 vendor=vendor,
             )
         if item is None:
-            c["phase"] = "pr_gates_codex"
+            c["phase"] = "pr_gates_second"
             save_task(store, task)
             return [
                 f"second review {dimension} gate missing on {head[:7]}; re-running gate"
@@ -2446,7 +2456,9 @@ def phase_second_comment(
                 "id": lane_id,
                 "result": "pass",
                 "status": "complete",
-                "provider": PROVIDER_DISPLAY[item["provider"]],
+                "provider": _driver_display_name(
+                    store, str(item["provider"]), "review-2"
+                ),
                 "model": item["model"],
                 "model_number": item["model"],
                 "prompt": public_prompt(item["prompt"], worker, task),

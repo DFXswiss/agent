@@ -58,7 +58,9 @@ from .coordinator_lanes import (
 from .gate_order import latest_gates
 from .model_slots import (
     ModelSlotsError,
+    UnrecordedSlotsError,
     canonical_key,
+    canonical_phase,
     canonical_stage,
     models_from_snapshot,
 )
@@ -70,7 +72,7 @@ from .store import Store, utcnow
 CHECK_EVIDENCE_BOUND = 1000
 ROUTE_LOOP_LIMIT = 3
 SECOND_REVIEW_PHASES = frozenset(
-    {"pr_gates_codex", "a38_second_comment", "await_second_review"}
+    {"pr_gates_second", "a38_second_comment", "await_second_review"}
 )
 OVERRIDE_ACTIONS = {"review_2": "waive_second_review"}
 
@@ -153,7 +155,7 @@ class TaskFacts:
 
 
 def current_phase(task: dict[str, Any]) -> str:
-    return str(coord(task).get("phase") or "accept")
+    return canonical_phase(str(coord(task).get("phase") or "accept"))
 
 
 def head_of(task: dict[str, Any]) -> str:
@@ -220,9 +222,13 @@ def route_phase(target: str, task: dict[str, Any]) -> str:
         return target
     try:
         second = models_from_snapshot(task).second
+    except UnrecordedSlotsError:
+        # Without recorded_slots an unpinned task has no known second slot;
+        # routing it as an external review would hide the missing configuration.
+        raise
     except ModelSlotsError:
         second = None
-    return "pr_gates_codex" if second is not None else "await_second_review"
+    return "pr_gates_second" if second is not None else "await_second_review"
 
 
 def registry_row_id(task_id: str, key: str) -> str:
@@ -778,6 +784,8 @@ def second_review_waiver_refusal(
     try:
         if models_from_snapshot(task).second is None:
             return "the second review of this order comes from external reviewers"
+    except UnrecordedSlotsError as exc:
+        return str(exc)
     except ModelSlotsError:
         return "the second review of this order comes from external reviewers"
     for key in ("review_1_quality", "review_1_logic"):
