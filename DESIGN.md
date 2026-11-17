@@ -1805,7 +1805,7 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 | §2 website-origin exception, §17 `agent assign` | The hub creates an issue on the code host | Replaced by tasks and orders once they ship |
 | §17 Control | Only the device that owns the session row executes control frames | The device executes a command whose proof it verified against its allow list |
 | §17 Live terminal bytes | Ephemeral, never stored | Stored in the session log |
-| §20 Website as an operations console | Refused | Accepted for watching, answering and handing over work |
+| §20 Website for operating leases, token cost and stuck coding tasks | Refused | Accepted for watching, answering and handing over work; leases stay refused |
 | §1, §2 AI vs scripts, §16, §19.1 | The AI talks only to the local database; scripts perform hub HTTP | A staff member's own AI on a controller device calls the hub API with its own program key (§25.14); model lanes and AI sessions on executors keep the rule |
 | §7 Pairing, §2 Device daemon, §8 `device.json`, §11 device WebSocket, §16 `agent pair`, §18 step 5 | A code-host session confirms pairing and issues a device token; revoke on the website | A device key added to the keys file by pull request, its first allow-list entries confirmed on the device; revocation by pull request (§25.3, §25.6, §25.15) |
 | §5, §8 Session kinds, §16 `--kind` | `human`, `runner`, `other` | Adds `direct` for a recorded direct login on an executor (§25.9) |
