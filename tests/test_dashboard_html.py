@@ -567,6 +567,10 @@ def test_order_events_have_their_own_page() -> None:
         "digest",
         "opinion",
     ]
+    render = top_level_function(orders_script(), "renderOrderObject")
+    assert 'field === "checkpoint"' in render
+    assert 'keys.filter(key => key !== "digest" && key !== "opinion")' in render
+    assert "orderRowsHtml(key, value[key])" in render
 
 
 def test_orders_script_is_a_second_element() -> None:

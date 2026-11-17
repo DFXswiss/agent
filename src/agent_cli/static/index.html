@@ -392,7 +392,11 @@ function renderOrderObject(container, obj, name) {
     } else if (keys && value !== null && typeof value === "object") {
       const rows = [];
       const subsections = [];
-      for (const key of keys) {
+      // digest and opinion render in #od-question and #od-opinion, not in this table.
+      const rowKeys = field === "checkpoint"
+        ? keys.filter(key => key !== "digest" && key !== "opinion")
+        : keys;
+      for (const key of rowKeys) {
         const nestedKeys = view.nested[field + "." + key];
         if (nestedKeys && Array.isArray(value[key])) {
           subsections.push(`<h3>${esc(field + "." + key)}</h3><table>${orderTableHtml(value[key], nestedKeys)}</table>`);
