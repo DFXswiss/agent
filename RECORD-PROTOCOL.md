@@ -110,7 +110,12 @@ Terms:
 - **Watcher**: an actor with principal `service` whose key holds `record:watch` (section 8).
 - **Staff**: an actor with principal `staff`. In this step none exists, because only a session
   key (section 10) can sign for one, and session keys are not built.
-- **Now**: the hub's clock cut to whole seconds, as in KEY-PROTOCOL.md section 2.
+- **Now**: the hub's clock cut to whole seconds, as in KEY-PROTOCOL.md section 2. During an
+  append, the hub reads its clock exactly once, in step 2 of the append transaction (section
+  11.5), and fixes `received_at` from that one reading (section 4.6); every check of that append
+  that compares with a time of the hub (checks 10, 11 and 18 of section 6.7) uses that
+  `received_at`, never a second reading. The request checks of KEY-PROTOCOL.md section 5 read the
+  clock on their own, before the append.
 
 ## 3. Scopes and visibility
 
@@ -121,7 +126,7 @@ that table and to the loader in the same diff.
 
 | Scope | Allows | May be held by |
 |---|---|---|
-| `record:security` | Read, and with `record:write` or `record:watch` write, tasks of kind `security` and their comments | `staff`, `agent`, `service` |
+| `record:security` | Read tasks of kind `security` and their comments; with `record:write`, also write such tasks and comments on them; with `record:watch`, also write the watcher events of section 8 on such tasks (a watcher never writes a comment, check 12 (a) of section 6.7) | `staff`, `agent`, `service` |
 | `record:watch` | Write status events as a watcher through `POST /api/key/record/watch` (section 8) | `service` |
 
 Loader rules added to KEY-PROTOCOL.md section 3; a file that breaks one does not start the hub:
@@ -146,9 +151,11 @@ A key **sees** a task when all of these hold:
    key's `subjects`
 
 A key sees a comment when it sees the comment's task. A key sees an event when it sees the
-object of the event; for an event of a comment, that is the comment's task. Visibility is always
+object of the event; for an event of a comment, that is the comment's task. Visibility is
 computed from the current state of the object and the keys file that the answering hub process
-loaded at start (section 11.6).
+loaded at start (section 11.6), with one exception: the answer of a failed verification on
+request (section 7.9) uses the state that the verification folded from the events before the
+failing one.
 
 A key that sees a task sees the whole task, every link included: a `service` key that sees a
 task through one link in its `subjects` also reads the task's links into repositories outside
@@ -183,7 +190,10 @@ The three exceptions, and what they reveal:
     withheld events while it belonged to the old one.
   - Verification on request. The answer of section 7.9 gives the position of a failure, also
     when that position is a withheld event; then its `failure` is `withheld` and names nothing
-    about the event (section 7.9).
+    about the event (section 7.9). The signed `429` `verify_busy` of section 7.9 tells every key
+    with `record:read`, of any team, that some key asked the answering process for a
+    verification less than 60 seconds before, or that one runs; it names neither that key nor
+    its team.
   - The `503` `record_unverified` (section 7.1) tells every caller of a record endpoint and of
     the release query, also a key without `record:read`, that the answering process found the
     record broken, whichever team's event failed.
@@ -197,17 +207,19 @@ The three exceptions, and what they reveal:
 - An id the caller already holds. An event whose `object_id` is the id of an existing object the
   actor does not see is an update of that object and gets `object_not_found` (check 12 (d) of
   section 6.7), where an unused id creates the object; an event whose `event_id` a stored event
-  already uses, whichever key signed it, gets `event_id_taken` (check 8 of section 6.7). Both
-  answers only confirm that an id the caller already holds is in use. They reveal nothing about
-  the object or event behind it. Every `event_id` and `object_id` is a version-4 UUID with 122
+  already uses, whichever key signed it, gets `event_id_taken` (check 8 of section 6.7). In the
+  same way, a failed verification on request that names the failure `event_id_taken` for an
+  event the key sees (section 7.9) confirms that an earlier event, possibly withheld, uses the
+  `event_id` of that event. These answers only confirm that an id the caller already holds is in
+  use. They reveal nothing else about the object or event behind it. Every `event_id` and `object_id` is a version-4 UUID with 122
   bits that its writer draws from a cryptographically secure random number generator (section
   2), so an id that a writer chose cannot be found by trying, and a reader cannot guess the event
   text of a withheld entry and confirm the guess against its event hash. A writer that breaks the
   rule to draw its ids at random gives up this protection for its own events; the hub cannot
   detect it.
 
-All three, with what they reveal, are decisions of section 17 (decisions 40, 41, 59, 72 and 73),
-and so is the rule above about the time of an answer (decision 79).
+All three, with what they reveal, are decisions of section 17 (decisions 40, 41, 46, 59, 72, 73
+and 86), and so is the rule above about the time of an answer (decision 79).
 
 A key that is revoked or expired reads and writes nothing, because the request checks of
 KEY-PROTOCOL.md section 5 refuse it. The events it signed earlier stay in the record and stay
@@ -221,7 +233,7 @@ Each event has these fields. All of them except `received_at` are part of the si
 
 | Field | Type and form | Meaning |
 |---|---|---|
-| `event_id` | UUID (version 4, section 2) | Drawn at random by the writer. Unique in the record. |
+| `event_id` | UUID (version 4, section 2) | Drawn at random by the writer. Unique in the record: checked at write time by check 8 of section 6.7 and in every verification by the row `event_id_taken` of section 12.1. |
 | `object_type` | `task` or `comment` | The type of the object (section 5). No other value exists in this step. |
 | `object_id` | UUID (version 4, section 2) | The object. An event for an `object_id` that does not exist yet creates the object; the writer draws a new `object_id` at random. |
 | `actor_key_id` | The `id` rule of KEY-PROTOCOL.md section 3 | The key that signed. In this step a key of the keys file of kind `ed25519`. |
@@ -230,7 +242,7 @@ Each event has these fields. All of them except `received_at` are part of the si
 | `key_certificate` | A value token (below) | The certificate of a session key (section 10). In this step always `-`; any other value token is refused with `certificate_not_supported` (section 6.7, check 5). |
 | `changes` | 1 to 15 changes | Each change names one field with its old and its new value. |
 | `signature` | 64 bytes, base64url | Ed25519 signature of the actor's key over the event text (section 4.2). |
-| `received_at` | Time | The hub's clock when it appended the event (section 4.6). Not signed. |
+| `received_at` | Time | Fixed by the hub from its one clock reading of the append (section 4.6). Not signed. |
 
 A change has three parts:
 
@@ -293,12 +305,15 @@ security issue that changes every changeable field except `verification`, each a
 both `old` and `new`; `links` and `verification` never change in one event, because `links`
 changes only outside `merged` and `done` (section 6.6) and `verification` only by row 11 of
 section 6.4, which starts from `merged`. With an `actor_key_id` of 63 characters, that event is
-at most 54461 bytes; every create, of a task or of a comment, is smaller, because every `old` of
-a create is `-`. An event text that has the form of this section and is longer than every valid
+at most 54461 bytes. This figure is an upper bound, the sum of the largest line of each part of
+the event text; it is not claimed to be the exact size of the largest valid event, which can be
+smaller. Every create, of a task or of a comment, is smaller, because every `old` of a create is
+`-`. An event text that has the form of this section and is longer than every valid
 event is therefore refused, unless an earlier check of section 6.7 refuses it, by a content
 check of section 6.7 (for example `value_invalid` at check 14, or `field_not_allowed` at check
-16 for an oversized value of a field the object type does not have), never by its size. Check 2 of section 6.7 refuses by size alone only an event
-text of more than 65536 bytes, which no valid event reaches.
+16 for an oversized value of a field the object type does not have), never by its size. Check 2
+of section 6.7 refuses by size alone only an event text of more than 65536 bytes, which no valid
+event reaches.
 
 A value whose decoded form breaks the form of its field (section 5) is refused with
 `value_invalid`. A field name that the object type or the task kind does not have is refused with
@@ -405,15 +420,20 @@ The hub keeps one record. It appends accepted events in the order it accepts the
 
 - **Position**: the first event has position 1; every further event has the position of the
   previous one plus 1. There is no gap.
-- **`received_at`**: the later of now and the `received_at` of the event at the previous
-  position. It therefore never decreases along the positions, so the state at a past moment is
+- **`received_at`**: the later of the hub's one clock reading of the append and the
+  `received_at` of the event at the previous position (for the first event, that reading). The
+  hub reads its clock for an append exactly once, in step 2 of the append transaction (section
+  11.5), after the advisory lock and the incremental fold, and fixes `received_at` there; checks
+  10, 11 and 18 of section 6.7 use that value, and step 4 inserts exactly that value. A clock
+  that is set back after that reading changes nothing in the append. `received_at` therefore
+  never decreases along the positions, so the state at a past moment is
   the fold of a prefix of the record (DESIGN.md §24.6). When the hub clock is set back, events
   keep the last `received_at` until the clock passes it again. When the hub clock jumps forward
   once, even by mistake, every later event gets at least that value, for good: the time axis of
   the record stays shifted, and check 11 of section 6.7 refuses with `key_not_valid_at_receipt`
   every event of a key whose `expires` or `revoked` time lies at or before that value, also when
   it lies after the true time, for example every `service` key (which always has `expires`)
-  whose expiry falls before it. The hub cannot repair this; it is a decision of section 17.
+  whose expiry falls before it. The hub cannot repair this; it is decision 8 of section 17.
 - **Record hash**: the SHA-256 of this text, as 64 lowercase hex characters:
 
 ```text
@@ -428,6 +448,13 @@ Position, `received_at` and record hash are values of the hub, not events. Anyon
 entries of section 7.4, each with its `received_at`, can compute every position and record hash
 again. Apart from its signed answers to the requests of section 7, the only statement the hub
 signs about the record is the checkpoint (section 12.2).
+
+Because check 10 of section 6.7 compares `signed_at` with the same `received_at` that step 4
+stores, and verification (section 12.1, `event_time_invalid`) compares `signed_at` with the
+stored `received_at` by the same rule, and `received_at` is never earlier than at the previous
+position, every event that the hub accepted passes the row `event_time_invalid` of every later
+verification, whatever the hub clock does after the reading, as long as no stored row is changed
+(decision 85).
 
 The **head** of the record is the position and record hash of its last event; an empty record
 has position 0 and no record hash.
@@ -500,7 +527,8 @@ Nothing is ever deleted from the record (DESIGN.md §24.3). Personal data, secre
 and customer data therefore never enter any field. `source` and `fix` are references that reveal
 nothing by themselves; a description names what is wrong, not whose data was affected. The hub
 cannot check this; a review treats a field or a client form that invites such data as a defect.
-The only names of people in the record are handles, which are already public in the keys file.
+The only names of people in the record are handles and the key ids that contain them (such as
+`example-staff-laptop-1`), which are already public in the keys file.
 
 ## 6. The reducer
 
@@ -517,8 +545,13 @@ and for the actor rules (section 6.5) the keys file and `received_at`.
   `restore` (section 12.3).
 - **Actor rules** (section 6.5) depend on the actor's entry in the keys file, on the endpoint
   that received the event, and on `received_at`. The hub checks them only at write time. A later
-  change of the keys file, such as a revocation or a changed scope, never makes an accepted
-  event invalid (DESIGN.md §24.2: events a key already signed stay valid).
+  revocation or expiry of a key, or a later change of its scopes, `subjects`, `handle` or `team`
+  in the keys file, never makes an accepted event invalid (DESIGN.md §24.2: events a key already
+  signed stay valid). A fold needs the key's entry only for its `kind` and `public_key`: an
+  entry is revoked, never removed (KEY-PROTOCOL.md section 3), and a keys file that removes the
+  entry of a key that signed a stored event, or changes its `kind` or `public_key`, makes that
+  event fail verification with `key_unknown` or `event_signature_invalid` (section 12.1), so a
+  hub with that file does not start (section 11.4).
 
 An event that breaks a rule is refused with the error value of that rule. It is never stored and
 changes nothing.
@@ -636,6 +669,19 @@ needs an actor that sees the task), `record:write` from rule 3, and its own vali
 setting a handle other than the actor's own. When no key of the team can act on the task, the
 issue keeps its orphaned assignee until the keys file gives one such key.
 
+**Who may edit a task.** Beyond the column "Who" of section 6.4 and rules 1 to 6, no actor rule
+limits who changes a task. Every writer that sees a task (section 3: of the task's team, and for
+kind `security` holding `record:security`) may make every status change that section 6.4 marks
+"writer" (rows 1, 3 to 7, 13 and 14, and row 2 for kind `work`), may change every field that
+section 5.2 marks changeable, and may write a comment on it. This holds also for a task of kind
+`security` assigned to another handle: such a writer may set it to `ready_for_review`, back to
+`open` or to `dropped`, set it back from `merged` or `done` by row 14, change `title`,
+`severity`, `urgency` or any other changeable field, and switch `completion` by row 13, which
+sets `done` without the confirmation of a staff member. Only these are limited to the assignee:
+a change of `assignee` of a task of kind `security` (rule 4), row 2 for kind `security`, and rows
+10 and 12. On a task of kind `work`, every writer that sees it may also set `assignee` to any
+handle that rule 5 allows. This is decision 87 of section 17.
+
 ### 6.6 Invariants after the event
 
 State rules on the state after the event:
@@ -659,7 +705,7 @@ failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transa
 | # | Check | Status | `error` |
 |---|---|---|---|
 | 1 | The query is empty. | 400 | `query_invalid` |
-| 2 | The body is one JSON object with exactly the members `event` and `signature`, each a string, no member twice. `event` is canonical base64url of 1 to 65536 bytes; `signature` is canonical base64url of 64 bytes. | 400 | `body_invalid` |
+| 2 | The request carries exactly one `Content-Type` header, and its value is exactly `application/json`, byte for byte, without parameters. The body (after removing a `Content-Encoding` of KEY-PROTOCOL.md section 5) is one JSON object with exactly the members `event` and `signature`, each a string, no member twice. `event` is canonical base64url of 1 to 65536 bytes; `signature` is canonical base64url of 64 bytes. | 400 | `body_invalid` |
 | 3 | The event text has the form of section 4.2. | 400 | `event_invalid` |
 | 4 | `actor_key_id` equals the request's `Agent-Key`. | 403 | `actor_mismatch` |
 | 5 | `key_certificate` is `-`. | 400 | `certificate_not_supported` |
@@ -667,7 +713,7 @@ failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transa
 | 7 | No stored event has this event hash. | 409 | `event_duplicate` |
 | 8 | No stored event has this `event_id`. | 409 | `event_id_taken` |
 | 9 | `prev_hash` is the event hash of the last accepted event of this key, or `-` when there is none. | 409 | `chain_broken` |
-| 10 | `signed_at` is at most 120 seconds after now and not earlier than `signed_at` of the last accepted event of this key. | 400 | `event_time_invalid` |
+| 10 | `signed_at` is at most 120 seconds after the `received_at` that step 2 of section 11.5 fixed for this append (section 4.6), and not earlier than `signed_at` of the last accepted event of this key. | 400 | `event_time_invalid` |
 | 11 | The actor's key is neither revoked nor expired at `received_at`. | 409 | `key_not_valid_at_receipt` |
 | 12 | The object, in this order: (a) through the watch endpoint, an object that does not exist or is not a task, such as a comment (404 `object_not_found`); (b) a create of a task without a change of `kind`, or a create of a comment without a change of `task` (409 `field_required`); (c) a create of a task with a change of `team` whose new value differs from the actor's `team`, actor rule 1 of section 6.5 (403 `change_not_allowed`); (d) an update of an object the actor does not see, or a create of a comment whose `task` value is not a UUID, names no task or names a task the actor does not see (404 `object_not_found`). | 403 / 404 / 409 | `change_not_allowed` / `object_not_found` / `field_required` |
 | 13 | A create of a task of kind `security` by an actor without `record:security`. | 403 | `scope_missing` |
@@ -677,10 +723,13 @@ failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transa
 | 17 | Section 6.4 (state conditions) and section 6.6, in the order of their tables. | 404 / 409 | as given there |
 | 18 | Section 6.5, rules 2 to 6, in the order of its table. | 403 / 409 | as given there |
 
+Checks 10, 11 and 18 use the one `received_at` that step 2 of section 11.5 fixed for this
+append (section 4.6); no check of this table reads the clock again.
+
 Check 11 can fail only when `received_at` is later than the time of the request checks of
-KEY-PROTOCOL.md section 5, because the clock moved on while the request waited for the advisory
-lock of section 11.5, or because `received_at` keeps a later value of an earlier event (section
-4.6); a key that is revoked or expired at the time of the request checks is already refused by
+KEY-PROTOCOL.md section 5, because the clock reading of step 2 of section 11.5 is later than that
+time (for example because the request waited for the advisory lock of section 11.5), or because
+`received_at` keeps a later value of an earlier event (section 4.6); a key that is revoked or expired at the time of the request checks is already refused by
 checks 3 and 4 there. It is a different situation from those checks: the key that signed the
 request was valid at the request checks, but not at the later `received_at` that the event
 would get. It therefore has its own error value; `key_revoked` and `key_expired`
@@ -757,7 +806,8 @@ name, no empty value, no parameter without `=`, no empty pair, no `+`, and no `%
 `%2f` for the `/` in a `repository` value. An endpoint without parameters takes only the empty
 query. An invalid query gets `400` with `{"error":"query_invalid"}` after check 9 of
 KEY-PROTOCOL.md section 5 (the scope) and before anything else. A `GET` endpoint ignores a
-request body.
+request body and its `Content-Type`. The two append endpoints require `Content-Type`
+`application/json` (check 2 of section 6.7).
 
 **Paging.** A list is read in pages. `limit` is decimal without leading zero, within the range
 given for the endpoint; without `limit`, the default given there applies. A page holds at most
@@ -787,8 +837,9 @@ Appends one event of a writer. Body:
 {"event":"<base64url of the event text>","signature":"<base64url of 64 bytes>"}
 ```
 
-The checks are those of section 6.7. A request may be sent with `Content-Encoding: gzip`
-(KEY-PROTOCOL.md section 5). Answer `201`, here to the second event of the story of section 4.2:
+The request carries `Content-Type: application/json` (check 2 of section 6.7). The checks are
+those of section 6.7. A request may be sent with `Content-Encoding: gzip` (KEY-PROTOCOL.md
+section 5). Answer `201`, here to the second event of the story of section 4.2:
 
 ```json
 {"position":17,"event_hash":"<64 hex>","record_hash":"<64 hex>","received_at":"2026-11-17T10:05:01Z","hub_key":"hub-1"}
@@ -796,7 +847,8 @@ The checks are those of section 6.7. A request may be sent with `Content-Encodin
 
 The answer is the hub's signed acknowledgement that the event is stored at that position. A
 writer that receives no answer reads `GET /api/key/record/head` before it sends anything else; a
-second send of the same event is refused with `event_duplicate`.
+second send of the same event, once the first is stored, is refused at check 7 of section 6.7
+with `event_duplicate`, unless an earlier check refuses it.
 
 ### 7.3 `POST /api/key/record/watch`
 
@@ -859,7 +911,8 @@ A task of kind `security` has the same members; there `repository`, `short_name`
 - `created` names the event that created the object, `changed` the last event of the object;
   `key` is its `actor_key_id` and `handle` the `handle` of that key's entry.
 
-A comment:
+A comment has exactly the members `type`, `id`, `task`, `body` and `created`, in this order,
+and no `changed`, because a comment is never changed:
 
 ```json
 {"type":"comment","id":"8e2f4a6c-1b3d-4e5f-9a7b-0c1d2e3f4a5b","task":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","body":"Reproduced on the example build.","created":{"position":19,"received_at":"2026-11-17T10:30:00Z","key":"example-staff-laptop-1","handle":"example-staff"}}
@@ -937,7 +990,10 @@ for a verification run by a running process.
 measured on a monotonic clock, so that a hub clock that is set back never blocks verification. A
 request that arrives while a verification on request runs, or less than 60 seconds after the
 previous one started, is answered with a signed `429` and `{"error":"verify_busy"}`, with no
-further detail and no header that names a waiting time. The limit counts runs on request only;
+further detail and no header that names a waiting time. The process tests the limit and records
+the start of a run in one atomic step, so of several requests that arrive at once at most one
+runs; the limit holds per process, not across the processes on one database. Section 3 names
+what this `429` reveals. The limit counts runs on request only;
 the verification at start (section 11.4) and the periodic verification (section 12.1) do not
 count. The order of checks of this endpoint is: checks 1 to 9 of KEY-PROTOCOL.md section 5, the
 query validation (`query_invalid`), the `503` of section 7.1, then this `429`.
@@ -1269,7 +1325,8 @@ after `migrate`. It runs these steps and stops at the first failure:
 
 1. `config`: no argument follows `migrate`; both connection strings are present and have the form
    of section 15, including its name rules, name different roles, and name the same host, port,
-   database and `sslmode`; and the libpq that `psycopg` uses is version 16 or later (section
+   database and `sslmode`, compared as section 15 gives (host byte for byte, a missing port as
+   5432); and the libpq that `psycopg` uses is version 16 or later (section
    15). This step never connects to the database: when any argument follows `migrate`, whatever
    it is, `migrate` prints `failed config` and exits 1 without reading the database.
 2. `owner`: it connects with the owner role, with the connect timeout of section 15, and refuses
@@ -1368,11 +1425,19 @@ committed before the lock was granted. The same holds for every checkpoint attem
    every checkpoint, also across several hub processes on one database.
 2. The hub takes the state lock of section 11.6 and runs the incremental fold of section 11.6.
    When the fold fails, the hub releases the state lock, rolls the transaction back and answers
-   the signed `503` `record_unverified` (section 7.1).
-3. Checks 7 to 18 of section 6.7, against the state that the fold of step 2 brought up to date.
-   The hub then releases the state lock.
+   the signed `503` `record_unverified` (section 7.1). After the fold, the hub reads its clock
+   once and fixes `received_at` as the later of that value and the `received_at` of the head of
+   the state, or that value when the state is empty (section 4.6). It reads the clock for this
+   append at no other point.
+3. Checks 7 to 18 of section 6.7, against the state that the fold of step 2 brought up to date;
+   check 10 compares `signed_at` with the `received_at` of step 2, and checks 11 and 18 use the
+   same value. The hub then releases the state lock.
 4. `INSERT` of the row with the next position (the head of the state after step 2, plus 1),
-   `received_at` and record hash.
+   exactly the `received_at` of step 2, and the record hash computed from that `received_at`.
+   No other append, checkpoint attempt or `restore` can commit between step 2 and step 5,
+   because each needs the advisory lock of step 1, so the head that step 2 read is still the
+   last stored event, unless a role outside this document changes the rows (section 12.1 finds
+   that).
 5. `COMMIT`. Only after the commit succeeded does the hub take the state lock again, apply the
    event to its state when the event's position is the head of the state plus 1, release the
    state lock and answer `201`. When the head of the state is already at or beyond the event's
@@ -1386,8 +1451,10 @@ fold of the process (section 11.6) finds the row, when it was committed, and fol
 
 ### 11.6 State in memory
 
-The hub keeps the state in memory: every object, the head of every key's chain, the index of
-`short_name` per team, the index from pull-request references to tasks, and the record head.
+The hub keeps the state in memory: every object, the head of every key's chain, the set of the
+`event_id` and the event hash of every folded event (checks 7 and 8 of section 6.7 and the row
+`event_id_taken` of section 12.1), the index of `short_name` per team, the index from
+pull-request references to tasks, and the record head with its `received_at`.
 At start it is built by the fold of section 11.4. After that the hub brings it up to date by the
 **incremental fold**: it reads the stored events with a position greater than the head of its
 state, in position order, and folds them. The incremental fold runs at exactly these points:
@@ -1416,7 +1483,9 @@ fold reads only positions above the head of the state, and the apply of step 5 a
 only at the head plus 1.
 
 **Clock.** The state holds no time of the process's clock other than the `received_at` values of
-the events it folded, so a clock that is set back changes nothing in it. The limits that the
+the events it folded, so a clock that is set back changes nothing in it. An append reads the
+wall clock exactly once (step 2 of section 11.5); a checkpoint attempt reads it for its full
+hour and its `published_at` (section 12.2). The limits that the
 process measures itself (section 7.9 and the interval of section 12.1) use a monotonic clock.
 
 The incremental fold checks each event it reads against every row of the table of section 12.1
@@ -1463,15 +1532,18 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `row_mismatch` | A stored `event_id`, `actor_key_id`, `prev_hash` or `event_hash` differs from the value taken from the event text. |
 | `key_unknown` | `actor_key_id` is not an `ed25519` entry of the keys file. |
 | `event_signature_invalid` | The signature does not verify. |
+| `event_id_taken` | The `event_id` of the event equals the `event_id` of an event at an earlier position. Two events with the same event text also fail here, because they have the same `event_id`. |
 | `chain_broken` | `prev_hash` is not the event hash of the previous event of the same key in position order, or `-` for its first. |
 | `event_time_invalid` | `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. |
 | `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6; or, in a verification that a running hub process runs on request or periodically, the record hash at the position of the head of the process's state in memory differs from the record hash of that head. |
 | `event_refused` | The state rules of section 6 refuse the event with any value other than `value_invalid`. |
-| `checkpoint_invalid` | A checkpoint signed with the hub's current key id has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the hub's public key. |
+| `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
 
 Revocation, expiry, scopes and the other actor rules are not checked (section 6.1). Checkpoints of
-another hub key id are skipped by the hub; offline verification checks them when it is given that
-key.
+another hub key id are skipped by the hub; `verify` skips every checkpoint whose hub key id is not
+given with `--hub-key`, and `restore` refuses such a file (section 12.3). No row compares
+`published_at` with a `received_at` or with the `published_at` of another checkpoint (section
+12.2).
 
 **Reducer errors in a fold.** A fold applies the reducer of section 6 without its actor rules. When
 the reducer refuses an event, the fold fails with `event_invalid` when the reducer's value is
@@ -1542,8 +1614,8 @@ at isolation level `REPEATABLE READ`
 (`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`). Every read of that run sees the same
 snapshot: an append or a checkpoint that commits while the run reads is either wholly in the
 snapshot or wholly outside it. A checkpoint beyond the head of the snapshot is therefore a real
-`checkpoint_invalid`, never the effect of a concurrent append, and the header of an export always
-matches its last event line.
+`checkpoint_invalid`, never the effect of a concurrent append, and the header of a complete
+export (one for which `export` printed `exported`, section 12.3) matches its last event line.
 
 ### 12.2 Checkpoints
 
@@ -1577,7 +1649,17 @@ and writes no checkpoint. An attempt is one transaction of the writer role at is
    hash that the fold of step 2 or an earlier fold of this process checked, with `published_at`
    equal to now at that moment, with `ON CONFLICT DO NOTHING`, and commits.
 
-The hub therefore signs only a record hash it has checked. A row at or before the state of the
+`published_at` is the reading of the process's clock in step 5 and nothing more. After the hub
+clock was set back, or with a process whose clock is behind that of the process that appended,
+it can be earlier than the `received_at` of the head it signs (section 4.6 keeps `received_at`
+from earlier events). Verification does not compare `published_at` with any `received_at` or
+with another checkpoint (section 12.1); a reader takes `published_at` as the time the hub
+claims, not as a bound on the times of the events. When the clock is set back, a process can
+reach a full hour `H` a second time; step 4 then writes nothing while the newest checkpoint of
+its hub key id has a `published_at` at or after `H`.
+
+Because of steps 2 and 5, the hub signs only a record hash that a fold of the process has
+checked. A row at or before the state of the
 process that is changed after the process folded it does not change the signed record hash; the
 next full verification (section 12.1) finds the change, and the checkpoint makes it detectable to
 everyone who holds a copy.
@@ -1625,8 +1707,13 @@ argument exists.
 
 `export` checks its configuration, then refuses an existing `FILE` before it connects, then
 creates `FILE` so that it fails when `FILE` exists, reads the snapshot and writes the file. When
-it fails after it created `FILE`, it removes `FILE`, so that no partial export remains. It prints
-one line and exits:
+it fails after it created `FILE` and keeps running, it removes `FILE` before it prints its line.
+When the process is killed or the machine stops while it writes, a partial `FILE` can remain:
+a file cut inside a line, or at the end of a line before the last event line, is refused by
+`verify` and `restore` with `file_invalid` (it lacks the final `\n`, or its header does not
+match its last event line); a file cut at the end of a line after the last event line lacks some
+checkpoints and still verifies. An export is complete only when `export` printed `exported`; the deployment keeps or
+copies a file only after that line (section 12.4). It prints one line and exits:
 
 | Line | Exit | When |
 |---|---|---|
@@ -1721,7 +1808,8 @@ public teams file alone (DESIGN.md §24.8).
 
 The record's data class is unique (DESIGN.md §24.8). The deployment of every environment:
 
-- runs the export at least once every 24 hours
+- runs the export at least once every 24 hours, and treats a run as an export only when it
+  printed `exported` (section 12.3)
 - keeps three copies of the latest export, at least one of them off-site
 - encrypts every copy at rest and limits access to it, because an export contains security
   issues; an export never enters a repository, an issue, a pull request or a log
@@ -1835,7 +1923,9 @@ The database and the start:
   variable missing or empty, each malformed connection string of section 15, the same role in
   both, different hosts, ports, databases or `sslmode`, a reported libpq version below 16
   (`config`), an owner that is a superuser, an owner that does not own the database, and an
-  unknown schema version
+  unknown schema version; a string without a port and one with `:5432` and otherwise the same
+  host pass the comparison, and a host name in one string and an IP address in the other fail
+  it (`config`)
 - `migrate` with an argument after `migrate` (each of `--help`, `-h`, `x`, `migrate` and an empty
   string, and two arguments) prints `failed config` and exits 1; a test server that logs
   connections shows no connection, and the database stays unchanged
@@ -1931,14 +2021,18 @@ The event:
   references, out of order or repeated, `urgency` 0, 11 and `07`, and a `short_name` of 31
   characters
 - the largest valid event of section 4.2 (an update of a security issue, every field at its
-  limit, `actor_key_id` of 63 characters) is accepted and is at most 54461 bytes
+  limit, `actor_key_id` of 63 characters) is accepted, and its event text is at most 54461
+  bytes, the upper bound of section 4.2
 - `team`: a task create by a key whose `team` has 100 bytes (accepted); a task create whose
   `team` has 101 bytes gets `change_not_allowed` at check 12 (c), because no key can hold such a
   team, and the same event in the fold directly gives `value_invalid` / `event_invalid`
 - `field_not_allowed` for a field name that no object type has (such as `priority`), on a task
   and on a comment
 - `body_invalid` for a body that is not JSON, has an extra or missing member, a member twice, an
-  empty string as `event`, or a signature of 63 bytes
+  empty string as `event`, or a signature of 63 bytes; and for a request without `Content-Type`,
+  with `text/plain`, with `application/json; charset=utf-8`, with `Application/JSON`, and with
+  two `Content-Type` headers, each with an otherwise valid body; a `GET` endpoint with any or no
+  `Content-Type` answers as without it
 - the order of checks 7 to 18 of section 6.7: for each check from 7 to 17, an event that fails
   it and also the next check that can fail together with it gets the value of the earlier check
 - `actor_mismatch`, `certificate_not_supported`, and `event_signature_invalid` for a signature by
@@ -1950,15 +2044,24 @@ The chain:
   `prev_hash`; the second is refused with `chain_broken`, also when both are sent in parallel)
 - the same event sent twice (`event_duplicate`), and another event with a used `event_id`
   (`event_id_taken`)
-- `signed_at` 120 seconds after now (accepted), 121 seconds (refused), and earlier than the
-  previous event of the key (refused)
+- `signed_at` 120 seconds after the `received_at` of the append (accepted), 121 seconds
+  (refused), and earlier than the previous event of the key (refused); with `received_at` kept
+  from an earlier event later than the clock (section 4.6), `signed_at` up to 120 seconds after
+  that kept value (accepted)
+- one clock reading per append (section 4.6): through a test hook, the fixed clock is set back
+  by 5 seconds after step 2 of section 11.5 and before the insert of step 4, for an event whose
+  `signed_at` is 120 seconds after the reading and whose previous `received_at` is earlier than
+  the set-back clock; the event is accepted, the stored `received_at` equals the reading of step
+  2, the next verification on request answers `verified` true, and a restart verifies and
+  starts; a test hook that counts the clock readings of one append counts exactly one
 - an event of a revoked key and of an expired `service` key (refused at the request checks,
   unsigned); an event signed before the key's `revoked` time and sent after it (refused, and not
   in the record); check 11 of section 6.7 with `received_at` kept from an earlier event later
   than the time of the request checks and the key's `revoked` time between the two
   (`409` `key_not_valid_at_receipt`, signed); and check 11 with a request that waits for the
   advisory lock (a test hook holds it) while the fixed clock passes the key's `revoked` time, so
-  that `received_at` equals the clock at the append (`409` `key_not_valid_at_receipt`, signed)
+  that `received_at` equals the clock reading of step 2 of section 11.5 (`409`
+  `key_not_valid_at_receipt`, signed)
 - a hub clock that jumps forward and back: events after the jump keep the `received_at` of the
   jump until the clock passes it, and an event of a watcher key whose `expires` lies between the
   clock and that `received_at` gets `key_not_valid_at_receipt`
@@ -1974,10 +2077,13 @@ The chain:
 - the incremental fold checks every row of section 12.1: after the state of instance A, a row is
   inserted as database superuser, once with a gap in the positions, once with a `received_at`
   earlier than at the previous position, once with a `signed_at` more than 120 seconds after its
-  `received_at`, and once with an `event_id` column that differs from its event text; each time
-  A's next checkpoint attempt writes nothing, A's next `GET /api/key/record/head` answers the
-  signed `503`, and A logs the failure (`position_gap`, `event_time_invalid`, `event_time_invalid`,
-  `row_mismatch`) with its position
+  `received_at`, once with an `event_id` column that differs from its event text, and once with
+  an event of another key, validly signed and chained, whose `event_id` an earlier event already
+  has (the superuser first drops the unique constraint on `event_id` of section 11.3, which
+  otherwise refuses that row); each time A's next checkpoint attempt writes nothing, A's next
+  `GET /api/key/record/head` answers the signed `503`, and A logs the failure (`position_gap`,
+  `event_time_invalid`, `event_time_invalid`, `row_mismatch`, `event_id_taken`) with its
+  position
 - an append refused at checks 1 to 6 of section 6.7 runs no fold: with a broken row after A's
   state, an append with an invalid event text gets `event_invalid` and A stays out of the state
   `record_unverified`; a valid append then gets the signed `503` after check 6
@@ -1993,8 +2099,15 @@ written `<error value>` / `<failure>`, for example `value_invalid` / `event_inva
 `transition_invalid` / `event_refused`. A case of the endpoint names the value of its answer.
 
 - each row of section 6.4 accepted, and for each status every other target refused with
-  `transition_invalid`; each row's "Who" refused for every other actor with
-  `change_not_allowed`
+  `transition_invalid`; each row's "Who" refused with `change_not_allowed` for every other actor
+  that reaches check 18 of section 6.7, except where an earlier check refuses first: a create
+  by a watcher (rows 1 and 2) gets `object_not_found` at check 12 (a), and a key without the
+  scope of the endpoint gets `scope_missing` at check 9 of KEY-PROTOCOL.md section 5
+- who may edit a task (section 6.5): on a security issue assigned to another handle, a writer of
+  the team with `record:security` sets `ready_for_review`, `open` and `dropped`, sets it back
+  from `merged` by row 14, changes `severity`, `urgency` and `title`, and makes row 13 (each
+  accepted); the same writer changes `assignee` to its own handle while the assignee can act on
+  the task (`change_not_allowed`) and makes row 10 or row 12 (`change_not_allowed`)
 - the defaults of `status` and `completion` per kind; a create with `status` `merged`, and one
   with `status` `done` (both `transition_invalid`)
 - row 10 from `open` (`transition_invalid`), and the same task set by its assignee to
@@ -2136,10 +2249,15 @@ record endpoint and for `GET /api/key/release`:
 
 Integrity and backup:
 
-- `GET /api/key/record/verify` on a sound record and on an empty record (`0` and `null`); then each
-  failure of section 12.1 produced by changing a row as database superuser with the triggers
-  bypassed, each giving its `failure` to a key that sees the object of the failing event and
-  afterwards `503` on every record endpoint; a restart refuses to start
+- `GET /api/key/record/verify` on a sound record and on an empty record (`0` and `null`); then,
+  each produced by changing or inserting a row as database superuser with the triggers bypassed
+  (for `event_id_taken` after dropping the unique constraint on `event_id`): each event failure
+  of section 12.1 (every value from `event_invalid` to `event_refused` except
+  `record_hash_mismatch`) gives its value by name to a key that sees the object of the failing
+  event, and the record-wide failures `position_gap`, `record_hash_mismatch` and
+  `checkpoint_invalid` give their value by name to every key with `record:read`; after each, the
+  process answers `503` on every record endpoint, and a restart refuses to start. `file_invalid`
+  cannot arise in the hub and is tested with `verify` and `restore`
 - `withheld` (section 7.9): the same failures at an event of another team, at an event on a
   security issue for a key without `record:security`, and at a create, give `withheld` with the
   position to the calling key, while `position_gap`, `record_hash_mismatch` and
@@ -2173,6 +2291,11 @@ Integrity and backup:
   new head and commits; the verification on request, the verification at start and `export` all
   succeed at the earlier head, the export header matches its last event line, and offline
   `verify` and `restore` accept that export
+- `published_at` (section 12.2): after the fixed clock is set back below the `received_at` of
+  the head and then passes a full hour that no checkpoint of the hub key id covers yet, the
+  checkpoint written has a `published_at` earlier than that `received_at`, and the next
+  verification on request answers `verified` true; while the newest checkpoint has a
+  `published_at` at or after the full hour reached again, an attempt writes nothing
 - checkpoints: one at a full hour; none for an empty record; none when the head did not move; an
   attempt that starts 30 minutes after the full hour writes the checkpoint with that later time as
   `published_at`; after a pause across three full hours exactly one attempt; two instances in the
@@ -2201,9 +2324,12 @@ Integrity and backup:
   `failed <position> <failure>` with the position of section 12.1 and exits 1, for: a changed
   signature (`event_signature_invalid`), a broken chain (`chain_broken`), a changed record hash
   (`record_hash_mismatch`), a changed checkpoint checked with `--hub-key` (`checkpoint_invalid`),
-  a gap in the positions (`position_gap`), a key missing from the keys file (`key_unknown`), and
-  an event the reducer refuses (`event_refused`); the same export without `--hub-key` skips the
-  checkpoint and prints `verified`
+  a gap in the positions (`position_gap`), a key missing from the keys file (`key_unknown`), an
+  event the reducer refuses (`event_refused`), and two validly signed and chained events of two
+  different keys with the same `event_id`, with the record hashes recomputed (`event_id_taken`
+  at the position of the later one); the same export without `--hub-key` skips the checkpoint
+  and prints `verified`; `restore` of the file with the repeated `event_id` prints
+  `failed <position> event_id_taken` at step 1 (c), not `refused database`, and inserts nothing
 - `failed <position> file_invalid` from `verify` and from `restore`, with the position of section
   12.3, for: a file that is not UTF-8 (`0`), an empty file (`0`), a missing final `\n` (`0`), an
   empty line, a line that is not JSON, a member twice, a header with an unknown `format` (`0`),
@@ -2331,7 +2457,10 @@ database; it has no SQLSTATE, so `<SQLSTATE or ->` is `-`:
 | `restore` (step 2 of section 12.3) | `refused database` | exit 1, nothing written |
 
 `migrate` checks that the two strings name different roles and the same host, port, database and
-`sslmode`. Like every `AGENT_CORE_*` variable, a missing or empty value stops a program that
+`sslmode`. In this comparison a missing port counts as 5432, so `db.example` and
+`db.example:5432` name the same port; the host is compared byte for byte as written, so a host
+name and an address of that host, or two forms of one address, are different hosts and fail
+`config`. Like every `AGENT_CORE_*` variable, a missing or empty value stops a program that
 requires it; so does any value outside this form. Both values are secrets: they never appear in a
 log, a printed line, an error message or an answer.
 
@@ -2362,14 +2491,20 @@ therefore split into three changes:
 
 1. **Change 1, this repository: the migration and the library.** It adds the command
    `python -m agent_core.record migrate` (section 11.4), the schema of section 11.3, and the
-   record library: the event text, the event hash and the record hash (section 4), the form of a
-   connection string with its name rules, and the connect timeout (section 15). It adds the
-   usage line of section 11.4 for the one command `migrate`. It adds the dependency and the test
-   workflow of section 15, and carries the tests of section 14 for `migrate` (its arguments
-   included), the usage line, the rights, triggers and constraints of the database, the
-   connection string and its name rules, the identifier test and the connect timeout as far as
-   they concern `migrate`, and the event text and its hashes. The hub process does
-   not use the database yet, reads no new variable, and starts and answers exactly as before.
+   record library. The library carries all of section 4, as pure functions that read no clock,
+   no database and no keys file of their own: the event text and its form rules (section 4.2),
+   the event hash (section 4.4), the signature check (section 4.3), the chain rule and the
+   `signed_at` rule of a key (section 4.5), and the record hash (section 4.6). The library also
+   carries the form of a connection string with its name rules, and the connect timeout (section
+   15). Change 3 carries the use of these functions in the endpoints, the reducer and the
+   verification. Change 1 adds the usage line of section 11.4 for the one command `migrate`. It
+   adds the dependency and the test workflow of section 15, and carries the tests of section 14
+   for `migrate` (its arguments included), the usage line, the rights, triggers and constraints
+   of the database, the connection string and its name rules, the identifier test and the
+   connect timeout as far as they concern `migrate`, and the tests of section 14 for the event
+   text, its form rules, its hashes, the signature check and the chain and `signed_at` rules,
+   applied to the functions directly. The hub process does not use the database yet, reads no
+   new variable, and starts and answers exactly as before.
 2. **Change 2, the deployment of each environment.** It provides a PostgreSQL 16 database with
    persistent storage, which serves TLS whenever the hub reaches it by a host other than a
    loopback address or `localhost` (section 15); creates the owner and writer roles with
@@ -2383,7 +2518,8 @@ therefore split into three changes:
    does not know is harmless.
 3. **Change 3, this repository: the record in the hub.** It makes the hub require
    `AGENT_CORE_RECORD_DATABASE` and run the start of section 11.4, and adds the scopes of section
-   3, the reducer, the endpoints of section 7, the release rule of section 9, checkpoints, the
+   3, the use of the functions of section 4 in the endpoints, the reducer and the verification,
+   the reducer, the endpoints of section 7, the release rule of section 9, checkpoints, the
    periodic verification, `export`, `verify` and `restore` with the usage line of section 11.4
    for the four commands, the updates of the compose file, the
    configuration test and the README of section 15, the updates of KEY-PROTOCOL.md named in
@@ -2444,16 +2580,22 @@ confirms or changes each one.
 6. The event hash covers the event text only, not the signature (§4.4).
 7. The record hash covers position, `received_at`, event hash and the previous record hash, not
    the signature (§4.6).
-8. `received_at` is the later of now and the previous `received_at`, so it never decreases (§4.6).
+8. `received_at` is the later of the one clock reading of the append (decision 85) and the
+   previous `received_at`, so it never decreases (§4.6).
    The limit this brings is accepted: after one forward jump of the hub clock every later event
    keeps at least that value, the time axis stays shifted, and check 11 of §6.7 refuses every
    event of a key whose `expires` or `revoked` time lies before that value, for example a
    `service` key whose expiry falls before it; the hub does not repair this (§4.6, §6.7).
-9. `signed_at` is at most 120 seconds in the future and never earlier than the key's previous
-   event; there is no lower bound otherwise, so writers can sign offline (§4.5, §6.7).
+9. `signed_at` is at most 120 seconds after the event's `received_at` and never earlier than the
+   key's previous event; there is no lower bound otherwise, so writers can sign offline (§4.5,
+   §6.7, §12.1).
 10. The task's `team` is an explicit, immutable field of the create event and equals the actor's
     team, so the fold does not depend on later edits of the keys file (§5.2).
-11. Actor rules are checked only at write time; the fold rechecks only state rules (§6.1).
+11. Actor rules are checked only at write time; the fold rechecks only state rules (§6.1). A
+    revocation, expiry or change of scopes, `subjects`, `handle` or `team` never invalidates a
+    stored event; the limit is accepted that a keys file which removes the entry of a key that
+    signed a stored event, or changes its `kind` or `public_key`, makes verification fail and the
+    hub not start (§6.1, §11.4, §12.1).
 12. New scope `record:security` restricts reading and writing security issues; a key sees only
     the objects of its own team; a `service` key sees only tasks touching its `subjects` (§3).
     A key that sees a task sees all of it: a `service` key that sees a task through one link
@@ -2507,8 +2649,8 @@ confirms or changes each one.
 29. Text limits: title 200, description and comment body 16384, verification 2000, source 200,
     team 100 bytes; event text 65536 bytes; at most 20 links. The keys-file loader refuses an
     entry whose `team` is longer than 100 bytes, from change 3 on (KEY-PROTOCOL.md section 3).
-    With these limits the largest valid event is at most 54461 bytes, so no valid event is
-    refused by its size. Of the two alternatives of the reviews (exclude `team` from the size
+    With these limits the largest valid event is at most 54461 bytes, an upper bound and not
+    the exact size of the largest valid event, so no valid event is refused by its size. Of the two alternatives of the reviews (exclude `team` from the size
     statement, or give it a limit), the stricter is taken (§3, §4.2, §5).
 30. PostgreSQL 16 or later, `psycopg` 3 with libpq 16 or later; passwords are 64 lowercase hex
     characters; `sslmode` is required and one of `disable`, `require`, `verify-full`; `disable`
@@ -2569,8 +2711,10 @@ confirms or changes each one.
     at write time, this reveals withheld events of the reader's own team, for example that a
     teammate's key wrote an event on a security issue at a given time, and, after a change of an
     entry's `team`, events of the key in its old team. The answer of §7.9 gives the position of
-    a failing withheld event (decision 73), and the `503` `record_unverified` tells every caller,
-    also a key with only `release:query`, that the answering process found the record broken.
+    a failing withheld event (decision 73), the `429` `verify_busy` tells every key with
+    `record:read` that some key asked the answering process for a verification less than 60
+    seconds before (decision 46), and the `503` `record_unverified` tells every caller, also a key
+    with only `release:query`, that the answering process found the record broken.
     This goes beyond "team scope follows §6" of DESIGN.md §24.7 and is kept so that every reader
     can check the record hash chain; hiding the chain link would need a new mechanism that no
     review asked for (§3, §7.4, §7.9, §7.10).
@@ -2582,7 +2726,8 @@ confirms or changes each one.
     before any read of the record, on every record endpoint and on the release query. When the
     incremental fold of a request fails, the `503` comes where that fold runs: for an append
     after check 6 of §6.7 (§7.1, §6.7, §9, §11.6).
-43. An event whose key is valid now but not at its later `received_at` is refused with its own
+43. An event whose key is valid at the request checks of KEY-PROTOCOL.md section 5 but not at
+    the event's later `received_at` (decision 85) is refused with its own
     value `409` `key_not_valid_at_receipt`; `key_revoked` and `key_expired` keep `401` of
     KEY-PROTOCOL.md and are used only by its request checks (§6.7, check 11).
 44. A task create without `kind` and a comment create without `task` are refused with
@@ -2591,7 +2736,10 @@ confirms or changes each one.
     repositories are covered (§2).
 46. Verification on request runs at most once per 60 seconds per hub process, measured on a
     monotonic clock; a request inside that time or during a run gets a signed `429`
-    `verify_busy` with no further detail (§7.9).
+    `verify_busy` with no further detail. The limit is accepted that this `429` tells every key
+    with `record:read`, of any team, that some key asked that process for a verification less
+    than 60 seconds before or that one runs; it is listed under the first exception of §3 (§3,
+    §7.9).
 47. The checkpoint list is ordered and paged by the pair of position and hub key id, with the
     cursor parameters `before` and `before_key` (§7.10).
 48. A guard must not rely on the release query in an environment before step 5 of the rollout is
@@ -2637,7 +2785,10 @@ confirms or changes each one.
     DESIGN.md §24.11 (§6.4).
 61. The implementation is split into three changes: the migration and the record library, the
     deployment of each environment, and the record in the hub; the third is merged only after
-    the second is rolled out in every environment that deploys from its target branch (§16).
+    the second is rolled out in every environment that deploys from its target branch. Change 1
+    carries all of §4 as pure functions (the event text and its form rules, the event hash, the
+    signature check, the chain rule and the `signed_at` rule of a key, and the record hash);
+    change 3 carries their use in the endpoints, the reducer and the verification (§16).
 62. `received_at` and `published_at` are kept in whole seconds by a `CHECK` in the database
     (§11.3).
 63. An event holds 1 to 15 changes, one per field at most (§4.1, §4.2).
@@ -2715,6 +2866,10 @@ confirms or changes each one.
     `record database error connect` (§11.4, §12.1, §13).
 79. A record object that a key does not see is answered with the same status and body as one that
     does not exist; this document makes no promise about the time an answer takes (§3).
+80. The request log line writes `-` for a method other than `GET`, `POST` and `HEAD` and for a
+    raw path that is not byte for byte one of the nine paths of §7.1, because such a method or
+    path can carry text that a client chose; change 3 writes this into the sentence of
+    KEY-PROTOCOL.md section 5 that it replaces (§1, §13).
 81. `migrate` takes no argument; any argument after it, whatever it is, makes it print
     `failed config` and exit 1 in step `config`, before any connection (§11.4).
 82. `python -m agent_core.record` without a command or with an unknown command prints one usage
@@ -2735,7 +2890,52 @@ confirms or changes each one.
     database name that reaches an SQL statement is composed as an identifier by the driver
     (`psycopg.sql.Identifier`), or passed as a statement parameter where it is a value, never by
     text formatting (§11.2, §11.3, §11.4, §15).
-80. The request log line writes `-` for a method other than `GET`, `POST` and `HEAD` and for a
-    raw path that is not byte for byte one of the nine paths of §7.1, because such a method or
-    path can carry text that a client chose; change 3 writes this into the sentence of
-    KEY-PROTOCOL.md section 5 that it replaces (§1, §13).
+85. An append reads the hub clock exactly once, in step 2 of the append transaction after the
+    advisory lock and the incremental fold, and fixes `received_at` there as the later of that
+    reading and the `received_at` of the head of the state. Check 10 compares `signed_at` with
+    that `received_at`, not with a separate "now"; checks 11 and 18 use the same value; step 4
+    inserts exactly that value. A write-time check and every later fold therefore apply the
+    `signed_at` rule to the same `received_at`, and a clock set back during an append cannot
+    store an event that fails a later verification (§2, §4.6, §6.7, §11.5).
+86. Verification has the row `event_id_taken`: an event whose `event_id` equals that of an event
+    at an earlier position fails it, between `event_signature_invalid` and `chain_broken`, as
+    check 8 of §6.7 comes before check 9. Of the two alternatives of the review (`event_refused`
+    or a new value), the new value is taken, because it names the rule exactly and is the same
+    value as at write time. The state in memory holds the `event_id` of every folded event. An
+    export with a repeated `event_id` therefore fails offline `verify`, and `restore` refuses it
+    at step 1 instead of at the insert. A failure `event_id_taken` named to a key that sees the
+    failing event confirms that an earlier event, possibly withheld, uses that id; this is part
+    of the third exception of §3 (§3, §4.1, §11.6, §12.1, §12.3).
+87. Every writer that sees a task (of the task's team, and for kind `security` holding
+    `record:security`) may make the transitions marked "writer" in §6.4 (rows 1, 3 to 7, 13 and
+    14, and row 2 for kind `work`), change every changeable field, and write comments, also on a
+    security issue assigned to another handle: it may move such an issue to `ready_for_review`,
+    back to `open` or to `dropped`, set it back from `merged` or `done`, change `severity`,
+    `urgency` or `title`, and switch `completion` by row 13, which sets `done` without the
+    confirmation of a staff member. Only a change of `assignee` of a security issue (decision
+    15, rule 4), row 2 for kind `security`, and rows 10 and 12 are limited to the assignee; row
+    11 needs staff, rows 8 and 9 a watcher. DESIGN.md §24.11 leaves "whoever may edit the task"
+    open (§6.4, §6.5).
+88. The two append endpoints require exactly one `Content-Type` header with the value
+    `application/json`, byte for byte and without parameters, and refuse every other request
+    with `400` `body_invalid` at check 2 of §6.7; the `GET` endpoints ignore `Content-Type`. Of
+    the two possibilities (ignore the header, or require it), the stricter is taken (§6.7, §7.1,
+    §7.2).
+89. A checkpoint's `published_at` is the reading of the process's clock when it writes the
+    checkpoint. The limit is accepted that after the hub clock was set back, or with processes
+    whose clocks differ, it can be earlier than the `received_at` of the head it signs;
+    verification compares it with no `received_at` and with no other checkpoint, and a reader
+    takes it as the time the hub claims, not as a bound on the times of the events (§12.1,
+    §12.2).
+90. In the comparison of the two connection strings by `migrate`, a missing port counts as
+    5432, and the host is compared byte for byte as written, so a host name and an address of the
+    same host are different hosts and fail `config` (§11.4, §15).
+91. `export` removes its file when it fails and keeps running; the limit is accepted that a kill
+    of the process or a stop of the machine while it writes can leave a partial file, and that a
+    file cut after its last event line lacks checkpoints and still verifies. An export counts
+    only when `export` printed `exported`; the deployment keeps and copies only such a file
+    (§12.3, §12.4).
+92. Visibility is computed from the current state, except in the answer of a failed verification
+    on request, which uses the state before the failing event (decision 73). The scope
+    `record:security` with `record:watch` lets a watcher write only its events of §8 on tasks of
+    kind `security`, never a comment (§3, §7.9).
