@@ -1381,7 +1381,7 @@ This revision records the decisions of 2026-11-17 that passkeys may be synced, t
 
 This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also makes an invite link of the one administrator the only way to create a passkey (§24.2), replaces the three statuses of a security issue with the task statuses of §25.8, adds the `key_certificate` field for events signed by a session key (§24.3), and names the certified session key in the build order (§24.10). An agent key now names the staff member who owns its device (§24.2), and §24.3 states that masking a session log is not a redaction of an event. Two explanation pages are new: docs/team-record.md and docs/central-operation.md.
 
-This revision records the decision of 2026-11-17 for the device page (§25.11): on the hub's website, `/<device name>` shows exactly what the local dashboard of that device shows. The hub serves it from its own store, which sync keeps in step with the device, so everything the local dashboard shows becomes part of the sync and of the inventory (§25.3). The page works while the device is off, names the time of the last sync and never presents old data as current. Reading needs sign-in; actions follow the rights of §25.5 and go through the hub as signed commands (§25.7). Device names are the names of the device inventory and must not collide with a path the website already uses (§25.3). It is not implemented.
+This revision records the decision of 2026-11-17 for the device page (§25.11): on the hub's website, `/<device name>` shows the same pages, sections and tables as the local dashboard of that device, and every row only when the reader may see it under §6 and §25.5; the owner sees what the local dashboard shows. The hub serves the page from what it holds for that device: the device's own events (§9), the rows of other origins it delivered to that device under §9, and the device's inventory (§25.3). Whatever the local dashboard shows and the hub does not hold yet becomes part of the sync, its configuration values and its local state part of the inventory, in build step 6 (§25.20). The page works while the device is off, names the time of the last sync and never presents old data as current. Reading needs sign-in and follows the team scope of §6 for every row, by the row's origin and by every login it names; a device whose owner the reader may not see answers like an unknown one. Every action of the local dashboard is a command (§25.2), offered on the page only to the owner and within a grant (§25.5), and goes through the hub (§25.7). A device name is the name in the hub's device list, the same in every keys-file entry of the device, unique over all teams and never a reserved first path segment of the website (§25.3). Side changes: §25.1, §25.2, §25.5, §25.9, §25.10, §25.16, §25.17, §25.19 (the decisions of this revision), §25.20 and §25.21, and sections 1, 3, 4, 10, 16, 17 and 18 of docs/central-operation.md. It is not implemented.
 
 ## 24. Team record and key identity (decided, not implemented)
 
@@ -1569,7 +1569,7 @@ Status: decided on 2026-11-17, not built. This section describes how the whole t
 Goal:
 
 - A staff member connects a device to the hub once and can then leave it alone. From the hub they hand work to it, answer its questions and watch every running session in full detail.
-- Every piece of work the team wants done is a task in one place, with one overview of tasks, pull requests, devices, sessions, AI usage and the key figures of the team's servers, and with one page per device that shows what the local dashboard of that device shows (§25.11).
+- Every piece of work the team wants done is a task in one place, with one overview of tasks, pull requests, devices, sessions, AI usage and the key figures of the team's servers, and with one page per device that shows the pages of the local dashboard of that device, every row only when the reader may see it (§25.11).
 - Who commanded what kind of action, on which target and when can always be reconstructed. The content of a command can be reconstructed except for a value masked under §25.9; the masking event records who masked it, where and why. Neither the device nor the hub can verify that a masked place really held such a value; the owner is trusted for this as for the rest of their device.
 - Everything the hub offers can be done by a person in the website and by an AI through the API. Two things are done on a device by design: a change of an allow list, a grant or a masking takes effect only when the owner signs it on a controller device (§25.6, §25.9), and a device is connected on the device itself.
 
@@ -1585,14 +1585,16 @@ Non-goals:
 |---|---|
 | Staff member | A person on the team. Signs in with a passkey (§24.2). |
 | Device | One machine with the client installed and its own key pair. Assigned to exactly one staff member, its owner. |
-| Device name | The name of a device in the hub's device inventory (§25.3). It is also the path of its device page. |
-| Device page | The page of one device on the hub's website, at `/<device name>`. It shows what the local dashboard of that device shows, from the hub's own store (§25.11). |
+| Device list | The hub's list of every device in the keys file, by device name, with its owner and level (§25.3). |
+| Device name | The name of a device in the device list, unique over all teams of the hub (§25.3). It is also the path of its device page. |
+| Inventory | What one device reports about itself: its accounts, runtimes and the values of the local dashboard that are not in the session store (§25.3). Not the device list. |
+| Device page | The page of one device on the hub's website, at `/<device name>`. It shows the pages of the local dashboard of that device from what the hub holds for that device, every row only when the reader may see it (§25.11). |
 | Executor | A device that runs work it was given. |
 | Controller | A device that may also give work to executors. |
 | Task | What has to be done. Lives in the team record. It is not the session task of the spine skill (§15, §19.5), which stays a row on its device and keeps its own states. |
 | Order | One attempt to do a task on one executor. |
 | Question | A decision a running session needs, with its allowed answers. |
-| Command | Any instruction signed by a sender key that reaches a device through the hub to act on a session or on work: an order, an answer, input typed into a session, start, stop. Statements that change an allow list, grants, maskings and the hub's revocation notices are not commands; §25.6 and §25.9 give their rules. |
+| Command | Any instruction signed by a sender key that reaches a device through the hub to act on a session or on work: an order, an answer, input typed into a session, start, stop, and every action the local dashboard offers when it is triggered from a device page (§25.11). Statements that change an allow list, grants, maskings and the hub's revocation notices are not commands; §25.6 and §25.9 give their rules. |
 | Allow list | The local file on a device that lists every public key the device obeys. |
 | Grant | A signed permission by a device's owner for someone else's key. |
 | Session log | The complete recording of one session. |
@@ -1603,8 +1605,11 @@ The hub's technical counterpart is a **device**, not a code-host account and not
 
 - A device proves itself with its own key pair (§24.2). The key is created on the device and never leaves it. Connecting a device is the login.
 - Every device is assigned to exactly one staff member. The assignment is an entry in the keys file (§24.2) and changes by pull request.
-- Every device has a **device name**. The hub's device inventory lists every device by this name. It is the device label of the device's entry in the keys file (§24.2), unique on the team, and it changes by pull request. A device name is also a path of the website (§25.11), so it must not collide with a path the website already uses: it is one path segment and never the first segment of such a path, for example `api`, `pair` or `sync` (§7, §9). A pull request that adds a colliding name to the keys file fails its check, and the website never adds a path whose first segment is the name of a device. Example: the device `example-device` has its page at `/example-device`.
-- A device reports an **inventory**: the AI accounts and subscriptions configured on it, the code-host accounts it can act as, the runtimes it offers (for example containers or virtual machines), and every other value of its configuration that its local dashboard shows (§25.11). The inventory holds names and states, never a credential.
+- Every device has a **device name**. The hub's **device list** lists every device by this name, with its owner and level. The name is the device label of the device's entries in the keys file (§24.2): a device can have several entries, its device key and one per program key, and every entry of that device carries the same name. A name names exactly one device. It changes by pull request. Example: the device `example-device` has its page at `/example-device`.
+- **A device name is unique on the whole hub**, over all teams, because the path `/<device name>` is shared by every team the hub serves (§6, §7). Names are compared without regard to case, like logins (§6), and are stored in lowercase: a name has 1 to 63 characters from `a` to `z`, `0` to `9` and `-`, and begins with a letter or a digit, so it is always exactly one path segment. The hub answers a device page only at the stored lowercase name (§25.11).
+- **A device name is never a reserved first path segment.** One file in the hub's repository lists every first segment of a path that the website or the API uses, among them `api`, `auth`, `pair` and `sync` (§7, §9, §18). A path the hub adds later gets its first segment into that list in the same change.
+- **The check of the keys file** fails a pull request in this order, at the first rule it breaks: a name that does not have the form above; entries of one device with different names; a name that another device already has, ignoring case, on any team; a name that is in the list of reserved segments. The check of the list of reserved segments fails a pull request that adds a segment that is already the name of a device. A failed check names the rule and the entry.
+- A device reports an **inventory**: the AI accounts and subscriptions configured on it, the code-host accounts it can act as, the runtimes it offers (for example containers or virtual machines), and every other value of its configuration and of its local state outside the session store that its local dashboard shows (§25.11). The inventory holds names, states and times, never a credential. The inventory is what one device reports about itself; the device list is the hub's list of all devices.
 - AI accounts are assigned to devices. Which account a device may use is device configuration ([docs/ai-accounts.md](docs/ai-accounts.md)); the hub shows it and does not choose it.
 - Devices connect outbound to the hub. No device opens a port, and nobody reaches a device's local store from outside (§3).
 
@@ -1619,8 +1624,8 @@ The level is a scope on the device key in the keys file. A staff member signed i
 
 ### 25.5 Rights
 
-- A staff member may **write** to all of their own devices without restriction: submit orders, answer questions, type into a session, start and stop sessions.
-- A staff member may **read** everything of every other team member: tasks, sessions in full detail, logs, usage and device pages (§25.11). Team scope follows §6.
+- A staff member may **write** to all of their own devices without restriction: submit orders, answer questions, type into a session, start and stop sessions, and trigger every other action the local dashboard offers, from the device page as a command (§25.2, §25.11).
+- A staff member may **read** everything of every other team member: tasks, sessions in full detail, logs, usage and device pages (§25.11). Team scope follows §6, and it applies to every row of the session store, on a device page as everywhere else, not only to a page or a device: such a row is shown only when the reader may see, under §6, the login of the row's origin and every other login the row names as a party (§25.11).
 - Nobody writes to a device of another staff member without a grant from that staff member (§25.6).
 - A device operated by an autonomous agent is, like every device, assigned to exactly one staff member in the keys file (§25.3). That staff member has the owner rights of this section; other staff members act on it only with a grant (§25.6).
 
@@ -1704,7 +1709,7 @@ Three stores with three different rules:
 | Session log | Everything a session shows and receives: output, input, prompts, tool calls, decisions | Recorded on the device first, synced completely and without gaps, append-only; the only later change is masking |
 | Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
 
-Beside these three stores, every device keeps syncing the own events of its session store to the hub's complete replica (§9), together with its inventory (§25.3). That is what its device page shows (§25.11).
+Beside these three stores, every device keeps syncing the own events of its session store to the hub's complete copy of its origin (§9), together with its inventory (§25.3). The hub also holds the rows of other origins that it delivered to that device under §9. These three sources, and nothing else, are what its device page shows, each row only when the reader may see it (§25.11).
 
 Commands:
 
@@ -1744,14 +1749,38 @@ The start page shows the whole team at once:
 
 Every figure can be opened down to the single task, session or event. Figures that come from the team record can be viewed for any past date (§24.6). Every device in the overview links to its device page.
 
-**Device page.** On the hub's website, `/<device name>` (§25.3) shows exactly what the local dashboard of that device (`agent dashboard`, bound to `127.0.0.1`, §16, §17) shows when it is opened on the device itself: the same pages, the same sections, the same tables and the same sub-pages. Each page of the local dashboard has its place below the device's path; for the device `example-device`, the main page is `/example-device` and the page `/usage` is `/example-device/usage`.
+**Device page.** On the hub's website, `/<device name>` (§25.3) shows the same pages, the same sections, the same tables and the same sub-pages as the local dashboard of that device (`agent dashboard`, bound to `127.0.0.1`, §16, §17) when it is opened on the device itself, and every row only when the reader may see it under §6 and §25.5 (Reading, below). The owner therefore sees what the local dashboard shows. Each page of the local dashboard has its place below the device's path; for the device `example-device`, the main page is `/example-device` and the page `/usage` is `/example-device/usage`.
 
-- **The data is not loaded from the device.** The hub serves the page from its own store: its replica of the device's session store (§9) and the device's inventory (§25.3). Sync keeps that store in step with the device. Everything the local dashboard shows is therefore part of what a device syncs to the hub; a change that adds something to the local dashboard adds it to the sync in the same change.
+- **The data is not loaded from the device.** The hub serves the page from what it holds for that device, and from nothing else:
+  1. the device's own events, in the hub's complete copy of the device's origin (§9);
+  2. the rows of other origins that this device holds: the session-mail snapshots addressed to its sessions with their parent `session` rows, the person-ping snapshots its owner's login sent or received, and the snapshots that matched its subscription set. The hub derives these rows from its own data under the rules of §9: they are the rows it delivered to this device on pull, live push and restore. It does not accept a list of held rows from the device;
+  3. the device's inventory (§25.3), which carries every value of the local dashboard that is not in the session store. Today these are the entries of `ai-subscriptions.json`, the display names and usage sections of `drivers.json`, whether a coordinator worker accepts orders and which checks may be skipped (`coordinator.json`), and the time of the last successful usage read of each account.
+
+  Sync keeps these sources in step with the device. Whatever the local dashboard shows and the hub does not hold yet becomes part of the sync in build step 6 (§25.20), the step that builds the page; after that, a change that adds something to the local dashboard adds it to the sync in the same change.
 - **The page works when the device is off.** It then shows the state of the last sync and says when that was. It never presents old data as current: while the device is not connected, every page names the time of its last sync, and a state that can change on the device, such as a working session or a running order, is shown as the last known state at that time.
-- **Reading.** Sign-in is required (§25.6); there is no anonymous view (§24.2). Everyone signed in may read the page of every device, within the team scope of §6 like every read (§25.5).
-- **Acting.** Only the owner of the device may trigger an action from its page; another staff member may do so only within a grant of the owner (§25.5, §25.6). Everyone else sees the page without its actions. Every action goes through the hub as a signed command, the way an order does (§25.7), and the device verifies it itself (§25.6). The page never sends anything directly to the device, and nothing reaches the device's local dashboard or local store from outside (§16, §25.3).
-- An action triggered while the device is not connected waits at the hub and is delivered when the device connects; the device refuses it if it is then outside the device's time window (§25.6). Until the device has accepted or refused it, the page shows the action as not delivered.
+- **Reading.** Sign-in is required (§25.6); there is no anonymous view (§24.2). Everyone signed in may read the page of every device whose owner they may see under §6 (§25.5). On that page every row is filtered by the reader's own §6 scope: a row is shown only when the reader may see the login of the row's origin (the owner of the origin device, or `<login>` of a `web:<login>` origin, §2) and every other login the row names as a party (the sender and the recipient of a person ping; the owner of the session that session mail is addressed to). Rows of the device's own origin and its inventory pass the origin part of this check. A row the reader may not see is left out of the page and of every count, sum and summary on it, and the page shows no marker and no count of what was left out. For a staff member who shares only some teams with the owner, the page therefore leaves out the sessions, session mail, pings and usage snapshots of members of the other teams. For the owner the filter leaves out nothing as long as `teams.yaml` is unchanged, because §9 delivers to a device only rows its owner's login may see; after a change of `teams.yaml` it also leaves out for the owner the rows that login may no longer see, which the local dashboard may still show.
+- **Acting.** Every action the local dashboard offers is a command when it is triggered from the device page (§25.2): the order operations submit, ack, reply, override, cancel and done (§19.10), and start, stop, input and resize of a session (§17). Only the owner of the device may trigger an action from its page; another staff member may do so only within a grant of the owner (§25.5, §25.6). Everyone else sees the page without its actions. An action on a row of another origin is never offered, as on the local dashboard (§17). Every action goes through the hub as a signed command, the way an order does (§25.7), and the device verifies it itself (§25.6). The page never sends anything directly to the device, and nothing reaches the device's local dashboard or local store from outside (§16, §25.3).
+- An action triggered while the device is not connected waits at the hub and is delivered when the device connects; the device refuses it if it is then outside the device's time window (§25.6). Until the device has accepted or refused it, the page shows the action as not yet accepted or refused and says whether the hub has delivered it.
 - Like every function of the hub, each read and each action of the device page is an operation of the API (§25.14).
+
+**Order of checks.** The hub checks a request for a device page in this order and answers with the first check that fails:
+
+| # | Check | If it fails |
+|---|---|---|
+| 1 | The request carries a valid signature of a registered key that is not revoked, or of a session key of a signed-in passkey session (§24.2, §25.6). | `401`, no data |
+| 2 | The first path segment is the name of a device in the device list, in its stored lowercase form, and the reader may see that device's owner under §6. | `404`; an unknown name and a device whose owner the reader may not see get the same answer, so the answer does not reveal that a device exists |
+| 3 | The rest of the path is a page of the local dashboard (§17). | `404` |
+| 4 | Every row passes the row check of Reading above. | The row is left out; no error |
+
+An action from a device page is then checked further:
+
+| # | Check | If it fails |
+|---|---|---|
+| 5 | The action is one the local dashboard offers on that page for that row, and the row is of the device's own origin and passes check 4. | `400`; a row the reader may not see gets the same answer as a row that does not exist |
+| 6 | The reader is the owner of the device, or holds a grant of the owner that is not expired or removed and covers this action (§25.5, §25.6). | `403` |
+| 7 | The command passes the hub's checks of every command (§25.6, §25.7). | Refused like any other command |
+
+The device then verifies the command itself (§25.6); the page shows its acceptance or refusal.
 
 ### 25.12 Monitoring sources
 
@@ -1815,6 +1844,8 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 | A session or an order tries to widen its own rights | The allow list, the device key and every program key that may send commands are out of reach of the account that runs sessions; the signing service signs only for the owner's own AI session (§25.6). |
 | A local administrator changes a device unseen | Not prevented. The client records the changes it makes or detects, and recordings are tamper-evident once their segment hash reached the team record (§25.9). A local administrator can bypass the client; a device's administrators are trusted like its owner. |
 | The network edge reads content in transit | Accepted (§24.2). It cannot forge or replay a request or an answer, because both are signed. |
+| A reader uses a device page to see rows of a team they are not on | Every row of a device page is filtered by the reader's own §6 scope, by its origin and by every login it names, and left out of every figure without a marker; a device whose owner the reader may not see answers like an unknown one (§25.11). |
+| Two teams claim the same device path | A device name is unique over all teams, and the check of the keys file fails a duplicate (§25.3). |
 
 ### 25.17 What this changes in the locked decisions
 
@@ -1838,8 +1869,10 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 | §20 Task as the durable center | Refused | As §3: tasks become the center of the team record; the session store stays the center of a device |
 | §20 Hub task machine | Refused | The task statuses of §25.8 live in the team record and are written by signed events, never by the hub |
 | §20 Token cost and stuck tasks on the website | Refused | Accepted as read-only views (§25.11) |
-| §16, §17 Local dashboard | Bound to `127.0.0.1`; what it shows is seen only on the device itself | Unchanged on the device. The hub's website also shows the same pages for every device at `/<device name>`, served from the hub's own store and never loaded from the device (§25.3, §25.11) |
-| §9 Device → hub | Every own event | Also the inventory, including every value of the device's configuration that its local dashboard shows (§25.3, §25.11) |
+| §16, §17 Local dashboard | Bound to `127.0.0.1`; what it shows is seen only on the device itself | Unchanged on the device. The hub's website also shows the same pages for every device at `/<device name>`, served from what the hub holds for that device and never loaded from the device, every row only when the reader may see it (§25.3, §25.11) |
+| §9 Device → hub | Every own event | Also the inventory, including every value of the device's configuration and local state outside the session store that its local dashboard shows (§25.3, §25.11) |
+| §6 Visibility | A login sees itself and the members of its teams | Unchanged, and applied to every row of a device page by the row's origin and by every login it names as a party (§25.5, §25.11) |
+| §24.2 Keys file, device label | Each agent and service key names its device and program label | The device label is the device name: the same in every entry of a device, unique over all teams, never a reserved first path segment (§25.3) |
 | §24.2 Key kinds and agent key storage | `webauthn` or `ed25519`; agent key under `$AGENT_HOME` with mode `0600` | Also the key type of the machine's secure hardware, where the device key is kept there; the key is out of reach of the account that runs sessions (§25.6) |
 | §13 Data class | Local store, hub event log, connection state | Adds the team record, the session log and the access log, all unique (§24.8, §25.9) |
 | §20 Policy language (allowed repositories, cost budgets) | Refused | Allow-list entries and grants name repositories, and broker keys carry a spending limit (§25.6, §25.13); there is still no general policy language |
@@ -1854,20 +1887,38 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 - A function that exists in only one front end.
 - Model traffic passing through the hub.
 
-### 25.19 Open decisions
+### 25.19 Decisions and open decisions
 
-None at the moment, here or in §24. A new one is added here and decided by a human before the part it affects is built.
+Decided on 2026-11-17 for the device page (§25.11), after the first version of this section:
+
+- `/<device name>` on the hub's website shows the pages of the local dashboard of that device, served from what the hub holds and never loaded from the device; it works while the device is off and never presents old data as current; reading needs sign-in; actions follow §25.5 and go through the hub as signed commands.
+- The page is served from three named sources: the device's own events, the rows of other origins the hub delivered to that device under §9, and the device's inventory. Whatever the local dashboard shows and the hub does not hold yet becomes part of the sync in build step 6 (§25.20).
+- Rights win over "exactly": the page shows the same pages, sections and tables as the local dashboard, but every row only when the reader may see it under §6 and §25.5. The owner sees what the local dashboard shows.
+- A device name is unique on the whole hub, not per team, because the path is shared by all teams (§25.3).
+
+Where the review offered alternatives, the stricter one was chosen: the one under which a device or the hub obeys less, reveals less and accepts less. These choices are recorded here for the human owner, who confirms them in the pull request that adds them (§25.21) or changes them by a later pull request:
+
+- The hub derives the rows of other origins that a device holds from what it delivered to that device under §9. It accepts no list of held rows from the device. (Not chosen: the device reports which rows it holds.)
+- A row is shown only when the reader may see the login of its origin and every other login it names as a party. (Not chosen: the origin alone.)
+- A row left out is also left out of every count, sum and summary, and the page shows no marker and no count of what was left out. (Not chosen: a note that rows were left out.)
+- The row filter applies to the owner too; after a change of `teams.yaml` the owner's device page can show less than the local dashboard. (Not chosen: the owner sees every row the device holds.)
+- A device whose owner the reader may not see gets `404`, the same answer as an unknown name, and an action on a row the reader may not see gets `400`, the same answer as an action on a row that does not exist (§25.11, Order of checks). (Not chosen: `403`, which reveals that the device or the row exists.)
+- A device name is stored in lowercase, has 1 to 63 characters from `a` to `z`, `0` to `9` and `-`, begins with a letter or a digit, and is compared without regard to case; the hub answers a device page only at the stored lowercase name. (Not chosen: any single path segment.)
+- The reserved first path segments are one list in the hub's repository that the check of the keys file reads; a pull request that adds a reserved segment already used as a device name fails too. (Not chosen: a list of examples.)
+- Every action the local dashboard offers is a command when triggered from the device page, and an action on a row of another origin is never offered. (Not chosen: only the actions §25.5 named before.)
+
+Open decisions: none at the moment, here or in §24. A new one is added here and decided by a human before the part it affects is built.
 
 ### 25.20 Build order
 
 After the steps of §24.10, each step as its own pull request with the API parity test from the first one on:
 
-1. Device keys with levels and inventory; the allow list and its checks on the device.
+1. Device keys with levels and inventory; the device names, the list of reserved first path segments and the check of the keys file (§25.3); the allow list and its checks on the device.
 2. Verification of the session key's certificate on the device; grants.
 3. The extended task (§25.8), log entries and the repository registry, with the one-time import.
 4. Orders and questions through the hub.
 5. The session log, recording of direct logins on executors, masking, and the full session view.
-6. The overview and the device pages, with the sync of everything the local dashboard shows (§25.11).
+6. The overview and the device pages, with the sync of everything the local dashboard shows that the hub does not hold yet, and the row filter by the reader's §6 scope (§25.11).
 7. Monitoring adapters.
 8. The central broker account.
 9. The phone app with push.
@@ -1877,3 +1928,4 @@ After the steps of §24.10, each step as its own pull request with the API parit
 - This section changes only by pull request. A change to the rights (§25.5), to the proofs (§25.6) or to what is recorded (§25.9) needs an explicit human decision recorded in that pull request.
 - The rules of §24.10 apply: record data and session logs never enter a repository, an issue, a pull request, a log or an error message, and no private repository, internal hostname or internal infrastructure is named here or in code.
 - Every implementation pull request carries tests for its refusal paths: an unknown key, a key outside the allow list, an expired session key, an expired or removed grant, an entry signed by a revoked controller key, a signature request from an order to the signing service, a signature request from a session that received input under a grant, a replayed allow-list statement or grant, a masking by someone who is not the owner, a masking for a revoked device that is not signed by its former owner or the administrator, an allow-list statement, grant or masking signed by a program key or requested through the signing service, a replayed command, a command outside its permission, a change of an allow list signed by a session key, a session-key expiry beyond the device's limit, and a team-record event signed by an expired session key.
+- The pull requests of the device names and of the device page also carry tests for these refusal paths: a keys-file entry whose device name does not have the form of §25.3; two entries of one device with different names; a device name that another device on another team already has, also when it differs only in case; a device name that is a reserved first path segment; a reserved segment added while a device has that name; a request for a device page without a valid signature (`401`); a device page at an unknown name, at a name in capital letters, and of a device whose owner the reader may not see, all with the same `404`; an unknown sub-page (`404`); a row of another origin whose login the reader may not see, and a row that names a party the reader may not see, each left out of the page and of every figure on it without a marker, for a reader who shares only one of the owner's teams; a row the owner's login may no longer see after a change of `teams.yaml`, left out for the owner; an action the local dashboard does not offer there, one on a row of another origin, and one on a row the reader may not see, all with the same `400`; an action by a reader who is neither the owner nor holds a grant that covers it (`403`); an action under an expired or removed grant (`403`); and an action that waited at the hub until it was outside the device's time window, refused by the device and shown as refused.
