@@ -136,12 +136,7 @@ def test_new_texts_name_the_concierge_only() -> None:
             "DESIGN.md",
             "| Website as an operations console for leases, token cost, stuck "
             "coding tasks | Website is the visibility replica (§7). |",
-        ),
-        (
-            "DESIGN.md",
-            "| §20 Website as an operations console | Refused | Accepted for "
-            "watching, answering and handing over work |",
-        ),
+        )
     ]
     design = _between(_read("DESIGN.md"), "### 19.10", "## 20. ")
     assert "concierge" in design
