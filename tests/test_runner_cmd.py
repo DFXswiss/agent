@@ -147,10 +147,16 @@ def _ingest_runner(
             return _completed()
         if joined.endswith("--slurp notifications"):
             return _completed(0, json.dumps([notifications or []]))
+        if "--jq .head.sha" in joined:
+            return _completed(0, "a" * 40 + "\n")
         if "/comments" in joined:
             return _completed(0, json.dumps([comments or []]))
         if "--jq .private" in joined:
             return _completed(0, "false\n")
+        # A re-queue removes a leftover worktree; `git worktree prune` runs
+        # even when the directory is already gone.
+        if joined.endswith("worktree prune"):
+            return _completed()
         raise AssertionError(argv)
 
     return run
@@ -162,13 +168,30 @@ def _write_policy(home: Path, **overrides: Any) -> None:
         "enabled": True,
         "actors_allow": ["alice"],
         "repos_allow": ["owner/name"],
-        "job_types_allow": ["pr-review"],
+        # A policy allows queue types; the catalogue maps `pr-ready` to the
+        # `pr-review` skill below.
+        "job_types_allow": ["pr-ready"],
         "default_skill_on_mention": "pr-review",
     }
     policy.update(overrides)
     runner_dir = home / "runner"
     runner_dir.mkdir(parents=True, exist_ok=True)
     (runner_dir / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+    (runner_dir / "skills-catalog.json").write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {
+                        "id": "pr-review",
+                        "queue_type": "pr-ready",
+                        "command_prefixes": ["/review"],
+                        "body_patterns": ["please review"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_worker_files(home: Path, **policy_overrides: Any) -> None:
@@ -210,7 +233,11 @@ def test_ingest_creates_a_job_for_an_admitted_mention(
                 }
             ],
             comments=[
-                {"body": "@example-bot pr-review please", "user": {"login": "alice"}}
+                {
+                    "id": 1,
+                    "body": "@example-bot pr-review please",
+                    "user": {"login": "alice"},
+                }
             ],
         ),
     )
@@ -255,6 +282,8 @@ def test_a_handled_notification_does_not_requeue_a_pruned_job(
             return _completed()
         if joined.endswith("--slurp notifications"):
             return _completed(0, json.dumps([[] if read else [notification]]))
+        if "--jq .head.sha" in joined:
+            return _completed(0, "a" * 40 + "\n")
         if "/comments" in joined:
             return _completed(
                 0,
@@ -262,6 +291,7 @@ def test_a_handled_notification_does_not_requeue_a_pruned_job(
                     [
                         [
                             {
+                                "id": 1,
                                 "body": "@example-bot pr-review please",
                                 "user": {"login": "alice"},
                             }
@@ -372,9 +402,19 @@ def test_ingest_passes_the_policy_to_scan_mentions(
         session_id: str,
         login: str,
         policy: Any,
-    ) -> tuple[list[str], int]:
-        seen.update(session_id=session_id, login=login, policy=policy)
-        return [], 0
+        catalog: Any,
+        device_id: str,
+        requeue: Callable[[dict[str, Any], dict[str, Any]], bool],
+    ) -> tuple[list[str], list[str], int]:
+        seen.update(
+            session_id=session_id,
+            login=login,
+            policy=policy,
+            catalog=catalog,
+            device_id=device_id,
+            requeue=requeue,
+        )
+        return [], [], 0
 
     monkeypatch.setattr("agent_cli.ingest.scan_mentions", scan_mentions)
     monkeypatch.setattr(
@@ -445,6 +485,101 @@ def test_ingest_reports_an_unusable_notification_listing(
     assert "ingest failed: notifications listing unusable" in captured.err
     assert "job.queued none" not in captured.out
     assert "external diagnostic" not in captured.err
+
+
+def test_ingest_stops_when_the_catalogue_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home)
+    (home / "runner" / "skills-catalog.json").unlink()
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="skills catalog"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+
+def test_ingest_stops_when_the_catalogue_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home)
+    (home / "runner" / "skills-catalog.json").write_text("[", encoding="utf-8")
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="skills catalog"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+
+def test_ingest_stops_when_the_default_skill_is_not_in_the_catalogue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home, default_skill_on_mention="not-a-skill")
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    with pytest.raises(SystemExit, match="not a skill in the catalogue"):
+        cmd_runner(["ingest", "--session", "session-1"])
+
+
+def test_ingest_prints_a_requeued_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _write_policy(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    expected = job_id("owner/name", "7", "pr-review")
+    row = job_row(
+        session_id="session-0",
+        repo="owner/name",
+        ref="7",
+        job_type="pr-review",
+        actor="alice",
+        queue_type="pr-ready",
+        trigger="comment:owner/name:7:0",
+    )
+    row.update({"state": "failed", "attempts": 1})
+    store = Store(home)
+    try:
+        store.write("job", "insert", expected, row)
+    finally:
+        store.close()
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        _ingest_runner(
+            login="example-bot",
+            calls=[],
+            notifications=[
+                {
+                    "id": "1001",
+                    "repository": {"full_name": "owner/name"},
+                    "subject": {"url": "https://api.github.com/repos/owner/name/issues/7"},
+                }
+            ],
+            comments=[
+                {
+                    "id": 1,
+                    "body": "@example-bot please review",
+                    "user": {"login": "alice"},
+                }
+            ],
+        ),
+    )
+
+    cmd_runner(["ingest", "--session", "session-1"])
+
+    out = capsys.readouterr().out
+    assert f"job.requeued {expected}" in out
+    assert "job.queued none" not in out
+    store = Store(home)
+    try:
+        saved = store.row("job", expected)
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved["attempts"] == 2
+        assert saved["trigger"] == "comment:owner/name:7:1"
+    finally:
+        store.close()
 
 
 # ---------------------------------------------------------------------- lock
@@ -559,6 +694,8 @@ def _dispatch_runner(
             return _completed()
         if "fetch --prune" in joined:
             return _completed()
+        if "rev-parse --verify" in joined:
+            return _completed(0, "c" * 40)
         if "refs/pull/" in joined:
             return _completed(fetch_pull_rc)
         if ".pull_request != null" in joined:
@@ -855,14 +992,27 @@ def test_dispatch_stops_before_state_without_a_prompt_template(
     _assert_dispatch_stopped_before_state(home, calls)
 
 
-def test_dispatch_stops_before_state_for_a_job_type_without_a_worker(
+def test_dispatch_stops_before_state_for_a_skill_without_a_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Starting a job whose worker refuses its type would create a worktree and
+    # Starting a job whose worker refuses its skill would create a worktree and
     # a session only to fail. The policy is rejected before the lock instead.
     home = tmp_path / "home"
     _write_runner_config(home, {"max_concurrent": 1})
-    _write_worker_files(home, job_types_allow=["pr-review", "pr-mergeable"])
+    _write_worker_files(
+        home, job_types_allow=["pr-ready", "pr-mergeable"]
+    )
+    (home / "runner" / "skills-catalog.json").write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {"id": "pr-review", "queue_type": "pr-ready"},
+                    {"id": "merge-conflict", "queue_type": "pr-mergeable"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("AGENT_HOME", str(home))
     calls: list[list[str]] = []
     monkeypatch.setattr(
@@ -870,17 +1020,36 @@ def test_dispatch_stops_before_state_for_a_job_type_without_a_worker(
         lambda argv: (calls.append(list(argv)), _completed())[1],
     )
 
-    with pytest.raises(SystemExit, match="job type pr-mergeable has no worker"):
+    with pytest.raises(SystemExit, match="job type merge-conflict has no worker"):
         cmd_runner(["dispatch"])
 
     _assert_dispatch_stopped_before_state(home, calls)
 
 
-def test_dispatch_preflight_accepts_the_job_type_case_insensitively(
+def test_dispatch_stops_before_state_for_an_unknown_queue_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
-    _write_worker_files(home, job_types_allow=["PR-REVIEW"])
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home, job_types_allow=["pr-ready", "pr-mergeable"])
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="not in the catalogue"):
+        cmd_runner(["dispatch"])
+
+    _assert_dispatch_stopped_before_state(home, calls)
+
+
+def test_dispatch_preflight_accepts_the_queue_type_case_insensitively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_worker_files(home, job_types_allow=["PR-READY"])
     monkeypatch.setenv("AGENT_HOME", str(home))
 
     runner_cmd._worker_preflight(runner_paths(home / "runner"))
@@ -889,10 +1058,10 @@ def test_dispatch_preflight_accepts_the_job_type_case_insensitively(
 def test_dispatch_preflight_accepts_an_uppercase_prompt_job_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The template requirement applies to the supported type however it is
-    # spelled, so the case-insensitive comparison is used on both sides.
+    # The template requirement follows the skill the allowed queue type maps
+    # to, so it applies however the policy spells the queue type.
     home = tmp_path / "home"
-    _write_worker_files(home, job_types_allow=["PR-REVIEW"])
+    _write_worker_files(home, job_types_allow=["PR-READY"])
     (home / "runner" / "prompts" / "pr-review.md").unlink()
     monkeypatch.setenv("AGENT_HOME", str(home))
 
@@ -2398,7 +2567,8 @@ def _healthy_runner_files(home: Path) -> RunnerPaths:
         json.dumps(
             {
                 "expected_gh_user": "example-bot",
-                "job_types_allow": ["pr-review"],
+                "job_types_allow": ["pr-ready"],
+                "default_skill_on_mention": "pr-review",
             }
         ),
         encoding="utf-8",
@@ -2415,7 +2585,10 @@ def _healthy_runner_files(home: Path) -> RunnerPaths:
         encoding="utf-8",
     )
     paths.skills_catalog.write_text(
-        json.dumps({"skills": [{"id": "pr-review"}]}), encoding="utf-8"
+        json.dumps(
+            {"skills": [{"id": "pr-review", "queue_type": "pr-ready"}]}
+        ),
+        encoding="utf-8",
     )
     paths.agent_config.write_text(
         json.dumps(
@@ -2606,13 +2779,17 @@ def test_doctor_accepts_the_job_type_case_insensitively(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # `PR-REVIEW` is the same job type; reporting it as unsupported while also
-    # requiring its template would be a contradiction.
+    # `PR-READY` is the same queue type; reporting its skill as unsupported
+    # while also requiring its template would be a contradiction.
     home = tmp_path / "home"
     paths = _healthy_runner_files(home)
     paths.policy.write_text(
         json.dumps(
-            {"expected_gh_user": "example-bot", "job_types_allow": ["PR-REVIEW"]}
+            {
+                "expected_gh_user": "example-bot",
+                "job_types_allow": ["PR-READY"],
+                "default_skill_on_mention": "pr-review",
+            }
         ),
         encoding="utf-8",
     )
@@ -2631,11 +2808,11 @@ def test_doctor_accepts_the_job_type_case_insensitively(
 
     assert raised.value.code == 1
     out = capsys.readouterr().out
-    assert "job type PR-REVIEW has no worker" not in out
+    assert "has no worker" not in out
     assert "prompt template" in out
 
 
-def test_doctor_reports_a_job_type_without_a_worker(
+def test_doctor_reports_a_skill_without_a_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2646,7 +2823,19 @@ def test_doctor_reports_a_job_type_without_a_worker(
         json.dumps(
             {
                 "expected_gh_user": "example-bot",
-                "job_types_allow": ["pr-review", "merge-conflict"],
+                "job_types_allow": ["pr-ready", "pr-mergeable"],
+                "default_skill_on_mention": "pr-review",
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.skills_catalog.write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {"id": "pr-review", "queue_type": "pr-ready"},
+                    {"id": "merge-conflict", "queue_type": "pr-mergeable"},
+                ]
             }
         ),
         encoding="utf-8",
@@ -2667,6 +2856,76 @@ def test_doctor_reports_a_job_type_without_a_worker(
     out = capsys.readouterr().out
     assert "job type merge-conflict has no worker" in out
     assert "job type pr-review has no worker" not in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_queue_type_not_in_the_catalogue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.policy.write_text(
+        json.dumps(
+            {
+                "expected_gh_user": "example-bot",
+                "job_types_allow": ["pr-ready", "pr-mergeable"],
+                "default_skill_on_mention": "pr-review",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "job type pr-mergeable is not in the catalogue" in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_default_skill_not_in_the_catalogue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    paths.policy.write_text(
+        json.dumps(
+            {
+                "expected_gh_user": "example-bot",
+                "job_types_allow": ["pr-ready"],
+                "default_skill_on_mention": "not-a-skill",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert "default_skill_on_mention is not a skill in the catalogue" in out
     assert "doctor 1 problems" in out
 
 

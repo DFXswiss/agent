@@ -78,6 +78,25 @@ def _listed(policy: Any, key: str) -> list[str]:
     return [item.lower() for item in raw if isinstance(item, str) and item]
 
 
+def _repo_named(repo_l: str, patterns: list[str]) -> bool:
+    """Whether `repo_l` is named by an exact entry or an `<owner>/*` entry.
+
+    The wildcard is deliberately narrow: exactly one slash, ending in `/*`, with
+    a non-empty owner. `*`, `*/*`, `owner/prefix*` and `owner/` therefore name
+    nothing, which keeps a typo from widening an allow-list to every repository
+    this runner can reach. Both sides are already lower-cased by the caller.
+    """
+    for pattern in patterns:
+        if repo_l == pattern:
+            return True
+        if not pattern.endswith("/*") or pattern.count("/") != 1:
+            continue
+        owner = pattern[:-2]
+        if owner and repo_l.startswith(owner + "/"):
+            return True
+    return False
+
+
 def admits(
     policy: Any,
     *,
@@ -90,6 +109,14 @@ def admits(
 
     Deny-lists win over allow-lists, comparison is case-insensitive, and every
     allow-list must name the value — an empty one admits nothing.
+
+    In `repos_allow` and `repos_deny`, an entry may be an exact repository or
+    `<owner>/*`, which names every repository of that owner. The wildcard is
+    applied to `repos_deny` as well: a denial is the stricter direction, so an
+    operator who writes `owner/*` there means all of that owner's repositories,
+    not a literal name that matches nothing. `private_repos_allow` stays exact:
+    it is the exception to a broad allow-list, and broadening it would defeat
+    the second statement a private repository is meant to require.
 
     `private` has no default on purpose: a caller who forgets it would hand a
     private repository the public path, and that is the one mistake this gate
@@ -110,12 +137,12 @@ def admits(
 
     if actor_l in _listed(policy, "actors_deny"):
         return Verdict(False, f"actor {actor} is denied")
-    if repo_l in _listed(policy, "repos_deny"):
+    if _repo_named(repo_l, _listed(policy, "repos_deny")):
         return Verdict(False, f"repo {repo} is denied")
 
     if actor_l not in _listed(policy, "actors_allow"):
         return Verdict(False, f"actor {actor} is not allowed")
-    if repo_l not in _listed(policy, "repos_allow"):
+    if not _repo_named(repo_l, _listed(policy, "repos_allow")):
         return Verdict(False, f"repo {repo} is not allowed")
     if type_l not in _listed(policy, "job_types_allow"):
         return Verdict(False, f"job type {job_type} is not allowed")

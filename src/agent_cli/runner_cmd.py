@@ -391,18 +391,46 @@ def _cmd_ingest(args: list[str]) -> None:
             return
         _ensure_state_dirs(paths)
         policy = load_json(paths.policy, "policy")
+        # What a mention asks for is a catalogue skill, never a job type named
+        # in the comment. An unreadable catalogue or a default that names no
+        # skill leaves every request undecided, so both stop the pass.
+        catalog = load_json(paths.skills_catalog, "skills catalog")
+        if ingest.catalog_skills(catalog) is None:
+            die("skills catalog is not readable")
+        if ingest.default_skill(policy, catalog) is None:
+            die("policy default_skill_on_mention is not a skill in the catalogue")
         # Use the spelling GitHub reports: `outputs._is_new` compares an
         # author login case-sensitively, so the policy's spelling would reject
         # this runner's own outputs whenever the two differ in case.
         login = verify_gh_login(run_argv, expected_login(policy))
         store = open_store()
         listing_failed = False
+        created: list[str] = []
+        requeued: list[str] = []
+        skipped = 0
         try:
+            def requeue(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+                try:
+                    return (
+                        _requeue_job(paths, store, row, payload, run_argv) is None
+                    )
+                except Exception:
+                    # A refused or raising re-queue leaves the thread unread so
+                    # the next pass tries again.
+                    return False
+
             # Plain Store, not OwnJobs: scan_mentions de-duplicates against every
             # device's rows. Reading a foreign row as absent would make its later
             # insert raise "already exists".
-            created, skipped = ingest.scan_mentions(
-                store, run_argv, session_id=session_id, login=login, policy=policy
+            created, requeued, skipped = ingest.scan_mentions(
+                store,
+                run_argv,
+                session_id=session_id,
+                login=login,
+                policy=policy,
+                catalog=catalog,
+                device_id=store.device_id(),
+                requeue=requeue,
             )
         except ingest.ListingFailed:
             # The notification list is the input to every admission decision.
@@ -416,7 +444,9 @@ def _cmd_ingest(args: list[str]) -> None:
         raise SystemExit(1)
     for job_id in created:
         print(f"job.queued {job_id}")
-    if not created:
+    for job_id in requeued:
+        print(f"job.requeued {job_id}")
+    if not created and not requeued:
         print("job.queued none")
     if skipped > 0:
         print(f"ingest skipped {skipped}", file=sys.stderr)
@@ -432,14 +462,15 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     input the worker needs must already be present. Checking before the lock
     and the store means a broken installation never leaves a half-created job;
     the checks are the same ones `doctor` reports.
+
+    A policy allows a *queue type*; the catalogue maps it to the skill whose id
+    names a worker and a `runner.json` entry. A queue type no skill carries is
+    refused here rather than queued and then failed.
     """
     from .ai_accounts import AccountError, load_ai_accounts
     from .main import die
     from .runner_worker import WORKER_JOB_TYPES
 
-    prompt = paths.prompts / "pr-review.md"
-    if not prompt.is_file():
-        die(f"prompt template {prompt} is missing")
     try:
         ai = load_ai_accounts(paths.base.parent, defer_model_configuration=True)
         ai.require_model_configuration()
@@ -447,14 +478,24 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     except AccountError as exc:
         die(f"dispatch: AI configuration cannot start lanes: {exc}")
     policy = load_json(paths.policy, "policy")
+    catalog = load_json(paths.skills_catalog, "skills catalog")
+    if ingest.catalog_skills(catalog) is None:
+        die("skills catalog is not readable")
     allowed = policy.get("job_types_allow")
     if not isinstance(allowed, list):
         # Admission already treats a missing list as "admits nothing"; there is
         # no allowed type for this command to reject.
         return
-    for job_type in allowed:
-        if not isinstance(job_type, str) or job_type.lower() not in WORKER_JOB_TYPES:
-            die(f"job type {job_type} has no worker")
+    skills, unknown = ingest.allowed_skills(policy, catalog)
+    if unknown:
+        die(f"job type {unknown[0]} is not in the catalogue")
+    for skill in skills:
+        if skill.id.lower() not in WORKER_JOB_TYPES:
+            die(f"job type {skill.id} has no worker")
+    if any(skill.id.lower() == "pr-review" for skill in skills):
+        prompt = paths.prompts / "pr-review.md"
+        if not prompt.is_file():
+            die(f"prompt template {prompt} is missing")
 
 
 def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
@@ -854,8 +895,43 @@ def remove_job_worktree(
     return None
 
 
-def _cmd_retry(args: list[str]) -> None:
+def _requeue_job(
+    paths: RunnerPaths,
+    store: Store,
+    row: dict[str, Any],
+    payload: dict[str, Any],
+    runner: Callable[[list[str]], Completed],
+) -> str | None:
+    """Move one existing row to the queued `payload`, or say why not.
+
+    Returns a problem text instead of exiting so `retry` and `ingest` can share
+    the exact sequence. A pending status activity of the attempt being replaced
+    is retired first; if that cannot be done, neither the row nor its evidence
+    is touched. Only after a clean worktree removal are the previous attempt's
+    artefacts removed: a stale exit code would otherwise be read as the next
+    attempt's result. The single write is last, so a refused re-queue leaves
+    the row unchanged.
+    """
     from . import runner_status
+
+    job_id = row.get("id")
+    if not isinstance(job_id, str) or not job_id:
+        return "job has no usable id"
+    if not runner_status.retire_status_activities(store, row):
+        return (
+            f"job {job_id}: a status comment of the previous attempt "
+            "could not be retired"
+        )
+    problem = remove_job_worktree(paths, job_id, row, runner)
+    if problem is not None:
+        return problem
+    for suffix in (".exit", ".transcript", ".prompt"):
+        _remove_if_present(paths.logs / f"{job_id}{suffix}")
+    store.write("job", "update", job_id, payload)
+    return None
+
+
+def _cmd_retry(args: list[str]) -> None:
     from .main import die, open_store
 
     if len(args) != 1 or args[0].startswith("-"):
@@ -884,25 +960,9 @@ def _cmd_retry(args: list[str]) -> None:
                 die(
                     f"job {job_id} cannot be retried from state {row.get('state')}"
                 )
-            # A pending status activity of the attempt being retried would be
-            # posted by a later scan after the new attempt's baseline and be
-            # counted as its output. Retire those before touching anything
-            # else; a refused retry leaves both the row and its evidence alone.
-            if not runner_status.retire_status_activities(store, row):
-                die(
-                    f"job {job_id}: a status comment of the previous attempt "
-                    "could not be retired"
-                )
-            problem = remove_job_worktree(paths, job_id, row, run_argv)
+            problem = _requeue_job(paths, store, row, payload, run_argv)
             if problem is not None:
                 die(problem)
-            # Only after a clean worktree removal: a refused retry leaves the
-            # row unchanged, and it must leave the previous attempt's evidence
-            # unchanged too. A stale exit code would otherwise be read as the
-            # next attempt's result.
-            for suffix in (".exit", ".transcript", ".prompt"):
-                _remove_if_present(paths.logs / f"{job_id}{suffix}")
-            store.write("job", "update", job_id, payload)
         finally:
             store.close()
     print(f"job.retried {job_id}")
@@ -976,21 +1036,29 @@ def _cmd_doctor(args: list[str]) -> None:
         except AccountError as exc:
             problems.append(str(exc))
     if policy is not None:
-        allowed = policy.get("job_types_allow")
-        if isinstance(allowed, list):
-            for job_type in allowed:
-                if (
-                    not isinstance(job_type, str)
-                    or job_type.lower() not in WORKER_JOB_TYPES
-                ):
-                    problems.append(f"job type {job_type} has no worker")
-            if any(
-                isinstance(job_type, str) and job_type.lower() == "pr-review"
-                for job_type in allowed
-            ):
+        # A policy allows queue types; the catalogue names the skill each one
+        # maps to, and the skill id is what the worker is keyed by. Only a
+        # readable catalogue can answer, and `health.unresolved_skills` already
+        # reports one that cannot be read.
+        if catalog is not None and ingest.catalog_skills(catalog) is not None:
+            skills, unknown = ingest.allowed_skills(policy, catalog)
+            for job_type in unknown:
+                problems.append(
+                    f"job type {job_type} is not in the catalogue"
+                )
+            for skill in skills:
+                if skill.id.lower() not in WORKER_JOB_TYPES:
+                    problems.append(f"job type {skill.id} has no worker")
+            # The template is required when an allowed queue type resolves to
+            # the one skill this worker knows how to run.
+            if any(skill.id.lower() == "pr-review" for skill in skills):
                 prompt = paths.prompts / "pr-review.md"
                 if not prompt.is_file():
                     problems.append(f"prompt template {prompt} is missing")
+            if ingest.default_skill(policy, catalog) is None:
+                problems.append(
+                    "policy default_skill_on_mention is not a skill in the catalogue"
+                )
 
     # All three health checks run whenever their inputs loaded. An empty answer
     # from one does not make another unnecessary.

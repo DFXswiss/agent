@@ -17,6 +17,15 @@ GitHub first; an unanswered question leaves the job queued rather than
 guessing, because checking out the default branch for a pull request would
 review the wrong code. Pushing back to a pull-request branch is not part of
 this change.
+
+For a pull-request job the row's `head_sha` is overwritten with the commit the
+worktree was actually checked out from. Ingest records the head it saw when it
+created or re-queued the row, but the pull-request ref may have moved before
+this pass fetched it; ingest compares that stored value with the current head
+on a later mention, so it must name the commit that was really reviewed. An
+unusable resolution is another unanswered question: the job is not started, the
+worktree is removed, and the row stays queued rather than run under a head that
+may name a different commit.
 """
 
 from __future__ import annotations
@@ -42,6 +51,10 @@ def worktree_path(work_root: str, job_id: str) -> str:
 
 
 SESSION_PREFIX = "job-"
+
+# A commit id, and nothing else, is a usable checkout record. A short,
+# upper-case or empty answer would name no commit.
+_HEAD_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def session_name(job_id: str) -> str:
@@ -169,17 +182,15 @@ def dispatch_queued(
             skipped += 1
             continue
 
+        head_ref: str | None = None
         if answer == "true":
             number = ref[1:] if ref.startswith("#") else ref
             pull = runner(workspace.fetch_pull_argv(bare, ref))
             if pull.returncode != 0:
                 skipped += 1
                 continue
-            add = runner(
-                workspace.worktree_add_ref_argv(
-                    bare, worktree, f"refs/remotes/origin/pull/{number}"
-                )
-            )
+            head_ref = f"refs/remotes/origin/pull/{number}"
+            add = runner(workspace.worktree_add_ref_argv(bare, worktree, head_ref))
         else:
             default = runner(workspace.default_branch_argv(repo))
             branch = (default.stdout or "").strip()
@@ -204,6 +215,24 @@ def dispatch_queued(
             store.write("job", "update", job_id, updated)
             skipped += 1
             continue
+
+        # A pull request is checked out from the ref that was fetched a moment
+        # ago, not from the head ingest stored: the ref may have moved since
+        # that scan. Record what the worktree really points at, because ingest
+        # compares the stored value with the current head on a later mention.
+        # An unusable answer is like the unanswered probe above: the stored
+        # value may name a different commit than the one checked out, so the
+        # job is not started. The row keeps that value and stays queued so the
+        # next pass tries again.
+        if head_ref is not None:
+            resolved = runner(workspace.rev_parse_argv(bare, head_ref))
+            sha = (resolved.stdout or "").strip()
+            if resolved.returncode != 0 or _HEAD_SHA.fullmatch(sha) is None:
+                runner(workspace.worktree_remove_argv(bare, worktree))
+                runner(workspace.worktree_prune_argv(bare))
+                skipped += 1
+                continue
+            row["head_sha"] = sha
 
         # The worktree exists now, so the row can record what the probe said
         # and the announcement can be posted against the right target.

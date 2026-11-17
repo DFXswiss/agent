@@ -14,6 +14,7 @@ from agent_cli.workspace import (
     new_session_argv,
     pull_request_probe_argv,
     repo_slug,
+    rev_parse_argv,
     worktree_add_argv,
     worktree_add_ref_argv,
     worktree_prune_argv,
@@ -180,6 +181,20 @@ def test_fetch_pull_argv_accepts_a_hash_prefixed_number() -> None:
 def test_fetch_pull_argv_rejects_anything_but_ascii_digits(number: str) -> None:
     with pytest.raises(ValueError, match="fetch_pull_argv requires"):
         fetch_pull_argv("/tmp/bare.git", number)
+
+
+# ---------------------------------------------------------------- rev_parse_argv
+
+
+def test_rev_parse_argv_peels_the_ref_to_a_commit() -> None:
+    # `^{commit}` makes anything that is not a commit an error, not a tree id.
+    assert rev_parse_argv("/tmp/bare.git", "refs/remotes/origin/pull/7") == [
+        "git",
+        "--git-dir=/tmp/bare.git",
+        "rev-parse",
+        "--verify",
+        "refs/remotes/origin/pull/7^{commit}",
+    ]
 
 
 # ------------------------------------------------------- default_branch_argv
