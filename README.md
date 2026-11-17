@@ -42,7 +42,7 @@ Every variable above is required. The process exits if one is missing.
 - `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed.
 - `AGENT_CORE_KEYS` is the path of the keys file (`keys.yaml` next to `teams.yaml`).
 - `AGENT_CORE_SIGNING_KEY` is the 32-byte seed of the hub's Ed25519 signing key as 64 lowercase hex characters. It is a secret: every environment has its own seed, and the hub never logs or returns it.
-- `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters). It is not a secret.
+- `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters, starting and ending with a letter or digit). It is not a secret.
 
 At start the hub logs one line `hub key <id> <public key>`; callers pin that pair.
 
@@ -72,6 +72,8 @@ The optional `agents` map declares GitHub logins operated by autonomous agents. 
 See [PROTOCOL.md](PROTOCOL.md).
 
 The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hub side of its first build step is built: the keys file `keys.yaml` (changed only by pull request), signed requests under `/api/key/`, the hub's signed answers, and `GET /api/key/whoami`.
+
+The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
 
 ## Control
 

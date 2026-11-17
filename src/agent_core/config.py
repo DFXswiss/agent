@@ -50,10 +50,11 @@ def public_url_host(url: str) -> str:
     if ":" in hostname:
         host = f"[{hostname}]"
     else:
-        try:
-            host = hostname.encode("idna").decode("ascii").lower()
-        except UnicodeError as exc:
-            raise ConfigError("AGENT_CORE_PUBLIC_URL has an invalid host name") from exc
+        if not hostname.isascii():
+            raise ConfigError(
+                "AGENT_CORE_PUBLIC_URL must carry an international host name in its ASCII form"
+            )
+        host = hostname.lower()
     if port is not None and port != DEFAULT_PORTS[parts.scheme]:
         host = f"{host}:{port}"
     return host

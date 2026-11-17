@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ from .github import (
     RealGitHub,
     valid_repository_name,
 )
-from .keys import KeyEntry, load_keys
+from .keys import KeyEntry, load_keys, valid_subject
 from .signing import (
     LOG as KEY_LOG,
     Clock,
@@ -246,6 +247,78 @@ def whoami_body(entry: KeyEntry, hub_key_id: str) -> dict[str, Any]:
     return body
 
 
+RELEASE_PATH = "/api/key/release"
+RELEASE_SCOPE = "release:query"
+RELEASE_PARAMETERS = frozenset({"repository", "pull_request"})
+PULL_REQUEST_MAX = 2147483647
+# The three conditions of the release rule, in the order they are checked (KEY-PROTOCOL.md section 8).
+RELEASE_FAILURES = ("task_missing", "task_not_ready", "question_unanswered")
+_PULL_REQUEST_RE = re.compile(r"[1-9][0-9]{0,9}")
+_ENCODED_SLASH_RE = re.compile(r"%2[Ff]")
+
+
+@dataclass(frozen=True)
+class ReleaseQuery:
+    repository: str
+    pull_request: int
+
+
+def parse_release_query(raw_query: str) -> ReleaseQuery | None:
+    """The query of GET /api/key/release as signed; None unless it is exactly valid.
+
+    Exactly `repository` and `pull_request`, once each, in any order. The only percent-encoding
+    allowed is `%2F` or `%2f` for the `/` of `repository`; `+` is never a space here.
+    """
+    if raw_query == "":
+        return None
+    values: dict[str, str] = {}
+    for part in raw_query.split("&"):
+        name, equals, value = part.partition("=")
+        if equals != "=" or name not in RELEASE_PARAMETERS or name in values or value == "":
+            return None
+        values[name] = value
+    if values.keys() != RELEASE_PARAMETERS:
+        return None
+    # Every other `%` and every `+` stays as it is and fails the subject rule of the loader.
+    repository = _ENCODED_SLASH_RE.sub("/", values["repository"])
+    if not valid_subject(repository):
+        return None
+    number = values["pull_request"]
+    if _PULL_REQUEST_RE.fullmatch(number) is None:
+        return None
+    pull_request = int(number)
+    if pull_request > PULL_REQUEST_MAX:
+        return None
+    return ReleaseQuery(repository=repository, pull_request=pull_request)
+
+
+def release_answer(repository: str, pull_request: int) -> tuple[bool, str | None]:
+    """Whether the pull request may leave draft, and the first failed condition.
+
+    The task record is not built yet, so no condition can fail. A later build step replaces only
+    this function.
+    """
+    return True, None
+
+
+def release_body(
+    query: ReleaseQuery, released: bool, failed: str | None, hub_key_id: str
+) -> dict[str, Any]:
+    """The answer of GET /api/key/release (KEY-PROTOCOL.md section 8), fields in order."""
+    if released:
+        if failed is not None:
+            raise ValueError("a released pull request names no failed condition")
+    elif failed not in RELEASE_FAILURES:
+        raise ValueError(f"failed must be one of {', '.join(RELEASE_FAILURES)}")
+    return {
+        "repository": query.repository,
+        "pull_request": query.pull_request,
+        "released": released,
+        "failed": failed,
+        "hub_key": hub_key_id,
+    }
+
+
 def create_app(
     cfg: Config,
     github: GitHub | None = None,
@@ -288,12 +361,29 @@ def create_app(
 
     key_routes.add("GET", "/api/key/whoami", key_whoami, scope=None, subject=None)
 
+    async def key_release(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        query: ReleaseQuery = request.params
+        released, failed = release_answer(query.repository, query.pull_request)
+        return 200, release_body(query, released, failed, signer.key_id)
+
+    def release_subject(request: KeyRequest) -> str | None:
+        return request.params.repository
+
+    key_routes.add(
+        "GET",
+        RELEASE_PATH,
+        key_release,
+        scope=RELEASE_SCOPE,
+        subject=release_subject,
+        query=parse_release_query,
+    )
+
     app = FastAPI(title="agent-core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         SessionMiddleware,
         secret_key=cfg.session_secret,
         same_site="lax",
-        https_only=cfg.public_url.startswith("https://"),
+        https_only=urlsplit(cfg.public_url).scheme == "https",
     )
     # Added last, so it runs first: every request under /api/key/ passes checks 1 to 8 here
     # and never reaches the session middleware or the router.
