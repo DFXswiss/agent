@@ -144,8 +144,8 @@ sequenceDiagram
 
 - There is no password and no code by mail.
 - You may register several passkeys, for example one on your laptop and one on your phone.
-- Your first passkey starts with an **invite link** from an administrator. It works once and
-  expires soon. You open it and create the passkey; the hub receives only its public part. It
+- Every passkey, your first and each further one, starts with an **invite link** from the
+  administrator. There is exactly one administrator. The link works once and expires soon. You open it and create the passkey; the hub receives only its public part. It
   counts once that public key was added to the keys file by pull request, after the
   administrator compared its fingerprint with you.
 - The private part stays with you. Your platform may sync a passkey between your own devices

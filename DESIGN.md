@@ -1372,7 +1372,7 @@ This revision records the decision of 2026-11-17 to store the team record in Pos
 
 This revision records the decisions of 2026-11-17 that passkeys may be synced, that reading at the network edge is accepted, and what done and released mean (§24.11). It also gives every key its own chain of events, so that a writer can sign while the hub is unreachable (§24.3).
 
-This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also adds invite links for a staff member's first passkey (§24.2).
+This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also makes an invite link of the one administrator the only way to create a passkey (§24.2).
 
 ## 24. Team record and key identity (decided, not implemented)
 
@@ -1427,12 +1427,11 @@ Rules for all principals:
 Staff members:
 
 - A staff member may register several passkeys (for example laptop and phone).
-- **Invite link for the first passkey** (decided on 2026-11-17). A staff member whose key has the scope `keys:invite` (an administrator) creates an invite link for one handle. The link works once and expires after a short time that the administrator sets. Whoever opens it creates a passkey in their browser; the hub receives only the public key and shows it to the administrator with its fingerprint.
+- **A passkey is created only through an invite link** (decided on 2026-11-17). There is exactly one administrator: the one staff member whose keys have the scope `keys:invite`. The administrator creates an invite link for one handle, for a person's first passkey and for every further one. The link works once and expires after a short time that the administrator sets. Whoever opens it creates a passkey in their browser; the hub receives only the public key and shows it to the administrator with its fingerprint.
   - The invite registers nothing by itself. The passkey counts only after a pull request has added that public key to the keys file. Before merging, the administrator compares the fingerprint with the invited person over a channel other than the link, so that an intercepted link cannot register a stranger's key.
   - Creating an invite is an event in the team record, signed by the administrator. The hub authors no event for the key it receives (§24.3); the key enters the history through its pull request. An unused or expired invite leaves no key behind.
   - The request that opens an invite link is the one request without a registered key: the single-use value in the link authenticates it, and it can do nothing but hand in one public key.
-  - The first administrator's key enters the keys file by a pull request made by hand; there is no invite before that.
-  - A further passkey of a person who already has one needs no invite: they sign in and hand in the new public key, which also counts only after its pull request.
+  - The administrator's own passkeys enter the keys file by a pull request made by hand, because nobody else can invite. The same path replaces the administrator's keys if all of them are lost, and it is how the role passes to another person.
 - A passkey is never exported to the hub or to a website. The platform may sync a passkey between a person's own devices (decided on 2026-11-17); the team accepts that the platform's sync then protects that passkey. Sign-in and every write are still verified by the hub alone.
 
 Agents:
@@ -1765,7 +1764,7 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 
 | Event | What happens |
 |---|---|
-| A staff member joins | An administrator sends them an invite link; they create their passkey with it, and a pull request adds its public key to the keys file (§24.2). They connect their devices (next row). |
+| A staff member joins | The administrator sends them an invite link; they create their passkey with it, and a pull request adds its public key to the keys file (§24.2). They connect their devices (next row). |
 | A new device | A new key is created on it. A pull request adds it to the keys file with its owner and level. The owner confirms the first entries of its allow list by hand on the device (§25.6). |
 | A staff member leaves | A pull request revokes their keys; the hub refuses them from then on and tells every device to stop obeying them (§25.6). Their devices are retired or connected again by hand for a new owner. Events they signed stay valid and attributed (§24.2). |
 | A device is lost or retired | A pull request revokes its key. The owner disables its broker key (§25.13). The owner ends its open orders and withdraws their unanswered questions with a signed event; a withdrawn question blocks no release query (§24.11). Its history stays in the hub. |
