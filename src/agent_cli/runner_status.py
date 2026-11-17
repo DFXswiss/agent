@@ -112,35 +112,27 @@ def outcome_body(
     elif outcome == "timeout":
         if isinstance(minutes, int) and not isinstance(minutes, bool):
             english = (
-                f"Job `{job_id}` exceeded its time limit of {minutes} minutes "
-                "and was stopped."
+                f"Job `{job_id}` exceeded its time limit of {minutes} minutes."
             )
             german = (
                 f"Auftrag `{job_id}` hat das Zeitlimit von {minutes} Minuten "
-                "überschritten und wurde beendet."
+                "überschritten."
             )
         else:
-            english = f"Job `{job_id}` exceeded its time limit and was stopped."
-            german = (
-                f"Auftrag `{job_id}` hat das Zeitlimit überschritten und wurde "
-                "beendet."
-            )
+            english = f"Job `{job_id}` exceeded its time limit."
+            german = f"Auftrag `{job_id}` hat das Zeitlimit überschritten."
     elif outcome == "stalled":
         if isinstance(minutes, int) and not isinstance(minutes, bool):
             english = (
-                f"Job `{job_id}` showed no progress for {minutes} minutes "
-                "and was stopped."
+                f"Job `{job_id}` showed no progress for {minutes} minutes."
             )
             german = (
                 f"Auftrag `{job_id}` hat {minutes} Minuten keinen Fortschritt "
-                "gezeigt und wurde beendet."
+                "gezeigt."
             )
         else:
-            english = f"Job `{job_id}` stopped making progress and was stopped."
-            german = (
-                f"Auftrag `{job_id}` hat keinen Fortschritt mehr gezeigt und "
-                "wurde beendet."
-            )
+            english = f"Job `{job_id}` stopped making progress."
+            german = f"Auftrag `{job_id}` hat keinen Fortschritt mehr gezeigt."
     elif outcome == "crashed":
         english = f"Job `{job_id}` stopped unexpectedly."
         german = f"Auftrag `{job_id}` ist unerwartet abgebrochen."

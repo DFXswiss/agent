@@ -186,8 +186,8 @@ def test_announce_body_numbers_a_retry_in_both_languages(attempts: int) -> None:
             "timeout",
             None,
             None,
-            "Job `job-1` exceeded its time limit and was stopped.",
-            "Zeitlimit überschritten und wurde beendet.",
+            "Job `job-1` exceeded its time limit.",
+            "Auftrag `job-1` hat das Zeitlimit überschritten.",
         ),
         (
             "stalled",
@@ -200,8 +200,8 @@ def test_announce_body_numbers_a_retry_in_both_languages(attempts: int) -> None:
             "stalled",
             None,
             None,
-            "Job `job-1` stopped making progress and was stopped.",
-            "keinen Fortschritt mehr gezeigt und wurde beendet.",
+            "Job `job-1` stopped making progress.",
+            "Auftrag `job-1` hat keinen Fortschritt mehr gezeigt.",
         ),
         (
             "crashed",
@@ -1347,7 +1347,7 @@ def test_report_outcomes_omits_the_minutes_without_a_recorded_limit(
 
     assert reported == [row["id"]]
     assert failed == []
-    assert "exceeded its time limit and was stopped" in seen[0]["payload"]["body"]
+    assert "exceeded its time limit." in seen[0]["payload"]["body"]
 
 
 def test_report_outcomes_counts_a_failed_write_and_leaves_the_row_alone(
