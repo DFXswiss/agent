@@ -26,7 +26,7 @@ Not built in this step:
 - the allow list on a device, grants, the team record, the release query
 
 No existing endpoint changes its behaviour: GitHub sign-in, device pairing and device tokens
-work as before. The hub additionally requires two new environment variables at start
+work as before. The hub additionally requires three new environment variables at start
 (section 10); section 11 gives the order in which they are rolled out.
 
 ## 2. Encodings
@@ -42,7 +42,9 @@ work as before. The hub additionally requires two new environment variables at s
 | Passkey public key | the 65 bytes of the uncompressed P-256 point (`0x04`, X, Y) |
 
 A public key must be a valid point: an Ed25519 key decodes to a point on the curve that is not
-of small order and is in its canonical encoding; a passkey key is a point on P-256.
+of small order and is in its canonical encoding; a passkey key is a point on P-256 (only ES256 credentials). Small order is checked against the
+fixed list of small-order encodings and canonical encoding by comparing with the field prime;
+this is input validation, not an own implementation of a primitive.
 
 A value that does not decode, is not canonical or has the wrong length is refused.
 
@@ -56,11 +58,6 @@ The hub reads the keys file from the path in the required environment variable
 It holds public keys and never a secret.
 
 ```yaml
-hub:
-  - id: hub-1
-    kind: ed25519
-    public_key: "<base64url, 32 bytes>"
-
 keys:
   - id: example-staff-passkey-1
     kind: webauthn
@@ -96,17 +93,17 @@ keys:
 
 | Field | Meaning |
 |---|---|
-| `id` | Unique across `keys` and `hub`. Lowercase letters, digits and `-`, 3 to 63 characters, starts and ends with a letter or digit. Never reused, also not after revocation. |
+| `id` | Unique in the file. Lowercase letters, digits and `-`, 3 to 63 characters, starts and ends with a letter or digit. Never reused, also not after revocation. |
 | `kind` | `ed25519` or `webauthn`. |
 | `principal` | `staff`, `agent` or `service`. |
 | `handle` | The person or program the key belongs to; for an `agent` key the staff member who owns the device. Lowercase letters, digits and `-`, 1 to 39 characters, starts and ends with a letter or digit, no `--`. A handle, never a legal name or mail address. |
 | `team` | A team in `teams.yaml`. |
-| `public_key` | As in section 2. Unique across `keys` and `hub`. |
+| `public_key` | As in section 2. Unique in the file. |
 | `credential_id` | The credential id of the passkey, 16 to 1023 bytes, unique across `keys`. |
 | `device` | Label of the machine, same form as an `id`. |
 | `program` | Label of the program, same form as an `id`. |
 | `scopes` | Non-empty list from the table below, no scope twice. |
-| `subjects` | The repositories the key may ask about: a non-empty list, no entry twice. Each entry is `owner/name`; `owner` has the form of a handle, `name` is 1 to 100 characters of lowercase letters, digits, `.`, `_` and `-`. |
+| `subjects` | The repositories the key may ask about: a non-empty list, no entry twice. Each entry is `owner/name`; `owner` has the form of a handle, `name` is 1 to 100 characters of lowercase letters, digits, `.`, `_` and `-`, and is not `.` or `..`. |
 | `expires` | From this time on the key is refused. |
 | `revoked` | From this time on the key is refused. An entry is revoked, never removed, so that what it signed stays attributable. |
 
@@ -153,13 +150,6 @@ Further rules:
 - Among the entries that are not revoked, at most one handle holds `keys:invite`. That handle is
   the administrator (DESIGN.md §24.2).
 
-### Entries in `hub`
-
-A `hub` entry is one of the hub's own signing keys. It has exactly `id` (rule as above),
-`kind: ed25519`, `public_key` and optionally `retired` (a time). `retired` is evaluated once, at
-start: an entry is retired when its `retired` time is at or before the start. To retire the key
-of a running hub, the hub is restarted with a new seed.
-
 ### Loader
 
 The loader fails closed. The process does not start when:
@@ -172,19 +162,28 @@ The loader fails closed. The process does not start when:
 - a scope is unknown or not allowed for the principal, an `agent` entry does not hold exactly
   one device scope, or among the entries that are not revoked at start more than one handle holds `keys:invite`
 - the pair of `device` and `program` is not unique as required
-- `hub` is empty
 
-An empty `keys` list is valid and is the starting state.
+An empty `keys` list is valid and is the starting state. The file holds no key of the hub
+itself (section 4).
 
 ## 4. The hub's signing key
 
-The hub signs with one Ed25519 key. Its 32-byte seed comes from the required environment
-variable `AGENT_CORE_SIGNING_KEY` (base64url). The process does not start unless the public key
-of that seed equals the `public_key` of a `hub` entry that is not retired. That entry's `id` is
-the hub key id.
+The hub signs with one Ed25519 key.
 
-The seed is a secret. It never appears in a log, an error message or an answer. Every
-environment has its own seed and its own `hub` entry; a seed is never used by two hubs.
+- Its 32-byte seed comes from the required environment variable `AGENT_CORE_SIGNING_KEY`, written
+  as 64 lowercase hex characters. The secret tooling of the deployment creates it once; no person
+  creates, sees or copies it.
+- The hub key id comes from the required environment variable `AGENT_CORE_HUB_KEY_ID`. It follows
+  the `id` rule of section 3 and is not a secret. Every environment has its own id and its own
+  seed; a seed is never used by two hubs.
+- At start the hub derives the public key from the seed and writes one log line
+  `hub key <id> <public key>`. That line is how an operator reads the public key, which callers
+  then pin (section 6). The public key is not a secret.
+- The process does not start when the seed is missing, is not 64 lowercase hex characters, or the
+  key id breaks the `id` rule.
+- A hub gets a new key by a new seed together with a new key id. Callers pin the new pair.
+
+The seed is a secret. It never appears in a log, an error message or an answer.
 
 ## 5. A signed request
 
@@ -241,7 +240,7 @@ failure:
 
 | # | Check | Status | `error` |
 |---|---|---|---|
-| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII. The request has no `Content-Encoding` other than `gzip`, and its body is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
+| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII. The request has no `Content-Encoding` other than a single `gzip`, its body decodes, and it is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
 | 2 | `Agent-Key` names an entry in `keys` | 401 | `key_unknown` |
 | 3 | The entry is not revoked | 401 | `key_revoked` |
 | 4 | The entry is not expired | 401 | `key_expired` |
@@ -287,9 +286,13 @@ agent-response-v1
 <body hash of the answer, as in section 5>
 ```
 
-A refusal at checks 1 to 8 is not signed: before check 7 the sender is not authenticated, and a
-signed `nonce_replayed` could be used to replace the real answer to the first request. A refusal
-at checks 9 and 10, a `404` and a `500` are signed like any answer.
+A refusal at checks 1 to 8, including a `500` from a failed nonce insert, is not signed: before
+check 7 the sender is not authenticated, and a signed `nonce_replayed` could be used to replace
+the real answer to the first request. A refusal at checks 9 and 10, a `404`, and a `500` that
+occurs after check 8 passed are signed like any answer.
+
+The hub never compresses an answer under `/api/key/`. A caller refuses an answer that carries a
+`Content-Encoding`.
 
 The caller holds the hub's public key and key id in its own configuration. It did not fetch
 them from the hub. It accepts an answer only when:
@@ -370,11 +373,13 @@ The hub:
 - the signed answer for 200, for a refusal at checks 9 and 10, and for an unknown route under
   `/api/key/`; no hub signature on a refusal at checks 1 to 8; an existing endpoint called with
   `Agent-*` headers behaves as before
-- every loader failure of section 3, including a small-order Ed25519 public key in `keys` and in
-  `hub`
-- `AGENT_CORE_KEYS` or `AGENT_CORE_SIGNING_KEY` missing or empty; a signing seed that does not
-  decode, is padded or is not 32 bytes; a seed that matches no `hub` entry or a retired one; a
-  public URL with a path
+- every loader failure of section 3, including a small-order Ed25519 public key
+- `AGENT_CORE_KEYS` or `AGENT_CORE_SIGNING_KEY` missing or empty; a signing seed that is not 64 lowercase hex characters; `AGENT_CORE_HUB_KEY_ID` missing or
+  outside the `id` rule; a public URL with a path
+- the start log line with the hub key id and public key, and no seed in it
+- a failure of the nonce insert other than the unique constraint gives an unsigned `500` with
+  `{"error": "internal"}`; a `500` after check 8 is signed
+- a corrupt `gzip` body and two content codings (refused at check 1)
 - exactly one log line per request of a `service` key that passed check 8, and no secret in any
   log line or body
 
@@ -385,7 +390,7 @@ The client:
 - an answer without hub headers, with a wrong hub key id, with a wrong signature, a validly
   signed answer to another request of the same key (other nonce, other `Agent-Time`), a changed
   body, a changed status, a time outside the window, and an answer sent with a
-  `Content-Encoding`
+  `Content-Encoding` (all refused)
 - `agent key pin-hub` with an invalid id or key refused with nothing written, and no silent
   replacement of a pinned key
 - a redirect is not followed
@@ -395,7 +400,8 @@ The client:
 
 - Both repositories use the `cryptography` package for Ed25519 and SHA-256. No own
   implementation of a primitive.
-- New required environment variables of the hub: `AGENT_CORE_KEYS` and `AGENT_CORE_SIGNING_KEY`.
+- New required environment variables of the hub: `AGENT_CORE_KEYS`, `AGENT_CORE_SIGNING_KEY` and
+  `AGENT_CORE_HUB_KEY_ID`.
   Like every `AGENT_CORE_*` variable, a missing or empty value stops the process. The list of
   required variables in the README, the compose file and the configuration test is updated in
   the same change, and the image contains the keys file next to `teams.yaml`.
@@ -406,17 +412,17 @@ The client:
 
 ## 11. Rollout order
 
-The hub does not start without its two new variables, and a hub is deployed automatically after
-a merge. The order is therefore fixed, for every environment:
+The hub does not start without its new variables, and a hub is deployed automatically after a
+merge. The order is therefore fixed, for every environment:
 
-1. Create the signing seed where the environment keeps its secrets, and store it there. It is
-   created on a machine of that environment and never travels through chat, mail or a
-   repository. Print only its public key.
-2. Add the public key as a `hub` entry to `keys.yaml` in this repository by pull request, one
-   entry per environment.
-3. Set `AGENT_CORE_KEYS` and `AGENT_CORE_SIGNING_KEY` in the deployment of that environment.
-   A variable the running version does not know is harmless.
-4. Only then merge the change that implements this document.
+1. The deployment of that environment declares the signing seed for its secret tooling, which
+   creates it, and sets `AGENT_CORE_KEYS` and `AGENT_CORE_HUB_KEY_ID`. A variable the running
+   version does not know is harmless, so this step is rolled out first and on its own.
+2. Only then the change that implements this document is merged to the branch that environment
+   deploys from.
+3. An operator reads the public key from the hub's start log line and gives it, with the key id,
+   to those who pin it.
 
-Before step 4 is merged, its pull request states that steps 1 to 3 are done for every
-environment that deploys from the target branch.
+The pull request of step 2 states that step 1 is rolled out for every environment that deploys
+from its target branch. The same holds for every later merge that brings the change to another
+deploying branch, such as a release pull request.
