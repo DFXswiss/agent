@@ -252,10 +252,17 @@ ledger session.
 Deletes finished queue rows and their log files once they are older than the
 retention configured for their state. Each of `done` and `failed` is handled
 independently; when a state has no retention setting, the command prints
-`prune <state> not configured` and keeps everything in that state. A leftover
-worktree under `state/work/<id>` is removed first with the same guards as
-`retry`; a row whose worktree cannot be removed safely is kept with its log
-files and reported as `prune skipped <job-id>: <reason>` on standard error.
+`prune <state> not configured` and keeps everything in that state. Before the
+row is deleted, its pending announcement and outcome activities are retired
+with the same locked check `retry` uses, recorded as `superseded by pruning
+the job`: the activities outlive the row, and a later scan could otherwise
+post one after a re-ingested job's baseline and have `finalize` count it as
+that job's output. A row whose status comment cannot be retired is kept with
+its logs and worktree and reported as `prune skipped <job-id>: a status
+comment could not be retired` on standard error. A leftover worktree under
+`state/work/<id>` is removed after that with the same guards as `retry`; a row
+whose worktree cannot be removed safely is likewise kept and reported as
+`prune skipped <job-id>: <reason>`.
 Output: `job.pruned <job-id>` per row, or `job.pruned none`.
 
 ### `agent runner retry JOB_ID`

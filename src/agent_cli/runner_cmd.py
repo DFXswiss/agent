@@ -706,6 +706,7 @@ def _cmd_supervise(args: list[str]) -> None:
 
 
 def _cmd_prune(args: list[str]) -> None:
+    from . import runner_status
     from .main import open_store
 
     paths = _runner_base()
@@ -733,6 +734,22 @@ def _cmd_prune(args: list[str]) -> None:
                 ):
                     row = own.row("job", job_id)
                     if row is None:
+                        continue
+                    # An interrupted dispatch or supervise can leave this
+                    # attempt's status activity pending. Deleting the row keeps
+                    # the activity, and a later scan could post it after a
+                    # re-ingested job's baseline, where finalize counts it as
+                    # that job's output. Retire it before anything else; a row
+                    # whose comment cannot be retired is kept for the next
+                    # prune, with its logs and worktree.
+                    if not runner_status.retire_status_activities(
+                        store, row, error="superseded by pruning the job"
+                    ):
+                        print(
+                            f"prune skipped {job_id}: a status comment could "
+                            "not be retired",
+                            file=sys.stderr,
+                        )
                         continue
                     # A failed job can leave its worktree behind (a failed
                     # `git worktree add`, or a cleanup `finalize` could not

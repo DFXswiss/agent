@@ -70,6 +70,9 @@ def _done_executor(seen: list[dict[str, Any]] | None = None) -> Any:
     return execute
 
 
+_CREATED_AT = "2026-01-01T00:00:00Z"
+
+
 def _row(**overrides: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": "job-1",
@@ -78,6 +81,7 @@ def _row(**overrides: Any) -> dict[str, Any]:
         "ref": "7",
         "pull_request": False,
         "attempts": 0,
+        "created_at": _CREATED_AT,
     }
     row.update(overrides)
     return row
@@ -249,13 +253,13 @@ def test_outcome_body_is_none_when_no_comment_is_owed(outcome: str) -> None:
 
 def test_status_activity_id_is_deterministic() -> None:
     assert runner_status.status_activity_id(
-        "announce", "job-1", 0
-    ) == runner_status.status_activity_id("announce", "job-1", 0)
+        "announce", "job-1", _CREATED_AT, 0
+    ) == runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
 
 
 def test_status_activity_id_differs_by_kind_and_attempt() -> None:
     ids = {
-        runner_status.status_activity_id(kind, "job-1", attempts)
+        runner_status.status_activity_id(kind, "job-1", _CREATED_AT, attempts)
         for kind in ("announce", "outcome")
         for attempts in (0, 1)
     }
@@ -263,9 +267,29 @@ def test_status_activity_id_differs_by_kind_and_attempt() -> None:
     assert len(ids) == 4
 
 
+def test_status_activity_id_differs_by_generation() -> None:
+    # prune deletes a finished row but keeps its activities; the same mention
+    # can then create a new row with the same id and attempt. The generation
+    # is what keeps the two apart.
+    older = runner_status.status_activity_id(
+        "outcome", "job-1", "2020-01-01T00:00:00Z", 0
+    )
+    newer = runner_status.status_activity_id(
+        "outcome", "job-1", "2026-01-01T00:00:00Z", 0
+    )
+
+    assert older != newer
+
+
+@pytest.mark.parametrize("created_at", [None, ""])
+def test_status_activity_id_rejects_a_missing_generation(created_at: Any) -> None:
+    with pytest.raises(ValueError, match="generation"):
+        runner_status.status_activity_id("announce", "job-1", created_at, 0)
+
+
 def test_status_activity_id_rejects_an_unknown_kind() -> None:
     with pytest.raises(ValueError, match="announce or outcome"):
-        runner_status.status_activity_id("other", "job-1", 0)
+        runner_status.status_activity_id("other", "job-1", _CREATED_AT, 0)
 
 
 # ---------------------------------------------------------- queue_activity
@@ -448,6 +472,8 @@ def test_post_status_posts_against_the_recorded_target(
         _row(attempts=True),
         _row(id=""),
         _row(id=7),
+        _row(created_at=None),
+        _row(created_at=""),
     ],
 )
 def test_post_status_fails_closed_for_an_unusable_row(
@@ -540,7 +566,7 @@ def test_post_status_retires_an_announcement_whose_executor_raises(
     # baseline, and would be counted as the job's own output.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
 
     def raising_execute(*_args: Any) -> str:
         raise RuntimeError("gh unavailable")
@@ -561,7 +587,7 @@ def test_post_status_retires_an_announcement_left_pending(
 ) -> None:
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
 
     def unfinished_execute(_store: Store, _runner: Any, _activity_id: str) -> str:
         return "comment.post pending"
@@ -584,7 +610,7 @@ def test_post_status_leaves_a_done_announcement_alone(
     # no retirement and the announcement counts as delivered.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
 
     try:
         assert _post(store, _row(), home=tmp_path, execute=_done_executor()) is True
@@ -599,7 +625,7 @@ def test_post_status_leaves_a_done_announcement_alone(
 
 def _insert_pending_announcement(store: Store) -> str:
     """Leave this attempt's announcement pending, as an interrupted dispatch does."""
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
     store.write(
         "activity",
         "insert",
@@ -692,6 +718,22 @@ def test_announce_status_reports_unsafe_when_every_update_raises(
     assert saved["execution_status"] == "pending"
 
 
+def test_announce_status_reports_false_for_a_row_without_a_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without `created_at` no activity of this generation can exist, so there
+    # is nothing to post and nothing to retire.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    row = _row()
+    row.pop("created_at")
+    try:
+        assert _announce(store, row, home=tmp_path) is False
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
 def test_announce_status_reports_the_comment_was_posted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -710,7 +752,7 @@ def test_announce_status_reports_a_safely_retired_announcement(
     # so dispatch may start the job.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
 
     def unfinished_execute(_store: Store, _runner: Any, _activity_id: str) -> str:
         return "comment.post pending"
@@ -758,7 +800,9 @@ def test_post_status_does_not_retire_an_outcome_activity(
     # keeps the retry at one comment. Retiring it would stop that retry.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("outcome", "job-1", 0)
+    activity_id = runner_status.status_activity_id(
+        "outcome", "job-1", _CREATED_AT, 0
+    )
 
     def raising_execute(*_args: Any) -> str:
         raise RuntimeError("gh unavailable")
@@ -790,7 +834,7 @@ def test_post_status_adopts_an_already_done_activity_without_executing_it(
     # deterministic id is what keeps the comment single.
     _install_account(monkeypatch)
     store = Store(tmp_path)
-    activity_id = runner_status.status_activity_id("announce", "job-1", 0)
+    activity_id = runner_status.status_activity_id("announce", "job-1", _CREATED_AT, 0)
     executed: list[str] = []
 
     def execute(*_args: Any) -> str:
@@ -818,11 +862,67 @@ def test_post_status_adopts_an_already_done_activity_without_executing_it(
     assert executed == []
 
 
+def test_post_status_does_not_adopt_an_earlier_generations_done_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # prune deletes the finished row but keeps its activities. A mention that
+    # re-ingests the same job id must post its own announcement instead of
+    # treating the earlier generation's `done` row as this attempt's comment.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    old_id = runner_status.status_activity_id(
+        "announce", "job-1", "2020-01-01T00:00:00Z", 0
+    )
+    executed: list[str] = []
+    seen: list[dict[str, Any]] = []
+
+    def execute(_store: Store, _runner: Any, activity_id: str) -> str:
+        executed.append(activity_id)
+        return _done_executor(seen)(_store, _runner, activity_id)
+
+    try:
+        store.write(
+            "activity",
+            "insert",
+            old_id,
+            {
+                "id": old_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "done",
+                "payload": {"body": "earlier generation"},
+            },
+        )
+
+        assert _post(store, _row(), home=tmp_path, execute=execute) is True
+        saved_old = store.row("activity", old_id)
+    finally:
+        store.close()
+
+    assert len(executed) == 1
+    assert executed[0] != old_id
+    assert len(seen) == 1
+    assert seen[0]["payload"]["body"] == "Working on this now."
+    assert saved_old is not None
+    assert saved_old["payload"] == {"body": "earlier generation"}
+
+
 # -------------------------------------------------- retire_status_activities
 
 
 def _status_activity_id(kind: str, *, attempts: int = 0) -> str:
-    return runner_status.status_activity_id(kind, "job-1", attempts)
+    return runner_status.status_activity_id(kind, "job-1", _CREATED_AT, attempts)
+
+
+def _job_generation(**overrides: Any) -> dict[str, Any]:
+    """The row fields `retire_status_activities` reads."""
+    row: dict[str, Any] = {
+        "id": "job-1",
+        "created_at": _CREATED_AT,
+        "attempts": 0,
+    }
+    row.update(overrides)
+    return row
 
 
 def _activity_payload(activity_id: str, status: str) -> dict[str, Any]:
@@ -847,7 +947,7 @@ def test_retire_status_activities_retires_both_pending_activities(
             )
 
         assert runner_status.retire_status_activities(
-            store, {"id": "job-1", "attempts": 0}
+            store, _job_generation()
         ) is True
 
         for activity_id in ids:
@@ -869,7 +969,7 @@ def test_retire_status_activities_leaves_a_done_activity_alone(tmp_path: Path) -
 
         # The outcome activity is absent; both rows are fine.
         assert runner_status.retire_status_activities(
-            store, {"id": "job-1", "attempts": 0}
+            store, _job_generation()
         ) is True
 
         saved = store.row("activity", activity_id)
@@ -885,7 +985,7 @@ def test_retire_status_activities_accepts_absent_activities(tmp_path: Path) -> N
     store = Store(tmp_path)
     try:
         assert runner_status.retire_status_activities(
-            store, {"id": "job-1", "attempts": 3}
+            store, _job_generation(attempts=3)
         ) is True
         assert store.rows("activity") == []
     finally:
@@ -911,7 +1011,7 @@ def test_retire_status_activities_refuses_a_foreign_pending_activity(
         )
 
         assert runner_status.retire_status_activities(
-            store, {"id": "job-1", "attempts": 0}
+            store, _job_generation()
         ) is False
 
         saved = store.row("activity", activity_id)
@@ -938,7 +1038,7 @@ def test_retire_status_activities_reports_a_raising_write(
         monkeypatch.setattr(store, "write", write)
 
         assert runner_status.retire_status_activities(
-            store, {"id": "job-1", "attempts": 0}
+            store, _job_generation()
         ) is False
     finally:
         store.close()
@@ -1005,6 +1105,54 @@ def test_report_outcomes_posts_the_comment_and_marks_the_row_reported(
     assert "report_attempts" not in saved
     assert seen[0]["payload"]["target"] == "issue"
     assert "exit code 1" in seen[0]["payload"]["body"]
+
+
+def test_report_outcomes_does_not_adopt_an_earlier_generations_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pruned row keeps its outcome activity. A later job with the same id
+    # and attempt is a new generation and owes its own comment; adopting the
+    # old `done` row would mark it reported without posting anything.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    row = _failed_row(exit_code=1)
+    old_id = runner_status.status_activity_id(
+        "outcome", row["id"], "2020-01-01T00:00:00Z", row["attempts"]
+    )
+    seen: list[dict[str, Any]] = []
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.write(
+            "activity",
+            "insert",
+            old_id,
+            {
+                "id": old_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "done",
+                "payload": {"body": "earlier generation"},
+            },
+        )
+
+        reported, failed = _report(
+            store, home=tmp_path, execute=_done_executor(seen)
+        )
+        saved = store.row("job", row["id"])
+        saved_old = store.row("activity", old_id)
+    finally:
+        store.close()
+
+    assert reported == [row["id"]]
+    assert failed == []
+    # The executor ran, so the new generation posted its own comment.
+    assert len(seen) == 1
+    assert seen[0]["id"] != old_id
+    assert "exit code 1" in seen[0]["payload"]["body"]
+    assert saved is not None
+    assert saved["reported"] is True
+    assert saved_old is not None
+    assert saved_old["payload"] == {"body": "earlier generation"}
 
 
 def test_report_outcomes_only_reports_rows_marked_reported_false(

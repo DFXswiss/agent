@@ -152,17 +152,31 @@ def outcome_body(
     return _comment(english, german)
 
 
-def status_activity_id(kind: str, job_id: str, attempts: int) -> str:
-    """Deterministic activity id for one status comment of one attempt.
+def status_activity_id(
+    kind: str, job_id: str, created_at: str, attempts: int
+) -> str:
+    """Deterministic activity id for one status comment of one job generation.
 
-    A retry has a new `attempts`, so it derives new ids and gets its own
-    comments. Re-running the same attempt finds the row it already wrote, and
-    the executor's marker keeps the comment single.
+    The generation is the row's `created_at`. `prune` deletes a finished row
+    but keeps its activities, and a later mention of the same pull request
+    inserts a new row with the same id and `attempts: 0`. Without the
+    generation the new job would adopt the earlier one's `done` activities and
+    post no announcement or outcome comment of its own.
+
+    A retry keeps the row's `created_at`, so it stays in its generation and a
+    new `attempts` still gives it new ids. Re-running the same attempt finds
+    the row it already wrote, and the executor's marker keeps the comment
+    single.
     """
     if kind not in _KINDS:
         raise ValueError("status kind must be announce or outcome")
+    if not isinstance(created_at, str) or not created_at:
+        raise ValueError("job generation (created_at) must be a non-empty string")
     return str(
-        uuid.uuid5(uuid.NAMESPACE_URL, f"runner-status:{kind}:{job_id}:{attempts}")
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"runner-status:{kind}:{job_id}:{created_at}:{attempts}",
+        )
     )
 
 
@@ -286,39 +300,46 @@ def _retire_unposted_announcement(
     )
 
 
-def retire_status_activities(store: Store, row: dict[str, Any]) -> bool:
-    """Retire the previous attempt's status activities before a retry.
+def retire_status_activities(
+    store: Store,
+    row: dict[str, Any],
+    *,
+    error: str = "superseded by a retry of the job",
+) -> bool:
+    """Retire a superseded job's pending status activities.
 
-    A retry writes a new attempt's row, but an announcement or outcome
-    activity of the attempt being retried can still be `pending` after an
-    interrupted dispatch or supervise. A later scan would post it after the
-    new attempt's baseline, and `finalize` would count it as the new attempt's
-    output. Under each activity's own lock, such a row is retired exactly as
-    an unposted announcement is. A row that is absent, done or no longer
-    pending is fine and left alone, as is a pending row this device retires.
+    A retry writes a new attempt's row, and `prune` deletes a finished row; in
+    both cases an announcement or outcome activity of the row's current
+    attempt can still be `pending` after an interrupted dispatch or supervise.
+    A later scan would post it after the next attempt's baseline, and
+    `finalize` would count it as that attempt's output. Under each activity's
+    own lock, such a row is retired exactly as an unposted announcement is. A
+    row that is absent, done or no longer pending is fine and left alone, as
+    is a pending row this device retires.
+
+    `error` is the text recorded on a retired row, so prune and retry each say
+    what superseded the comment. The row's `created_at` names the generation,
+    so a re-ingested job with the same id never retires an earlier
+    generation's activities.
 
     Returns True only when both activities are fine; a pending row owned by
     another device, a raising write, or any other exception returns False.
     """
     try:
         job_id = row.get("id")
+        created_at = row.get("created_at")
         attempts = row.get("attempts")
         if (
             not isinstance(job_id, str)
+            or not isinstance(created_at, str)
+            or not created_at
             or not isinstance(attempts, int)
             or isinstance(attempts, bool)
         ):
             return False
         for kind in _KINDS:
-            activity_id = status_activity_id(kind, job_id, attempts)
-            if (
-                _retire_activity(
-                    store,
-                    activity_id,
-                    error="superseded by a retry of the job",
-                )
-                is None
-            ):
+            activity_id = status_activity_id(kind, job_id, created_at, attempts)
+            if _retire_activity(store, activity_id, error=error) is None:
                 return False
         return True
     except (Exception, SystemExit):
@@ -371,6 +392,9 @@ def _post_status(
         job_id = row.get("id")
         if not isinstance(job_id, str) or not job_id:
             return False
+        created_at = row.get("created_at")
+        if not isinstance(created_at, str) or not created_at:
+            return False
         if not isinstance(expected_login, str):
             return False
         try:
@@ -380,7 +404,7 @@ def _post_status(
         if account.login.casefold() != expected_login.casefold():
             return False
         try:
-            activity_id = status_activity_id(kind, job_id, attempts)
+            activity_id = status_activity_id(kind, job_id, created_at, attempts)
         except ValueError:
             return False
         payload = {
@@ -468,17 +492,21 @@ def announce_status(
     if not isinstance(row, dict):
         return False
     job_id = row.get("id")
+    created_at = row.get("created_at")
     attempts = row.get("attempts")
     if (
         not isinstance(job_id, str)
         or not job_id
+        or not isinstance(created_at, str)
+        or not created_at
         or not isinstance(attempts, int)
         or isinstance(attempts, bool)
     ):
-        # No non-empty id or valid attempt means no activity row can exist.
+        # No non-empty id, generation or valid attempt means no activity row
+        # of this attempt can exist.
         return False
     try:
-        activity_id = status_activity_id("announce", job_id, attempts)
+        activity_id = status_activity_id("announce", job_id, created_at, attempts)
     except (Exception, SystemExit):
         return None
     return _retire_unposted_announcement(store, activity_id)

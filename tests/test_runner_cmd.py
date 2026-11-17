@@ -1456,6 +1456,133 @@ def test_prune_removes_a_leftover_worktree_before_deleting_the_row(
     assert f"job.pruned {row['id']}" in capsys.readouterr().out
 
 
+def test_prune_retires_a_pending_status_activity_before_deleting_the_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The activity outlives the row. A later scan could post it after a
+    # re-ingested job's baseline and finalize would count it as that job's
+    # output, so prune retires it first.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"failed": 0}})
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], row["attempts"]
+    )
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+    finally:
+        store.close()
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv", lambda _argv: _completed()
+    )
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        activity = store.row("activity", activity_id)
+    finally:
+        store.close()
+    assert saved is None
+    assert activity is not None
+    assert activity["execution_status"] == "error"
+    assert activity["error"] == "superseded by pruning the job"
+    assert f"job.pruned {row['id']}" in capsys.readouterr().out
+
+
+def test_prune_keeps_the_row_when_a_status_comment_cannot_be_retired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A row whose activity may still be posted later is kept, with its logs
+    # and worktree, for the next prune. Deleting it would lose the only handle
+    # on that activity.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"retention_days": {"failed": 0}})
+    runner_dir = home / "runner"
+    logs = runner_dir / "state" / "logs"
+    logs.mkdir(parents=True)
+    work = runner_dir / "state" / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    row = _job_row()
+    row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], row["attempts"]
+    )
+    store = Store(home)
+    try:
+        store.write("job", "insert", row["id"], row)
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "s",
+                "type": "comment.post",
+                "execution_status": "pending",
+                "payload": {"body": "previous"},
+            },
+        )
+    finally:
+        store.close()
+    worktree = work / row["id"]
+    worktree.mkdir(parents=True)
+    for suffix in (".exit", ".transcript", ".prompt"):
+        (logs / f"{row['id']}{suffix}").write_text("x", encoding="utf-8")
+    original_write = Store.write
+
+    def write(
+        self: Store, table: str, op: str, row_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if table == "activity" and op == "update":
+            raise RuntimeError("db unavailable")
+        return original_write(self, table, op, row_id, payload)
+
+    monkeypatch.setattr(Store, "write", write)
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv", lambda _argv: _completed()
+    )
+
+    cmd_runner(["prune"])
+
+    store = Store(home)
+    try:
+        saved = store.row("job", row["id"])
+        activity = store.row("activity", activity_id)
+    finally:
+        store.close()
+    assert saved is not None
+    assert saved["state"] == "failed"
+    assert activity is not None
+    assert activity["execution_status"] == "pending"
+    assert worktree.exists()
+    for suffix in (".exit", ".transcript", ".prompt"):
+        assert (logs / f"{row['id']}{suffix}").exists()
+    captured = capsys.readouterr()
+    assert (
+        f"prune skipped {row['id']}: a status comment could not be retired"
+        in captured.err
+    )
+    assert f"job.pruned {row['id']}" not in captured.out
+
+
 def test_prune_keeps_a_row_whose_worktree_cannot_be_removed_safely(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1585,7 +1712,9 @@ def test_retry_retires_a_pending_status_activity_of_the_previous_attempt(
     monkeypatch.setenv("AGENT_HOME", str(home))
     row = _job_row()
     row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
-    activity_id = runner_status.status_activity_id("outcome", row["id"], 0)
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], 0
+    )
     store = Store(home)
     try:
         store.write("job", "insert", row["id"], row)
@@ -1632,7 +1761,9 @@ def test_retry_refuses_when_a_status_activity_cannot_be_retired(
     monkeypatch.setenv("AGENT_HOME", str(home))
     row = _job_row()
     row.update({"state": "failed", "finished": "2020-01-01T00:00:00Z"})
-    activity_id = runner_status.status_activity_id("outcome", row["id"], 0)
+    activity_id = runner_status.status_activity_id(
+        "outcome", row["id"], row["created_at"], 0
+    )
     store = Store(home)
     try:
         store.write("job", "insert", row["id"], row)
