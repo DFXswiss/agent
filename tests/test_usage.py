@@ -480,6 +480,23 @@ def test_fetch_usage_documents_failure_hides_token(response_kind: str, message: 
     assert str(excinfo.value) == message
     assert token not in str(excinfo.value)
     assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_fetch_usage_documents_with_non_ascii_key_hides_key() -> None:
+    key = "tök"
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200)),
+        follow_redirects=False,
+    ) as client:
+        with pytest.raises(StoreError) as excinfo:
+            fetch_usage_documents(SPEND_DRIVER, _usage(SPEND_DRIVER), key, client)
+
+    assert str(excinfo.value) == "driver-d usage request key failed: UnicodeEncodeError"
+    assert key not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
 
 
 @pytest.mark.parametrize("proxy_from_environment", [False, True])
@@ -632,6 +649,22 @@ def test_scan_account_usage_keeps_scanning_after_a_failing_account(tmp_path: Pat
     assert excinfo.value.errors == ("spend-broken: driver-d key missing",)
     assert len(excinfo.value.activity_ids) == 1
     assert lock_keys == [f"usage.snapshot:driver-d:{SPEND_ACCOUNT}"]
+
+
+def test_scan_account_usage_reports_a_non_ascii_key_per_account(tmp_path: Path) -> None:
+    store, directories = _spend_store(tmp_path)
+    _owned_session(store, "s-spend", SPEND_DRIVER)
+    key = "tök"
+    _key(directories[SPEND_DRIVER], key)
+
+    with pytest.raises(AccountUsageError) as excinfo:
+        scan_account_usage(store, now=lambda: "2026-11-04T10:00:00Z")
+
+    assert excinfo.value.errors == (
+        f"{SPEND_ACCOUNT}: driver-d usage request key failed: UnicodeEncodeError",
+    )
+    assert key not in str(excinfo.value)
+    assert _snapshots(store) == []
 
 
 @pytest.mark.parametrize(
