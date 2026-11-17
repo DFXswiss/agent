@@ -1049,8 +1049,8 @@ def _finish_result(
     body = safe(ctx.worker, body)
     save_state(ctx, "result-pending", result_body=body)
     if ctx.mandated_head is not None:
-        # A script mandate serves an order. Its outcome reaches the human as an
-        # order event, never as a pull-request comment.
+        # A script mandate serves an order. Nothing is posted on the pull
+        # request; only a final blocker reaches the human, as an order question.
         return _finish_marker(ctx, dry_run=False, observation=observation)
     if find_result_comment(
         request_runtime.github,
