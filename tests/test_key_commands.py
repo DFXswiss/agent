@@ -513,7 +513,7 @@ def test_whoami_reports_a_signed_refusal_as_verified(agent_home: Path, hub: Fake
     hub.body = b'{"error": "scope_missing"}'
     with pytest.raises(keys.KeyProtocolError) as caught:
         call(agent_home, hub, NOW, HUB_URL)
-    assert str(caught.value) == "hub refused the request: HTTP 403, error scope_missing"
+    assert str(caught.value) == "hub GET /api/key/whoami → HTTP 403: scope_missing"
 
 
 def test_whoami_does_not_follow_an_unsigned_redirect(agent_home: Path, hub: FakeHub) -> None:
@@ -532,7 +532,7 @@ def test_whoami_does_not_follow_a_signed_redirect(agent_home: Path, hub: FakeHub
     hub.extra_headers = [("Location", "https://other.example/api/key/whoami")]
     with pytest.raises(keys.KeyProtocolError) as caught:
         call(agent_home, hub, NOW, HUB_URL)
-    assert str(caught.value) == "hub refused the request: HTTP 307"
+    assert str(caught.value) == "hub GET /api/key/whoami → HTTP 307: no error value"
     assert len(hub.requests) == 1
     assert hub.requests[0].url.host == HUB_HOST
 

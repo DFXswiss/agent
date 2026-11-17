@@ -93,9 +93,10 @@ def valid_id(value: str) -> bool:
     return ID_PATTERN.fullmatch(value) is not None
 
 
-def _require_id(value: str, what: str) -> None:
+def _require_id(value: str, what: str, writes: bool = True) -> None:
     if not valid_id(value):
-        raise KeyProtocolError(f"{what} must be {ID_RULE}; nothing was written")
+        suffix = "; nothing was written" if writes else ""
+        raise KeyProtocolError(f"{what} must be {ID_RULE}{suffix}")
 
 
 def b64url_encode(raw: bytes) -> str:
@@ -494,7 +495,7 @@ def whoami(
     as ``YYYY-MM-DDTHH:MM:SSZ``. A redirect is never followed, and the body of
     an answer that does not verify is never used.
     """
-    _require_id(key_id, "ID")
+    _require_id(key_id, "ID", writes=False)
     origin = hub_origin(hub_url)
     private = _load_private_key(_key_path(agent_home, key_id), key_id)
     request_time = _clock_time(clock)
@@ -539,8 +540,8 @@ def whoami(
     )
     if status != 200:
         error = _error_value(body)
-        detail = f"HTTP {status}" if error is None else f"HTTP {status}, error {error}"
-        raise KeyProtocolError(f"hub refused the request: {detail}")
+        detail = "no error value" if error is None else error
+        raise KeyProtocolError(f"hub {WHOAMI_METHOD} {WHOAMI_TARGET} → HTTP {status}: {detail}")
     try:
         answer = json.loads(body)
     except (ValueError, RecursionError):

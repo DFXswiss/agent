@@ -6250,7 +6250,7 @@ def _key_args(args: list[str], valued: tuple[str, ...], switches: tuple[str, ...
     while idx < len(args):
         name = args[idx]
         if name in seen:
-            die(f"{name} is given twice")
+            die(KEY_USAGE)
         if name in valued:
             if idx + 1 >= len(args):
                 die(f"{name} needs a value")
