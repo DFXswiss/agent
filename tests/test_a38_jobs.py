@@ -1222,6 +1222,271 @@ def test_npm_cache_requires_stamp_version_arch_and_canaries(tmp_path: Path) -> N
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+def _node_program(path: Path, major: str, version: str) -> Path:
+    return _executable(
+        path,
+        "import sys\n"
+        f"print({major!r} if 'process.versions.node' in sys.argv[-1] else {version!r})\n",
+    )
+
+
+def _npm_program(path: Path, log: Path) -> Path:
+    return _executable(
+        path,
+        "from pathlib import Path\n"
+        "root = Path.cwd()\n"
+        "package = root / 'node_modules' / 'example-package' / 'package.json'\n"
+        "package.parent.mkdir(parents=True, exist_ok=True)\n"
+        "package.write_text('{}')\n"
+        f"with Path({str(log)!r}).open('a', encoding='utf-8') as handle:\n"
+        "    handle.write('ci\\n')\n",
+    )
+
+
+def _path_report(script: Path, report: Path) -> None:
+    script.write_text(
+        "import json, os, shutil\n"
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text(json.dumps({{\n"
+        "    'PATH': os.environ.get('PATH'),\n"
+        "    'node': shutil.which('node'),\n"
+        "    'npm': shutil.which('npm'),\n"
+        "    'npx': shutil.which('npx'),\n"
+        "}}), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+
+def _prepare_npm_repo(repo: Path) -> tuple[str, str]:
+    base, head = _repo(repo)
+    (repo / "package-lock.json").write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+    return base, head
+
+
+def test_npm_keeps_path_when_node_major_already_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _prepare_npm_repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    path_bin = tmp_path / "path-bin"
+    path_bin.mkdir()
+    _node_program(path_bin / "node", "24", "v24.1.0")
+    path_log = tmp_path / "path-npm.log"
+    _npm_program(path_bin / "npm", path_log)
+    decoy_bin = agent_home / "a38-node" / "24" / "bin"
+    decoy_bin.mkdir(parents=True)
+    _node_program(decoy_bin / "node", "24", "v24.9.9")
+    decoy_log = tmp_path / "decoy-npm.log"
+    _npm_program(decoy_bin / "npm", decoy_log)
+    report = tmp_path / "path-report.json"
+    inspector = tmp_path / "inspect-path.py"
+    _path_report(inspector, report)
+    job_path = f"{path_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    status = commands.run_commands(
+        json.dumps(
+            {
+                "npm": {"node_major": 24, "canaries": ["example-package/package.json"]},
+                "steps": [[sys.executable, str(inspector)]],
+            }
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    captured = capfd.readouterr()
+    artifacts = _artifacts_from(captured.out)
+    try:
+        assert status == 0, captured.err
+        seen = json.loads(report.read_text(encoding="utf-8"))
+        assert seen["PATH"].split(os.pathsep)[0] == str(path_bin)
+        assert str(decoy_bin) not in seen["PATH"].split(os.pathsep)
+        assert seen["node"] == str(path_bin / "node")
+        stamp = (repo / "node_modules" / ".a38-nm-ok").read_text(encoding="utf-8")
+        assert "-nodev24.1.0-" in stamp
+        assert "v24.9.9" not in stamp
+        assert path_log.read_text(encoding="utf-8").splitlines() == ["ci"]
+        assert not decoy_log.exists()
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_npm_prepends_node_major_directory_for_later_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _prepare_npm_repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    wrong_bin = tmp_path / "wrong-bin"
+    wrong_bin.mkdir()
+    _node_program(wrong_bin / "node", "26", "v26.0.0")
+    wrong_log = tmp_path / "wrong-npm.log"
+    _npm_program(wrong_bin / "npm", wrong_log)
+    prefix = tmp_path / "node-24-prefix"
+    prefix_bin = prefix / "bin"
+    prefix_bin.mkdir(parents=True)
+    _node_program(prefix_bin / "node", "24", "v24.2.0")
+    selected_log = tmp_path / "selected-npm.log"
+    _npm_program(prefix_bin / "npm", selected_log)
+    _executable(prefix_bin / "npx", "raise SystemExit(0)\n")
+    (agent_home / "a38-node").mkdir(parents=True)
+    (agent_home / "a38-node" / "24").symlink_to(prefix, target_is_directory=True)
+    node_bin = agent_home / "a38-node" / "24" / "bin"
+    report = tmp_path / "path-report.json"
+    inspector = tmp_path / "inspect-path.py"
+    _path_report(inspector, report)
+    job_path = f"{wrong_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    status = commands.run_commands(
+        json.dumps(
+            {
+                "npm": {"node_major": 24, "canaries": ["example-package/package.json"]},
+                "env": {"PATH": job_path},
+                "steps": [[sys.executable, str(inspector)]],
+            }
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    captured = capfd.readouterr()
+    artifacts = _artifacts_from(captured.out)
+    try:
+        assert status == 0, captured.err
+        seen = json.loads(report.read_text(encoding="utf-8"))
+        parts = seen["PATH"].split(os.pathsep)
+        assert parts[0] == str(node_bin)
+        assert parts[1] == str(wrong_bin)
+        assert seen["node"] == str(node_bin / "node")
+        assert seen["npm"] == str(node_bin / "npm")
+        assert seen["npx"] == str(node_bin / "npx")
+        stamp = (repo / "node_modules" / ".a38-nm-ok").read_text(encoding="utf-8")
+        assert "-nodev24.2.0-" in stamp
+        assert "v26.0.0" not in stamp
+        assert selected_log.read_text(encoding="utf-8").splitlines() == ["ci"]
+        assert not wrong_log.exists()
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_npm_rejects_directory_node_with_wrong_major(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _prepare_npm_repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    wrong_bin = tmp_path / "wrong-bin"
+    wrong_bin.mkdir()
+    _node_program(wrong_bin / "node", "26", "v26.0.0")
+    wrong_log = tmp_path / "wrong-npm.log"
+    _npm_program(wrong_bin / "npm", wrong_log)
+    node_bin = agent_home / "a38-node" / "24" / "bin"
+    node_bin.mkdir(parents=True)
+    _node_program(node_bin / "node", "22", "v22.0.0")
+    selected_log = tmp_path / "selected-npm.log"
+    _npm_program(node_bin / "npm", selected_log)
+    job_path = f"{wrong_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    runtime = JobRuntime(
+        adapter="commands",
+        common=parse_common_config(
+            {"npm": {"node_major": 24, "canaries": ["example-package/package.json"]}}
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    artifacts = runtime.artifacts
+    try:
+        with pytest.raises(JobError) as raised:
+            runtime.ensure_node_modules()
+        assert str(raised.value) == (
+            f"Node major must be 24; got 22 from {node_bin}"
+        )
+        assert runtime.env["PATH"].split(os.pathsep)[0] == str(wrong_bin)
+        assert not (repo / "node_modules").exists()
+        assert not wrong_log.exists()
+        assert not selected_log.exists()
+    finally:
+        runtime.cleanup(0)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_npm_rejects_missing_node_major_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _prepare_npm_repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    wrong_bin = tmp_path / "wrong-bin"
+    wrong_bin.mkdir()
+    _node_program(wrong_bin / "node", "26", "v26.0.0")
+    wrong_log = tmp_path / "wrong-npm.log"
+    _npm_program(wrong_bin / "npm", wrong_log)
+    node_bin = agent_home / "a38-node" / "24" / "bin"
+    job_path = f"{wrong_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    runtime = JobRuntime(
+        adapter="commands",
+        common=parse_common_config(
+            {"npm": {"node_major": 24, "canaries": ["example-package/package.json"]}}
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    artifacts = runtime.artifacts
+    try:
+        with pytest.raises(JobError) as raised:
+            runtime.ensure_node_modules()
+        assert str(raised.value) == (
+            f"Node major must be 24; got 26 on PATH; expected {node_bin}"
+        )
+        assert runtime.env["PATH"] == job_path
+        assert not (repo / "node_modules").exists()
+        assert not wrong_log.exists()
+    finally:
+        runtime.cleanup(0)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_job_without_npm_keeps_its_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    node_bin = agent_home / "a38-node" / "24" / "bin"
+    node_bin.mkdir(parents=True)
+    _node_program(node_bin / "node", "24", "v24.2.0")
+    report = tmp_path / "path-report.json"
+    inspector = tmp_path / "inspect-path.py"
+    _path_report(inspector, report)
+    job_path = f"{tmp_path / 'tools'}{os.pathsep}{os.environ.get('PATH', '')}"
+    status = commands.run_commands(
+        json.dumps({"steps": [[sys.executable, str(inspector)]]}),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    captured = capfd.readouterr()
+    artifacts = _artifacts_from(captured.out)
+    try:
+        assert status == 0, captured.err
+        seen = json.loads(report.read_text(encoding="utf-8"))
+        assert seen["PATH"] == job_path
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
 def _fake_docker(path: Path) -> Path:
     return _executable(
         path,
