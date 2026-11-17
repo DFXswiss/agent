@@ -52,7 +52,14 @@ from .coordinator_common import (
 )
 from .coordinator_config import WorkerConfig
 from .coordinator_exec import kill_process_group, run_bounded
-from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
+from .coordinator_git import (
+    _order_de_sentence,
+    execute_github,
+    queue_activity,
+    refresh_draft_body,
+    verify_checkout_identity,
+    verify_signed_clean_head,
+)
 from .gate_order import latest_gates, ordered_snapshot_gates
 from .lane import (
     LANE_MODEL_LIMIT,
@@ -2282,6 +2289,9 @@ def write_review_context(
     REVIEW.md exists at the base is the lane told to check its list of
     reused and added elements, the condition of review_rules_bound under
     which the implementer reports that list and the script posts it.
+    For an order, that post runs again before ``gh pr view`` when the
+    stored German sentence or the reused and added list is present, so
+    the text written here is the description the refresh just published.
     """
     c = coord(task)
     worktree = str(c.get("worktree") or "")
@@ -2357,6 +2367,19 @@ def write_review_context(
 
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
+    # The list post and the sentence replacement share one write. Reading
+    # before that write keeps a published English title for the review.
+    if source_kind(c) == ORDER_KIND and number is not None and target != "":
+        reused_lines = task.get("reused_lines")
+        added_lines = task.get("added_lines")
+        has_lists = (
+            isinstance(reused_lines, list)
+            and isinstance(added_lines, list)
+            and bool(reused_lines)
+            and bool(added_lines)
+        )
+        if _order_de_sentence(task) is not None or has_lists:
+            refresh_draft_body(store, worker, task, runner)
     if number is None or target == "":
         pr_path.write_text(
             "The pull request body is not available.\n",

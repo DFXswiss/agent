@@ -541,8 +541,10 @@ A record of a check lane is closed the same way, but closing it does not retry t
    title is not accepted, including when that line equals the text just
    generated. The text stored in `change_summary_de` is the full German
    sentence. The check reads the published description, not the request
-   that was sent. `gh pr view` in the review context reads that same
-   published description. When the full German sentence is stored, that
+   that was sent. The review context runs that same refresh before its
+   `gh pr view` when the stored German sentence or the reused and added
+   list is present, and the view then reads the description that refresh
+   published. When the full German sentence is stored, that
    `DE:` line is `Entwurf für Auftrag <eight characters>: <sentence>`
    and not the English title. When the sentence is missing, or it only
    repeats the English title, posting the reused and added list may
