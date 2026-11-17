@@ -557,9 +557,11 @@ Above that table the page shows one compact line per provider: every provider
 Agent knows (`claude`, `codex`, `grok`, `openrouter`) and every provider of the
 inventory. The line shows the time until the quota resets, a bar and the used
 percentage of the headline window (Claude: weekly; Grok: the billing period;
-OpenRouter: the key limit, when it has one). A provider without a usage reader
-on this device (today `codex`) shows `not read`; a provider with a reader but
-no snapshot with a percentage shows `no data`; neither is shown as 0 %.
+OpenRouter: the key limit, when it has one). A provider Agent has no usage
+reader for (today `codex`) shows `not read`. A provider with a reader shows
+`no data` when none of its snapshots has a headline percentage or another
+figure; OpenRouter without a limit shows its USD usage instead. Neither is
+shown as 0 %, and both are shown as icons of the dashboard's state mapping.
 Opening a provider lists each quota window (Claude: five hours, weekly and the
 weekly per-model windows) with its reset and bar, then each account with its
 own bar and the age of its newest snapshot (`recorded 4 min ago`). A snapshot is

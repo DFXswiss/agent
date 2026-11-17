@@ -108,7 +108,7 @@
     // One icon for every state or status value the code produces, one family per line:
     // running or active, task in progress, open or waiting, blocked, ready, merged or done,
     // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
-    // unavailable) and unknown.
+    // unavailable), usage without a figure (no data, not read) and unknown.
     const STATE_ICONS = {
       "running": "▶", "active": "▶", "working": "▶",
       "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
@@ -120,6 +120,7 @@
       "failed": "✖", "error": "✖",
       "cancelled": "⊘",
       "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
+      "no data": "∅", "not read": "⊗",
       "unknown": "?"
     };
     const STATE_FALLBACK_ICON = "◌";
@@ -230,6 +231,23 @@
       el.innerHTML = html;
       restoreCopyFocus(focus);
     }
+
+    // Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
+    // date-time without a zone designator, which the browser would read as local
+    // time, is read as UTC.
+    function timestampMs(value) {
+      const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
+      return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
+    }
+
+    // Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
+    function elapsedText(timestamp, now) {
+      const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
+      if (seconds < 60) return seconds + " s";
+      if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+      if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
+      return Math.floor(seconds / 86400) + " d";
+    }
     /* DASHBOARD_COMMON_END */
 
     async function tick() {
@@ -310,23 +328,6 @@ function orderCell(value) {
     return `<a href="${esc(value)}" target="_blank" rel="noopener">${esc(value)}</a>`;
   }
   return idOrText(value);
-}
-
-// Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
-// date-time without a zone designator, which the browser would read as local
-// time, is read as UTC.
-function timestampMs(value) {
-  const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
-  return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
-}
-
-// Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
-function elapsedText(timestamp, now) {
-  const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
-  if (seconds < 60) return seconds + " s";
-  if (seconds < 3600) return Math.floor(seconds / 60) + " min";
-  if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
-  return Math.floor(seconds / 86400) + " d";
 }
 
 function isTimestamp(value) {

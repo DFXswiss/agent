@@ -140,7 +140,7 @@
     // One icon for every state or status value the code produces, one family per line:
     // running or active, task in progress, open or waiting, blocked, ready, merged or done,
     // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
-    // unavailable) and unknown.
+    // unavailable), usage without a figure (no data, not read) and unknown.
     const STATE_ICONS = {
       "running": "▶", "active": "▶", "working": "▶",
       "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
@@ -152,6 +152,7 @@
       "failed": "✖", "error": "✖",
       "cancelled": "⊘",
       "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
+      "no data": "∅", "not read": "⊗",
       "unknown": "?"
     };
     const STATE_FALLBACK_ICON = "◌";
@@ -262,6 +263,23 @@
       el.innerHTML = html;
       restoreCopyFocus(focus);
     }
+
+    // Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
+    // date-time without a zone designator, which the browser would read as local
+    // time, is read as UTC.
+    function timestampMs(value) {
+      const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
+      return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
+    }
+
+    // Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
+    function elapsedText(timestamp, now) {
+      const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
+      if (seconds < 60) return seconds + " s";
+      if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+      if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
+      return Math.floor(seconds / 86400) + " d";
+    }
     /* DASHBOARD_COMMON_END */
 
     const SUBSCRIPTION_COLUMNS = 11;
@@ -331,31 +349,32 @@
     }
 
     // One line: name, time until the reset, bar and percentage; without a
-    // percentage the figure or status word stands in place of the bar.
-    function usageLineHtml(name, resetsIn, percent, text) {
-      const bar = typeof percent === "number"
-        ? usageMeter(percent) + `<span>${esc(percent)}%</span>`
-        : `<span class="usage-muted">${esc(text || "—")}</span><span></span>`;
+    // percentage the status icon or the figure stands in place of the bar.
+    function usageLineHtml(name, resetsIn, percent, text, status) {
+      let bar;
+      if (typeof percent === "number") bar = usageMeter(percent) + `<span>${esc(percent)}%</span>`;
+      else if (status) bar = `<span${stateCellAttributes(status)}>${stateIcon(status)}</span><span></span>`;
+      else bar = `<span class="usage-muted">${esc(text || "—")}</span><span></span>`;
       return `<span class="usage-line"><span>${name}</span><span>${esc(resetsIn || "")}</span>${bar}</span>`;
     }
 
     // The compact provider list of /api/state usage_overview. Each provider opens
     // to its quota windows and its accounts; open providers stay open.
-    function usageOverviewHtml(providers, open, detailed, sortByUsed) {
+    function usageOverviewHtml(providers, open, detailed, sortByUsed, now) {
       const list = providers.slice();
       if (sortByUsed) {
         list.sort((a, b) => (typeof b.used_percent === "number" ? b.used_percent : -1) - (typeof a.used_percent === "number" ? a.used_percent : -1));
       }
       return list.map(p => {
-        const head = usageLineHtml(`<b>${esc(p.name)}</b>`, p.resets_in, p.used_percent, p.status || p.text);
+        const head = usageLineHtml(`<b>${esc(p.name)}</b>`, p.resets_in, p.used_percent, p.text, p.status);
         const windows = (p.windows || []).map(w => usageLineHtml(esc(w.name), w.resets_in, w.used_percent, "")).join("");
         const accounts = (p.accounts || []).map(a => {
           const label = a.label ? ` <span class="usage-muted">${esc(a.label)}</span>` : "";
-          const age = a.recorded ? `<br><span class="usage-muted">recorded ${esc(a.recorded)}</span>` : "";
-          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text);
+          const age = a.recorded ? `<br><span class="usage-muted" title="${esc(a.recorded)}">recorded ${esc(elapsedText(a.recorded, now))} ago</span>` : "";
+          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text, a.status);
         }).join("");
         const isOpen = detailed || open.has(p.provider);
-        const recorded = p.recorded ? `<p class="usage-muted">recorded ${esc(p.recorded)}</p>` : "";
+        const recorded = p.recorded ? `<p class="usage-muted" title="${esc(p.recorded)}">recorded ${esc(elapsedText(p.recorded, now))} ago</p>` : "";
         return `<details class="usage-provider" data-provider="${esc(p.provider)}"${isOpen ? " open" : ""}><summary>${head}</summary>`
           + `<div class="usage-detail">${windows || ""}${accounts ? "<p><b>Accounts</b></p>" + accounts : ""}${recorded}</div></details>`;
       }).join("") || `<p class="usage-muted">—</p>`;
@@ -368,7 +387,7 @@
     function renderUsageOverview() {
       setHtml(document.getElementById("usage-overview"), usageOverviewHtml(usageOverview, usageOpen,
         document.getElementById("usage-detailed").checked,
-        document.getElementById("usage-sort").checked));
+        document.getElementById("usage-sort").checked, Date.now()));
     }
 
     async function postControl(id, body) {
@@ -537,12 +556,13 @@
         err.textContent = String(e);
       }
     }
-    document.getElementById("usage-overview").addEventListener("click", event => {
-      const summary = event.target instanceof Element ? event.target.closest("summary") : null;
-      if (!summary) return;
-      const provider = summary.parentElement.dataset.provider;
-      if (usageOpen.has(provider)) usageOpen.delete(provider); else usageOpen.add(provider);
-    });
+    // toggle does not bubble, so it is caught in the capture phase. While
+    // "detailed" opens every provider, the viewer's own choice is kept as it was.
+    document.getElementById("usage-overview").addEventListener("toggle", event => {
+      const details = event.target;
+      if (!(details instanceof HTMLDetailsElement) || document.getElementById("usage-detailed").checked) return;
+      if (details.open) usageOpen.add(details.dataset.provider); else usageOpen.delete(details.dataset.provider);
+    }, true);
     document.getElementById("usage-detailed").onchange = renderUsageOverview;
     document.getElementById("usage-sort").onchange = renderUsageOverview;
     tick();

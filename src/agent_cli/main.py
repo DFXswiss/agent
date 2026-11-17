@@ -82,11 +82,11 @@ from .model_slots import (
     SLOT_STAGES,
     STAGE_CHOICES,
     STAGE_SLOTS,
+    SUPPORTED_PROVIDERS,
     TASK_MODELS_NOT_CONFIGURED,
     ModelSlots,
     ModelSlotsError,
     PinnedModelSlotsError,
-    SUPPORTED_PROVIDERS,
     canonical_checklist,
     canonical_key,
     canonical_stage,
@@ -122,6 +122,7 @@ from .small_change import (
     is_small_change_evidence,
 )
 from .store import Store, StoreConnectionError, StoreError, utcnow
+from .timestamps import parse_utc_timestamp
 from .usage import (
     VENDOR as GROK_VENDOR,
     AccountUsageError,
@@ -2499,7 +2500,8 @@ def _subscriptions_dashboard(
     }
 
 
-# Providers whose usage this device can read (Grok billing, usage_accounts).
+# Providers Agent has a usage reader for (Grok billing, usage_accounts); a
+# provider outside this set is never read on any device.
 USAGE_READ_PROVIDERS = USAGE_ACCOUNT_PROVIDERS | {GROK_VENDOR}
 USAGE_PROVIDER_NAMES = {
     "claude": "Claude",
@@ -2512,20 +2514,20 @@ USAGE_NO_DATA = "no data"
 
 
 def _usage_time(value: Any) -> datetime | None:
-    """An ISO-8601 time of a usage snapshot as aware UTC, or ``None``."""
-    if not isinstance(value, str) or not value:
-        return None
+    """An ISO-8601 time of a usage snapshot as aware UTC, or ``None``.
+
+    Snapshots may come from other devices, so a time that cannot be shown in
+    UTC is unknown instead of an error of the whole ``/api/state``.
+    """
     try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
+        return parse_utc_timestamp(value)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _usage_duration_text(seconds: float) -> str:
-    """A short duration such as ``5 d 19 h``, ``3 h 12 min`` or ``4 min``."""
+    """The countdown to a future quota reset, such as ``5 d 19 h``,
+    ``3 h 12 min`` or ``4 min``; elapsed times are shown by the browser."""
     minutes = int(max(seconds, 0) // 60)
     if minutes < 1:
         return "<1 min"
@@ -2554,11 +2556,15 @@ def _usage_rank(window: dict[str, Any]) -> float:
 
 
 def _usage_percent_text(value: float) -> str:
+    """A percentage without trailing zeros, such as ``14%`` or ``21.5%``."""
     return f"{value:g}%"
 
 
-def _usage_windows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int, str | None]:
-    """Quota windows of one snapshot, the index of its headline window, and a
+def _usage_windows(
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int | None, str | None]:
+    """Quota windows of one snapshot, the index of its headline window (``None``
+    when the snapshot has none, such as Claude without a weekly window), and a
     figure without a percentage (OpenRouter without a limit).
 
     Each window is ``{"name", "used_percent", "resets_at"}``; a value the
@@ -2590,7 +2596,7 @@ def _usage_windows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int, 
             if found:
                 windows.append(found)
         weekly = [i for i, w in enumerate(windows) if w["name"] == "Week"]
-        return windows, weekly[0] if weekly else 0, None
+        return windows, weekly[0] if weekly else None, None
     if provider == "grok":
         period = payload.get("period_type")
         name = "Period"
@@ -2620,7 +2626,7 @@ def _usage_windows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int, 
             if reset and resets_at is None:
                 text += f" ({reset})"
         return [{"name": "Limit", "used_percent": used, "resets_at": resets_at}], 0, text
-    return [], 0, None
+    return [], None, None
 
 
 def _usage_overview(
@@ -2646,6 +2652,7 @@ def _usage_overview(
         headline: dict[str, Any] | None = None
         text: str | None = None
         newest: datetime | None = None
+        newest_raw: str | None = None
         for row in subscription_rows:
             if row.get("provider") != provider:
                 continue
@@ -2656,6 +2663,7 @@ def _usage_overview(
                 "label": row.get("label"),
                 "listed": row.get("listed"),
                 "origin": event.get("_origin_device_id") if event else None,
+                "status": None,
                 "used_percent": None,
                 "resets_in": None,
                 "text": None,
@@ -2663,18 +2671,22 @@ def _usage_overview(
             }
             accounts.append(account)
             if payload is None:
-                account["text"] = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
+                account["status"] = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
                 continue
             own, primary, figure = _usage_windows(payload)
             fetched = _usage_time(payload.get("fetched_at"))
             if fetched is not None:
-                account["recorded"] = _usage_duration_text((now - fetched).total_seconds()) + " ago"
-                newest = fetched if newest is None or fetched > newest else newest
-            main = own[primary] if own else None
+                # The browser shows the age with elapsedText.
+                account["recorded"] = payload["fetched_at"]
+                if newest is None or fetched > newest:
+                    newest, newest_raw = fetched, payload["fetched_at"]
+            main = own[primary] if primary is not None else None
             if main is not None:
                 account["used_percent"] = main["used_percent"]
                 account["resets_in"] = _usage_resets_in(main["resets_at"], now)
             account["text"] = figure
+            if account["used_percent"] is None and figure is None:
+                account["status"] = USAGE_NO_DATA
             for item in own:
                 shown = windows.get(item["name"])
                 if shown is None or _usage_rank(item) > _usage_rank(shown):
@@ -2709,11 +2721,7 @@ def _usage_overview(
                 "resets_in": headline["resets_in"] if headline else None,
                 "text": None if headline else text,
                 "summary": summary,
-                "recorded": (
-                    _usage_duration_text((now - newest).total_seconds()) + " ago"
-                    if newest is not None
-                    else None
-                ),
+                "recorded": newest_raw,
                 "windows": list(windows.values()),
                 "accounts": accounts,
             }

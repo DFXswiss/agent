@@ -383,27 +383,27 @@ def test_usage_overview_one_entry_per_provider() -> None:
     # The headline is the weekly window of the most used account.
     assert (claude["used_percent"], claude["window"], claude["resets_in"]) == (32.0, "Week", "6 d 0 h")
     assert claude["summary"] == "Claude 32% 6 d 0 h"
-    assert claude["status"] is None and claude["recorded"] == "4 min ago"
+    assert claude["status"] is None and claude["recorded"] == "2026-11-17T09:56:00+00:00"
     assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
         ("Week", 32.0, "6 d 0 h"),
         ("Week Fable", 21.0, "6 d 0 h"),
     ]
     assert [
-        (a["account"], a["label"], a["used_percent"], a["text"], a["recorded"]) for a in claude["accounts"]
+        (a["account"], a["label"], a["used_percent"], a["status"], a["recorded"]) for a in claude["accounts"]
     ] == [
-        ("seat-1@example.com", "Team seat 1", 14.0, None, "4 min ago"),
+        ("seat-1@example.com", "Team seat 1", 14.0, None, "2026-11-17T09:56:00+00:00"),
         ("seat-2@example.com", None, None, "no data", None),
-        ("seat-3@example.com", None, 32.0, None, "2 h 0 min ago"),
+        ("seat-3@example.com", None, 32.0, None, "2026-11-17T08:00:00+00:00"),
     ]
 
     codex = overview["codex"]
     assert codex["status"] == "not read" and codex["used_percent"] is None
     assert codex["summary"] == "Codex not read"
-    assert [(a["account"], a["text"]) for a in codex["accounts"]] == [("seat-1@example.com", "not read")]
+    assert [(a["account"], a["status"]) for a in codex["accounts"]] == [("seat-1@example.com", "not read")]
 
     grok = overview["grok"]
     assert grok["summary"] == "Grok 0% 3 d 4 h"
-    assert grok["used_percent"] == 0.0 and grok["recorded"] == "<1 min ago"
+    assert grok["used_percent"] == 0.0 and grok["recorded"] == "2026-11-17T09:59:30+00:00"
     assert [(w["name"], w["used_percent"]) for w in grok["windows"]] == [("Weekly", 0.0), ("GrokBuild", 0.0)]
 
     router = overview["openrouter"]
@@ -435,7 +435,40 @@ def test_usage_overview_without_data_never_shows_zero() -> None:
     assert router["summary"] == "OpenRouter $1.25 / unlimited (monthly)"
     assert overview["claude"]["status"] == "no data"
     assert overview["claude"]["accounts"][0]["used_percent"] is None
+    assert overview["claude"]["accounts"][0]["status"] == "no data"
     assert overview["claude"]["accounts"][0]["recorded"] is None
+
+
+def test_usage_overview_claude_headline_is_weekly_only() -> None:
+    body = usage_body(five_hour={"utilization": 80.0, "resets_at": "2026-11-17T12:00:00+00:00"})
+    body.update({"seven_day": None, "limits": []})
+    only_five_hour = claude_snapshot("seat-1@example.com", None, body, "2026-11-17T09:56:00+00:00")
+    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["provider"] == "claude"
+    # The five-hour window is shown, but never as the weekly headline.
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+        ("5h", 80.0, "2 h 0 min")
+    ]
+    assert claude["used_percent"] is None and claude["window"] is None
+    assert claude["status"] == "no data" and claude["summary"] == "Claude no data"
+    assert claude["accounts"][0]["used_percent"] is None
+    assert claude["accounts"][0]["status"] == "no data"
+
+    weekly = claude_snapshot("seat-2@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour), _recorded(weekly)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["summary"] == "Claude 14% 6 d 0 h"
+
+
+def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
+    edge = "0001-01-01T00:00:00+14:00"
+    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), edge)
+    snapshot["windows"]["weekly"]["resets_at"] = edge
+    rows = _subscription_dashboard_rows((), [_recorded(snapshot)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["used_percent"] == 14.0 and claude["resets_in"] is None
+    assert claude["recorded"] is None and claude["summary"] == "Claude 14%"
 
 
 def test_usage_overview_markup() -> None:
@@ -445,6 +478,9 @@ def test_usage_overview_markup() -> None:
     html = SECTION_PAGE.read_text(encoding="utf-8")
     assert '<div id="usage-overview"></div>' in html
     assert 'id="usage-detailed"' in html and 'id="usage-sort"' in html
+    # The viewer's open providers follow the details element, outside "detailed".
+    assert 'addEventListener("toggle", event => {' in html
+    assert "if (details.open) usageOpen.add(details.dataset.provider);" in html
     assert "usageOverview = data.usage_overview || [];" in html
 
 
@@ -457,16 +493,19 @@ def test_usage_overview_renders_in_node() -> None:
     functions = "\n".join(
         section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
     )
+    # The shared block brings stateIcon and stateCellAttributes.
+    helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
     overview = _usage_overview(_overview_rows(), OVERVIEW_NOW)
     overview[0]["accounts"][0]["label"] = "<b>seat</b>"
     harness = helpers + "\n" + functions + f"""
 const overview = {json.dumps(overview)};
+const NOW = Date.parse("2026-11-17T10:00:00Z");
 console.log(JSON.stringify({{
-  closed: usageOverviewHtml(overview, new Set(), false, false),
-  open: usageOverviewHtml(overview, new Set(["claude"]), false, false),
-  detailed: usageOverviewHtml(overview, new Set(), true, false),
-  sorted: usageOverviewHtml(overview, new Set(), false, true),
-  none: usageOverviewHtml([], new Set(), false, false),
+  closed: usageOverviewHtml(overview, new Set(), false, false, NOW),
+  open: usageOverviewHtml(overview, new Set(["claude"]), false, false, NOW),
+  detailed: usageOverviewHtml(overview, new Set(), true, false, NOW),
+  sorted: usageOverviewHtml(overview, new Set(), false, true, NOW),
+  none: usageOverviewHtml([], new Set(), false, false, NOW),
 }}));
 """
     completed = subprocess.run(
@@ -482,9 +521,17 @@ console.log(JSON.stringify({{
         '<meter min="0" max="100" low="70" high="90" optimum="0" value="32" title="32%"></meter>'
         "<span>32%</span></span></summary>"
     ) in closed
-    assert '<span class="usage-muted">not read</span>' in closed
+    not_read = state_icons(html)["not read"]
+    assert (
+        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
+        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
+    ) in closed
+    assert '<span title="no data" aria-label="no data">' in out["open"]
     assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
-    assert "recorded 4 min ago" in closed
+    # The browser renders the age of the raw timestamp with the shared elapsedText.
+    assert '<span class="usage-muted" title="2026-11-17T09:56:00+00:00">recorded 4 min ago</span>' in closed
+    assert "recorded 2 h ago" in closed
+    assert '<p class="usage-muted" title="2026-11-17T09:59:30+00:00">recorded 30 s ago</p>' in closed
     assert "&lt;b&gt;seat&lt;/b&gt;" in closed and "<b>seat</b>" not in closed
     assert '<details class="usage-provider" data-provider="claude" open>' in out["open"]
     assert out["open"].count(" open>") == 1
@@ -952,6 +999,8 @@ def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
         ("ja",),
         ("nein",),
         ("pending",),
+        ("no data",),
+        ("not read",),
     )
     family_icons = []
     for family in families:
@@ -1076,7 +1125,7 @@ def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> Non
     assert 'if (value === null || value === undefined) return "—";' in top_level_function(
         code, "orderCell"
     )
-    elapsed = top_level_function(code, "elapsedText")
+    elapsed = section_function(common_block(static_page("index.html")), "elapsedText")
     for unit in ('" s"', '" min"', '" h"', '" d"'):
         assert unit in elapsed
     assert "setInterval(ordersTick, 2000);" in code
@@ -1084,15 +1133,19 @@ def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> Non
 
 def test_a_timestamp_without_a_zone_counts_as_utc() -> None:
     code = orders_script()
-    # Every parse of a timestamp goes through timestampMs.
-    assert "(now - timestampMs(timestamp))" in top_level_function(code, "elapsedText")
+    shared = common_block(static_page("index.html"))
+    # Every parse of a timestamp goes through timestampMs, which the shared block
+    # carries with elapsedText on every page.
+    assert "function timestampMs(" not in code and "function elapsedText(" not in code
+    assert "(now - timestampMs(timestamp))" in section_function(shared, "elapsedText")
     assert (
         'typeof value === "string" && !Number.isNaN(timestampMs(value))'
         in top_level_function(code, "isTimestamp")
     )
-    for name in ("elapsedText", "isTimestamp", "elapsedCell"):
+    assert "Date.parse(" not in section_function(shared, "elapsedText")
+    for name in ("isTimestamp", "elapsedCell"):
         assert "Date.parse(" not in top_level_function(code, name), name
-    parse = top_level_function(code, "timestampMs")
+    parse = section_function(shared, "timestampMs")
     assert (
         "return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);"
         in parse
@@ -1143,8 +1196,6 @@ def page_behaviour() -> dict:
         top_level_function(code, name)
         for name in (
             "orderCell",
-            "timestampMs",
-            "elapsedText",
             "isTimestamp",
             "elapsedCell",
             "repoPart",
