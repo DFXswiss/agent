@@ -1,19 +1,21 @@
 # Key protocol
 
 This document fixes the wire format for key identity: the keys file, how a request is signed,
-how the hub signs its answer, and every refusal. It is the technical specification for the
-first build step of the team record.
+how the hub signs its answer, every refusal, and the release query. It is the technical
+specification for the first two build steps of the team record.
 
-**Status:** the hub side of the first build step is implemented in this repository; the client
-commands are in the client repository. Everything listed under "Not built in this step" is
-not implemented. The rules behind it are in
+**Status:** the hub side of the first build step and of the release query (the second build
+step) is implemented in this repository; the client commands of the first build step are in the
+client repository. The client command for the release query is specified in the client
+repository's next change. Everything listed under "Not built yet" is not implemented. The rules
+behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
 
-## 1. Scope of the first build step
+## 1. Scope of what is built now
 
-Built in this step:
+Built in the first build step:
 
 - the keys file and its loader
 - verification of a signed request
@@ -21,15 +23,22 @@ Built in this step:
 - one endpoint that uses both: `GET /api/key/whoami`
 - in the client: creating a key, pinning the hub key, calling that endpoint
 
-Not built in this step:
+Built in the second build step:
+
+- the release query `GET /api/key/release` on the hub (section 8), with its final wire format.
+  Until the team record exists its answer is yes for every pull request.
+
+Not built yet:
 
 - passkey sign-in and session keys (the keys file already has a place for passkeys)
 - device keys in secure hardware (kind `p256`)
-- the allow list on a device, grants, the team record, the release query
+- the allow list on a device, grants, the team record (tasks, orders, questions)
+- the client command for the release query
 
 No existing endpoint changes its behaviour: GitHub sign-in, device pairing and device tokens
 work as before. The hub additionally requires three new environment variables at start
-(section 10); section 11 gives the order in which they are rolled out.
+(section 11); section 12 gives the order in which they are rolled out. The release query needs
+no new environment variable and no change to the keys file.
 
 ## 2. Encodings
 
@@ -268,7 +277,10 @@ failure:
   `500`. A nonce is stored only after check 7 passed and is kept for 10
   minutes, so a request that fails an earlier check cannot fill the store.
 - Check 10 applies only to an endpoint that names a subject, and then only to `service` keys.
-  `GET /api/key/whoami` names none.
+  `GET /api/key/whoami` names none; `GET /api/key/release` names one (section 8).
+- An endpoint that takes a query validates it after check 9 and before check 10. An invalid
+  query gets the status 400 with the body `{"error":"query_invalid"}`. Today only
+  `GET /api/key/release` takes a query; every other endpoint ignores its query.
 - A refusal has the JSON body `{"error":"<value>"}` and nothing else, written without
   whitespace. It carries no data of the
   hub. The keys file is public, so the values of checks 2 to 5 tell a caller nothing it could
@@ -299,8 +311,8 @@ agent-response-v1
 
 A refusal at checks 1 to 8, including a `500` from a failed nonce insert, is not signed: before
 check 7 the sender is not authenticated, and a signed `nonce_replayed` could be used to replace
-the real answer to the first request. A refusal at checks 9 and 10, a `404`, and a `500` that
-occurs after check 8 passed are signed like any answer.
+the real answer to the first request. A refusal at checks 9 and 10, a `400` for an invalid
+query, a `404`, and a `500` that occurs after check 8 passed are signed like any answer.
 
 The hub never compresses an answer under `/api/key/`. A caller refuses an answer that carries a
 `Content-Encoding`.
@@ -337,7 +349,83 @@ Needs a signed request, no scope, and names no subject. The answer is signed.
 The answer has exactly these fields, plus `program`, `subjects` and `expires` when the entry has
 them. It shows nothing about any other key.
 
-## 8. The client
+## 8. `GET /api/key/release`
+
+Asks whether one pull request may leave draft. Needs a signed request (section 5), the scope
+`release:query`, and names a subject. The answer is signed (section 6). By the scope table of
+section 3 only a `service` key can hold `release:query`. An `agent` key, and a `service` key
+without the scope, gets `scope_missing`; a `staff` key is a passkey and is already refused at
+check 5.
+
+### Query
+
+The query has exactly the two parameters `repository` and `pull_request`, each exactly once, in
+any order, and nothing else:
+
+```text
+GET /api/key/release?repository=example-org%2Fexample-repo&pull_request=42
+```
+
+- `repository` has the form of an entry of `subjects` (section 3): `owner/name`, lowercase. The
+  rule is the loader's rule; a repository written with an uppercase letter breaks it and is
+  refused as an invalid query, also when it differs from a subject only in letter case.
+- `pull_request` is a decimal number from 1 to 2147483647, without sign, without leading zero
+  and without any other character.
+- The hub takes the query from the raw request target that the signature covers. The only
+  percent-encoding allowed is the `/` of `repository` written as `%2F` or `%2f`; a literal `/`
+  is allowed as well. Any other percent sign, a `+`, an empty value, a parameter without `=`, an
+  empty parameter (such as `&&` or a trailing `&`), a missing, repeated or unknown parameter, an
+  invalid value and a request without query are refused.
+
+### Order of checks
+
+1. Checks 1 to 9 of section 5 run first and unchanged. A key without `release:query` gets
+   `scope_missing`, also when its query is invalid.
+2. The query is validated. An invalid query gets the status 400 with the body
+   `{"error":"query_invalid"}`.
+3. Check 10: the subject is the `repository` value, with `/`. For a `service` key it must be one
+   of the key's `subjects`, compared exactly; otherwise `subject_not_allowed`.
+
+Every answer after check 8, including the 400 and the 403, is signed (section 6). Another
+method on the path, the path with a trailing slash and `HEAD` get the signed `404` of section 5.
+The log line of section 5 for a `service` key is written unchanged: it holds the raw path
+without the query.
+
+### Answer
+
+Status 200, with exactly these fields in this order:
+
+```json
+{"repository":"example-org/example-repo","pull_request":42,"released":true,"failed":null,"hub_key":"hub-1"}
+```
+
+| Field | Value |
+|---|---|
+| `repository` | The repository as asked, with `/` |
+| `pull_request` | The pull request number, a JSON number |
+| `released` | `true` when the pull request may leave draft, otherwise `false` |
+| `failed` | `null` when `released` is `true`; otherwise the first failed condition below |
+| `hub_key` | The hub key id |
+
+The release rule has three conditions, checked in this order. When one fails, `released` is
+`false` and `failed` names the first that failed:
+
+| `failed` | Condition |
+|---|---|
+| `task_missing` | The pull request is linked to at least one task. |
+| `task_not_ready` | Every linked task has an assignee and the status `in progress` or `ready for review`. |
+| `question_unanswered` | No question of an order for a linked task is unanswered. |
+
+The team record that holds tasks, orders and questions is not built yet. Until it is, no
+condition can fail, and the hub answers `"released":true,"failed":null` for every valid query.
+The wire format is final: a later build step changes only how the answer is computed.
+
+The answer is one input for a guard. It replaces no review rule. The hub does not call the code
+host and does not check that the pull request or the repository exists.
+
+The client command for this endpoint is specified in the client repository's next change.
+
+## 9. The client
 
 | Command | Does |
 |---|---|
@@ -359,9 +447,9 @@ them. It shows nothing about any other key.
 - The separate operating-system account for keys (DESIGN.md §25.6) belongs to a later build
   step.
 
-## 9. Tests this step must carry
+## 10. Tests these steps must carry
 
-The hub:
+The hub, first build step:
 
 - each refusal of section 5 in its order. Checks 9 and 10 are tested through a route that
   exists only in the test suite.
@@ -384,7 +472,8 @@ The hub:
   fractional seconds, with an offset instead of `Z` or with an impossible date (all refused at
   check 1)
 - the host line for a public URL with uppercase letters and with an explicit default port; a
-  public URL with user information, a query or a fragment is refused at start
+  public URL with user information, a query or a fragment, and one whose host name is not in
+  ASCII form, is refused at start
 - a revoked key, an expired key, a key whose `revoked` or `expires` time equals now (refused),
   and a key whose `revoked` time is in the future (accepted)
 - a `webauthn` key used directly
@@ -401,6 +490,26 @@ The hub:
 - exactly one log line per request of a `service` key that passed check 8, and no secret in any
   log line or body
 
+The hub, release query (section 8), through the application with a fixed clock; every case
+asserts the exact status, the exact body and the hub signature:
+
+- a `service` key with the scope and the subject gets a signed 200 with the exact body bytes
+- `%2F` and `%2f` in `repository` are accepted and answered with `/`; both parameter orders
+- a signed 400 `query_invalid` for: each parameter missing, each parameter repeated, an unknown
+  third parameter, an empty value, `pull_request` 0, negative, with a leading zero, with a sign,
+  not decimal and 2147483648, `repository` without `/`, with two `/`, with an invalid owner or
+  name, with a percent sign other than the allowed one, with `+`, and no query at all
+- a key without the scope gets `scope_missing`, also with an invalid query; this is tested for
+  each principal that cannot hold `release:query` (`staff` is refused earlier at check 5)
+- a `service` key asking about a repository outside its `subjects` gets `subject_not_allowed`;
+  a repository that differs from a subject only in letter case gets `query_invalid`
+- another method, a trailing slash and `HEAD` get the signed `404`
+- each of checks 1 to 8 refuses on this endpoint exactly as on `whoami`, unsigned
+- a replayed query gets `nonce_replayed`
+- one log line per request of a `service` key with the raw path without the query, for 200, 400
+  and 403
+- the query parser and the computation of the answer, directly, for every branch
+
 The client:
 
 - key creation: directory and file modes, no overwrite, no private key on standard output, an
@@ -414,7 +523,7 @@ The client:
 - a redirect is not followed
 - no request without a pinned hub key
 
-## 10. Dependencies and configuration
+## 11. Dependencies and configuration
 
 - Both repositories use the `cryptography` package for Ed25519 and SHA-256. No own
   implementation of a primitive.
@@ -428,7 +537,7 @@ The client:
 - One new table, the nonce store: key id, nonce, time seen, with a unique constraint on key id
   and nonce. Rows older than 10 minutes are deleted.
 
-## 11. Rollout order
+## 12. Rollout order
 
 The hub does not start without its new variables, and a hub is deployed automatically after a
 merge. The order is therefore fixed, for every environment:

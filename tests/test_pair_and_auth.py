@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 from fastapi.testclient import TestClient
 
-from agent_core.db import utcnow
+from agent_core.app import create_app
+from agent_core.config import Config
+from agent_core.db import Store, utcnow
+from agent_core.github import FakeGitHub
 from agent_core.tokens import issue
 from tests.conftest import pair_device, sign_in
 
@@ -125,3 +131,21 @@ def test_pair_token_is_one_shot(hub: TestClient) -> None:
     )
     assert again.status_code == 200
     assert again.json()["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("public_url", "secure"),
+    [("https://hub.example", True), ("HTTPS://hub.example", True), ("http://hub.example", False)],
+)
+def test_session_cookie_is_secure_for_an_https_public_url(
+    cfg: Config, github: FakeGitHub, public_url: str, secure: bool
+) -> None:
+    store = Store(cfg.database)
+    try:
+        app = create_app(replace(cfg, public_url=public_url), github=github, store=store)
+        with TestClient(app, base_url=public_url.lower()) as client:
+            start = client.get("/auth/github", follow_redirects=False)
+    finally:
+        store.close()
+    attributes = [part.strip().lower() for part in start.headers["set-cookie"].split(";")]
+    assert ("secure" in attributes) is secure

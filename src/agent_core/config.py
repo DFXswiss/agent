@@ -50,6 +50,10 @@ def public_url_host(url: str) -> str:
     if ":" in hostname:
         host = f"[{hostname}]"
     else:
+        if not hostname.isascii():
+            raise ConfigError(
+                "AGENT_CORE_PUBLIC_URL must carry an international host name in its ASCII form"
+            )
         try:
             host = hostname.encode("idna").decode("ascii").lower()
         except UnicodeError as exc:

@@ -2,7 +2,8 @@
 
 Every request whose raw path or percent-decoded path starts with `/api/key/` goes through
 `KeyGate`. Checks 1 to 8 run before routing; only a request that passed them reaches a key
-route, and only key routes answer under `/api/key/`.
+route, and only key routes answer under `/api/key/`. A route that takes a query validates it
+after check 9 and before check 10.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import logging
 import re
 import time
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -62,6 +63,7 @@ ERROR_SIGNATURE_INVALID = "signature_invalid"
 ERROR_NONCE_REPLAYED = "nonce_replayed"
 ERROR_SCOPE_MISSING = "scope_missing"
 ERROR_SUBJECT = "subject_not_allowed"
+ERROR_QUERY_INVALID = "query_invalid"
 ERROR_NOT_FOUND = "not_found"
 ERROR_INTERNAL = "internal"
 
@@ -213,7 +215,10 @@ class HubSigner:
 
 @dataclass(frozen=True)
 class KeyRequest:
-    """A request that passed checks 1 to 8, with the key entry they established."""
+    """A request that passed checks 1 to 8, with the key entry they established.
+
+    `params` is what the route's query parser returned; None for a route without one.
+    """
 
     entry: "KeyEntry"
     method: str
@@ -221,10 +226,13 @@ class KeyRequest:
     raw_path: str
     query: str
     body: bytes
+    params: Any = None
 
 
 KeyHandler = Callable[[KeyRequest], Awaitable[tuple[int, dict[str, Any]]]]
 SubjectOf = Callable[[KeyRequest], "str | None"]
+# Parses the raw query (as signed); None means the query is invalid (signed 400).
+QueryParser = Callable[[str], Any]
 
 
 @dataclass(frozen=True)
@@ -234,6 +242,7 @@ class KeyRoute:
     handler: KeyHandler
     scope: str | None
     subject: SubjectOf | None
+    query: QueryParser | None = None
 
 
 class KeyRoutes:
@@ -250,6 +259,7 @@ class KeyRoutes:
         *,
         scope: str | None,
         subject: SubjectOf | None,
+        query: QueryParser | None = None,
     ) -> None:
         if not path.startswith(KEY_PREFIX):
             raise ValueError(f"a key route must start with {KEY_PREFIX}: {path}")
@@ -257,7 +267,7 @@ class KeyRoutes:
             raise ValueError(f"a key route needs an uppercase method other than HEAD: {method}")
         if (method, path) in self._routes:
             raise ValueError(f"key route {method} {path} is already registered")
-        self._routes[(method, path)] = KeyRoute(method, path, handler, scope, subject)
+        self._routes[(method, path)] = KeyRoute(method, path, handler, scope, subject, query)
 
     def find(self, method: str, path: str) -> KeyRoute | None:
         return self._routes.get((method, path))
@@ -509,7 +519,7 @@ class KeyService:
         return _Verified(request=request, agent_time=agent_time, nonce=nonce)
 
     async def _answer(self, request: KeyRequest) -> tuple[int, bytes]:
-        """Route, checks 9 and 10, and the endpoint. Any failure here is a signed 500."""
+        """Route, check 9, the query, check 10, and the endpoint. Any failure here is a signed 500."""
         try:
             route = self.routes.find(request.method, request.path)
             if route is None:
@@ -517,6 +527,11 @@ class KeyService:
             entry = request.entry
             if route.scope is not None and route.scope not in entry.scopes:
                 return 403, _json_bytes(_error(ERROR_SCOPE_MISSING))
+            if route.query is not None:
+                params = route.query(request.query)
+                if params is None:
+                    return 400, _json_bytes(_error(ERROR_QUERY_INVALID))
+                request = replace(request, params=params)
             if route.subject is not None and entry.principal == "service":
                 subject = route.subject(request)
                 if subject is None or entry.subjects is None or subject not in entry.subjects:

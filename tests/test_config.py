@@ -192,8 +192,28 @@ def test_public_url_single_trailing_slash_is_not_a_path(
         ("http://hub.example.com:443", "hub.example.com:443"),
         ("http://[::1]:8787", "[::1]:8787"),
         ("https://[2001:DB8::1]:443", "[2001:db8::1]"),
-        ("https://bücher.example", "xn--bcher-kva.example"),
+        ("https://xn--bcher-kva.example", "xn--bcher-kva.example"),
     ],
 )
 def test_host_line_of_the_public_url(url: str, host: str) -> None:
     assert public_url_host(url) == host
+
+
+def test_international_host_name_must_be_configured_in_ascii_form() -> None:
+    with pytest.raises(ConfigError) as caught:
+        public_url_host("https://bücher.example")
+    assert str(caught.value) == "AGENT_CORE_PUBLIC_URL must carry an international host name in its ASCII form"
+
+
+@pytest.mark.parametrize("url", ["https://", "https://:8787"])
+def test_public_url_without_a_host_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        public_url_host(url)
+    assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has no host"
+
+
+@pytest.mark.parametrize("url", ["https://hub..example", "https://" + "a" * 64 + ".example"])
+def test_public_url_with_an_invalid_host_name_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        public_url_host(url)
+    assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has an invalid host name"
