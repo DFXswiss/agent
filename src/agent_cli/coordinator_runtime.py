@@ -340,7 +340,7 @@ def _execution_binding_fields(
             )
         ],
         "models": ai.models.as_dict(),
-        "lane_execution": asdict(ai.require_lane_execution()),
+        "lane_execution": ai.require_lane_execution().binding_object(),
         "lanes": lanes,
     }
     if ai.implementer != ai.models.first:

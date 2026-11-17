@@ -10,8 +10,10 @@ import pytest
 
 from agent_cli.ai_accounts import (
     ACCESS_VALUES,
+    DELEGATE_LANE_EXECUTION_ERROR,
     LANE_EXECUTION_ERROR,
     READ_ONLY_WORKFLOW_KINDS,
+    REMOTE_LANE_EXECUTION_ERROR,
     AccountError,
     AIAccount,
     AIAccountPool,
@@ -206,8 +208,56 @@ def test_remote_lane_execution_is_unsupported(tmp_path: Path) -> None:
     assert loaded.for_session("chosen-session").name == "builder"
     with pytest.raises(AccountError, match="remote.*not supported"):
         loaded.for_lane("chosen-session", "implementer", "driver-a")
-    with pytest.raises(AccountError, match="remote.*not supported"):
+    with pytest.raises(AccountError) as excinfo:
         loaded.require_lane_execution()
+    assert str(excinfo.value) == REMOTE_LANE_EXECUTION_ERROR
+
+
+def test_local_lane_execution_binding_object_is_unchanged(tmp_path: Path) -> None:
+    write_config(tmp_path, sample_config())
+    execution = load_ai_accounts(tmp_path).require_lane_execution()
+    assert execution.delegated is False
+    assert execution.argv == ()
+    assert execution.binding_object() == {"mode": "this-device-is-lane-host"}
+
+
+def test_delegate_lane_execution_is_accepted(tmp_path: Path) -> None:
+    data = sample_config()
+    data["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+    write_config(tmp_path, data)
+    execution = load_ai_accounts(tmp_path).require_lane_execution()
+    assert execution.delegated is True
+    assert execution.argv == ("/opt/operator/run-lane", "--profile", "work")
+    assert execution.binding_object() == {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+
+
+@pytest.mark.parametrize(
+    "lane_execution",
+    [
+        {"mode": "delegate"},
+        {"mode": "delegate", "argv": []},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane"], "extra": 1},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane", 3]},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane", "two\nlines"]},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane", ""]},
+    ],
+)
+def test_invalid_delegate_lane_execution_fails_closed(
+    tmp_path: Path, lane_execution: object
+) -> None:
+    data = sample_config()
+    data["lane_execution"] = lane_execution
+    write_config(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    with pytest.raises(AccountError) as excinfo:
+        loaded.require_lane_execution()
+    assert str(excinfo.value) == DELEGATE_LANE_EXECUTION_ERROR
 
 
 def test_session_omitted_interactive_and_empty_lanes(tmp_path: Path) -> None:

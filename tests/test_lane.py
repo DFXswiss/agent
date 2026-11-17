@@ -12,7 +12,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
+from agent_cli.ai_accounts import (
+    LANE_EXECUTION_ERROR,
+    AccountError,
+    LaneExecution,
+)
 from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
     redact as redact_shared,
@@ -28,10 +32,12 @@ from agent_cli.drivers import (
 )
 from agent_cli.errors import redact as redact_error
 from agent_cli.lane import (
+    DELEGATED_GIT_METADATA_CHANGED,
     LANE_GITHUB_TOKEN_ENV,
     LaneResult,
     LaneUsage,
     _run_in_tmux,
+    delegated_lane_argv,
     finalize_lane_output,
     hide_config_dir,
     launch,
@@ -140,6 +146,7 @@ def write_operator_ai_accounts(
     home: Path,
     *,
     sessions: dict | None = None,
+    lane_execution: dict | None = None,
 ) -> None:
     """Write an operator-supplied ai-accounts.json for positive lane scenarios.
 
@@ -147,7 +154,9 @@ def write_operator_ai_accounts(
     positive cases; negative tests leave the home unconfigured.
     """
     data = {
-        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "lane_execution": (
+            lane_execution or {"mode": "this-device-is-lane-host"}
+        ),
         "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
             "account-a": {"provider": "driver-a", "config_dir": OPERATOR_HOME_A},
@@ -3016,6 +3025,186 @@ def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
             session_id=DEFAULT_SESSION,
         )
     assert called["n"] == 0
+
+
+def test_delegated_lane_argv_local_mode_is_unchanged() -> None:
+    argv = ["env", "TOOL_A_HOME=/profile", "tool-a", "--prompt-file", "/spec.md"]
+    execution = LaneExecution("this-device-is-lane-host")
+    assert (
+        delegated_lane_argv(
+            execution, argv, workdir="/work", reads=("/profile",)
+        )
+        == argv
+    )
+
+
+def test_delegated_lane_argv_prefixes_order_and_dedupes(tmp_path: Path) -> None:
+    execution = LaneExecution(
+        "delegate", ("/opt/operator/run-lane", "--profile", "work")
+    )
+    workdir = tmp_path / "work"
+    read_one = tmp_path / "one"
+    read_two = tmp_path / "two"
+    write_back = tmp_path / "out.txt"
+
+    argv = delegated_lane_argv(
+        execution,
+        ["env", "tool-a"],
+        workdir=str(workdir),
+        reads=(str(read_two), str(read_one), str(read_two), ""),
+        write_backs=(str(write_back), str(write_back)),
+    )
+
+    assert argv == [
+        "/opt/operator/run-lane",
+        "--profile",
+        "work",
+        "--workdir",
+        str(workdir),
+        "--read",
+        str(read_two),
+        "--read",
+        str(read_one),
+        "--write-back",
+        str(write_back),
+        "--",
+        "env",
+        "tool-a",
+    ]
+
+
+def test_launch_delegate_prefixes_argv_and_skips_tmux(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane", "--profile", "work"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        reads = [
+            argv[index + 1]
+            for index, value in enumerate(argv[:-1])
+            if value == "--read"
+        ]
+        assert str(spec.resolve()) in reads
+        assert OPERATOR_HOME_A in reads
+        assert any("agent-lane-empty-gh-" in Path(value).name for value in reads)
+        assert all(Path(value).is_absolute() for value in reads)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert len(seen) == 1
+    argv = seen[0]
+    assert argv[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    assert argv[argv.index("--workdir") + 1] == str(tmp_path.resolve())
+    assert argv[argv.index("--read") + 1] == str(spec.resolve())
+    assert argv.count("--workdir") == 1
+    assert argv.index("--") < argv.index("env")
+    assert "tmux" not in argv
+    assert result.tmux_session is None
+    assert result.status == "complete"
+    assert OPERATOR_MODEL_A in result.argv[result.argv.index("--") :]
+
+
+def test_launch_delegate_restores_changed_git_metadata(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (gitdir / "config").write_text("[core]\n", encoding="utf-8")
+    hooks = gitdir / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        head.write_text("ref: refs/heads/other\n", encoding="utf-8")
+        (hooks / "post-commit").write_text("#!/bin/sh\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_CHANGED in result.stderr
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+    assert not (hooks / "post-commit").exists()
+
+
+def test_launch_delegate_allows_tracked_file_write_back(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        (worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    assert result.status == "complete"
+    assert (worktree / "tracked.txt").read_text(encoding="utf-8") == "changed\n"
 
 
 def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) -> None:

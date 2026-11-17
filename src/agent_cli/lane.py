@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -32,7 +32,7 @@ from .text_sanitize import (
 )
 
 if TYPE_CHECKING:
-    from .ai_accounts import AIRole
+    from .ai_accounts import AIRole, LaneExecution
 
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 NPROC_CAP = 800
@@ -125,6 +125,147 @@ def sanitized_lane_argv(argv: list[str], profile_dir: str | None = None):
         return
     with tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-") as profile:
         yield _github_cleared_argv(argv, profile)
+
+
+def _unique_abspaths(paths: Sequence[str | None]) -> list[str]:
+    """Absolute, de-duplicated, non-empty paths in their original order."""
+    seen: set[str] = set()
+    selected: list[str] = []
+    for path in paths:
+        if not path:
+            continue
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        selected.append(absolute)
+    return selected
+
+
+def delegated_lane_argv(
+    execution: LaneExecution,
+    argv: Sequence[str],
+    *,
+    workdir: str,
+    reads: Sequence[str] = (),
+    write_backs: Sequence[str] = (),
+) -> list[str]:
+    """Prefix a lane argv with the operator command, or leave it unchanged.
+
+    The operator process runs the lane elsewhere. The model argv after ``--``
+    is never interpreted here, and every path stays a local absolute path.
+    """
+    if not execution.delegated:
+        return list(argv)
+    prefixed = [*execution.argv, "--workdir", os.path.abspath(workdir)]
+    for path in _unique_abspaths(reads):
+        prefixed.extend(["--read", path])
+    for path in _unique_abspaths(write_backs):
+        prefixed.extend(["--write-back", path])
+    prefixed.append("--")
+    prefixed.extend(argv)
+    return prefixed
+
+
+DELEGATED_GIT_METADATA_CHANGED = (
+    "delegated implementer changed git metadata; snapshot restored"
+)
+_GIT_METADATA_FILES = ("HEAD", "config", os.path.join("info", "exclude"))
+
+
+@dataclass(frozen=True)
+class GitMetadataSnapshot:
+    """Git metadata bytes an implementer write-back must not change."""
+
+    gitdir: str
+    files: dict[str, bytes]
+    hooks: frozenset[str]
+
+
+def _git_metadata_dir(worktree: str) -> Path | None:
+    """The worktree's gitdir, following a ``.git`` file pointer when present."""
+    dot_git = Path(worktree) / ".git"
+    try:
+        if dot_git.is_dir():
+            return dot_git
+        if not dot_git.is_file():
+            return None
+        text = dot_git.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    for line in text.splitlines():
+        if not line.startswith("gitdir:"):
+            continue
+        target = line[len("gitdir:") :].strip()
+        if not target:
+            continue
+        path = Path(target)
+        return path if path.is_absolute() else dot_git.parent / path
+    return None
+
+
+def _git_hook_files(gitdir: Path) -> list[Path]:
+    hooks = gitdir / "hooks"
+    if not hooks.is_dir():
+        return []
+    try:
+        return [path for path in sorted(hooks.rglob("*")) if path.is_file()]
+    except OSError:
+        return []
+
+
+def snapshot_git_metadata(worktree: str) -> GitMetadataSnapshot | None:
+    """Capture the git metadata a delegated implementer must not change."""
+    gitdir = _git_metadata_dir(worktree)
+    if gitdir is None:
+        return None
+    files: dict[str, bytes] = {}
+    for relative in _GIT_METADATA_FILES:
+        path = gitdir / relative
+        try:
+            if path.is_file():
+                files[str(path)] = path.read_bytes()
+        except OSError:
+            continue
+    hooks: list[str] = []
+    for path in _git_hook_files(gitdir):
+        try:
+            files[str(path)] = path.read_bytes()
+            hooks.append(str(path))
+        except OSError:
+            continue
+    return GitMetadataSnapshot(str(gitdir), files, frozenset(hooks))
+
+
+def restore_git_metadata(
+    snapshot: GitMetadataSnapshot,
+) -> bool:
+    """Restore a changed metadata snapshot; return whether anything changed."""
+    gitdir = Path(snapshot.gitdir)
+    changed = False
+    for path_text, data in snapshot.files.items():
+        path = Path(path_text)
+        try:
+            current: bytes | None = path.read_bytes()
+        except OSError:
+            current = None
+        if current == data:
+            continue
+        changed = True
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        except OSError:
+            continue
+    for path in _git_hook_files(gitdir):
+        if str(path) in snapshot.hooks:
+            continue
+        changed = True
+        try:
+            path.unlink()
+        except OSError:
+            continue
+    return changed
 
 
 def replace_path_roots(
@@ -337,6 +478,37 @@ def unreadable_output_result(
         status="unavailable",
         argv=argv,
         returncode=returncode,
+        stdout="",
+        stderr=diagnostic,
+        tmux_session=tmux_session,
+        config_dir=config_dir,
+        audit_stderr_when_empty=audit_stderr_when_empty,
+    )
+
+
+def delegated_git_metadata_result(
+    *,
+    role: str,
+    vendor: str,
+    model: str,
+    argv: list[str],
+    returncode: int,
+    stderr: str,
+    config_dir: str | None,
+    tmux_session: str | None = None,
+    audit_stderr_when_empty: bool = False,
+) -> LaneResult:
+    """Unavailable result for a delegated implementer that changed git metadata."""
+    message = DELEGATED_GIT_METADATA_CHANGED
+    diagnostic = f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
+    diagnostic = redact_diagnostic(diagnostic, config_dir=config_dir)
+    return LaneResult(
+        role=role,
+        vendor=vendor,
+        model=model,
+        status="unavailable",
+        argv=argv,
+        returncode=returncode if returncode != 0 else 1,
         stdout="",
         stderr=diagnostic,
         tmux_session=tmux_session,
@@ -700,6 +872,11 @@ def launch(
     # an unknown --vendor.
     driver = ai.driver(vendor, lane=True)
     lane = require_lane(driver)
+    execution = ai.lane_execution
+    delegated = execution is not None and execution.delegated
+    if delegated:
+        # The operator command is the process holder; local tmux holds local lanes.
+        tmux = False
     io = lane_io(driver, tmux=tmux)
     if binding is None:
         selected = ai.for_lane(session_id, role, vendor, require_execution=False)
@@ -758,11 +935,35 @@ def launch(
     # Apply the selected driver home inside the tmux child too. The lane's
     # credential-clearing prefix is nested, never a process-global mutation.
     argv = [*selected.env_prefix(ai.drivers), *argv]
-    github_environment = sanitized_lane_argv(argv)
+    profile_context: tempfile.TemporaryDirectory[str] | None = None
+    profile_dir: str | None = None
+    if delegated:
+        # The empty GitHub profile's path is a delegated read, so keep it here.
+        profile_context = tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-")
+        profile_dir = profile_context.name
+    github_environment = sanitized_lane_argv(argv, profile_dir=profile_dir)
     argv = github_environment.__enter__()
 
     tmux_session: str | None = None
     try:
+        if delegated:
+            write_backs: list[str] = []
+            if lane_output_file is not None:
+                write_backs.append(lane_output_file)
+            if write:
+                write_backs.append(cwd)
+            argv = delegated_lane_argv(
+                execution,
+                argv,
+                workdir=cwd,
+                reads=(
+                    spec_file,
+                    *read_dirs,
+                    selected.account.config_dir,
+                    profile_dir,
+                ),
+                write_backs=write_backs,
+            )
         if tmux:
             unique = "" if dry_run else uuid.uuid4().hex[:8]
             tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
@@ -775,6 +976,8 @@ def launch(
             argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
     except BaseException:
         github_environment.__exit__(None, None, None)
+        if profile_context is not None:
+            profile_context.cleanup()
         raise
 
     if dry_run:
@@ -794,7 +997,12 @@ def launch(
             )
         finally:
             github_environment.__exit__(None, None, None)
+            if profile_context is not None:
+                profile_context.cleanup()
 
+    # A delegated implementer writes back a worktree; its git metadata must not
+    # change. The operator excludes .git, and this snapshot verifies that.
+    git_snapshot = snapshot_git_metadata(cwd) if delegated and write else None
     stdin_text: str | None = spec_text if io.stdin else None
     try:
         if runner is not None:
@@ -813,6 +1021,19 @@ def launch(
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")
+
+        if git_snapshot is not None and restore_git_metadata(git_snapshot):
+            return delegated_git_metadata_result(
+                role=role,
+                vendor=vendor,
+                model=selected.model,
+                argv=argv,
+                returncode=returncode,
+                stderr=stderr,
+                config_dir=selected.account.config_dir,
+                tmux_session=tmux_session,
+                audit_stderr_when_empty=io.audit_stderr_when_empty,
+            )
 
         output_file_text = ""
         if lane_output_file is not None:
@@ -880,3 +1101,5 @@ def launch(
             except OSError:
                 pass
         github_environment.__exit__(None, None, None)
+        if profile_context is not None:
+            profile_context.cleanup()

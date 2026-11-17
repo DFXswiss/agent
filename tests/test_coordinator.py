@@ -20664,3 +20664,239 @@ def test_legacy_passing_second_review_recovers_activity_timestamp(
     assert result == ["blocker merged-without-second-review"]
     assert isinstance(state.get("requirement_satisfied_at"), str)
     assert "requirement_satisfied_legacy" not in state
+
+
+def _set_delegate_execution(store: Store, argv: list[str]) -> None:
+    """Declare one local operator command as this device's lane execution."""
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {"mode": "delegate", "argv": argv}
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _delegate_flag_values(argv: list[str], flag: str) -> list[str]:
+    """Values that follow one operator flag in a delegated lane argv."""
+    return [
+        argv[index + 1] for index, item in enumerate(argv[:-1]) if item == flag
+    ]
+
+
+def _seed_delegate_implementer_task(
+    store: Store, worker: Any, tid: str, worktree: Path
+) -> dict[str, Any]:
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "models": {"first": "driver-a", "second": "driver-b"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", tid, task)
+    return task
+
+
+def test_delegate_lane_execution_changes_the_execution_binding(
+    tmp_path: Path,
+) -> None:
+    """The binding hashes the operator command only in delegate mode."""
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    local_binding = execution_binding(store, worker, repo)
+    local = load_ai_accounts(store.home).require_lane_execution()
+    assert local.binding_object() == {"mode": "this-device-is-lane-host"}
+
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    delegated_binding = execution_binding(store, worker, repo)
+    delegated = load_ai_accounts(store.home).require_lane_execution()
+
+    assert delegated_binding != local_binding
+    assert delegated.binding_object() == {
+        "mode": "delegate",
+        "argv": ["/operator/lane", "--flag"],
+    }
+
+
+def test_launch_lane_delegate_prefixes_the_lane_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "delegate-prefix"
+    worktree.mkdir()
+    (worktree / ".git").mkdir()
+    (worktree / ".git" / "HEAD").write_text(
+        "ref: refs/heads/develop\n", encoding="utf-8"
+    )
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    task = _seed_delegate_implementer_task(
+        store, worker, "aa000001-0000-4000-8000-0000000000f1", worktree
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        (worktree / "tracked.py").write_text("changed\n", encoding="utf-8")
+        return Completed(
+            0,
+            event_stream_output(
+                "STATUS: complete\n"
+                "RESULT: done\n"
+                "SUMMARY_EN: Added the widget.\n"
+                "SUMMARY_DE: Widget hinzugefuegt.\n"
+            ),
+            "",
+        )
+
+    _agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="driver-a",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=run,
+    )
+
+    assert result.status == "complete"
+    argv = seen[0]
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(worktree)
+    reads = _delegate_flag_values(argv, "--read")
+    assert any(value.endswith("implementer-driver-a.md") for value in reads)
+    assert "/test/driver-a" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert _delegate_flag_values(argv, "--write-back") == [str(worktree)]
+    assert "tool-a" in argv[separator + 1 :]
+
+
+def test_launch_lane_delegate_restores_changed_git_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "delegate-git-guard"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/develop\n", encoding="utf-8")
+    hooks = gitdir / "hooks"
+    hooks.mkdir()
+    _set_delegate_execution(store, ["/operator/lane"])
+    task = _seed_delegate_implementer_task(
+        store, worker, "aa000001-0000-4000-8000-0000000000f3", worktree
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+
+    def run(_argv: list[str], _stdin: str | None = None) -> Completed:
+        head.write_text("ref: refs/heads/changed\n", encoding="utf-8")
+        (hooks / "post-commit").write_text("#!/bin/sh\n", encoding="utf-8")
+        return Completed(
+            0,
+            event_stream_output(
+                "STATUS: complete\n"
+                "RESULT: done\n"
+                "SUMMARY_EN: Changed git metadata.\n"
+                "SUMMARY_DE: Git-Metadaten geaendert.\n"
+            ),
+            "",
+        )
+
+    with pytest.raises(
+        LaneFailedError,
+        match="delegated implementer changed git metadata; snapshot restored",
+    ):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=run,
+        )
+
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/develop\n"
+    assert not (hooks / "post-commit").exists()
+
+
+def test_run_prepared_delegate_prefixes_a_pr_review_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import control_dir
+
+    tid = "aa000001-0000-4000-8000-0000000000f4"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        output = Path(_delegate_flag_values(argv, "--last-message")[0])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=run
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    argv = seen[0]
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(prepared["worktree"])
+    reads = _delegate_flag_values(argv, "--read")
+    assert str(prepared["worktree"]) in reads
+    assert str(control_dir(worker, tid)) in reads
+    assert str(prepared["spec_file"]) in reads
+    assert "/test/driver-b" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert _delegate_flag_values(argv, "--write-back") == [
+        str(prepared["output_file"])
+    ]
+    assert "tool-b" in argv[separator + 1 :]

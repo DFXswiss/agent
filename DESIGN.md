@@ -533,9 +533,13 @@ and the driver's `home_env` selects the configured profile. `--provider` and `--
 be combined; `--model` requires `--provider` and, when supplied, must match the configured role.
 A read-only role appends the driver's `interactive.read_only_args`; every start
 appends its `interactive.hardening_args`.
-Interactive provider starts require the current device to be a declared lane
-host. The local harness's lane starter starts them on that external host;
-Agent does not provide its own remote lane transport or workspace mirroring.
+Interactive provider starts require a `lane_execution` declaration. A
+`delegate` declaration satisfies that check, but an interactive start stays
+local and is never prefixed with the operator command. Headless model lanes use
+the declared execution: the local harness's lane starter starts them on an
+external lane host, or a `delegate` operator command runs the process elsewhere.
+Agent does not provide its own remote lane transport or workspace mirroring; the
+operator command does the copy and transport.
 Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
 the `models` and `lane_execution` checks pass.
 
@@ -591,7 +595,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Semantic diagnosis, hypothesis, patch text, review findings, PR title/body draft | AI | `activity` intent (`investigate.step`, …); implementer/reviewer rows when those skills are on |
 | Auth, Git, GitHub HTTP, CI status, mail, hub HTTP, tmux knock, retries | Script | Result columns on the intent row; `pr.merged` and other watch types; `LISTEN agent_work` |
 | Assignment acceptance and its confirmation in the GitHub issue, before starting the implementation lane | Static script on the execution device | Required ordering; see §19.7 |
-| Start implementation and review lanes, restart the implementer for improvements, and start any other agents | Static script on the execution device | The model never orchestrates another model |
+| Start implementation and review lanes, restart the implementer for improvements, and start any other agents | Static script on the execution device; a `delegate` operator command may run the process elsewhere | The model never orchestrates another model |
 | Execute tests, builds, and checks, including local tests | Static script on the execution device | Script-produced results supplied to the lanes |
 | Monitor or wait for CI, reviews, merges, and other external events; notify a lane when there is useful work | Static script on the execution device | Script-observed facts, not a waiting or polling model |
 | Preconditions of every coordinator action | Static script on the execution device | Registry of checks; one resolver per check; facts in the checklist table (§19.10) |
@@ -612,12 +616,16 @@ start another lane or run tests does not transfer orchestration to the script.
 The static script owns those decisions and invocations; the lane supplies its
 implementation or review result.
 
-Model lanes never run on a user's work device. The local harness's lane starter
-starts them on an external lane host. On that host, `ai-accounts.json` must
-declare `lane_execution.mode = "this-device-is-lane-host"`; Agent has no remote
-SSH/rsync execution mode. Lane starts fail closed without that declaration;
-process-holder flags such as `--no-tmux` do not change the execution-device
-decision.
+Model lanes run on an execution device, not inside the user's work device. The
+local harness's lane starter starts them on an external lane host, whose
+`ai-accounts.json` declares
+`lane_execution.mode = "this-device-is-lane-host"`. A work device may instead
+declare `lane_execution` with `mode = "delegate"` and one operator argv; Agent
+then prefixes every headless model lane with that local foreground command,
+which runs the process elsewhere. Agent still has no remote SSH/rsync execution
+mode of its own; the operator command does the copy and transport. Lane starts
+fail closed without a declaration, and process-holder flags such as `--no-tmux`
+do not change the execution-device decision.
 
 A model never starts a monitor, polls for status, or waits for a CI run or other
 external event. Model lanes are used exclusively for work. When a lane has no
@@ -899,10 +907,12 @@ too: the program, JSON-RPC method and answer keys come from `drivers.json`.
 Agent sends no token for them and stores none, and reads the account file only
 for the login identity, decoding the identity claim of the ID token without a
 signature check when one is configured.
-Its `lane_execution` declaration is required for every vendor-lane start and
-only explicitly marks the current device as a lane host. The local harness's
-lane starter must start Agent on the external lane host; absence, invalid
-configuration, and the unsupported `remote` mode authorize no fallback.
+Its `lane_execution` declaration is required for every vendor-lane start. It
+either marks the current device as a lane host, or names one operator argv that
+runs each headless model lane. The local harness's lane starter must start Agent
+on the external lane host; absence, invalid configuration, and the unsupported
+`remote` mode authorize no fallback. A `delegate` operator command does the copy
+and transport that Agent does not implement itself.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 Its required `models` block names the provider of model slot `first` and `second`, and

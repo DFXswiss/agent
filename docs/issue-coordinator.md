@@ -311,9 +311,12 @@ for worker in workers.values():
   slots of `recorded_slots` in `drivers.json`. Other configuration changes still
   stop the task. Driver descriptions in `drivers.json` are not part of the
   execution binding.
-  `lane_execution` accepts only `this-device-is-lane-host`: the local harness's
-  lane starter starts the coordinator on the external lane host. The Agent
-  coordinator does not SSH, mirror, or copy a lane from a work device.
+  `lane_execution` accepts `this-device-is-lane-host` or a `delegate` operator
+  argv. On the external lane host the local harness's lane starter starts the
+  coordinator; with `delegate` the coordinator prefixes each headless model lane
+  with that local foreground command, which runs it elsewhere. The Agent
+  coordinator does not SSH, mirror, or copy a lane itself; the operator command
+  does the copy and transport.
 - Successful `gh api user` login verification is shared on the device for at
   most 15 minutes per GitHub account. Coordinator workers and the knock child
   reuse that result across ticks. An authentication error drops it, and the

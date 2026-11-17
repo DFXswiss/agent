@@ -24,10 +24,14 @@ subagents, run tests, or access GitHub. The user works in GitHub and merges the
 reviewed PR there. This is a workflow requirement, not a claim of a complete
 deployed integration.
 
-Model lanes never run on a work device. The local harness's lane starter starts
-them on an external lane host, where `ai-accounts.json` declares
-`lane_execution.mode = "this-device-is-lane-host"`. Agent has no SSH/rsync
-remote-execution mode.
+Model lanes run on an execution device, not inside the work device. The local
+harness's lane starter starts them on an external lane host, where
+`ai-accounts.json` declares
+`lane_execution.mode = "this-device-is-lane-host"`. A work device may instead
+declare `mode = "delegate"` with one operator argv; Agent prefixes every
+headless model lane with that local foreground command, which runs it elsewhere.
+Agent has no SSH/rsync remote-execution mode of its own; the operator command
+does the copy and transport.
 
 Model lanes perform work and return results or blockers. They never start
 monitors, poll statuses, or wait for CI. Scripts own monitoring and inform a
