@@ -698,8 +698,14 @@ def test_scan_skips_stale_logins_quietly_and_reports_errors(tmp_path: Path) -> N
         store.close()
 
 
+def _check(store: Store, account_name: str) -> dict[str, str] | None:
+    value = store.meta(f"usage.checked.{WINDOWS_DRIVER_ID}.{account_name}")
+    return None if value is None else json.loads(value)
+
+
 def _checked(store: Store, account_name: str) -> str | None:
-    return store.meta(f"usage.checked.{WINDOWS_DRIVER_ID}.{account_name}")
+    check = _check(store, account_name)
+    return None if check is None else check["checked_at"]
 
 
 def test_scan_records_the_check_time_of_every_successful_read(tmp_path: Path) -> None:
@@ -723,7 +729,11 @@ def test_scan_records_the_check_time_of_every_successful_read(tmp_path: Path) ->
                 store, fetch=fetch, read_keychain=no_keychain, now=lambda: "2026-11-16T12:00:00Z"
             )
         ) == 1
-        assert _checked(store, "seat") == "2026-11-16T12:00:00Z"
+        # The value names the case-folded login that was read; the key does not.
+        assert _check(store, "seat") == {
+            "checked_at": "2026-11-16T12:00:00Z",
+            "identity": "seat-1@example.com",
+        }
 
         # Unchanged usage stores no snapshot, but the check still counts.
         assert scan_window_usage(
@@ -759,7 +769,10 @@ def test_scan_records_no_check_time_for_skipped_failed_or_rate_limited_reads(
         assert _checked(store, "stale") is None
         assert _checked(store, "broken") is None
         assert _checked(store, "limited") is None
-        assert _checked(store, "good") == "2026-11-16T12:00:00Z"
+        assert _check(store, "good") == {
+            "checked_at": "2026-11-16T12:00:00Z",
+            "identity": "good@example.com",
+        }
         # The key names the configured account, never the login's address.
         assert _checked(store, "good@example.com") is None
     finally:

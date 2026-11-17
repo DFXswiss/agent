@@ -615,16 +615,23 @@ with the exact UTC time as the cell's title and `—` when there is none:
 
 - **Checked**: the last successful usage read of the account on this device,
   whether or not its usage changed. After every successful read of a
-  `usage_accounts` account (snapshot stored or unchanged) the poller writes the
-  read time to the local meta key `usage.checked.<provider>.<account name>`;
-  the key holds the configured account name, never a token or an e-mail
-  address. Skipped, failed and rate-limited reads write nothing. A row gets
-  this value (`checked_at` in `rows`) when it shows that account: a row of a
-  `spend` driver by the account name, only for this device's snapshot, a row
-  of a `windows` driver by the identity of the account's login. Rows of other
-  drivers and accounts this device does not poll show `—`. When
-  `ai-accounts.json` or a login's account file cannot be read, the reason is
-  shown on the page's error line (`check_error`).
+  `usage_accounts` account (snapshot stored or unchanged) the poller writes
+  `{"checked_at": <read time>, "identity": <identity read>}` to the local meta
+  key `usage.checked.<provider>.<account name>`; the key holds the configured
+  account name, never a token or an e-mail address. The identity is the
+  case-folded account name of a `spend` driver or the case-folded login of a
+  `windows` driver. Skipped, failed and rate-limited reads write nothing. A
+  row gets the read time (`checked_at` in `rows`) when it shows that account:
+  a row of a `spend` driver by the account name, only for this device's
+  snapshot, a row of a `windows` driver by the identity of the account's
+  login. A check whose identity is not the account's current identity, such as
+  after another login in the same configuration directory, applies to no row
+  until that login is read. Rows of other drivers and accounts this device
+  does not poll show `—`. `/api/state` reads these values together with the
+  rest of its store data; a lost database connection answers `503` as for the
+  rest of the state. When `ai-accounts.json`, a login's account file or a
+  stored check value cannot be read, the reason is shown on the page's error
+  line (`check_error`).
 - **Changed**: the `fetched_at` of the newest snapshot, which is stored only
   when a value other than `fetched_at` changed, so it is the last change, not
   the last check.

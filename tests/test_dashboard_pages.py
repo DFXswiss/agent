@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import json
 
 import pytest
 
@@ -101,8 +102,13 @@ class _StateStore:
     def device_id(self) -> str:
         return "device-a"
 
-    def meta(self, key: str) -> str | None:
-        return {f"usage.checked.{WINDOWS_DRIVER_ID}.seat": "2026-11-16T12:30:00Z"}.get(key)
+    def meta_prefix(self, prefix: str) -> dict[str, str]:
+        assert prefix == "usage.checked."
+        return {
+            f"usage.checked.{WINDOWS_DRIVER_ID}.seat": json.dumps(
+                {"checked_at": "2026-11-16T12:30:00Z", "identity": "seat-1@example.com"}
+            )
+        }
 
     def close(self) -> None:
         pass

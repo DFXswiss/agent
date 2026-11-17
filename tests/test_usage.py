@@ -610,6 +610,11 @@ def test_scan_account_usage_missing_key_and_malformed_data(tmp_path: Path) -> No
 CHECKED_KEY = f"usage.checked.{SPEND_DRIVER}.{SPEND_ACCOUNT}"
 
 
+def _checked(store: Store) -> dict[str, str] | None:
+    value = store.meta(CHECKED_KEY)
+    return None if value is None else json.loads(value)
+
+
 def test_scan_account_usage_records_the_check_time_of_every_successful_read(
     tmp_path: Path,
 ) -> None:
@@ -621,13 +626,15 @@ def test_scan_account_usage_records_the_check_time_of_every_successful_read(
         store, fetch=lambda *_args: {"key": _key_body()}, now=lambda: "2026-11-04T10:00:00Z"
     )
     assert len(created) == 1
-    assert store.meta(CHECKED_KEY) == "2026-11-04T10:00:00Z"
+    # The value names the identity that was read: the spend account name.
+    assert _checked(store) == {"checked_at": "2026-11-04T10:00:00Z", "identity": SPEND_ACCOUNT}
 
     # Unchanged usage stores no snapshot, but the check still counts.
     assert scan_account_usage(
         store, fetch=lambda *_args: {"key": _key_body()}, now=lambda: "2026-11-04T10:01:00Z"
     ) == []
-    assert store.meta(CHECKED_KEY) == "2026-11-04T10:01:00Z"
+    assert _checked(store) == {"checked_at": "2026-11-04T10:01:00Z", "identity": SPEND_ACCOUNT}
+    assert store.meta_prefix("usage.checked.") == {CHECKED_KEY: store.meta(CHECKED_KEY)}
     assert [row["payload"]["fetched_at"] for row in _snapshots(store)] == [
         "2026-11-04T10:00:00Z"
     ]

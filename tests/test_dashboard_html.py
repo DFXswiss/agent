@@ -241,13 +241,30 @@ def test_subscription_rows_without_inventory_keep_every_snapshot() -> None:
     ]
 
 
-def _no_meta(_key: str) -> str | None:
-    return None
+_NO_CHECKS: dict[str, str] = {}
+
+
+def _check(checked_at: str, identity: str) -> str:
+    """A meta value as the poller writes it after a successful read."""
+    return json.dumps({"checked_at": checked_at, "identity": identity})
+
+
+class _RecordingChecks(dict):
+    """Check times that record every key the dashboard looks up."""
+
+    def __init__(self, values: dict[str, str]) -> None:
+        super().__init__(values)
+        self.keys_read: list[str] = []
+
+    def __contains__(self, key: object) -> bool:
+        assert isinstance(key, str)
+        self.keys_read.append(key)
+        return super().__contains__(key)
 
 
 def test_subscriptions_dashboard_reports_file_state_as_data(tmp_path: Path) -> None:
     snapshot = _snapshot("driver-a", "login@example.com")
-    assert _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a") == {
+    assert _subscriptions_dashboard(tmp_path, [snapshot], _NO_CHECKS, "device-a") == {
         "configured": False,
         "error": None,
         "check_error": None,
@@ -261,12 +278,12 @@ def test_subscriptions_dashboard_reports_file_state_as_data(tmp_path: Path) -> N
         json.dumps({"subscriptions": [{"provider": "driver-a", "account": "login@example.com"}]}),
         encoding="utf-8",
     )
-    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _NO_CHECKS, "device-a")
     assert state["configured"] is True and state["error"] is None
     assert state["rows"][0]["listed"] is True and state["rows"][0]["usage"] == snapshot
 
     path.write_text(json.dumps({"subscriptions": [{"provider": "Driver-A"}]}), encoding="utf-8")
-    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _NO_CHECKS, "device-a")
     assert state["configured"] is False
     assert "provider must be a lowercase token" in state["error"]
     assert [row["listed"] for row in state["rows"]] == [False]
@@ -316,16 +333,17 @@ def test_subscription_rows_carry_the_check_time_of_their_configured_account(
         },
         ["seat", "logged-out", "spend-a", "spend-b"],
     )
-    times = {
-        f"usage.checked.{WINDOWS_DRIVER_ID}.seat": "2026-11-16T12:30:00Z",
-        f"usage.checked.{WINDOWS_DRIVER_ID}.logged-out": "2026-11-16T12:31:00Z",
-        "usage.checked.driver-d.spend-a": "2026-11-16T12:32:00Z",
-    }
-    keys: list[str] = []
-
-    def meta(key: str) -> str | None:
-        keys.append(key)
-        return times.get(key)
+    meta = _RecordingChecks(
+        {
+            f"usage.checked.{WINDOWS_DRIVER_ID}.seat": _check(
+                "2026-11-16T12:30:00Z", "seat-1@example.com"
+            ),
+            f"usage.checked.{WINDOWS_DRIVER_ID}.logged-out": _check(
+                "2026-11-16T12:31:00Z", "gone@example.com"
+            ),
+            "usage.checked.driver-d.spend-a": _check("2026-11-16T12:32:00Z", "spend-a"),
+        }
+    )
 
     seat = _snapshot(
         WINDOWS_DRIVER_ID, "seat-1@example.com", "device-b", fetched_at="2026-11-16T09:00:00Z"
@@ -352,6 +370,7 @@ def test_subscription_rows_carry_the_check_time_of_their_configured_account(
     # Existing fields stay; the snapshot time stays the last change.
     assert state["rows"][0]["usage"]["payload"]["fetched_at"] == "2026-11-16T09:00:00Z"
     # The keys name configured accounts, never a login address.
+    keys = meta.keys_read
     assert sorted(keys) == sorted(
         f"usage.checked.{provider}.{name}"
         for provider, name in (
@@ -399,7 +418,7 @@ def test_subscription_rows_carry_the_check_time_of_their_configured_account(
 def test_subscription_check_times_report_unreadable_configuration(tmp_path: Path) -> None:
     snapshot = _snapshot("driver-a", "login@example.com")
     (tmp_path / "ai-accounts.json").write_text("{", encoding="utf-8")
-    state = _subscriptions_dashboard(tmp_path, [snapshot], _no_meta, "device-a")
+    state = _subscriptions_dashboard(tmp_path, [snapshot], _NO_CHECKS, "device-a")
     assert state["check_error"] == "Cannot read ai-accounts.json"
     assert [row["checked_at"] for row in state["rows"]] == [None]
 
@@ -412,12 +431,75 @@ def test_subscription_check_times_report_unreadable_configuration(tmp_path: Path
         ["broken"],
     )
     state = _subscriptions_dashboard(
-        tmp_path, [snapshot], lambda _key: "2026-11-16T12:30:00Z", "device-a"
+        tmp_path,
+        [snapshot],
+        {
+            f"usage.checked.{WINDOWS_DRIVER_ID}.broken": _check(
+                "2026-11-16T12:30:00Z", "login@example.com"
+            )
+        },
+        "device-a",
     )
     assert state["check_error"] == (
         f"broken: {WINDOWS_CREDENTIAL_LABEL} account file is not valid JSON"
     )
     assert [row["checked_at"] for row in state["rows"]] == [None]
+
+
+def test_subscription_check_time_does_not_follow_a_new_login(tmp_path: Path) -> None:
+    """A check read one login; another login in the same directory is not checked."""
+    seat = tmp_path / "seat"
+    _login(seat, "Seat-1@Example.com")
+    _usage_accounts_config(
+        tmp_path,
+        {"seat": {"provider": WINDOWS_DRIVER_ID, "config_dir": str(seat)}},
+        ["seat"],
+    )
+    checks = {
+        f"usage.checked.{WINDOWS_DRIVER_ID}.seat": _check(
+            "2026-11-16T12:30:00Z", "seat-1@example.com"
+        )
+    }
+    old = _snapshot(WINDOWS_DRIVER_ID, "seat-1@example.com", "device-a")
+    new = _snapshot(WINDOWS_DRIVER_ID, "seat-2@example.com", "device-b")
+
+    state = _subscriptions_dashboard(tmp_path, [old, new], checks, "device-a")
+    assert [(row["account"], row["checked_at"]) for row in state["rows"]] == [
+        ("seat-1@example.com", "2026-11-16T12:30:00Z"),
+        ("seat-2@example.com", None),
+    ]
+
+    # Another login in the same directory; this device has not read it yet,
+    # so the old check time stays with no row, neither the old nor the new login.
+    (seat / WINDOWS_ACCOUNT_FILE).write_text(
+        json.dumps({"loginAccount": {"emailAddress": "seat-2@example.com"}}), encoding="utf-8"
+    )
+    state = _subscriptions_dashboard(tmp_path, [old, new], checks, "device-a")
+    assert state["check_error"] is None
+    assert [(row["account"], row["checked_at"]) for row in state["rows"]] == [
+        ("seat-1@example.com", None),
+        ("seat-2@example.com", None),
+    ]
+
+
+def test_subscription_check_time_reports_a_malformed_value(tmp_path: Path) -> None:
+    _usage_accounts_config(
+        tmp_path,
+        {"spend-a": {"provider": "driver-d", "config_dir": str(tmp_path / "spend-a")}},
+        ["spend-a"],
+    )
+    snapshot = _snapshot("driver-d", "spend-a", "device-a")
+    for value, reason in (
+        ("2026-11-16T12:30:00Z", "is not valid JSON"),
+        ("[]", "is not an object"),
+        (json.dumps({"identity": "spend-a"}), "has no checked_at"),
+        (json.dumps({"checked_at": "2026-11-16T12:30:00Z"}), "has no identity"),
+    ):
+        state = _subscriptions_dashboard(
+            tmp_path, [snapshot], {"usage.checked.driver-d.spend-a": value}, "device-a"
+        )
+        assert state["check_error"] == f"spend-a: usage check time {reason}"
+        assert [row["checked_at"] for row in state["rows"]] == [None]
 
 
 def test_subscriptions_section_markup() -> None:

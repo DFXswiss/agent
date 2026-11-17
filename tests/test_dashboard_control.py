@@ -14,7 +14,7 @@ import pytest
 
 from agent_cli import main as main_mod
 from agent_cli.main import ThreadingHTTPServer, open_store
-from agent_cli.store import StoreConnectionError
+from agent_cli.store import StoreConnectionError, StoreError
 
 
 def _init_paired_store(tmp_path: Path) -> None:
@@ -255,3 +255,110 @@ def test_dashboard_get_state_reconnects_after_transient_store_connection_error(
         assert "sessions" in payload
         assert reconnect_calls == [1], "store.reconnect() must be called exactly once"
         assert snapshot_calls == [1, 1], "snapshot must be tried once, then retried after reconnect"
+
+
+def test_dashboard_get_state_returns_503_when_the_check_times_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The usage check times are read with snapshot()/device_id(): a lost
+    connection while reading them reconnects once and, when it persists,
+    surfaces as a clean JSON 503 instead of an empty response."""
+    _init_paired_store(tmp_path)
+    prefixes: list[str] = []
+    reconnect_calls: list[int] = []
+    real_reconnect = main_mod.Store.reconnect
+
+    def broken_meta_prefix(self: object, prefix: str) -> dict[str, str]:
+        prefixes.append(prefix)
+        raise StoreConnectionError("server closed the connection unexpectedly")
+
+    def counting_reconnect(self: object) -> None:
+        reconnect_calls.append(1)
+        real_reconnect(self)
+
+    monkeypatch.setattr(main_mod.Store, "meta_prefix", broken_meta_prefix)
+    monkeypatch.setattr(main_mod.Store, "reconnect", counting_reconnect)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 503
+        assert payload["ok"] is False
+        assert reconnect_calls == [1], "store.reconnect() must be called exactly once"
+        assert prefixes == ["usage.checked.", "usage.checked."]
+
+
+def test_dashboard_get_state_reconnects_after_a_transient_check_time_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_paired_store(tmp_path)
+    calls: list[int] = []
+    real_meta_prefix = main_mod.Store.meta_prefix
+
+    def flaky_meta_prefix(self: object, prefix: str) -> dict[str, str]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+        return real_meta_prefix(self, prefix)
+
+    monkeypatch.setattr(main_mod.Store, "meta_prefix", flaky_meta_prefix)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 200
+        assert "subscriptions" in payload
+        assert calls == [1, 1]
+
+
+def test_dashboard_get_state_returns_503_on_a_store_error_reading_check_times(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain StoreError is not retried, but it is still a clean JSON 503."""
+    _init_paired_store(tmp_path)
+    reconnect_calls: list[int] = []
+
+    def failing_meta_prefix(self: object, prefix: str) -> dict[str, str]:
+        raise StoreError("postgres error: relation does not exist")
+
+    def counting_reconnect(self: object) -> None:
+        reconnect_calls.append(1)
+
+    monkeypatch.setattr(main_mod.Store, "meta_prefix", failing_meta_prefix)
+    monkeypatch.setattr(main_mod.Store, "reconnect", counting_reconnect)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 503
+        assert payload == {"ok": False, "error": "postgres error: relation does not exist"}
+        assert reconnect_calls == []
+
+
+def test_store_meta_prefix_reads_only_the_keys_with_that_prefix(tmp_path: Path) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.set_meta("usage.checked.driver-a.seat", "a")
+        store.set_meta("usage.checked.driver-d.spend_a", "b")
+        store.set_meta("usage.checkedX", "c")
+        store.set_meta("usage_checked.driver-a.seat", "d")
+        assert store.meta_prefix("usage.checked.") == {
+            "usage.checked.driver-a.seat": "a",
+            "usage.checked.driver-d.spend_a": "b",
+        }
+        assert store.meta_prefix("usage.missing.") == {}
+    finally:
+        store.close()
