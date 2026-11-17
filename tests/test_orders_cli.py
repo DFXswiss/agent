@@ -1047,7 +1047,8 @@ def test_list_and_show_are_bounded(device, capsys) -> None:
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
     order("list", "--json")
     listed = json.loads(capsys.readouterr().out)
-    assert all(len(item) == 9 for item in listed)
+    assert all(len(item) == 10 for item in listed)
+    assert all("holding_check" in item for item in listed)
 
     order("show", "--id", str(first["id"]))
     text = capsys.readouterr().out
