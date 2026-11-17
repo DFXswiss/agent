@@ -588,6 +588,45 @@ def test_an_admitted_mention_becomes_a_queued_job(tmp_path: Path) -> None:
         store.close()
 
 
+def test_a_job_id_over_the_limit_is_skipped_and_leaves_the_thread_unread(
+    tmp_path: Path,
+) -> None:
+    # The longest legal repository with a one-digit reference and this skill id
+    # produce an id over 200 characters. Every command that runs jobs drops such
+    # an id, so inserting the row and marking the thread read would record a
+    # request nothing ever runs.
+    repo = "a" * 39 + "/" + "b" * 100
+    skill_id = "x" * 42
+    catalog = {
+        "skills": [
+            {
+                "id": skill_id,
+                "queue_type": "pr-ready",
+                "body_patterns": ["please review"],
+            }
+        ]
+    }
+    policy = {**POLICY, "repos_allow": [repo]}
+    calls: list[list[str]] = []
+    store = Store(tmp_path)
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification(repo=repo)],
+                comments=[_comment("@theo-vane please review")],
+                calls=calls,
+            ),
+            policy=policy,
+            catalog=catalog,
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+        assert _mark_read_calls(calls) == []
+    finally:
+        store.close()
+
+
 def test_a_non_canonical_catalogue_id_names_no_skill(tmp_path: Path) -> None:
     # Only a lower-case id is used as the job type and as the `runner.json`
     # key, so an upper-case one would never find its own settings. It names no

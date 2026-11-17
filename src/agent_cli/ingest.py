@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .jobs import Verdict, admits, job_id
+from .jobs import Verdict, admits, job_id, safe_job_id
 from .queue import retry_payload
 from .runtime import Completed
 from .store import Store, StoreConnectionError, utcnow
@@ -600,6 +600,13 @@ def scan_mentions(
             continue
 
         row_id = job_id(repo, ref, job_type)
+        if not safe_job_id(row_id):
+            # A long repository name and skill id can form an id over the
+            # 200-character limit. The commands that run jobs drop such a row,
+            # so queueing it and marking the thread read would record a request
+            # nothing ever runs. Leave the thread unread and touch no row.
+            skipped += 1
+            continue
         existing = store.row("job", row_id)
 
         if existing is not None:

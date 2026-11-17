@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from . import dispatch, finalize, health, ingest, queue, reap, workspace
+from .jobs import job_id, safe_job_id
 from .runtime import Completed, run_argv
 from .store import Store
 
@@ -50,20 +51,6 @@ USAGE = (
 )
 
 _EXIT_CODE_RE = re.compile(r"^-?[0-9]+$")
-_SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
-
-
-def safe_job_id(value: Any) -> bool:
-    """True when `value` may be used as a job id, and therefore as a path component.
-
-    Job ids become file names (`state/logs/<id>.exit`, `state/work/<id>`) and
-    worktree paths, but the store accepts any string as a row id. A row whose id
-    is `/tmp/x` or `../x` would make prune unlink a file outside the logs
-    directory, retry remove a path outside the work root, and dispatch create a
-    worktree outside it. Only a plain name is accepted: `.` and `/` are excluded,
-    so `.`/`..` and every path separator are impossible.
-    """
-    return isinstance(value, str) and _SAFE_JOB_ID.fullmatch(value) is not None
 
 
 @dataclass(frozen=True)
@@ -1071,11 +1058,21 @@ def _cmd_doctor(args: list[str]) -> None:
         # A catalogue id is used as written: it becomes the job type and the
         # `runner.json` key, so only a lower-case id without surrounding spaces
         # resolves its own settings. `ingest` ignores any other id, which makes
-        # the mismatch silent; report it here instead.
+        # the mismatch silent; report it here instead. A canonical id also has
+        # to leave room in a job id: a request that would exceed the limit is
+        # skipped by `ingest`, so the skill could never run.
         for entry in ingest.catalog_skills(catalog) or []:
             raw_id = entry.get("id")
             if isinstance(raw_id, str) and raw_id != raw_id.strip().lower():
-                problems.append(f"skill id {raw_id} is not lower-case")
+                problems.append(
+                    f"skill id {raw_id} is not lower-case without surrounding spaces"
+                )
+            if isinstance(raw_id, str) and raw_id and raw_id == raw_id.strip().lower():
+                longest = job_id("a" * 39 + "/" + "b" * 100, "1", raw_id)
+                if not safe_job_id(longest):
+                    problems.append(
+                        f"skill id {raw_id} is too long to form a job id"
+                    )
     if policy is not None:
         # A policy allows queue types; the catalogue names the skill each one
         # maps to, and the skill id is what the worker is keyed by. Only a
