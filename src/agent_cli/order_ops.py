@@ -38,6 +38,7 @@ from .coordinator_orders import (
     own_order_events,
     serves_repo,
 )
+from .model_slots import canonical_phase
 from .preconditions import ACTIONS, CHECKS, ORDER, OVERRIDABLE, PHASE_ACTION
 from .store import Store, StoreError, utcnow
 
@@ -204,7 +205,11 @@ def event_view(row: dict[str, Any]) -> dict[str, Any]:
         "wake": payload.get("wake") is True,
         "digest": payload.get("digest") or "",
         "pr_url": payload.get("pr_url"),
-        "phase": payload.get("phase"),
+        "phase": (
+            canonical_phase(payload["phase"])
+            if isinstance(payload.get("phase"), str)
+            else payload.get("phase")
+        ),
         "round": payload.get("round"),
         "check": payload.get("check"),
         "failed_kind": payload.get("failed_kind"),
@@ -413,7 +418,7 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
 
     phase = current_phase(task)
     anchor = (
-        str(checkpoint_data.get("resume_phase") or "")
+        canonical_phase(str(checkpoint_data.get("resume_phase") or ""))
         if phase in ("ask", "blocked")
         else phase
     )

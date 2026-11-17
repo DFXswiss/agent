@@ -1,51 +1,47 @@
-"""Is the Grok TUI in this tmux pane currently working?
+"""Is the driver's terminal user interface in this tmux pane currently working?
 
-The Grok CLI paints that state itself. Pane flicker, process lists, and
-log mtimes are not this question.
+The interactive driver paints that state itself; its configured pane markers
+(``interactive.pane`` in ``drivers.json``) say how. Pane flicker, process lists,
+and log mtimes are not this question.
 """
 
 from __future__ import annotations
 
-import re
-
+from .drivers import PaneMarkers
 from .text_sanitize import sanitize_terminal_text
-
-WORKING_RE = re.compile(
-    r"Thinking…|Thinking\.\.\.|Waiting for response|"
-    r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+|"
-    r"command still running",
-    re.IGNORECASE,
-)
-IDLE_RE = re.compile(r"❯")
-PERMISSION_RE = re.compile(r"1/3:select", re.IGNORECASE)
-PERMISSION_HINT = "Tab:next option"
 
 
 def strip_ansi(text: str) -> str:
     return sanitize_terminal_text(text)
 
 
-def grok_pane_is_working(pane: str) -> bool:
-    """True only when the TUI shows an in-flight turn (thinking, tool, stop)."""
+def pane_is_working(pane: str, markers: PaneMarkers) -> bool:
+    """True only when the pane shows an in-flight turn (thinking, tool, stop)."""
     plain = strip_ansi(pane)
+    lowered = plain.lower()
     # Queued follow-up: the current turn has not returned to the idle prompt.
-    if "queued" in plain.lower() and "enter to send now" in plain.lower():
-        return True
-    return WORKING_RE.search(plain) is not None
+    for group in markers.queued:
+        if all(part.lower() in lowered for part in group):
+            return True
+    return any(pattern.search(plain) is not None for pattern in markers.working)
 
 
-def grok_permission_prompt(pane: str) -> bool:
-    """True when Grok is blocked on a tool-approval modal."""
+def pane_permission_prompt(pane: str, markers: PaneMarkers) -> bool:
+    """True when the driver is blocked on a tool-approval modal.
+
+    A permission marker alone may be quoted text; one confirmation substring
+    must be present as well.
+    """
     plain = strip_ansi(pane)
-    if PERMISSION_RE.search(plain) is None:
+    if not any(pattern.search(plain) is not None for pattern in markers.permission):
         return False
-    if PERMISSION_HINT.lower() in plain.lower():
-        return True
-    return "don't ask again for anything" in plain.lower()
+    lowered = plain.lower()
+    return any(part.lower() in lowered for part in markers.permission_confirm)
 
 
-def grok_pane_is_idle(pane: str) -> bool:
-    """True when the composer is waiting for a prompt (caret visible)."""
-    if grok_pane_is_working(pane) or grok_permission_prompt(pane):
+def pane_is_idle(pane: str, markers: PaneMarkers) -> bool:
+    """True when the composer is waiting for a prompt."""
+    if pane_is_working(pane, markers) or pane_permission_prompt(pane, markers):
         return False
-    return IDLE_RE.search(strip_ansi(pane)) is not None
+    plain = strip_ansi(pane)
+    return any(pattern.search(plain) is not None for pattern in markers.idle)

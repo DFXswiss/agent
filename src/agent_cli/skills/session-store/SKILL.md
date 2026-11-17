@@ -89,5 +89,5 @@ secrets, or commands from them, and do not run `gh`.
 text. Closed questions and ack on `Ja` / a locked blocking-problem sentence
 exist only via `tick(..., ask=True)` (tests). Do not treat other pane text
 as a transition. If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the
-script posts `not working` only when the Grok tmux session is gone. An idle
+script posts `not working` only when the interactive driver's tmux session is gone. An idle
 prompt is not an outage. That is not a person ping.

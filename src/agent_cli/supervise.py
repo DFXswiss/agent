@@ -2,7 +2,7 @@
 
 The model never chooses the next state. The shipped CLI follow loop
 (`ask=False`) watches the pane, confirms a tool-approval modal, and pages
-Telegram only when the Grok tmux session is gone. Locked closed questions
+Telegram only when the tmux session is gone. Locked closed questions
 and acks exist for `tick(..., ask=True)` (tests).
 """
 
@@ -12,11 +12,11 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from .pane_state import grok_pane_is_working, grok_permission_prompt, strip_ansi
+from .pane_state import pane_is_working, pane_permission_prompt, strip_ansi
 from .telegram_act import TELEGRAM_IDLE_TICKS
 from .runtime import Completed, Runtime
 from .store import Store, StoreError, utcnow
@@ -51,29 +51,19 @@ LAST_WORKING_KEY = "supervise_last_working_at"
 STREAK_KEY = "supervise_idle_streak"
 
 
-_CHROME = (
-    "Worked for",
-    "Shift+Tab",
-    "Help improve",
-    "Enter:send",
-    "Esc:cancel",
-    "Ctrl+x",
-    "Off by default",
-    "Read Terms",
-    "always-approve",
-    "Grok 4.6",
-)
+def parse_closed_answer(pane: str, chrome: Sequence[str]) -> str | None:
+    """Only the newest content line counts. Scrollback 'Ja' is not an answer.
 
-
-def parse_closed_answer(pane: str) -> str | None:
-    """Only the newest content line counts. Scrollback 'Ja' is not an answer."""
+    ``chrome`` lists the driver's interface lines (``interactive.pane.chrome``)
+    that are skipped as not being content.
+    """
     for raw in reversed(pane.splitlines()):
         text = strip_ansi(raw).strip().strip('"').strip("'")
         if text == "":
             continue
         if text.startswith("│") or text.startswith("╰") or text.startswith("╭"):
             continue
-        if any(text.startswith(p) or p in text for p in _CHROME):
+        if any(text.startswith(p) or p in text for p in chrome):
             continue
         if text in ALLOWED_ANSWERS:
             return text
@@ -397,7 +387,8 @@ def tick(
             pane = runtime.capture(session_id)
         else:
             pane = ""
-    if grok_permission_prompt(pane):
+    markers = runtime.markers_for(session_id)
+    if pane_permission_prompt(pane, markers):
         runtime.input_key(session_id, "enter")
         _log(
             store,
@@ -412,7 +403,7 @@ def tick(
         return f"supervise approve assigned={assigned_id}"
     if working is not None:
         busy = working
-    elif grok_pane_is_working(pane):
+    elif pane_is_working(pane, markers):
         busy = True
     else:
         busy = runtime.is_busy(session_id)
@@ -427,7 +418,7 @@ def tick(
         if streak < TELEGRAM_IDLE_TICKS:
             return f"supervise quiet assigned={assigned_id} streak={streak}"
         return f"supervise stalled assigned={assigned_id} streak={streak}"
-    answer = parse_closed_answer(pane)
+    answer = parse_closed_answer(pane, markers.chrome)
     if last_kind == "ask" and answer is not None:
         _log(
             store,

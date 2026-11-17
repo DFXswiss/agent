@@ -34,13 +34,20 @@ it. There is no default GitHub account or fallback to the host login on those
 paths. A38 visibility lookup likewise requires an explicitly configured
 `--github-session`, unless `--private` or `--public` supplies the report visibility.
 [AI accounts and roles](docs/ai-accounts.md) configure provider profiles, models,
-access and session bindings without built-in selections. `agent lane run` needs
-`--session`; `agent run` uses its task session. Interactive Grok starts require
-an interactive role binding. Automatic Grok usage reads are disabled until
-`usage_session` is explicitly configured. OpenRouter key-usage and Claude
-subscription-usage reads are disabled until `usage_accounts` explicitly names one
-or more OpenRouter or Claude accounts. The optional `ai-subscriptions.json`
-inventory lists every known subscription on the dashboard's Subscriptions page.
+access and session bindings without built-in selections. Every driver those
+selections name is described in the operator file `$AGENT_HOME/drivers.json`
+([Drivers](docs/ai-accounts.md#drivers)); the repository ships no driver table,
+and a missing or incomplete description fails loudly. Place `drivers.json` on a
+device before upgrading it. `agent lane run` needs
+`--session`; `agent run` uses its task session. Interactive session starts require
+an interactive role binding whose driver has an `interactive` section. Automatic
+period-usage reads are disabled until
+`usage_session` is explicitly configured. Key-spend reads are
+disabled until `usage_accounts` explicitly names one or more accounts whose
+driver has a spend usage adapter. Window-usage reads stay disabled until
+`usage_accounts` names an account whose driver has a windows usage adapter. The optional
+`ai-subscriptions.json` inventory lists every known subscription on the
+dashboard's Subscriptions page.
 
 ## Install
 
@@ -115,7 +122,7 @@ agent session skill attach --id <session-id> --skill pr-review
 # agent session register --id <session-id> --kind runner
 # agent session skill attach --id <session-id> --skill error-fix
 # (also attach spine, review-loop, and pr-review on that same runner)
-agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
+agent session start --id <session-id> [--provider DRIVER] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session input --id <session-id> --data TEXT
 agent session input --id <session-id> --key enter|ctrl-c|tab
 agent session keep-working --id <session-id> [--once|--follow]
@@ -189,9 +196,9 @@ agent knock --once
 agent knock             # valid foreground loop; the user-service daemon is the supported always-on path
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon covers the loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
-agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
-agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
-agent watch claude-usage # one scan of configured Claude subscription usage (5h, weekly, per model)
+agent watch session-usage # one scan of the usage session's period usage into usage.snapshot
+agent watch account-usage # one scan of the configured usage accounts' key USD usage
+agent watch window-usage # one scan of configured window usage (5h, weekly, per model)
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
 agent order submit|list|show|events|wait|ack|reply|override|cancel|done|report  # local orders for the coordinator; coordinator.json "orders": true
 agent conflicts --session ID [--once|--follow] [--dry-run] # comment-mandated conflict resolution; conflicts.json
@@ -199,10 +206,10 @@ agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HO
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each Claude usage account at most every 15 min
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each window-usage account no more often than its configured poll_seconds
 ```
 
-`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the Grok tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The TUI working probe (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
+`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the interactive driver's tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The pane working probe (the driver's `interactive.pane.working` and `queued` markers in `drivers.json`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
 
 The optional [issue coordinator](docs/issue-coordinator.md) uses explicitly
 configured worker sessions, GitHub and AI accounts, checks, and workspace roots.
@@ -247,12 +254,13 @@ repository, or check command.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 
-`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
+`agent watch session-usage` uses the existing login token that the usage session's driver keeps in its credential file (the driver's `period` usage adapter), does not start an interactive session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
 
-`agent watch openrouter-usage` reads only explicitly selected `usage_accounts`
-and stores changed USD usage and limits from OpenRouter's key endpoint.
-`agent watch claude-usage` reads the Claude Code login of each selected `claude`
-account and stores changed five-hour, weekly and per-model weekly percentages;
+`agent watch account-usage` reads only explicitly selected `usage_accounts`
+and stores changed USD usage and limits from their driver's `spend` usage
+adapter. `agent watch window-usage` reads the login of each selected account
+whose driver has a `windows` usage adapter and stores changed five-hour, weekly
+and per-model weekly percentages;
 see [AI accounts](docs/ai-accounts.md). Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
@@ -400,8 +408,9 @@ first sees the complete raw source; the result is then cut to the limit plus a
 small fail-closed inspection margin before the remaining precise redaction.
 Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
-`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter and
-Claude usage watches ignore them too.
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and a usage adapter
+with `proxy_from_environment: false` ignores them too. The windows usage
+adapter builds its client with the adapter's `proxy_from_environment` setting as well.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
@@ -409,7 +418,7 @@ Claude usage watches ignore them too.
 { "assigned_repos": ["Owner/repo"], "session_id": "assigned" }
 ```
 
-Missing or empty `assigned_repos` is an error. `session_id` is optional, defaults to `assigned`, and may contain only `A-Za-z0-9_-`. A session already present under that id must be `kind=runner`. The auto-created runner session attaches `spine`, `review-loop`, and `pr-review` (those skills stay opt-in for every other session). The working directory is `$AGENT_HOME/sessions/<session_id>` unless `AGENT_SESSION_ROOT` is set. The first successful scan records the `assigned_watch_since` watermark and the assigned session id, and creates no activities. Changing `session_id` after that pin is an error. The scan uses the session account from `github-accounts.json`; a missing binding or a `gh api user` mismatch is an error. Hub pairing is separate and still used for sync. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, write `MANDATE.md` / `QUEUE.md`, and start Grok only if that session is not already attached. The insert does not notify the knock daemon. There is one terminal; further assignments wait in the knock queue until the supervise script records `issue.assigned.ack` with `payload.assigned_id` set to that activity id. The follow CLI does not ack from pane text. `MANDATE.md` lists session and activity ids. `QUEUE.md` lists ids and urls. Neither file contains issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
+Missing or empty `assigned_repos` is an error. `session_id` is optional, defaults to `assigned`, and may contain only `A-Za-z0-9_-`. A session already present under that id must be `kind=runner`. The auto-created runner session attaches `spine`, `review-loop`, and `pr-review` (those skills stay opt-in for every other session). The working directory is `$AGENT_HOME/sessions/<session_id>` unless `AGENT_SESSION_ROOT` is set. The first successful scan records the `assigned_watch_since` watermark and the assigned session id, and creates no activities. Changing `session_id` after that pin is an error. The scan uses the session account from `github-accounts.json`; a missing binding or a `gh api user` mismatch is an error. Hub pairing is separate and still used for sync. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, write `MANDATE.md` / `QUEUE.md`, and start the interactive driver only if that session is not already attached. The insert does not notify the knock daemon. There is one terminal; further assignments wait in the knock queue until the supervise script records `issue.assigned.ack` with `payload.assigned_id` set to that activity id. The follow CLI does not ack from pane text. `MANDATE.md` lists session and activity ids. `QUEUE.md` lists ids and urls. Neither file contains issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
 
 ### Session terminal control
 
@@ -417,8 +426,8 @@ This device is the only place that starts, stops, or types into a live terminal.
 
 ```bash
 agent session start --id <session-id> [--cmd "bash -l"] [--cols 80] [--rows 24]
-agent session start --id <session-id> --provider grok
-# → started <id> tmux=agent-… grok=<uuid>
+agent session start --id <session-id> --provider <driver>
+# → started <id> tmux=agent-… interactive=<uuid>
 # later starts resume that uuid; they do not reuse the store session id
 agent session input --id <session-id> --data "ls\n"
 agent session input --id <session-id> --key enter
@@ -427,7 +436,7 @@ agent session stop --id <session-id>
 # → stopped <id>
 ```
 
-`agent session keep-working` is for a session whose standing job is already in the working directory. The Grok TUI stops after each turn; this command does not interrupt an in-flight turn. A tool-approval modal is cleared with Enter. The first idle composer tick (caret visible) sends one standing instruction to keep going until the assignment is complete. Later idle ticks send only `Continue.`. Bare `keep-working` and `--once` are one tick; `--follow` polls every 30s. A missing tmux session is reported and left alone. An unreadable pane is not typed into.
+`agent session keep-working` is for a session whose standing job is already in the working directory. The interactive driver stops after each turn; this command does not interrupt an in-flight turn. A tool-approval modal is cleared with Enter. The first idle composer tick (caret visible) sends one standing instruction to keep going until the assignment is complete. Later idle ticks send only `Continue.`. Bare `keep-working` and `--once` are one tick; `--follow` polls every 30s. A missing tmux session is reported and left alone. An unreadable pane is not typed into.
 
 `$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` call for that session. A missing key is local tmux, as today. The file stays on this device; it is not a hub event.
 

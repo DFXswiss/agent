@@ -258,8 +258,8 @@
       return w && typeof w.used_percent === "number" ? w.used_percent + "%" : "—";
     }
 
-    // The windows of a Claude snapshot: five hours, the week, and the week per model.
-    function claudeWindows(p) {
+    // The windows of a window snapshot: five hours, the week, and the week per model.
+    function windowLines(p) {
       const w = p.windows || {};
       const list = [["5h", w.five_hour], ["Week", w.weekly]];
       (Array.isArray(w.weekly_models) ? w.weekly_models : []).forEach(m => list.push(["Week " + (m.model || "scoped"), m]));
@@ -268,15 +268,15 @@
 
     // Used and reset cells of one usage.snapshot payload, escaped.
     function usageCells(p) {
-      const provider = p.provider || p.vendor;
-      if (provider === "claude") {
-        const list = claudeWindows(p);
+      if (p.windows && typeof p.windows === "object") {
+        const list = windowLines(p);
         return {
           used: list.map(([name, w]) => esc(name + ": " + percentText(w))).join("<br>"),
           reset: list.map(([name, w]) => esc(name + ": " + (w && w.resets_at ? w.resets_at : "—"))).join("<br>"),
         };
       }
-      if (provider === "openrouter") {
+      const spend = p.account !== undefined;
+      if (spend) {
         return {
           used: idOrText(typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : ""),
           reset: idOrText(p.limit_reset),
@@ -353,7 +353,7 @@
         controls.innerHTML = `
           <div class="control-form">
             <button type="button" id="ctl-start">Start</button>
-            <button type="button" id="ctl-start-grok">Start Grok</button>
+            <button type="button" id="ctl-start-ai">Start AI session</button>
             <button type="button" id="ctl-stop">Stop</button>
             <input type="text" id="ctl-data" placeholder="input text" />
             <button type="button" id="ctl-send">Send</button>
@@ -368,8 +368,8 @@
         };
         document.getElementById("ctl-start").onclick = () =>
           postControl(s.id, { action: "start", payload: {} }).catch(showErr);
-        document.getElementById("ctl-start-grok").onclick = () =>
-          postControl(s.id, { action: "start", payload: { provider: "grok" } }).catch(showErr);
+        document.getElementById("ctl-start-ai").onclick = () =>
+          postControl(s.id, { action: "start", payload: { interactive: true } }).catch(showErr);
         document.getElementById("ctl-stop").onclick = () =>
           postControl(s.id, { action: "stop", payload: {} }).catch(showErr);
         document.getElementById("ctl-send").onclick = () => {

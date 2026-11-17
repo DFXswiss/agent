@@ -39,6 +39,10 @@ inputs:
     description: Python version for the trusted interpreter
     required: false
     default: "3.12"
+  attribution_patterns:
+    description: JSON object with the lists tool_tokens, session_headers and noreply_emails that detect AI tool attribution; bind it to the Actions variable A38_ATTRIBUTION_PATTERNS. Empty or invalid fails every assessed pull request with a hard-fail reason
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -73,6 +77,7 @@ runs:
         A38_EVENT_FILE: ${{ inputs.event_file }}
         A38_EVENT_NAME: ${{ inputs.event_name }}
         A38_ACTOR_APP_SLUG: ${{ inputs.actor_app_slug }}
+        A38_ATTRIBUTION_PATTERNS: ${{ inputs.attribution_patterns }}
         # Composite actions must pass action_ref through env; it identifies the
         # trusted action revision, while github.sha belongs to the consumer.
         A38_RUNTIME_REVISION: ${{ github.action_ref }}

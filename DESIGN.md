@@ -111,7 +111,7 @@ A task exists only when the spine skill is attached. The durable unit is the ses
 Production-error ingestion is not the product core and not a default skill. The `error.*` spellings in §14 belong to the opt-in **error-fix** skill (§21). A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
 
 **Worker capability ontology / scheduler.**
-Providers remain the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; `ai-accounts.json` supplies the default for model slot `first` or `second` when the task is created, the pin on the task governs, and it can be changed explicitly with `agent task models` (not for coordinator tasks), not by a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
+Providers are the drivers that the operator describes in `$AGENT_HOME/drivers.json` ([docs/ai-accounts.md#drivers](docs/ai-accounts.md#drivers)); the repository ships no driver table. `ai-accounts.json` supplies the default for model slot `first` or `second` when the task is created, the pin on the task governs, and it can be changed explicitly with `agent task models` (not for coordinator tasks), not by a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
 
 **A second event envelope beside `activity`.**  
 Outside facts enter as scripts writing catalog rows. Do not add a parallel `external_events` store.
@@ -142,7 +142,7 @@ A runner on an already paired machine inherits that device’s login. No second 
 
 The hub binds `origin_device_id` to the GitHub login of the session that **confirmed** pairing. The client cannot choose that login.
 
-A Grok (or other TUI) runtime UUID is **not** the session id. See §17.
+An interactive driver's runtime UUID is **not** the session id. See §17.
 
 ## 6. Visibility and teams
 
@@ -272,7 +272,7 @@ Knock state machine (observable states only):
 | Session not running | Unread until the next start; the agent `SELECT`s unread ids |
 | No tmux and no ACP | No knock; unread until the next human turn |
 
-`Runtime.is_busy` is the Grok TUI working probe in the registered pane (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`). “Model running” is that probe. The queue branch still runs when a runtime reports busy.
+`Runtime.is_busy` is the working probe of the interactive driver in the registered pane: the `interactive.pane.working` markers of that driver in `drivers.json`, or a complete `queued` marker group (a queued follow-up). “Model running” is that probe. The queue branch still runs when a runtime reports busy.
 
 Ack of session mail is a **recipient-owned** `message.read` activity, not a mutation of the sender’s row.
 
@@ -326,7 +326,7 @@ v1 types (mechanism only):
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; device daemon knock child) |
-| `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
+| `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one interactive terminal) |
 | `issue.assigned.ack` | `issue` | script | — (releases the next queued knock; supervise only) |
 | `comment.post` | — | AI (target + body) | script |
 | `review.post` | — | gate record (repo, number, body) | script |
@@ -336,8 +336,8 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
-| `usage.snapshot` | — | script | — (configured Grok billing, OpenRouter key-usage or Claude OAuth-usage GET on this device; no TUI knock). Missing or expired Grok or Claude login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`, `agent watch claude-usage` prints `usage.snapshot skipped <account>: <reason>`; OpenRouter and Claude account failures are reported and never stored as zero values. |
-| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; the OpenRouter and Claude usage GETs use `trust_env=False`. |
+| `usage.snapshot` | — | script | — (configured period-usage, key-spend or windows GET of a driver's usage adapter, on this device; no TUI knock). A missing or expired login of the usage session is not a scan failure: `agent watch session-usage` prints `usage.snapshot skipped`. A missing or expired windows login is not a scan failure either: `agent watch window-usage` prints `usage.snapshot skipped <account>: <reason>`. Usage-account failures, including HTTP 429, are reported and never stored as zero values. |
+| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; a usage adapter with `proxy_from_environment: false` uses `trust_env=False`. A windows adapter follows its configured `proxy_from_environment` setting. |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
@@ -371,7 +371,7 @@ Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of 
 
 The first successful scan records `assigned_watch_since` and the assigned `session_id` and dispatches nothing. Later scans consider assignments whose latest matching `assigned` event is at or after that cursor, skipping `assigned_at` values already stored. Changing `session_id` after that pin is an error. The scan uses the session's explicitly configured GitHub execution account; a missing account or a `gh api user` mismatch is an error. This account is independent of hub pairing. The queue head is the already-knocked inflight item if any, then remaining items oldest first.
 
-The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts Grok only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the **supervise script** records `issue.assigned.ack` with `payload.assigned_id`. The model must not insert that ack. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
+The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux terminal with the interactive driver, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts the interactive driver only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the **supervise script** records `issue.assigned.ack` with `payload.assigned_id`. The model must not insert that ack. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
 
 Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 
@@ -412,7 +412,7 @@ agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
 agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix|conflicts
 agent session skill list --id ID
-agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
+agent session start --id ID [--provider DRIVER] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
@@ -450,12 +450,12 @@ agent daemon [--install|--uninstall]           # always-on supervisor; init inst
 agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
-agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
-agent watch openrouter-usage                   # one scan of explicitly configured OpenRouter accounts
-agent watch claude-usage                       # one scan of explicitly configured Claude accounts
+agent watch session-usage                      # one scan; knock child (under the device daemon) polls every 60s
+agent watch account-usage                      # one scan of explicitly configured usage accounts
+agent watch window-usage                       # one scan of explicitly configured window-usage accounts
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
-agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
-agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
+agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with session-usage
+agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with session-usage
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent coordinate --session ID [--follow]             # static issue and order workflow; coordinator.json
 agent conflicts --session ID [--once|--follow] [--dry-run]
@@ -500,8 +500,8 @@ Owned-row runtime fields (start/stop set control and tmux; `keep-working` may al
   "control": "attached" | "stopped",
   "cols": 80,
   "rows": 24,
-  "provider": "grok",
-  "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "provider": "driver-a",
+  "interactive_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "model": "operator-selected-model",
   "keep_working": { "standing_sent": true }
 }
@@ -509,23 +509,30 @@ Owned-row runtime fields (start/stop set control and tmux; `keep-working` may al
 
 Start sets `control=attached` and the tmux name. Stop sets `control=stopped` and keeps the name. `agent session keep-working` updates `runtime.keep_working.standing_sent` on idle ticks so the standing instruction is sent once. Session `status` (`active` / `closed`) is separate; `session close` stays as it is.
 
-**Grok Build launch** (`--provider grok` or control `{provider: "grok"}`) resolves
-an explicit interactive role from `ai-accounts.json`. The model and provider
+**Interactive driver launch** (`--provider DRIVER` or control `{provider: "DRIVER"}`, or the dashboard's "Start AI session" with `{interactive: true}`) resolves
+an explicit interactive role from `ai-accounts.json`; its driver must have an
+`interactive` section in `drivers.json`. The model and provider
 profile directory are required configuration; there is no built-in model.
-The CLI accepts only a UUID, so first start creates `runtime.grok_session_id`.
+The session id format is a UUID, so first start creates `runtime.interactive_session_id`
+(and `runtime.interactive_start_pending` until the tmux session is attached) and
+prints `interactive=<uuid>`. Runtimes of an earlier version that stored these
+under keys named after the driver are read as the neutral keys and rewritten on
+the next session write.
 A later start may resume that ID only with the same recorded AI binding
 (role, account, provider, model, access, and configuration-directory hash).
 Changing that binding, or adopting an old unbound ID, requires a new session.
 Provider credential environment variables are cleared in the child process,
-and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
-be combined; `--model`, when supplied, must match the configured role.
+and the driver's `home_env` selects the configured profile. `--provider` and `--cmd` cannot
+be combined; `--model` requires `--provider` and, when supplied, must match the configured role.
+A read-only role appends the driver's `interactive.read_only_args`; every start
+appends its `interactive.hardening_args`.
 Interactive provider starts require the current device to be a declared lane
 host. The local harness's lane starter starts them on that external host;
 Agent does not provide its own remote lane transport or workspace mirroring.
 Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
 the `models` and `lane_execution` checks pass.
 
-**Lane providers are the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; `ai-accounts.json` supplies the default for the model slots `first` and `second` when the task is created, and the pin on the task governs and can be changed explicitly with `agent task models` (not for coordinator tasks).** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; `claude` and `openrouter` lanes are headless restricted `claude --print` adapters, not this tmux pane. The OpenRouter adapter supplies its Anthropic-compatible endpoint and reads its key only inside a shell wrapper; the key is not argv or lane evidence. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
+**Lane providers are the drivers with a `lane` section in `drivers.json`; `ai-accounts.json` supplies the default for the model slots `first` and `second` when the task is created, and the pin on the task governs and can be changed explicitly with `agent task models` (not for coordinator tasks).** A process running inside a tmux pane is not a store vendor. The interactive runtime is the driver's `interactive` section; a lane is the headless `lane` section of a driver, not this tmux pane. A driver with `lane.credential_file` reads its key only inside a generated shell wrapper; the key is not argv or lane evidence. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
 Local dashboard (`127.0.0.1`): the main page (`/`) keeps the orders and order-events sections — the order table, detail and events — and links to the new-order form on its own page, `/orders/new`, and to one loopback subpage per remaining section (`/usage`, labelled Subscriptions, which joins the optional `ai-subscriptions.json` inventory with the newest usage snapshots, `/sessions`, `/tasks`, `/rounds`, `/agents`, `/checks`, `/gates`, `/work`, `/pings`). Sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub. Order reads use `GET /api/orders/<name>` and order writes use `POST /api/orders/<name>` with a JSON object. `GET /api/orders/schema` returns `enabled`, `skippable`, and `operations`. These routes call the same order operations as the command line. Every route below `/api/orders/` requires `Host` to be `127.0.0.1:<port>` or `localhost:<port>`, with any port. When `Origin` is present and nonempty, it must equal `http://` plus that `Host`; otherwise the route returns 403 with `cross-origin request refused`. The blocking `wait` operation has no dashboard route; the dashboard polls `events`.
 
@@ -663,7 +670,7 @@ checklist evidence still blocks `done`; only `task close-from-pr` writes it.
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains with only `.md` files changed in between. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
-Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex`, `claude` or `openrouter`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created, with that file supplying the default. Later checks use the pinned values. To run a slot with another provider, change the pin with `agent task models --id <uuid> --slot first|second|implementer --vendor <provider> --reason "<why>"`; the change is recorded on the task and applies to later agent rows of that slot, and for a review slot (`first`, `second`) also to later gate rows, while rows already recorded keep their vendor. For a PR reviewer that cannot run, the order is `agent agent finish --id <reviewer-uuid> --verdict unavailable` for its row, then `agent gate record --verdict unavailable`, then `agent close-step --status unavailable` for the matching gate key, and then the pin change; do not record `approved`. For an implementer that cannot run, the order is `agent agent finish --id <implementer-uuid> --verdict blocked` for its row (the task becomes `failed`), then the implementer pin change with `agent task models`, then `agent round start`. Never record a gate for a provider the task does not pin; do not substitute another vendor until the pin is changed, and never substitute silently or automatically. `agent task models` refuses `done`, `merged` and `superseded` tasks, and coordinator tasks. Empty, partial, timeout, or unavailable review output is not zero findings. The session that authored the diff does not sit those PR reviews.
+Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (a driver with a `lane` section in `drivers.json`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created, with that file supplying the default. Later checks use the pinned values. To run a slot with another provider, change the pin with `agent task models --id <uuid> --slot first|second|implementer --vendor <provider> --reason "<why>"`; the change is recorded on the task and applies to later agent rows of that slot, and for a review slot (`first`, `second`) also to later gate rows, while rows already recorded keep their vendor. For a PR reviewer that cannot run, the order is `agent agent finish --id <reviewer-uuid> --verdict unavailable` for its row, then `agent gate record --verdict unavailable`, then `agent close-step --status unavailable` for the matching gate key, and then the pin change; do not record `approved`. For an implementer that cannot run, the order is `agent agent finish --id <implementer-uuid> --verdict blocked` for its row (the task becomes `failed`), then the implementer pin change with `agent task models`, then `agent round start`. Never record a gate for a provider the task does not pin; do not substitute another vendor until the pin is changed, and never substitute silently or automatically. `agent task models` refuses `done`, `merged` and `superseded` tasks, and coordinator tasks. Empty, partial, timeout, or unavailable review output is not zero findings. The session that authored the diff does not sit those PR reviews.
 
 Besides the `one_review_authors` one-review exception above, the only other
 second-slot exception is a coordinator A38 task pinned with
@@ -872,7 +879,15 @@ device's hub identity or transfer ownership of store rows.
 
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
-used by lane launches, interactive Grok starts and optional Grok, OpenRouter and Claude usage reads.
+used by lane launches, interactive session starts and optional usage reads.
+Every driver it names is described in the operator file `drivers.json`
+([docs/ai-accounts.md#drivers](docs/ai-accounts.md#drivers)): argv templates,
+spec and output passing, the configuration-directory variable, credential
+variables to scrub, capability flags, the usage adapter, the display name and
+the pane markers. The repository ships no driver table and no driver default;
+a missing or incomplete description fails loudly.
+Window-usage reads are a usage adapter; their login, requests and response keys
+come from that driver's `drivers.json` configuration.
 Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid
@@ -883,14 +898,16 @@ Its required `models` block names the provider of model slot `first` and `second
 its optional `implementer` names a separate implementation provider;
 device-wide `lanes` bind slots for every session. An unset `models` block
 is unconfigured and fails closed; no provider assignment is built in. Tasks
-recorded before model slots existed may use the historical `grok`, then `codex`
-mapping only when their existing agent and gate rows are read or displayed.
+recorded before model slots existed read the slots of `recorded_slots` in
+`drivers.json` only when their existing agent and gate rows are read or
+displayed; the same entry keeps stage, checklist-key and phase names that an
+earlier version derived from driver ids readable.
 They cannot start a new lane or write a new agent or gate row and must be
 recreated with the configured device selection. Task creation and `agent models`
 read both selections.
-Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude/OpenRouter
-provider adapters are protocol capabilities, not installed account or role
-selections. A38 visibility lookup uses an explicitly bound GitHub
+Absent configuration authorizes no AI launch. Fixed workflow kinds are
+protocol capabilities and drivers are operator configuration; neither is an
+installed account or role selection. A38 visibility lookup uses an explicitly bound GitHub
 session, or operator-supplied visibility without a GitHub lookup.
 
 The standalone PR guard retains its explicit workflow-token configuration.
@@ -1092,7 +1109,7 @@ no `STATUS` line. The script validates the answer and never interprets free
 text. This is process argv hardening, not a sandbox.
 
 The check lane uses model slot `first` through `<first>:check`, bound to a
-read-only role. `codex` cannot run it. The duplicate check first lists the open
+read-only role. A driver without `lane.argv.judgment` cannot run it. The duplicate check first lists the open
 pull requests with bounded titles and descriptions. With none, the
 script records yes without a lane. Otherwise the lane compares that list with
 the order and returns `RESULT: duplicate <number>` or `RESULT: no-duplicate`,
@@ -1192,7 +1209,7 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 | Hub assigns, leases, and reassigns work | Hub is replica + fan-out, not author. A disappeared laptop is restore or unread, not a lease expiry that moves authorship. |
 | Formal `CREATED` → `READY_FOR_PR` machine as platform | Spine already has a local task machine. A second hub machine would be a second truth. |
 | Normalized `external_events` table + fingerprint service | Outside facts are script-written `activity` rows (`pr.merged`, …). |
-| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude` \| `openrouter`; `ai-accounts.json` supplies the slot defaults when the task is created, and the task pin governs and can be changed explicitly with `agent task models` (not for coordinator tasks). Scripts are not store workers. |
+| Worker capability ontology and scheduler | Providers are the drivers described in `drivers.json`; `ai-accounts.json` supplies the slot defaults when the task is created, and the task pin governs and can be changed explicitly with `agent task models` (not for coordinator tasks). Scripts are not store workers. |
 | Policy language (allowed repos, forbidden paths, cost budgets) as core | Team-specific rules stay outside this public client (§2 Runtime). |
 | Website as an operations console for leases, token cost, stuck coding tasks | Website is the visibility replica (§7). |
 | Autonomous merge | Already forbidden. Stays forbidden. |
@@ -1250,7 +1267,7 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 }
 ```
 
-`session_id`, `url`, and `query` are required. The default fetch is a Loki-compatible `query_range` GET (`query`, `start`, `end`, `limit`, `direction=forward`). The JSON body is `{ "data": { "result": [ { "stream": {}, "values": [[ns, line], ...] } ] } }`. Optional `service`, `environment`, `repo`, `limit`, `line_must_match`, `line_must_not_match`. Cursor is nanoseconds in `$AGENT_HOME/error-fix.cursor`; the next `start` is that value plus one. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from `error-fix.json`, the store, or the URL. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
+`session_id`, `url`, and `query` are required. The default fetch is a Loki-compatible `query_range` GET (`query`, `start`, `end`, `limit`, `direction=forward`). The JSON body is `{ "data": { "result": [ { "stream": {}, "values": [[ns, line], ...] } ] } }`. Optional `service`, `environment`, `repo`, `limit`, `line_must_match`, `line_must_not_match`. Cursor is nanoseconds in `$AGENT_HOME/error-fix.cursor`; the next `start` is that value plus one. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from `error-fix.json`, the store, or the URL. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as session-usage when the config file exists.
 
 ### 21.3 Payload shape (`error.seen`)
 
@@ -1322,17 +1339,17 @@ A second model must not orchestrate the first. `agent supervise` is a **script**
 
 - One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
 - `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
-- Busy means the Grok TUI in the tmux pane shows an in-flight turn (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, or a queued follow-up with `Enter to send now`). `Runtime.is_busy` is that probe. The script does not type while busy.
-- Follow (`ask=False`, the CLI default) does not knock an existing session, does not ask closed questions, and does not auto-continue. It only confirms a Grok tool-approval modal (`1/3:select` plus `Tab:next option` → Enter). Closed questions remain available to `tick(..., ask=True)` for tests. Consecutive idle ticks (`supervise quiet` / `supervise stalled`) are follow-loop bookkeeping, not Telegram pages. The footer badge `always-approve` is not a working signal.
+- Busy means the interactive driver in the tmux pane shows an in-flight turn: an `interactive.pane.working` marker of that driver, or a complete `queued` marker group for a queued follow-up. `Runtime.is_busy` is that probe. The script does not type while busy.
+- Follow (`ask=False`, the CLI default) does not knock an existing session, does not ask closed questions, and does not auto-continue. It only confirms a tool-approval modal (a `permission` marker plus one `permission_confirm` substring → Enter). Closed questions remain available to `tick(..., ask=True)` for tests. Consecutive idle ticks (`supervise quiet` / `supervise stalled`) are follow-loop bookkeeping, not Telegram pages. Interface lines listed in `interactive.pane.chrome` are not a working signal or an answer.
 - When `ask=True`, `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
 - `supervise.event` is script-only and does not knock.
-- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. Telegram `not working` is posted only when the Grok tmux session is gone (`runtime.exists` is false), once until the session returns. An idle prompt after `Worked for` is not an outage. A send failure does not stop the loop.
+- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. Telegram `not working` is posted only when the interactive driver's tmux session is gone (`runtime.exists` is false), once until the session returns. An idle prompt is not an outage. A send failure does not stop the loop.
 
 Phase 1 is this loop plus a backlog. Smarter questions are later.
 
 ## 23. Document history
 
-Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, the historical default model (now replaced by explicit AI configuration), no Claude environment in the pane.
+Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Interactive launch: own UUID in `runtime.interactive_session_id`, a resume template on later starts, the historical default model and built-in driver table (now replaced by explicit AI and driver configuration), no credential environment of another driver in the pane.
 
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 

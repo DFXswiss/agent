@@ -1,4 +1,18 @@
-"""Record configured provider usage as usage.snapshot activities."""
+"""Record configured driver usage as usage.snapshot activities.
+
+A driver's ``usage`` section in ``drivers.json`` is its usage adapter: the
+credential file in the account's configuration directory, the HTTPS requests to
+make and JSON pointers (RFC 6901) into their responses. The first segment of a
+field pointer names a request. A ``period`` adapter records the usage of a
+subscription period for the configured usage session; a ``spend`` adapter
+records key spend in US dollars for each configured usage account. A
+``windows`` adapter records the login's usage windows (a short window, the
+week, and the week per model) for each configured usage account.
+
+The request semantics stay here: a bearer token, ``Accept: application/json``,
+an 8 second timeout and no redirects. Proxy and certificate settings come from
+the process environment only when the adapter sets ``proxy_from_environment``.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +26,7 @@ import sys
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -20,30 +34,24 @@ from typing import Any
 
 import httpx
 
+from .drivers import (
+    SPEND_FIELDS,
+    DriverSpec,
+    UsageCredential,
+    UsageKeychain,
+    UsageRequest,
+    UsageSpec,
+    expand_template,
+    is_home_default_dir,
+)
 from .store import Store, StoreError, utcnow
 
-# format=credits is required: the weekly SuperGrok pool lives only on that view;
-# the default monthly billing body has no currentPeriod.
-CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
-SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings"
 USAGE_POLL_SECONDS = 60
-VENDOR = "grok"
-OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
-OPENROUTER_VENDOR = "openrouter"
-CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-CLAUDE_VENDOR = "claude"
-CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
-CLAUDE_KEYCHAIN_FALLBACK_USER = "claude-code-user"
-SECURITY_BIN = "/usr/bin/security"
-# The Claude usage endpoint answers per-minute polling with HTTP 429 and a
-# Retry-After header, so the poll reads each Claude account at most this often.
-CLAUDE_USAGE_POLL_SECONDS = 15 * 60
-# ``security`` exit status for an item that does not exist.
-_SECURITY_ITEM_NOT_FOUND = 44
-_KEYCHAIN_USER = re.compile(r"[a-zA-Z0-9._-]+")
+USAGE_TIMEOUT_SECONDS = 8.0
+# Bound of one secret-store read. The program and its arguments come from the adapter.
+KEYCHAIN_READ_TIMEOUT_SECONDS = 10
 # A bearer token must be visible ASCII: no whitespace, control or non-ASCII characters.
 _VISIBLE_ASCII = re.compile(r"[\x21-\x7e]+")
-_MAX_MULTIPLIER = re.compile(r"(?:^|_)max_(\d+x)$", re.IGNORECASE)
 _COMPARE_KEYS = (
     "vendor",
     "provider",
@@ -58,10 +66,19 @@ _COMPARE_KEYS = (
     "on_demand_cap_val",
     "on_demand_used_val",
 )
+# Spend fields that may be null, or absent from an existing object, when the
+# key has no limit. Every other spend field is a required number.
+_NULLABLE_SPEND_FIELDS = frozenset({"limit_usd", "limit_remaining_usd", "limit_reset"})
+_PERIOD_TEXT_FIELDS = ("tier", "period_type", "period_start", "period_end")
+_PERIOD_INT_FIELDS = ("prepaid_val", "on_demand_cap_val", "on_demand_used_val")
+_ARRAY_INDEX = re.compile(r"0|[1-9][0-9]*")
+_MISSING = object()
+
+Fetch = Callable[[str, UsageSpec, str], Mapping[str, Any]]
 
 
 class AuthStale(StoreError):
-    """Grok login missing or expired. Not a runtime failure of this scan."""
+    """The usage credential is missing or expired. Not a runtime failure of this scan."""
 
 
 class AccountUsageError(StoreError):
@@ -105,221 +122,283 @@ def _retry_after_seconds(value: str | None) -> float | None:
     return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
-class OpenRouterUsageError(AccountUsageError):
-    """One or more configured OpenRouter accounts could not be scanned."""
+def is_spend_snapshot(payload: Mapping[str, Any]) -> bool:
+    """A spend snapshot names its usage account; a period snapshot an email."""
+    return "account" in payload
 
 
-class ClaudeUsageError(AccountUsageError):
-    """One or more configured Claude accounts could not be scanned."""
+def load_usage_credential(
+    driver: str, credential: UsageCredential, path: Path
+) -> tuple[str, str]:
+    """Read a ``json-entry`` credential and return ``(token, account)``.
 
-
-def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
+    The first top-level key that starts with ``entry_prefix`` holds the entry.
+    Its ``token``, ``expires_at`` and ``account`` fields must be non-empty
+    strings. ``expires_at`` is ISO-8601 with an offset; a trailing ``Z`` means
+    UTC. A missing file, a missing entry or an expired token is AuthStale.
+    Invalid JSON or a missing or invalid field is StoreError. The token is
+    never logged, and nothing is refreshed.
     """
-    Read the SuperGrok OIDC entry.
-    Prefer the first top-level key that starts with 'https://auth.x.ai::'.
-    Required fields: key (non-empty str), expires_at (non-empty str), email (non-empty str).
-    expires_at must parse as aware UTC; if now >= expiry → AuthStale('grok auth token expired; run grok login').
-    Parse ISO-8601; replace trailing Z with +00:00. No other date libraries.
-    Missing file or no auth.x.ai entry → AuthStale. Invalid JSON, missing key/expires_at/email → StoreError.
-    Return (token, account_email). Never log the token.
-    Do not refresh tokens. Do not read refresh_token except to ignore it.
-    """
-    if auth_path is None:
-        raise AuthStale("Grok authentication path must be explicitly configured")
-    path = auth_path
+    prefix = credential.entry_prefix
+    token_field = credential.token
+    expires_field = credential.expires_at
+    account_field = credential.account
+    if prefix is None or token_field is None or expires_field is None or account_field is None:
+        raise StoreError(f"{driver} usage credential is not a json-entry credential")
     if not path.is_file():
-        raise AuthStale(f"grok auth file not found: {path}")
+        raise AuthStale(f"{driver} credential file not found: {path}")
     try:
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise StoreError("grok auth file is not valid JSON") from exc
+        raise StoreError(f"{driver} credential file is not valid JSON") from exc
     if not isinstance(data, dict):
-        raise StoreError("grok auth file is not valid JSON")
+        raise StoreError(f"{driver} credential file is not valid JSON")
     entry: dict[str, Any] | None = None
     for key, value in data.items():
-        if isinstance(key, str) and key.startswith("https://auth.x.ai::"):
+        if isinstance(key, str) and key.startswith(prefix):
             if not isinstance(value, dict):
-                raise StoreError("grok auth entry field key is missing or invalid")
+                raise StoreError(_entry_field_error(driver, token_field))
             entry = value
             break
     if entry is None:
-        raise AuthStale("grok auth file has no auth.x.ai entry")
-    token = entry.get("key")
+        raise AuthStale(f"{driver} credential file has no entry that starts with {prefix}")
+    token = entry.get(token_field)
     if not isinstance(token, str) or token == "":
-        raise StoreError("grok auth entry field key is missing or invalid")
-    expires_at = entry.get("expires_at")
+        raise StoreError(_entry_field_error(driver, token_field))
+    expires_at = entry.get(expires_field)
     if not isinstance(expires_at, str) or expires_at == "":
-        raise StoreError("grok auth entry field expires_at is missing or invalid")
+        raise StoreError(_entry_field_error(driver, expires_field))
     parsed = expires_at[:-1] + "+00:00" if expires_at.endswith("Z") else expires_at
     try:
         when = datetime.fromisoformat(parsed)
     except ValueError as exc:
-        raise StoreError("grok auth entry field expires_at is invalid") from exc
+        raise StoreError(f"{driver} credential entry field {expires_field} is invalid") from exc
     if when.tzinfo is None:
-        raise StoreError("grok auth entry field expires_at is invalid")
+        raise StoreError(f"{driver} credential entry field {expires_field} is invalid")
     if datetime.now(timezone.utc) >= when:
-        raise AuthStale("grok auth token expired; run grok login")
-    account_email = entry.get("email")
-    if not isinstance(account_email, str) or account_email == "":
-        raise StoreError("grok auth entry field email is missing or invalid")
-    return token, account_email
+        raise AuthStale(f"{driver} credential expired; log in again")
+    account = entry.get(account_field)
+    if not isinstance(account, str) or account == "":
+        raise StoreError(_entry_field_error(driver, account_field))
+    return token, account
 
 
-def _get_json(
-    client: httpx.Client,
-    url: str,
-    headers: dict[str, str],
-    name: str,
+def _entry_field_error(driver: str, field: str) -> str:
+    return f"{driver} credential entry field {field} is missing or invalid"
+
+
+def load_key_credential(driver: str, path: Path) -> str:
+    """Read a ``text`` credential: the key file's content without surrounding space."""
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise StoreError(f"{driver} key missing") from exc
+    if token == "":
+        raise StoreError(f"{driver} key missing")
+    return token
+
+
+def _get_document(
+    client: httpx.Client, driver: str, request: UsageRequest, token: str
 ) -> dict[str, Any]:
-    try:
-        response = client.get(url, headers=headers)
-    except httpx.HTTPError as exc:
-        raise StoreError(f"{name} request failed: {exc}") from exc
-    if response.status_code != 200:
-        raise StoreError(f"{name} returned HTTP {response.status_code}")
-    try:
-        data = response.json()
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-        raise StoreError(f"{name} returned invalid JSON") from exc
-    if not isinstance(data, dict):
-        raise StoreError(f"{name} response is not an object")
-    return data
-
-
-def fetch_credits_and_settings(
-    token: str, client: httpx.Client | None = None
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    GET CREDITS_URL and SETTINGS_URL with httpx.Client(timeout=8.0, follow_redirects=False).
-    Headers: Authorization Bearer, Accept application/json, x-xai-token-auth: xai-grok-cli.
-    Non-200, HTTPError, invalid JSON, non-object body → StoreError.
-    Return (credits_object, settings_object).
-    Optional client is caller-owned and is not closed.
-    """
+    label = f"{driver} usage request {request.name}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
-        "x-xai-token-auth": "xai-grok-cli",
+        **dict(request.headers),
     }
+    try:
+        response = client.get(request.url, headers=headers)
+    except httpx.HTTPError as exc:
+        # The exception text may repeat request details; only its kind is shown.
+        raise StoreError(f"{label} failed: {type(exc).__name__}") from None
+    if response.status_code != 200:
+        raise StoreError(f"{label} returned HTTP {response.status_code}")
+    try:
+        data = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        raise StoreError(f"{label} returned invalid JSON") from None
+    if not isinstance(data, dict):
+        raise StoreError(f"{label} response is not an object")
+    return data
+
+
+def fetch_usage_documents(
+    driver: str,
+    spec: UsageSpec,
+    token: str,
+    client: httpx.Client | None = None,
+) -> dict[str, dict[str, Any]]:
+    """GET every configured request in order; return the JSON objects by name.
+
+    The owned client has an 8 second timeout, follows no redirect, and reads
+    proxy and certificate settings from the environment only when the adapter
+    sets ``proxy_from_environment``. An optional client is caller-owned and is
+    not closed. A transport error, a status other than 200, invalid JSON or a
+    body that is not an object is a StoreError that never contains the token.
+    """
     if client is None:
-        with httpx.Client(timeout=8.0, follow_redirects=False) as owned:
-            credits = _get_json(owned, CREDITS_URL, headers, "credits")
-            settings = _get_json(owned, SETTINGS_URL, headers, "settings")
-        return credits, settings
-    credits = _get_json(client, CREDITS_URL, headers, "credits")
-    settings = _get_json(client, SETTINGS_URL, headers, "settings")
-    return credits, settings
+        with httpx.Client(
+            timeout=USAGE_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            trust_env=spec.proxy_from_environment,
+        ) as owned:
+            return fetch_usage_documents(driver, spec, token, owned)
+    return {
+        request.name: _get_document(client, driver, request, token)
+        for request in spec.requests
+    }
 
 
-def _require_nonempty_str(value: Any, field: str) -> str:
+def _resolve(root: Any, pointer: str, *, absent_leaf: Any = _MISSING) -> Any:
+    """Follow a JSON pointer from ``root``; ``_MISSING`` when it leads nowhere.
+
+    ``absent_leaf`` stands in for a last segment that an existing object lacks.
+    """
+    segments = [
+        segment.replace("~1", "/").replace("~0", "~")
+        for segment in pointer.split("/")[1:]
+    ]
+    current = root
+    for position, segment in enumerate(segments):
+        if isinstance(current, dict):
+            if segment not in current:
+                return absent_leaf if position == len(segments) - 1 else _MISSING
+            current = current[segment]
+        elif isinstance(current, list) and _ARRAY_INDEX.fullmatch(segment):
+            index = int(segment)
+            if index >= len(current):
+                return _MISSING
+            current = current[index]
+        else:
+            return _MISSING
+    return current
+
+
+def _field(
+    driver: str, name: str, pointer: str, root: Any, *, absent_leaf: Any = _MISSING
+) -> tuple[str, Any]:
+    label = f"{driver} usage field {name} at {pointer}"
+    value = _resolve(root, pointer, absent_leaf=absent_leaf)
+    if value is _MISSING:
+        raise StoreError(f"{label} is missing")
+    return label, value
+
+
+def _text(label: str, value: Any) -> str:
     if not isinstance(value, str) or value == "":
-        raise StoreError(f"{field} must be a non-empty string")
+        raise StoreError(f"{label} must be a non-empty string")
     return value
 
 
-def _require_float(value: Any, field: str) -> float:
+def _finite(label: str, value: Any) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise StoreError(f"{field} must be a number")
+        raise StoreError(f"{label} must be a number")
     try:
-        number = float(value)
-    except (OverflowError, ValueError) as exc:
-        raise StoreError(f"{field} must be a finite number") from exc
-    if not math.isfinite(number):
-        raise StoreError(f"{field} must be a finite number")
-    return number
+        finite = math.isfinite(float(value))
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise StoreError(f"{label} must be a finite number")
+    return value
 
 
-def _require_val_int(obj: Any, field: str) -> int:
-    if not isinstance(obj, dict):
-        raise StoreError(f"{field} must be an object")
-    val = obj.get("val")
-    if isinstance(val, bool) or not isinstance(val, int):
-        raise StoreError(f"{field}.val must be an int")
-    return val
+def _integer(label: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise StoreError(f"{label} must be an integer")
+    return value
 
 
-def snapshot_from_payloads(
-    credits: dict[str, Any],
-    settings: dict[str, Any],
+def period_snapshot(
+    driver: str,
+    spec: UsageSpec,
+    documents: Mapping[str, Any],
     fetched_at: str,
     account_email: str,
 ) -> dict[str, Any]:
+    """Map the period adapter's responses to a period snapshot.
+
+    Text fields are non-empty strings; ``used_percent`` and each product's
+    ``used_percent`` are finite numbers stored as floats; the three ``*_val``
+    fields are integers. The product list must exist and may be empty. A
+    missing field or a wrong type is a StoreError that names the field and its
+    pointer; nothing is defaulted or coerced.
     """
-    Return:
-    {
-      "vendor": "grok",
-      "provider": "grok",
-      "account_email": <account_email str>,
-      "tier": <settings.subscription_tier_display str>,
-      "used_percent": <float of config.creditUsagePercent>,
-      "period_type": <config.currentPeriod.type str>,
-      "period_start": <config.currentPeriod.start str>,
-      "period_end": <config.currentPeriod.end str>,
-      "products": [{"product": str, "used_percent": float}, ...],  # from config.productUsage; empty list allowed
-      "prepaid_val": <int config.prepaidBalance.val>,
-      "on_demand_cap_val": <int config.onDemandCap.val>,
-      "on_demand_used_val": <int config.onDemandUsed.val>,
-      "fetched_at": fetched_at,
-    }
-    creditUsagePercent and usagePercent: int or float (not bool). Store as float.
-    val fields: int (not bool, not float).
-    productUsage missing → StoreError (do not default to []).
-    productUsage must be a list; each item a dict with product str non-empty and usagePercent number.
-    account_email must be a non-empty str.
-    Any missing/wrong type → StoreError naming the field. No defaults, no coercion of the monthly shape.
-    """
-    if not isinstance(credits, dict):
-        raise StoreError("credits must be an object")
-    config = credits.get("config")
-    if not isinstance(config, dict):
-        raise StoreError("config must be an object")
-    period = config.get("currentPeriod")
-    if not isinstance(period, dict):
-        raise StoreError("currentPeriod must be an object")
-    period_type = _require_nonempty_str(period.get("type"), "currentPeriod.type")
-    period_start = _require_nonempty_str(period.get("start"), "currentPeriod.start")
-    period_end = _require_nonempty_str(period.get("end"), "currentPeriod.end")
-    used_percent = _require_float(config.get("creditUsagePercent"), "creditUsagePercent")
-    if "productUsage" not in config:
-        raise StoreError("productUsage is missing")
-    product_usage = config.get("productUsage")
-    if not isinstance(product_usage, list):
-        raise StoreError("productUsage must be a list")
-    products: list[dict[str, Any]] = []
-    for item in product_usage:
+    values: dict[str, Any] = {}
+    for name in _PERIOD_TEXT_FIELDS:
+        values[name] = _text(*_field(driver, name, spec.pointer(name), documents))
+    values["used_percent"] = float(
+        _finite(*_field(driver, "used_percent", spec.pointer("used_percent"), documents))
+    )
+    products = spec.products
+    if products is None:
+        raise StoreError(f"{driver} usage adapter has no products fields")
+    label, items = _field(driver, "products", products.list, documents)
+    if not isinstance(items, list):
+        raise StoreError(f"{label} must be a list")
+    product_rows: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        item_name = f"products[{index}]"
         if not isinstance(item, dict):
-            raise StoreError("productUsage item must be an object")
-        product = _require_nonempty_str(item.get("product"), "productUsage.product")
-        item_used = _require_float(item.get("usagePercent"), "productUsage.usagePercent")
-        products.append({"product": product, "used_percent": item_used})
-    prepaid_val = _require_val_int(config.get("prepaidBalance"), "prepaidBalance")
-    on_demand_cap_val = _require_val_int(config.get("onDemandCap"), "onDemandCap")
-    on_demand_used_val = _require_val_int(config.get("onDemandUsed"), "onDemandUsed")
-    if not isinstance(settings, dict):
-        raise StoreError("settings must be an object")
-    tier = settings.get("subscription_tier_display")
-    if not isinstance(tier, str) or tier == "":
-        raise StoreError("subscription_tier_display must be a non-empty string")
-    account_email = _require_nonempty_str(account_email, "account_email")
+            raise StoreError(f"{label} item {index} must be an object")
+        product = _text(*_field(driver, f"{item_name}.product", products.product, item))
+        used = _finite(*_field(driver, f"{item_name}.used_percent", products.used_percent, item))
+        product_rows.append({"product": product, "used_percent": float(used)})
+    for name in _PERIOD_INT_FIELDS:
+        values[name] = _integer(*_field(driver, name, spec.pointer(name), documents))
+    account_email = _text(f"{driver} usage account", account_email)
     return {
-        "vendor": VENDOR,
-        "provider": VENDOR,
+        "vendor": driver,
+        "provider": driver,
         "account_email": account_email,
-        "tier": tier,
-        "used_percent": used_percent,
-        "period_type": period_type,
-        "period_start": period_start,
-        "period_end": period_end,
-        "products": products,
-        "prepaid_val": prepaid_val,
-        "on_demand_cap_val": on_demand_cap_val,
-        "on_demand_used_val": on_demand_used_val,
+        "tier": values["tier"],
+        "used_percent": values["used_percent"],
+        "period_type": values["period_type"],
+        "period_start": values["period_start"],
+        "period_end": values["period_end"],
+        "products": product_rows,
+        "prepaid_val": values["prepaid_val"],
+        "on_demand_cap_val": values["on_demand_cap_val"],
+        "on_demand_used_val": values["on_demand_used_val"],
         "fetched_at": fetched_at,
     }
 
 
-def pick_session_id(store: Store, provider: str = "grok") -> str:
+def spend_snapshot(
+    driver: str,
+    spec: UsageSpec,
+    account: str,
+    documents: Mapping[str, Any],
+    fetched_at: str,
+) -> dict[str, Any]:
+    """Map the spend adapter's responses to a spend snapshot of one account.
+
+    Amounts are finite numbers, stored as received. ``limit_usd`` and
+    ``limit_remaining_usd`` may be null, and ``limit_reset`` may be any scalar;
+    those three read an absent last segment as null. Anything else missing or
+    of the wrong type is a StoreError that names the field and its pointer.
+    """
+    snapshot: dict[str, Any] = {"vendor": driver, "provider": driver, "account": account}
+    for name in SPEND_FIELDS:
+        nullable = name in _NULLABLE_SPEND_FIELDS
+        label, value = _field(
+            driver,
+            name,
+            spec.pointer(name),
+            documents,
+            absent_leaf=None if nullable else _MISSING,
+        )
+        if name == "limit_reset":
+            if isinstance(value, (dict, list, bool)):
+                raise StoreError(f"{label} has an invalid type")
+        elif not (nullable and value is None):
+            value = _finite(label, value)
+        snapshot[name] = value
+    snapshot["fetched_at"] = fetched_at
+    return snapshot
+
+
+def pick_session_id(store: Store, provider: str) -> str:
     """
     Among rows from store.rows('session') whose _origin_device_id == store.device_id():
     1. first (rows is newest-first) with status=='active' and runtime dict provider==provider
@@ -365,21 +444,13 @@ def usage_unchanged(
 
 
 def last_usage_snapshot(
-    store: Store,
-    match: Callable[[dict[str, Any]], bool] | None = None,
-    *,
-    vendor: str = VENDOR,
+    store: Store, match: Callable[[dict[str, Any]], bool]
 ) -> dict[str, Any] | None:
     """Return the newest owned usage payload accepted by ``match``."""
-    if match is None:
-        def matches(payload: dict[str, Any]) -> bool:
-            return payload.get("vendor") == vendor
-    else:
-        matches = match
     event = store.last_own_activity_insert(
         "usage.snapshot",
         predicate=lambda row: isinstance(row.get("payload"), dict)
-        and matches(row["payload"]),
+        and match(row["payload"]),
     )
     if event is None:
         return None
@@ -387,47 +458,43 @@ def last_usage_snapshot(
     return payload if isinstance(payload, dict) else None
 
 
-def scan_usage(
+def scan_session_usage(
     store: Store,
     *,
-    fetch: Callable[[str], tuple[dict[str, Any], dict[str, Any]]] | None = None,
-    auth_path: Path | None = None,
+    fetch: Fetch | None = None,
     now: Callable[[], str] | None = None,
 ) -> str | None:
+    """Record the configured usage session's period usage when it changed.
+
+    The usage session's interactive role names the account; its driver's
+    period adapter names the credential file in the account's configuration
+    directory. An unchanged snapshot records nothing and returns None. A new
+    snapshot is inserted through ``store.write_with_advisory`` under the lock
+    key ``usage.snapshot:<driver>`` and its activity id is returned. Any
+    failure raises; usage is never invented on error.
     """
-    Resolve an explicit usage binding (or injected auth_path), fetch and record.
-    If usage_unchanged(last, snapshot): return None.
-    Else insert activity via store.write_with_advisory:
-      lock_key='usage.snapshot:grok'
-      skip=lambda: usage_unchanged(last_usage_snapshot(store), snapshot)
-      payload:
-        id, session_id, type='usage.snapshot',
-        payload=snapshot, execution_status='done'
-    Return new activity id or None.
-    Raise StoreError on any failure. Never invent 0% on error.
-    fetched_at = (now or utcnow)().
-    """
-    session_id = None
-    if auth_path is None:
-        from .ai_accounts import load_ai_accounts
-        accounts = load_ai_accounts(store.home)
-        session_id = accounts.usage_session
-        if session_id is None:
-            raise AuthStale("AI usage monitoring is not configured")
-        row = store.row("session", session_id)
-        if row is None or row.get("_origin_device_id") != store.device_id() or row.get("status") != "active":
-            raise StoreError("AI usage session must be owned and active")
-        selected = accounts.for_session(session_id)
-        auth_path = Path(selected.account.config_dir) / "auth.json"
-    token, account_email = load_grok_bearer(auth_path)
-    credits, settings = (fetch or fetch_credits_and_settings)(token)
-    fetched_at = (now or utcnow)()
-    snapshot = snapshot_from_payloads(credits, settings, fetched_at, account_email)
-    # Explicit auth_path is an injection hook for callers supplying their own
-    # account path; automatic polling always uses the configured usage session.
+    from .ai_accounts import load_ai_accounts
+
+    accounts = load_ai_accounts(store.home)
+    session_id = accounts.usage_session
     if session_id is None:
-        session_id = pick_session_id(store)
-    if usage_unchanged(last_usage_snapshot(store), snapshot):
+        raise AuthStale("AI usage monitoring is not configured")
+    row = store.row("session", session_id)
+    if row is None or row.get("_origin_device_id") != store.device_id() or row.get("status") != "active":
+        raise StoreError("AI usage session must be owned and active")
+    account = accounts.for_session(session_id).account
+    driver = account.provider
+    spec = accounts.usage_adapter(driver, "period", "usage_session")
+    token, account_email = load_usage_credential(
+        driver, spec.credential, Path(account.config_dir) / spec.credential.file
+    )
+    documents = (fetch or fetch_usage_documents)(driver, spec, token)
+    snapshot = period_snapshot(driver, spec, documents, (now or utcnow)(), account_email)
+
+    def match(payload: dict[str, Any]) -> bool:
+        return payload.get("vendor") == driver
+
+    if usage_unchanged(last_usage_snapshot(store, match), snapshot):
         return None
     activity_id = str(uuid.uuid4())
     event = store.write_with_advisory(
@@ -441,8 +508,8 @@ def scan_usage(
             "payload": snapshot,
             "execution_status": "done",
         },
-        lock_key="usage.snapshot:grok",
-        skip=lambda: usage_unchanged(last_usage_snapshot(store), snapshot),
+        lock_key=f"usage.snapshot:{driver}",
+        skip=lambda: usage_unchanged(last_usage_snapshot(store, match), snapshot),
     )
     return None if event is None else activity_id
 
@@ -465,7 +532,7 @@ def _get_bearer_json(
             # The bearer must never follow an ambient proxy or trust an ambient
             # CA override; the owned client ignores the process environment.
             with httpx.Client(
-                timeout=8.0, follow_redirects=False, trust_env=False
+                timeout=USAGE_TIMEOUT_SECONDS, follow_redirects=False, trust_env=False
             ) as owned:
                 response = owned.get(url, headers=headers)
         else:
@@ -491,53 +558,6 @@ def _get_bearer_json(
     if not isinstance(body, dict):
         raise StoreError(f"{name} response is not an object")
     return body
-
-
-def _fetch_openrouter_key(
-    token: str, client: httpx.Client | None = None
-) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    return _get_bearer_json(OPENROUTER_KEY_URL, headers, "OpenRouter usage", client)
-
-
-def _openrouter_number(value: Any, field: str, *, nullable: bool = False) -> int | float | None:
-    if value is None and nullable:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise StoreError(f"OpenRouter {field} must be a number")
-    try:
-        finite = math.isfinite(float(value))
-    except OverflowError:
-        finite = False
-    if not finite:
-        raise StoreError(f"OpenRouter {field} must be a finite number")
-    return value
-
-
-def _openrouter_snapshot(
-    account: str, body: dict[str, Any], fetched_at: str
-) -> dict[str, Any]:
-    data = body.get("data")
-    if not isinstance(data, dict):
-        raise StoreError("OpenRouter usage data is not an object")
-    limit_reset = data.get("limit_reset")
-    if isinstance(limit_reset, (dict, list, bool)):
-        raise StoreError("OpenRouter limit_reset has an invalid type")
-    return {
-        "vendor": OPENROUTER_VENDOR,
-        "provider": OPENROUTER_VENDOR,
-        "account": account,
-        "usage_usd": _openrouter_number(data.get("usage"), "usage"),
-        "usage_daily_usd": _openrouter_number(data.get("usage_daily"), "usage_daily"),
-        "usage_weekly_usd": _openrouter_number(data.get("usage_weekly"), "usage_weekly"),
-        "usage_monthly_usd": _openrouter_number(data.get("usage_monthly"), "usage_monthly"),
-        "limit_usd": _openrouter_number(data.get("limit"), "limit", nullable=True),
-        "limit_remaining_usd": _openrouter_number(
-            data.get("limit_remaining"), "limit_remaining", nullable=True
-        ),
-        "limit_reset": limit_reset,
-        "fetched_at": fetched_at,
-    }
 
 
 def _record_account_snapshot(
@@ -573,13 +593,19 @@ def _record_account_snapshot(
     return None if event is None else activity_id
 
 
-def scan_openrouter_usage(
+def scan_account_usage(
     store: Store,
     *,
-    fetch: Callable[[str], dict[str, Any]] | None = None,
+    fetch: Fetch | None = None,
     now: Callable[[], str] | None = None,
 ) -> list[str]:
-    """Record changed OpenRouter key-usage snapshots for configured accounts."""
+    """Record changed spend snapshots for the configured usage accounts.
+
+    Each account's driver has a spend adapter whose key file lies in the
+    account's configuration directory. A failing account does not stop the
+    others; the failures are raised together as AccountUsageError, which also
+    carries the activities recorded before it.
+    """
     from .ai_accounts import load_ai_accounts
 
     accounts = load_ai_accounts(store.home)
@@ -587,119 +613,198 @@ def scan_openrouter_usage(
     errors: list[str] = []
     for account_name in accounts.usage_accounts:
         account = accounts.accounts[account_name]
-        if account.provider != OPENROUTER_VENDOR:
+        # Window accounts are read by scan_window_usage.
+        configured = accounts.drivers.get(account.provider)
+        if (
+            configured is not None
+            and configured.usage is not None
+            and configured.usage.snapshot == "windows"
+        ):
             continue
-        key_path = Path(account.config_dir) / "openrouter-api-key"
+        driver = account.provider
         try:
-            try:
-                token = key_path.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeError) as exc:
-                raise StoreError("openrouter key missing") from exc
-            if token == "":
-                raise StoreError("openrouter key missing")
-            body = (fetch or _fetch_openrouter_key)(token)
-            if not isinstance(body, dict):
-                raise StoreError("OpenRouter usage response is not an object")
-            snapshot = _openrouter_snapshot(
-                account_name, body, (now or utcnow)()
+            spec = accounts.usage_adapter(
+                driver, "spend", f"usage_accounts account {account_name}"
             )
-
-            def match(payload: dict[str, Any], name: str = account_name) -> bool:
-                return (
-                    payload.get("vendor") == OPENROUTER_VENDOR
-                    and payload.get("account") == name
-                )
-
-            activity_id = _record_account_snapshot(
-                store,
-                snapshot,
-                match,
-                provider=OPENROUTER_VENDOR,
-                lock_key=f"usage.snapshot:openrouter:{account_name}",
+            token = load_key_credential(
+                driver, Path(account.config_dir) / spec.credential.file
             )
-            if activity_id is not None:
+            documents = (fetch or fetch_usage_documents)(driver, spec, token)
+            snapshot = spend_snapshot(
+                driver, spec, account_name, documents, (now or utcnow)()
+            )
+            compare_keys = tuple(key for key in snapshot if key != "fetched_at")
+
+            def match(
+                payload: dict[str, Any], name: str = account_name, vendor: str = driver
+            ) -> bool:
+                return payload.get("vendor") == vendor and payload.get("account") == name
+
+            if usage_unchanged(
+                last_usage_snapshot(store, match), snapshot, compare_keys
+            ):
+                continue
+            session_id = pick_session_id(store, driver)
+            activity_id = str(uuid.uuid4())
+            event = store.write_with_advisory(
+                "activity",
+                "insert",
+                activity_id,
+                {
+                    "id": activity_id,
+                    "session_id": session_id,
+                    "type": "usage.snapshot",
+                    "payload": snapshot,
+                    "execution_status": "done",
+                },
+                lock_key=f"usage.snapshot:{driver}:{account_name}",
+                skip=lambda matcher=match, snap=snapshot, keys=compare_keys: (
+                    usage_unchanged(last_usage_snapshot(store, matcher), snap, keys)
+                ),
+            )
+            if event is not None:
                 created.append(activity_id)
         except StoreError as exc:
             errors.append(f"{account_name}: {exc}")
     if errors:
-        raise OpenRouterUsageError(errors, created)
+        raise AccountUsageError(errors, created)
     return created
 
 
 KeychainReader = Callable[[str, str], str | None]
+WindowFetch = Callable[[str], dict[str, Any]]
 
 
-def claude_keychain_service(config_dir: str) -> str:
-    """Claude Code's Keychain service name for the login of ``config_dir``.
+def _windows_spec(spec: DriverSpec) -> UsageSpec:
+    usage = spec.usage
+    if usage is None or usage.snapshot != "windows" or usage.label is None:
+        raise StoreError(f"{spec.id} has no windows usage section")
+    if usage.poll_seconds is None or usage.account_file is None:
+        raise StoreError(f"{spec.id} windows usage section is incomplete")
+    if usage.window is None or usage.limits is None:
+        raise StoreError(f"{spec.id} windows usage section is incomplete")
+    credential = usage.credential
+    if (
+        credential.label is None
+        or credential.object_key is None
+        or credential.token is None
+        or credential.token_name is None
+        or credential.expires_at is None
+        or credential.subscription is None
+        or credential.login_name is None
+        or credential.renew is None
+    ):
+        raise StoreError(f"{spec.id} windows credential section is incomplete")
+    return usage
 
-    The default profile (``~/.claude``) uses the unsuffixed service; any other
-    directory adds the first 8 hex characters of the SHA-256 of the NFC form of
-    the directory exactly as ``CLAUDE_CONFIG_DIR`` names it.
+
+def keychain_service_name(spec: DriverSpec, config_dir: str) -> str:
+    """Secret-store service for the login of ``config_dir``.
+
+    With ``service_suffix`` ``nfc-sha256-8``, the driver's default profile keeps
+    the unsuffixed service. Every other directory, and every directory when the
+    driver has no ``home_default_dir``, adds the first 8 hex characters of the
+    SHA-256 of the NFC form of ``config_dir`` exactly as given.
     """
-    from .ai_accounts import _is_default_claude_dir
-
-    if _is_default_claude_dir(config_dir):
-        return CLAUDE_KEYCHAIN_SERVICE
+    usage = _windows_spec(spec)
+    keychain = usage.credential.keychain
+    if keychain is None:
+        raise StoreError(f"{usage.credential.label} keychain is not configured")
+    service = keychain.service
+    if keychain.service_suffix is None:
+        return service
+    if spec.home_default_dir is not None and is_home_default_dir(spec, config_dir):
+        return service
+    if keychain.service_suffix != "nfc-sha256-8":
+        raise StoreError(
+            f"{usage.credential.label} keychain suffix {keychain.service_suffix} "
+            "is not supported"
+        )
     digest = hashlib.sha256(
         unicodedata.normalize("NFC", config_dir).encode("utf-8")
     ).hexdigest()[:8]
-    return f"{CLAUDE_KEYCHAIN_SERVICE}-{digest}"
+    return f"{service}-{digest}"
 
 
-def claude_keychain_user(environ: dict[str, str] | None = None) -> str:
-    """The Keychain account Claude Code uses: ``$USER`` when it is a plain name."""
-    user = (os.environ if environ is None else environ).get("USER", "")
-    return user if _KEYCHAIN_USER.fullmatch(user) else CLAUDE_KEYCHAIN_FALLBACK_USER
+def keychain_user(keychain: UsageKeychain, environ: Mapping[str, str] | None = None) -> str:
+    """The secret-store account: the named variable when it matches, else the fallback."""
+    source = os.environ if environ is None else environ
+    user = source.get(keychain.user_env, "")
+    if keychain.user_pattern.fullmatch(user):
+        return user
+    return keychain.fallback_user
 
 
-def read_claude_keychain(service: str, user: str) -> str | None:
-    """Read one generic password; ``None`` when the item does not exist.
+def read_keychain_item(
+    keychain: UsageKeychain, service: str, user: str, *, label: str
+) -> str | None:
+    """Run the configured secret-store argv; ``None`` when the item does not exist.
 
     The output is the credential itself and is never echoed in an error.
     """
+    argv = expand_template(keychain.argv, {"service": service, "user": user})
     # Errors are raised after each ``except`` block: the original exception
     # carries the captured output (the credential), so it must not stay in
     # ``__context__``.
     failure: str | None = None
     try:
         completed = subprocess.run(
-            [SECURITY_BIN, "find-generic-password", "-s", service, "-a", user, "-w"],
+            argv,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=KEYCHAIN_READ_TIMEOUT_SECONDS,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        failure = "claude keychain read timed out"
+        failure = f"{label} keychain read timed out"
     except (OSError, ValueError):
-        failure = "claude keychain read failed"
+        failure = f"{label} keychain read failed"
     if failure is not None:
         raise StoreError(failure)
-    if completed.returncode == _SECURITY_ITEM_NOT_FOUND:
+    if completed.returncode == keychain.missing_status:
         return None
     if completed.returncode != 0:
-        raise StoreError(f"claude keychain read failed (exit {completed.returncode})")
+        raise StoreError(f"{label} keychain read failed (exit {completed.returncode})")
     text = completed.stdout.strip()
     return text or None
 
 
-def _keychain_supported() -> bool:
-    return sys.platform == "darwin"
-
-
-def _claude_tier(subscription: Any, rate_limit_tier: Any) -> str | None:
-    """Plan name; a Max plan adds its multiplier (``default_claude_max_20x`` → ``max_20x``)."""
+def _login_tier(credential: UsageCredential, subscription: Any, rate_value: Any) -> str | None:
+    """Plan name; a configured plan adds the multiplier its pattern captures."""
     plan = subscription.strip() if isinstance(subscription, str) else ""
     if plan == "":
         return None
-    if plan.lower() == "max" and isinstance(rate_limit_tier, str):
-        multiplier = _MAX_MULTIPLIER.search(rate_limit_tier.strip())
-        if multiplier is not None:
-            return f"max_{multiplier.group(1).lower()}"
+    multiplier = credential.multiplier
+    if (
+        multiplier is not None
+        and plan.lower() == multiplier.plan.lower()
+        and isinstance(rate_value, str)
+    ):
+        found = multiplier.pattern.search(rate_value.strip())
+        if found is not None:
+            return f"{multiplier.plan.lower()}_{found.group(1).lower()}"
     return plan
 
 
-def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
+def _parse_login_credentials(
+    credential: UsageCredential, raw: str, source: str
+) -> tuple[str, str | None]:
+    label = credential.label
+    object_key = credential.object_key
+    token_field = credential.token
+    token_name = credential.token_name
+    expires_field = credential.expires_at
+    if (
+        label is None
+        or object_key is None
+        or token_field is None
+        or token_name is None
+        or expires_field is None
+        or credential.login_name is None
+        or credential.renew is None
+        or credential.subscription is None
+    ):
+        raise StoreError("windows credential section is incomplete")
     data: Any = None
     valid = True
     try:
@@ -708,29 +813,33 @@ def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
         # Raised below: the decode error holds the credential text in ``doc``.
         valid = False
     if not valid:
-        raise StoreError(f"claude credentials in {source} are not valid JSON")
+        raise StoreError(f"{label} credentials in {source} are not valid JSON")
     if not isinstance(data, dict):
-        raise StoreError(f"claude credentials in {source} are not an object")
-    oauth = data.get("claudeAiOauth")
+        raise StoreError(f"{label} credentials in {source} are not an object")
+    oauth = data.get(object_key)
     if oauth is None:
-        raise AuthStale(f"claude credentials in {source} hold no Claude login")
+        raise AuthStale(f"{label} credentials in {source} hold no {credential.login_name}")
     if not isinstance(oauth, dict):
-        raise StoreError(f"claude credentials in {source}: claudeAiOauth must be an object")
-    token = oauth.get("accessToken")
+        raise StoreError(f"{label} credentials in {source}: {object_key} must be an object")
+    token = oauth.get(token_field)
     if token is None:
-        raise AuthStale(f"claude credentials in {source} hold no access token")
+        raise AuthStale(f"{label} credentials in {source} hold no {token_name}")
     if not isinstance(token, str) or token == "":
         raise StoreError(
-            f"claude credentials in {source}: accessToken must be a non-empty string"
+            f"{label} credentials in {source}: {token_field} must be a non-empty string"
         )
     if not _VISIBLE_ASCII.fullmatch(token):
         raise StoreError(
-            f"claude credentials in {source}: accessToken must be visible ASCII characters"
+            f"{label} credentials in {source}: {token_field} must be visible ASCII characters"
         )
-    expires_at = oauth.get("expiresAt")
+    expires_at = oauth.get(expires_field)
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
         raise StoreError(
-            f"claude credentials in {source}: expiresAt must be epoch milliseconds"
+            f"{label} credentials in {source}: {expires_field} must be epoch milliseconds"
+        )
+    if credential.expires_unit != "epoch-ms":
+        raise StoreError(
+            f"{label} credentials in {source}: {expires_field} must be epoch milliseconds"
         )
     try:
         expires_seconds = float(expires_at) / 1000.0
@@ -738,38 +847,52 @@ def _parse_claude_credentials(raw: str, source: str) -> tuple[str, str | None]:
         expires_seconds = math.inf
     if not math.isfinite(expires_seconds):
         raise StoreError(
-            f"claude credentials in {source}: expiresAt must be epoch milliseconds"
+            f"{label} credentials in {source}: {expires_field} must be epoch milliseconds"
         )
     if datetime.now(timezone.utc).timestamp() >= expires_seconds:
-        raise AuthStale("claude login token expired; start claude to renew it")
-    return token, _claude_tier(oauth.get("subscriptionType"), oauth.get("rateLimitTier"))
+        raise AuthStale(
+            f"{label} login token expired; start {credential.renew} to renew it"
+        )
+    rate_field = credential.multiplier.field if credential.multiplier is not None else None
+    rate_value = oauth.get(rate_field) if rate_field is not None else None
+    return token, _login_tier(credential, oauth.get(credential.subscription), rate_value)
 
 
-def load_claude_credentials(
+def load_login_credentials(
+    spec: DriverSpec,
     config_dir: str,
     *,
     read_keychain: KeychainReader | None = None,
 ) -> tuple[str, str | None]:
-    """Return ``(access_token, tier)`` for the Claude login of ``config_dir``.
+    """Return ``(access_token, tier)`` for the windows login of ``config_dir``.
 
-    macOS: the Keychain item of that directory first, then
-    ``<config_dir>/.credentials.json``; elsewhere only the file. A missing login
-    or an expired token is ``AuthStale``; malformed data is ``StoreError``.
-    Never refreshes and never reads the refresh token. Never log the token.
+    On the keychain's platform the secret-store item of that directory is read
+    first, then the credential file; elsewhere only the file. An injected
+    reader is used on every platform. A missing login or an expired token is
+    ``AuthStale``; malformed data is ``StoreError``. Never refreshes and never
+    reads a refresh token. Never log the token.
     """
+    usage = _windows_spec(spec)
+    credential = usage.credential
+    label = credential.label
+    keychain = credential.keychain
     keychain_error: StoreError | None = None
     reader = read_keychain
-    if reader is None and _keychain_supported():
-        reader = read_claude_keychain
+    if reader is None and keychain is not None and sys.platform == keychain.platform:
+        def reader(service: str, user: str) -> str | None:
+            return read_keychain_item(keychain, service, user, label=label)
+
     if reader is not None:
+        if keychain is None:
+            raise StoreError(f"{label} keychain is not configured")
         try:
-            raw = reader(claude_keychain_service(config_dir), claude_keychain_user())
+            raw = reader(keychain_service_name(spec, config_dir), keychain_user(keychain))
         except StoreError as exc:
             keychain_error = exc
         else:
             if raw is not None:
-                return _parse_claude_credentials(raw, "the keychain")
-    path = Path(config_dir) / ".credentials.json"
+                return _parse_login_credentials(credential, raw, "the keychain")
+    path = Path(config_dir) / credential.file
     raw_file: str | None = None
     readable = True
     try:
@@ -779,25 +902,35 @@ def load_claude_credentials(
         # Raised below so that the original stays out of ``__context__``.
         readable = False
     if not readable:
-        raise StoreError("claude credentials file is not readable")
+        raise StoreError(f"{label} credentials file is not readable")
     if raw_file is None:
         if keychain_error is not None:
             raise keychain_error
-        raise AuthStale(f"claude login not found for {config_dir}; run claude auth login")
-    return _parse_claude_credentials(raw_file, ".credentials.json")
+        raise AuthStale(
+            f"{label} login not found for {config_dir}; run {credential.renew} auth login"
+        )
+    return _parse_login_credentials(credential, raw_file, credential.file)
 
 
-def _claude_account_file(config_dir: str) -> Path:
-    from .ai_accounts import _is_default_claude_dir
+def _login_account_file(spec: DriverSpec, config_dir: str) -> Path:
+    usage = _windows_spec(spec)
+    account_file = usage.account_file
+    if account_file is None:
+        raise StoreError(f"{spec.id} windows usage section is incomplete")
+    if account_file.default_name is not None and is_home_default_dir(spec, config_dir):
+        return Path.home() / account_file.default_name
+    return Path(config_dir) / account_file.file
 
-    if _is_default_claude_dir(config_dir):
-        return Path.home() / ".claude.json"
-    return Path(config_dir) / ".claude.json"
 
-
-def load_claude_account_email(config_dir: str) -> str:
-    """The e-mail address of the Claude login, from ``oauthAccount.emailAddress``."""
-    path = _claude_account_file(config_dir)
+def load_login_account(spec: DriverSpec, config_dir: str) -> str:
+    """The login's identity string from the configured account file."""
+    usage = _windows_spec(spec)
+    credential = usage.credential
+    account_file = usage.account_file
+    if account_file is None or credential.label is None or credential.renew is None:
+        raise StoreError(f"{spec.id} windows usage section is incomplete")
+    label = credential.label
+    path = _login_account_file(spec, config_dir)
     # Errors are raised after each ``except`` block, never chained.
     readable = True
     exists = False
@@ -806,147 +939,214 @@ def load_claude_account_email(config_dir: str) -> str:
     except OSError:
         readable = False
     if not readable:
-        raise StoreError("claude account file is not readable")
+        raise StoreError(f"{label} account file is not readable")
     if not exists:
-        raise AuthStale(f"claude account file not found: {path}")
+        raise AuthStale(f"{label} account file not found: {path}")
     data: Any = None
     failure: str | None = None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError:
-        failure = "claude account file is not readable"
+        failure = f"{label} account file is not readable"
     except (UnicodeError, ValueError):
-        failure = "claude account file is not valid JSON"
+        failure = f"{label} account file is not valid JSON"
     if failure is not None:
         raise StoreError(failure)
     if not isinstance(data, dict):
-        raise StoreError("claude account file is not an object")
-    account = data.get("oauthAccount")
+        raise StoreError(f"{label} account file is not an object")
+    account = data.get(account_file.object_key)
     if account is None:
-        raise AuthStale("claude account file has no oauthAccount; run claude auth login")
+        raise AuthStale(
+            f"{label} account file has no {account_file.object_key}; "
+            f"run {credential.renew} auth login"
+        )
     if not isinstance(account, dict):
-        raise StoreError("claude account file field oauthAccount must be an object")
-    email = account.get("emailAddress")
+        raise StoreError(
+            f"{label} account file field {account_file.object_key} must be an object"
+        )
+    email = account.get(account_file.field)
     if not isinstance(email, str) or email.strip() == "":
         raise StoreError(
-            "claude account file field oauthAccount.emailAddress is missing or invalid"
+            f"{label} account file field {account_file.object_key}.{account_file.field} "
+            "is missing or invalid"
         )
     return email
 
 
-def _fetch_claude_usage(
-    token: str, client: httpx.Client | None = None
-) -> dict[str, Any]:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "anthropic-beta": "oauth-2025-04-20",
-        "Accept": "application/json",
-        "User-Agent": "dfx-agent",
-    }
-    return _get_bearer_json(CLAUDE_USAGE_URL, headers, "Claude usage", client)
+def fetch_window_documents(
+    spec: UsageSpec,
+    token: str,
+    client: httpx.Client | None = None,
+) -> dict[str, dict[str, Any]]:
+    """GET every windows request; return the JSON objects by request name.
+
+    The owned client has an 8 second timeout, follows no redirect, and reads
+    proxy settings from the environment only when the adapter sets
+    ``proxy_from_environment``. Error text uses the adapter's ``label`` and
+    never contains the token. HTTP 429 is ``UsageRateLimited``.
+    """
+    if spec.label is None:
+        raise StoreError("windows usage adapter has no label")
+    if client is None:
+        with httpx.Client(
+            timeout=USAGE_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            trust_env=spec.proxy_from_environment,
+        ) as owned:
+            return fetch_window_documents(spec, token, owned)
+    documents: dict[str, dict[str, Any]] = {}
+    for request in spec.requests:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            **dict(request.headers),
+        }
+        documents[request.name] = _get_bearer_json(request.url, headers, spec.label, client)
+    return documents
 
 
-def _claude_reset(value: Any, field: str) -> str | None:
+def _pointer_leaf(pointer: str) -> str:
+    return pointer.split("/")[-1].replace("~1", "/").replace("~0", "~")
+
+
+def _window_reset(value: Any, field: str, label: str) -> str | None:
     """Reset time as UTC ISO-8601 rounded to the nearest minute, or ``None``.
 
-    The endpoint reports the same reset with about a second of jitter between
-    calls (for example ``09:59:59.66`` and ``10:00:00.41``). Rounding to the
-    nearest full minute (30 seconds and more round up) keeps an unchanged
-    window equal, so no new snapshot is written for jitter alone.
+    The same reset is reported with about a second of jitter between calls.
+    Rounding to the nearest full minute (30 seconds and more round up) keeps an
+    unchanged window equal, so no new snapshot is written for jitter alone.
     """
     if value is None:
         return None
     if not isinstance(value, str) or value == "":
-        raise StoreError(f"Claude usage {field} must be a timestamp string or null")
+        raise StoreError(f"{label} {field} must be a timestamp string or null")
     text = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
         when = datetime.fromisoformat(text)
     except ValueError:
-        raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
+        raise StoreError(f"{label} {field} is not a valid timestamp") from None
     if when.tzinfo is None:
-        raise StoreError(f"Claude usage {field} has no time zone")
+        raise StoreError(f"{label} {field} has no time zone")
     try:
         when = when.astimezone(timezone.utc)
         minute = when.replace(second=0, microsecond=0)
         if when - minute >= timedelta(seconds=30):
             minute += timedelta(minutes=1)
     except OverflowError:
-        # Converting or rounding at the edge of the datetime range.
-        raise StoreError(f"Claude usage {field} is not a valid timestamp") from None
+        raise StoreError(f"{label} {field} is not a valid timestamp") from None
     return minute.isoformat()
 
 
-def _claude_window(raw: Any, field: str) -> dict[str, Any] | None:
+def _usage_window(
+    raw: Any, field: str, spec: UsageSpec
+) -> dict[str, Any] | None:
     """A reported window, or ``None`` when the response has no value for it."""
+    window = spec.window
+    label = spec.label
+    if window is None or label is None:
+        raise StoreError("windows usage adapter has no window fields")
+    if window.round != "minute":
+        raise StoreError(f"{label} window round {window.round} is not supported")
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise StoreError(f"Claude usage {field} must be an object or null")
-    used = raw.get("utilization")
+        raise StoreError(f"{label} {field} must be an object or null")
+    used = raw.get(window.used_percent)
     if used is None:
         return None
     return {
-        "used_percent": _require_float(used, f"Claude usage {field}.utilization"),
-        "resets_at": _claude_reset(raw.get("resets_at"), f"{field}.resets_at"),
+        "used_percent": float(_finite(f"{label} {field}.{window.used_percent}", used)),
+        "resets_at": _window_reset(
+            raw.get(window.resets_at), f"{field}.{window.resets_at}", label
+        ),
     }
 
 
-def claude_snapshot(
+def _optional_field(documents: Mapping[str, Any], pointer: str) -> Any:
+    value = _resolve(documents, pointer, absent_leaf=None)
+    return None if value is _MISSING else value
+
+
+def windows_snapshot(
+    driver: str,
+    spec: UsageSpec,
     account_email: str,
     tier: str | None,
-    body: dict[str, Any],
+    documents: Mapping[str, Any],
     fetched_at: str,
 ) -> dict[str, Any]:
-    """Map the OAuth usage response to a ``usage.snapshot`` payload.
+    """Map the windows adapter's responses to a ``usage.snapshot`` payload.
 
     ``windows.five_hour`` and ``windows.weekly`` are ``None`` when the response
-    reports no value; a missing window is never shown as 0 %.
-    ``windows.weekly_models`` lists the weekly limits scoped to one model.
+    reports no value; a missing window is never shown as 0 %. The weekly window
+    is the configured weekly pointer, or the first all-models limit when that
+    pointer has no value. ``windows.weekly_models`` lists the limits scoped to
+    one model.
     """
-    if not isinstance(body, dict):
-        raise StoreError("Claude usage response is not an object")
+    label = spec.label
+    limits_spec = spec.limits
+    if label is None or limits_spec is None or spec.window is None:
+        raise StoreError(f"{driver} windows usage adapter is incomplete")
+    five_name = _pointer_leaf(spec.pointer("five_hour"))
+    weekly_name = _pointer_leaf(spec.pointer("weekly"))
+    limits_name = _pointer_leaf(spec.pointer("limits"))
     weekly_all: dict[str, Any] | None = None
     weekly_models: list[dict[str, Any]] = []
-    limits = body.get("limits")
+    limits = _optional_field(documents, spec.pointer("limits"))
     if limits is None:
         limits = []
     if not isinstance(limits, list):
-        raise StoreError("Claude usage limits must be a list or null")
+        raise StoreError(f"{label} {limits_name} must be a list or null")
     for index, item in enumerate(limits):
-        field = f"limits[{index}]"
+        field = f"{limits_name}[{index}]"
         if not isinstance(item, dict):
-            raise StoreError(f"Claude usage {field} must be an object")
-        kind = item.get("kind")
-        if kind not in ("weekly_all", "weekly_scoped") or item.get("percent") is None:
+            raise StoreError(f"{label} {field} must be an object")
+        kind = item.get(limits_spec.kind)
+        if (
+            kind not in (limits_spec.weekly_all, limits_spec.weekly_model)
+            or item.get(limits_spec.used_percent) is None
+        ):
             continue
         window = {
-            "used_percent": _require_float(
-                item.get("percent"), f"Claude usage {field}.percent"
+            "used_percent": float(
+                _finite(
+                    f"{label} {field}.{limits_spec.used_percent}",
+                    item.get(limits_spec.used_percent),
+                )
             ),
-            "resets_at": _claude_reset(item.get("resets_at"), f"{field}.resets_at"),
+            "resets_at": _window_reset(
+                item.get(limits_spec.resets_at),
+                f"{field}.{limits_spec.resets_at}",
+                label,
+            ),
         }
-        if kind == "weekly_all":
+        if kind == limits_spec.weekly_all:
             if weekly_all is None:
                 weekly_all = window
             continue
-        scope = item.get("scope")
-        model = scope.get("model") if isinstance(scope, dict) else None
+        scope = item.get(limits_spec.scope)
+        model = scope.get(limits_spec.model) if isinstance(scope, dict) else None
         name: str | None = None
         if isinstance(model, dict):
-            for key in ("display_name", "id"):
+            for key in limits_spec.model_names:
                 value = model.get(key)
                 if isinstance(value, str) and value.strip():
                     name = value.strip()
                     break
         weekly_models.append({"model": name, **window})
-    weekly = _claude_window(body.get("seven_day"), "seven_day") or weekly_all
+    weekly = (
+        _usage_window(_optional_field(documents, spec.pointer("weekly")), weekly_name, spec)
+        or weekly_all
+    )
     return {
-        "vendor": CLAUDE_VENDOR,
-        "provider": CLAUDE_VENDOR,
-        "account_email": _require_nonempty_str(account_email, "account_email"),
+        "vendor": driver,
+        "provider": driver,
+        "account_email": _text("account_email", account_email),
         "tier": tier,
         "windows": {
-            "five_hour": _claude_window(body.get("five_hour"), "five_hour"),
+            "five_hour": _usage_window(
+                _optional_field(documents, spec.pointer("five_hour")), five_name, spec
+            ),
             "weekly": weekly,
             "weekly_models": weekly_models,
         },
@@ -954,25 +1154,25 @@ def claude_snapshot(
     }
 
 
-def scan_claude_usage(
+def scan_window_usage(
     store: Store,
     *,
-    fetch: Callable[[str], dict[str, Any]] | None = None,
+    fetch: WindowFetch | None = None,
     read_keychain: KeychainReader | None = None,
     now: Callable[[], str] | None = None,
     skipped: list[str] | None = None,
     pace: dict[str, float] | None = None,
     clock: Callable[[], float] | None = None,
 ) -> list[str]:
-    """Record changed Claude subscription usage for configured ``usage_accounts``.
+    """Record changed window usage for configured ``usage_accounts``.
 
     An account without a usable login (missing or expired) is skipped quietly;
     its reason is appended to ``skipped`` when the caller passes a list.
 
     ``pace`` maps an account name to the ``clock`` time before which it is not
-    read again. An attempted account waits ``CLAUDE_USAGE_POLL_SECONDS``, or the
-    server's ``Retry-After`` when that is longer. Without ``pace`` every account
-    is read on every call.
+    read again. An attempted account waits its adapter's ``poll_seconds``, or
+    the server's ``Retry-After`` when that is longer. Without ``pace`` every
+    account is read on every call.
     """
     tick = clock or time.monotonic
     from .ai_accounts import load_ai_accounts
@@ -982,31 +1182,51 @@ def scan_claude_usage(
     errors: list[str] = []
     for account_name in accounts.usage_accounts:
         account = accounts.accounts[account_name]
-        if account.provider != CLAUDE_VENDOR:
+        driver_spec = accounts.drivers.get(account.provider)
+        if (
+            driver_spec is None
+            or driver_spec.usage is None
+            or driver_spec.usage.snapshot != "windows"
+        ):
             continue
+        spec = _windows_spec(driver_spec)
+        poll_seconds = spec.poll_seconds
+        if poll_seconds is None:
+            raise StoreError(f"{account.provider} windows usage has no poll_seconds")
         if pace is not None:
             started = tick()
             if started < pace.get(account_name, -math.inf):
                 continue
-            pace[account_name] = started + CLAUDE_USAGE_POLL_SECONDS
+            pace[account_name] = started + poll_seconds
         try:
             try:
-                email = load_claude_account_email(account.config_dir)
-                token, tier = load_claude_credentials(
-                    account.config_dir, read_keychain=read_keychain
+                email = load_login_account(driver_spec, account.config_dir)
+                token, tier = load_login_credentials(
+                    driver_spec, account.config_dir, read_keychain=read_keychain
                 )
             except AuthStale as exc:
                 if skipped is not None:
                     skipped.append(f"{account_name}: {exc}")
                 continue
-            body = (fetch or _fetch_claude_usage)(token)
-            snapshot = claude_snapshot(email, tier, body, (now or utcnow)())
+            if fetch is not None:
+                body = fetch(token)
+                if not isinstance(body, dict):
+                    raise StoreError(f"{spec.label} response is not an object")
+                if len(spec.requests) != 1:
+                    raise StoreError(f"{spec.label} fetch requires exactly one request")
+                documents: Mapping[str, Any] = {spec.requests[0].name: body}
+            else:
+                documents = fetch_window_documents(spec, token)
+            snapshot = windows_snapshot(
+                account.provider, spec, email, tier, documents, (now or utcnow)()
+            )
             key = email.casefold()
+            driver = account.provider
 
-            def match(payload: dict[str, Any], key: str = key) -> bool:
+            def match(payload: dict[str, Any], key: str = key, vendor: str = driver) -> bool:
                 value = payload.get("account_email")
                 return (
-                    payload.get("vendor") == CLAUDE_VENDOR
+                    payload.get("vendor") == vendor
                     and isinstance(value, str)
                     and value.casefold() == key
                 )
@@ -1015,8 +1235,8 @@ def scan_claude_usage(
                 store,
                 snapshot,
                 match,
-                provider=CLAUDE_VENDOR,
-                lock_key=f"usage.snapshot:claude:{key}",
+                provider=driver,
+                lock_key=f"usage.snapshot:{driver}:{key}",
             )
             if activity_id is not None:
                 created.append(activity_id)
@@ -1024,11 +1244,13 @@ def scan_claude_usage(
             message = f"{account_name}: {exc}"
             if exc.retry_after is not None:
                 message += f"; retry after {math.ceil(exc.retry_after)} s"
-                if pace is not None and exc.retry_after > CLAUDE_USAGE_POLL_SECONDS:
+                if pace is not None and exc.retry_after > poll_seconds:
                     pace[account_name] = tick() + exc.retry_after
             errors.append(message)
         except StoreError as exc:
             errors.append(f"{account_name}: {exc}")
     if errors:
-        raise ClaudeUsageError(errors, created)
+        raise AccountUsageError(errors, created)
     return created
+
+
