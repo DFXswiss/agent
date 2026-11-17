@@ -111,16 +111,39 @@ PostgreSQL 16 (or later) is required for the team record tests. They read the co
 a superuser on a throwaway local test server from `AGENT_CORE_TEST_POSTGRES`; each test creates its
 own database and roles with random names and drops them at the end. Without the variable the record
 tests fail; they are never skipped. The server must accept password logins over TCP on a loopback
-address or `localhost`. For example, with a throwaway container:
+address or `localhost`.
+
+Use a throwaway PostgreSQL 16 instance for this and nothing else: it holds no data, the tests
+create and drop databases and roles on it, and its superuser password `postgres` is a test
+constant. It listens on the dedicated port 55432, so it never meets another PostgreSQL on 5432.
+Start it in one of two ways.
+
+With a container:
 
 ```bash
-docker run -d --rm --name agent-core-test-postgres -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:16
-export AGENT_CORE_TEST_POSTGRES=postgresql://postgres:postgres@127.0.0.1:5432/postgres
+docker run -d --rm --name agent-core-test-postgres -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 postgres:16
+# Stop and remove it afterwards: docker stop agent-core-test-postgres
+```
+
+Or with a local `initdb` of PostgreSQL 16 (its `bin` directory on `PATH`):
+
+```bash
+TESTPG="$(mktemp -d)"
+printf 'postgres\n' > "$TESTPG/password"
+initdb -D "$TESTPG/data" -U postgres --auth=scram-sha-256 --pwfile="$TESTPG/password"
+pg_ctl -D "$TESTPG/data" -l "$TESTPG/server.log" -o "-p 55432 -c listen_addresses=127.0.0.1 -k $TESTPG" start
+# Stop and remove it afterwards: pg_ctl -D "$TESTPG/data" stop && rm -rf "$TESTPG"
+```
+
+Then run the tests:
+
+```bash
+export AGENT_CORE_TEST_POSTGRES=postgresql://postgres:postgres@127.0.0.1:55432/postgres
 pip install -e ".[test]"
 pytest
 ```
 
-CI runs the same tests against a `postgres:16` service container.
+CI runs the same tests against a `postgres:16` service container on the same port 55432.
 
 `python -m agent_core.record migrate` applies the schema of the team record (RECORD-PROTOCOL.md
 section 11.4). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE`; the hub

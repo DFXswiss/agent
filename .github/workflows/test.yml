@@ -10,20 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     services:
       # Throwaway test server for the record tests (RECORD-PROTOCOL.md section 14). The password
-      # is a test constant of this container only.
+      # is a test constant of this container only. The host port is 55432, the same dedicated
+      # port as in .github/a38.json and the README, so that it never meets a PostgreSQL on 5432.
       postgres:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
-      AGENT_CORE_TEST_POSTGRES: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      AGENT_CORE_TEST_POSTGRES: postgresql://postgres:postgres@127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

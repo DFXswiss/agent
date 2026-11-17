@@ -1,7 +1,8 @@
 """The event of the team record (RECORD-PROTOCOL.md sections 4 and 14, "The event").
 
-Pure functions: these tests need no database. The hashes are compared with a recomputation in
-this file that uses `hashlib` instead of the library's helper.
+Pure functions: these tests need no database. The hashes of the examples of section 4.2 are
+compared with fixed values and, as a second assertion, with a recomputation in this file that uses
+`hashlib` instead of the library's helper.
 """
 
 from __future__ import annotations
@@ -42,7 +43,18 @@ EVENT_ID = "0b6f3c1e-8d2a-4c1b-9f3e-2a7d5c9e1f40"
 OBJECT_ID = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 ACTOR = "example-staff-laptop-1"
 
-# The two example events of section 4.2, written out as the specification shows them.
+# Fixed values of the examples of section 4.2: the event hashes (section 4.4) of the two example
+# events, and the record hashes (section 4.6) of the two events at positions 1 and 2 with the
+# `received_at` of the story of section 4.2 (10:00:01 and 10:05:01).
+EXAMPLE_1_EVENT_HASH = "ee3e09fbb4e47ff826cc7623039e964908379d62d0e8cf5881356c4a618e48bf"
+EXAMPLE_2_EVENT_HASH = "634af2c5c36e9191ac78ccc1ef1ff285c71b102853d16772806f17a83e80f1e4"
+RECORD_HASH_1 = "6c73dcb14650019ae5c8769d33123a169253418a62ec13fc0e775a7933fb447f"
+RECORD_HASH_2 = "f380dba999261e59b4fbc1b0adc7c3fbd0e3b2cffbc10f6a99a8ef20a04c4f9f"
+RECEIVED_AT_1 = "2026-11-17T10:00:01Z"
+RECEIVED_AT_2 = "2026-11-17T10:05:01Z"
+
+# The two example events of section 4.2, written out as the specification shows them. The second
+# carries the fixed event hash of the first in place of `<event hash of the first event>`.
 EXAMPLE_1_LINES = (
     "agent-event-v1",
     EVENT_ID,
@@ -73,7 +85,7 @@ EXAMPLE_2 = "\n".join(
         OBJECT_ID,
         ACTOR,
         "2026-11-17T10:05:00Z",
-        EXAMPLE_1_HASH,
+        EXAMPLE_1_EVENT_HASH,
         "-",
         "2",
         "assignee",
@@ -155,6 +167,29 @@ def test_the_event_hash_is_the_sha256_of_the_text() -> None:
     assert event_hash(EXAMPLE_1) == EXAMPLE_1_HASH
     assert event_hash(EXAMPLE_2) == hashlib.sha256(EXAMPLE_2).hexdigest()
     assert parse_event(EXAMPLE_2).event_hash == hashlib.sha256(EXAMPLE_2).hexdigest()
+
+
+def test_the_examples_of_section_4_2_have_their_fixed_event_hashes() -> None:
+    assert len(EXAMPLE_1) == 199
+    assert len(EXAMPLE_2) == 269
+    assert event_hash(EXAMPLE_1) == EXAMPLE_1_EVENT_HASH
+    assert parse_event(EXAMPLE_1).event_hash == EXAMPLE_1_EVENT_HASH
+    assert event_hash(EXAMPLE_2) == EXAMPLE_2_EVENT_HASH
+    assert parse_event(EXAMPLE_2).event_hash == EXAMPLE_2_EVENT_HASH
+    # Second assertion: the same values through `hashlib`, not through the library.
+    assert hashlib.sha256(EXAMPLE_1).hexdigest() == EXAMPLE_1_EVENT_HASH
+    assert EXAMPLE_1_HASH == EXAMPLE_1_EVENT_HASH
+    assert hashlib.sha256(EXAMPLE_2).hexdigest() == EXAMPLE_2_EVENT_HASH
+
+
+def test_the_examples_of_section_4_2_have_their_fixed_record_hashes() -> None:
+    position_1 = record_hash(1, seconds(RECEIVED_AT_1), EXAMPLE_1_EVENT_HASH, None)
+    assert position_1 == RECORD_HASH_1
+    position_2 = record_hash(2, seconds(RECEIVED_AT_2), EXAMPLE_2_EVENT_HASH, RECORD_HASH_1)
+    assert position_2 == RECORD_HASH_2
+    # Second assertion: the same values through `hashlib`, not through the library.
+    assert independent_record_hash(1, RECEIVED_AT_1, EXAMPLE_1_EVENT_HASH, "-") == RECORD_HASH_1
+    assert independent_record_hash(2, RECEIVED_AT_2, EXAMPLE_2_EVENT_HASH, RECORD_HASH_1) == RECORD_HASH_2
 
 
 def test_the_record_hash_chains_over_positions() -> None:

@@ -22,7 +22,7 @@ import pytest
 from psycopg import sql
 
 from agent_core.record import connection
-from agent_core.record.__main__ import USAGE, main
+from agent_core.record.__main__ import USAGE
 from agent_core.record.connection import parse_connection_string
 from agent_core.record.migrate import MIGRATE_LOCK, run_migrate
 from tests.conftest import RecordDatabase
@@ -689,26 +689,10 @@ def test_an_unknown_command_prints_the_usage(args: list[str]) -> None:
     assert (result.stdout, result.stderr, result.returncode) == ("", USAGE + "\n", 2)
 
 
-def test_main_runs_migrate(record_db: RecordDatabase, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["migrate"], record_db.migrate_env()) == 0
-    assert capsys.readouterr() == ("migrated 1\n", "")
+def test_the_command_refuses_an_argument_of_migrate(record_db: RecordDatabase) -> None:
+    result = run_cli(["migrate", "--force"], record_db.migrate_env())
+    assert (result.stdout, result.stderr, result.returncode) == ("failed config\n", "", 1)
+    assert not schema_exists(record_db)
 
 
-def test_main_refuses_an_argument_of_migrate(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["migrate", "--force"], {}) == 1
-    assert capsys.readouterr() == ("failed config\n", "")
-
-
-def test_main_prints_the_usage_without_a_command(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main([], {}) == 2
-    assert capsys.readouterr() == ("", USAGE + "\n")
-
-
-def test_main_reads_argv_and_the_environment(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(sys, "argv", ["agent_core.record", "migrate"])
-    monkeypatch.delenv("AGENT_CORE_RECORD_DATABASE", raising=False)
-    monkeypatch.delenv("AGENT_CORE_RECORD_OWNER_DATABASE", raising=False)
-    assert main() == 1
-    assert capsys.readouterr() == ("failed config\n", "")
+# The command's entry in process (`main` and the `__main__` guard) is tested in test_record_main.py.

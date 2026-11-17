@@ -15,7 +15,7 @@
         "config": {
           "env": {
             "CI": "true",
-            "AGENT_CORE_TEST_POSTGRES": "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
+            "AGENT_CORE_TEST_POSTGRES": "postgresql://postgres:postgres@127.0.0.1:55432/postgres"
           },
           "steps": [
             [
