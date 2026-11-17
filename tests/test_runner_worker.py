@@ -318,9 +318,11 @@ def test_worker_wrapper_runs_the_work_subcommand_with_the_exact_argv(
 ) -> None:
     wrapper = runner_worker.worker_wrapper(tmp_path)
 
+    trusted = Path(runner_worker.__file__).resolve().parent.parent
     assert shlex.split(wrapper) == [
         "env",
         f"AGENT_HOME={tmp_path}",
+        f"PYTHONPATH={trusted}",
         sys.executable,
         "-P",
         "-m",
@@ -337,13 +339,15 @@ def test_worker_wrapper_refuses_a_relative_agent_home() -> None:
         runner_worker.worker_wrapper("home")
 
 
+@pytest.mark.parametrize("inherited_pythonpath", [".", "", ":", "agent_cli/.."])
 def test_worker_wrapper_does_not_import_agent_cli_from_the_job_worktree(
-    tmp_path: Path,
+    tmp_path: Path, inherited_pythonpath: str
 ) -> None:
     # Dispatch runs the wrapper with the pull-request checkout as its working
     # directory. This repository copy stands in for that checkout and ships an
     # `agent_cli` package that records its own import. The wrapper's own
-    # interpreter flags must keep it off `sys.path`.
+    # `PYTHONPATH` assignment and its `-P` flag must both keep it off
+    # `sys.path`, whatever the tmux server's `PYTHONPATH` happens to be.
     home = tmp_path / "home"
     home.mkdir()
     shadow_cwd = tmp_path / "checkout"
@@ -354,22 +358,22 @@ def test_worker_wrapper_does_not_import_agent_cli_from_the_job_worktree(
     (package / "__init__.py").write_text(write_marker, encoding="utf-8")
     (package / "main.py").write_text(write_marker, encoding="utf-8")
 
-    # Keep the interpreter flags exactly as the wrapper builds them; only the
-    # `runner work` tail is replaced so no real worker starts.
+    # Keep the wrapper's own `env` assignments and interpreter flags exactly as
+    # it builds them; only the `runner work` tail is replaced so no real worker
+    # starts.
     argv = shlex.split(runner_worker.worker_wrapper(home))
-    interpreter_argv = argv[: argv.index("-m")] + [
+    probe_argv = argv[: argv.index("-m")] + [
         "-c",
-        "import agent_cli, sys; print(agent_cli.__file__)",
+        "import agent_cli; print(agent_cli.__file__)",
     ]
     environment = dict(os.environ)
-    # The real package stays reachable through the environment, which `-P`
-    # deliberately keeps. Without `-P` the working directory comes first.
-    environment["PYTHONPATH"] = str(
-        Path(runner_worker.__file__).resolve().parent.parent
-    )
+    # What the worker inherits from the tmux server: a relative or empty entry
+    # resolves against the checkout. The wrapper's own assignment must replace
+    # this value; without it the shadow package is imported.
+    environment["PYTHONPATH"] = inherited_pythonpath
 
     completed = subprocess.run(
-        interpreter_argv,
+        probe_argv,
         cwd=str(shadow_cwd),
         env=environment,
         capture_output=True,

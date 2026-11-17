@@ -837,9 +837,11 @@ def test_dispatch_uses_the_installed_worker_by_default(
     wrapper = started[0][-1]
     # The exact command tmux runs: this interpreter, this module entry point,
     # and the agent home passed explicitly rather than inferred from the cwd.
+    trusted = Path(runner_worker.__file__).resolve().parent.parent
     assert shlex.split(wrapper) == [
         "env",
         f"AGENT_HOME={home}",
+        f"PYTHONPATH={trusted}",
         sys.executable,
         "-P",
         "-m",

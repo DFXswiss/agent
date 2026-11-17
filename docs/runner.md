@@ -129,8 +129,10 @@ Output: `job.started <job-id>` per job, or `job.started none`.
 ### `agent runner work`
 
 The detached worker for one job. `dispatch` starts it with the job worktree as
-its working directory and runs the interpreter with `-P`, so an `agent_cli`
-package shipped by the pull request is never imported; an operator does not
+its working directory and runs the interpreter with `-P` and a `PYTHONPATH`
+that names only the directory holding the installed `agent_cli` package, so an
+`agent_cli` package shipped by the pull request is never imported — even
+through a relative or empty entry the session inherited; an operator does not
 normally run it. It performs one `pr-review` job and writes
 `state/logs/<id>.exit` last:
 

@@ -159,17 +159,23 @@ def worker_wrapper(agent_home: Path | str) -> str:
     `-P` is passed because that working directory is the pull-request checkout:
     without it `-m` puts the working directory first on `sys.path`, so a pull
     request that ships an `agent_cli` package at its root would import its own
-    code instead of the installed worker. `-P` leaves the working directory off
-    the path while the installed package, the user site directory and the
-    environment keep working; `-I` would also drop the environment.
+    code instead of the installed worker. `-P` alone is not enough, because the
+    inherited `PYTHONPATH` is still searched and a relative or empty entry in it
+    resolves against that same checkout. The wrapper therefore replaces
+    `PYTHONPATH` with the one directory that contains the installed `agent_cli`
+    package, so only trusted code can be imported; `-P` stays because it drops
+    the working directory that `-m` would otherwise put first. `-I` would also
+    drop the environment the worker needs.
     """
     home = Path(agent_home)
     if not home.is_absolute():
         raise ValueError("worker wrapper requires an absolute agent home")
+    trusted = Path(__file__).resolve().parent.parent
     return shlex.join(
         [
             "env",
             f"AGENT_HOME={home}",
+            f"PYTHONPATH={trusted}",
             sys.executable,
             "-P",
             "-m",
