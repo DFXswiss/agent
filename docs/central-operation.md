@@ -194,8 +194,8 @@ the work has no clear home.
 | closed | Ended without being done. |
 
 **When is a task done?** Normally when every linked pull request is merged or closed and at
-least one of them is merged into the default branch. A
-security issue is done only after a staff member has also confirmed that the change is rolled
+least one of them is merged into the default branch. A task without a pull request is set to
+done by its assignee. A security issue, with or without a pull request, is done only after a staff member has also confirmed that the change is rolled
 out to production and was checked there. The rule can be changed per task.
 
 The **team log** is for things everyone should know. An entry is written once and never
@@ -209,7 +209,7 @@ there.
 
 | Store | Holds | Rule |
 |---|---|---|
-| Team record | Tasks, log entries, orders, questions, answers, grants, every command | Signed, chained, never deleted, no secrets and no personal data |
+| Team record | Tasks, log entries, discussions, orders, questions, answers, grants, every command | Signed, chained, never deleted, no secrets and no personal data |
 | Session log | Everything a session shows and receives | Recorded on the device first, synced completely, never deleted; the only later change is masking |
 | Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
 
@@ -283,6 +283,7 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 | You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
 | You leave | Your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
 | A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |
+| A device changes owner | It is connected again by hand as a new device with a new key; the old key is revoked. |
 | A passkey is lost | A pull request revokes it, and your devices stop obeying it. You remove it from your devices from a controller device. |
 
 ## 15. What stays refused
@@ -354,9 +355,10 @@ Executors keep working on what they accepted and keep recording. You can still s
 the device itself. Everything syncs afterwards.
 
 **What if someone breaks into the hub?**
-They can read, delay and drop. They cannot sign as a device and cannot change whom a device
-obeys. While you are signed in, a changed website could get a command signed in your name
-until your session key expires (section 6, What stays a risk).
+They can read, delay and drop, hold back the notice that a key was revoked, and create broker
+keys up to the limit of the central account. They cannot sign as a device and cannot change
+whom a device obeys. While you sign in or are signed in, a changed website could get a
+command signed in your name until your session key expires (section 6, What stays a risk).
 
 **Where did the issues and the lists go?**
 They were imported once. The old place points to the hub and is no longer edited.

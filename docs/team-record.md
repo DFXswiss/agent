@@ -165,7 +165,7 @@ its owner.
 - **One key per program where it matters.** If two programs on the same device need different
   rights, or must be told apart in the history (for example a coordinator, a lane starter and a
   monitoring script), each gets its own key.
-- An agent key is never registered as a person. Events written by an agent name the agent key
+- An agent key is never registered as a person; it names the staff member who owns its device. Events written by an agent name the agent key
   and, where there is one, the person who runs it.
 
 ### External programs: a service key with the fewest rights
@@ -259,7 +259,8 @@ issue could look like (values made up):
     "assignee": { "old": null, "new": "example-staff" },
     "status":   { "old": "to do", "new": "in progress" }
   },
-  "actor_key_id": "example-staff-laptop",
+  "actor_key_id": "example-staff-session-key",
+  "key_certificate": "…",
   "signed_at": "2026-12-01T09:14:03Z",
   "received_at": "2026-12-01T09:14:04Z",
   "prev_hash": "9b2e…",
@@ -272,7 +273,8 @@ issue could look like (values made up):
 | `event_id` | Unique id chosen by the writer |
 | `object_type`, `object_id` | Which object changed |
 | `changes` | Each field that changed, with its old and new value |
-| `actor_key_id` | The registered key that signed |
+| `actor_key_id` | The key that signed: a registered key, or the session key that a passkey certified at sign-in |
+| `key_certificate` | Only for an event signed by a session key: the passkey's certificate for that session key |
 | `signed_at` | The writer's clock, part of what is signed |
 | `received_at` | The hub's clock when it stored the event |
 | `prev_hash` | Fingerprint of the previous event signed by the same key |
@@ -281,6 +283,7 @@ issue could look like (values made up):
 The hub refuses an event when:
 
 - the signature does not check out, or the key is unknown, revoked or lacks the scope
+- it was signed by a session key whose certificate is missing, invalid or expired
 - `prev_hash` is not the last event the hub accepted from the same key
 - the old values in `changes` do not match what the record says right now
 
@@ -312,7 +315,7 @@ Every question about history can be answered from the chain alone:
 
 | Question | Answered by |
 |---|---|
-| Who? | `actor_key_id`, and through the keys file the person, agent or program behind it |
+| Who? | `actor_key_id`, and through the keys file the person, agent or program behind it; for a session key through its certificate to the passkey |
 | Which object? | `object_type` and `object_id` |
 | What exactly? | `changes`: each field with old and new value |
 | When? | `signed_at` (writer) and `received_at` (hub) |
@@ -401,7 +404,7 @@ tests for every refusal path, not only the success path.
 | 3 | Event chain in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
-| 6 | Sign-in with passkeys instead of GitHub | not started |
+| 6 | Sign-in with passkeys and the certified session key instead of GitHub | not started |
 | 7 | Removal of the GitHub sign-in, together with removing the edge access gate | not started |
 
 ## 14. Open questions
@@ -411,7 +414,7 @@ None at the moment. Three earlier questions were decided on 2026-11-17:
 1. **Passkey sync.** A staff member's passkey may be synced by their platform between their own
    devices.
 2. **What "released" and "done" mean.** A task is done when every linked pull request is
-   merged or closed and at least one of them is merged into the default branch. A security issue is done only after a staff member has also confirmed
+   merged or closed and at least one of them is merged into the default branch. A task without a pull request is set to done by its assignee. A security issue is done only after a staff member has also confirmed
    that the change is rolled out to production and was checked there. The rule can be changed
    per task. A release query is answered with yes only when the pull request is linked to at
    least one task, every linked task has an assignee and is in progress or ready for review,

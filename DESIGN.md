@@ -1372,7 +1372,7 @@ This revision records the decision of 2026-11-17 to store the team record in Pos
 
 This revision records the decisions of 2026-11-17 that passkeys may be synced, that reading at the network edge is accepted, and what done and released mean (§24.11). It also gives every key its own chain of events, so that a writer can sign while the hub is unreachable (§24.3).
 
-This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also makes an invite link of the one administrator the only way to create a passkey (§24.2).
+This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also makes an invite link of the one administrator the only way to create a passkey (§24.2), replaces the three statuses of a security issue with the task statuses of §25.8, adds the `key_certificate` field for events signed by a session key (§24.3), and names the certified session key in the build order (§24.10).
 
 ## 24. Team record and key identity (decided, not implemented)
 
@@ -1438,7 +1438,7 @@ Agents:
 
 - **At least one key per device.** A key is never copied to a second device.
 - **One key per program where it matters.** Programs on the same device that need different rights or must be told apart in the audit trail (for example a coordinator, a lane starter and a monitoring script) each get their own key with their own scopes.
-- An agent key is never registered under a person. Agent events name the agent key and, where one exists, the person who runs it.
+- An agent key is never registered as a person. It names the staff member who owns its device (§25.3). Agent events name the agent key and that staff member.
 
 External programs:
 
@@ -1468,11 +1468,11 @@ Each event carries:
 
 Rules:
 
-- **Nothing is deleted and nothing is rewritten.** A correction is a new event. There is no redaction event and no administrative delete, not in the hub, not in the database, not in a backup.
+- **Nothing is deleted and nothing is rewritten.** A correction is a new event. There is no event that redacts another event (masking a session log, §25.9, is not one) and no administrative delete, not in the hub, not in the database, not in a backup.
 - Because nothing can be removed, **personal data, secrets, credentials and customer data must never be written into the record.** Objects refer to them by an external reference that does not reveal them. A review treats a field that invites such data as a defect.
 - **Every key has its own chain.** Each event names the previous event of the same key. A writer can therefore sign without knowing what others wrote, also while the hub is unreachable (§25.7), and a missing or replaced event of any key is detectable.
 - **The hub keeps one record.** It appends accepted events in the order they arrive. For each one it stores its position and a record hash computed from the previous record hash and this event. Both are computed values that anyone can recompute from the events; they are not events and carry no statement of the hub.
-- The hub rejects an event whose signature does not verify, whose key is unknown or revoked, whose session key has no certificate that verifies against a registered passkey, whose `prev_hash` is not the hash of the last event it accepted from that key, or whose old values do not match the current state (the writer signs a new event against the current state). This makes concurrent edits explicit instead of losing one.
+- The hub rejects an event whose signature does not verify, whose key is unknown or revoked, whose session key has no certificate that verifies against a registered passkey, whose session key's certificate states an expiry that has passed at `received_at` or that lies further than the longest session-key lifetime after the hub issued the fresh value in the certificate, whose `prev_hash` is not the hash of the last event it accepted from that key, or whose old values do not match the current state (the writer signs a new event against the current state). This makes concurrent edits explicit instead of losing one.
 - An event that a key signed before it was revoked and that reaches the hub only afterwards is refused; it stays in the writer's local log.
 - The hub never authors an event. It only verifies, orders and stores.
 
@@ -1539,7 +1539,7 @@ When the matching part ships, its pull request changes these rows in the same di
 - The rule can be changed per task by whoever may edit the task; the change is an event like any other. Changing the rule of a task in status `merged` to `merged` sets the task to `done` in the same event. Changing the rule of a `done` task does not change its status.
 - A watcher program with its own registered key (§24.2) observes merges on the code host and writes the status change. Nobody marks a merge by hand, and the hub itself authors nothing (§24.3).
 - Under `merged`, the watcher sets the task to `done`. Under `verified in production`, it sets the task to `merged`; the confirmation of a staff member then sets `done` and names what was checked.
-- A task without a pull request is set to done by its assignee.
+- For a task without a linked pull request, the first condition of the table does not apply. Under the rule `merged` its assignee sets it to `done`. Under the rule `verified in production` its assignee sets it to `merged`, and the confirmation of a staff member then sets `done`.
 
 **What "released" means in a release query.** An external program asks whether one pull request may leave draft. The hub answers yes only when all of these hold:
 
@@ -1547,11 +1547,11 @@ When the matching part ships, its pull request changes these rows in the same di
 - Every linked task has an assignee and the status `in progress` or `ready for review`.
 - No question of an order for a linked task is unanswered.
 
-A withdrawn question (§25.15) does not count as unanswered, and a condition about a part that is not built yet counts as met. Otherwise the answer is no and names the first condition that failed. The answer is one input for the guard and replaces no review rule (§24.2).
+A withdrawn question (§25.15) does not count as unanswered, and a condition about a part that is not built yet counts as met. Until tasks are built, the release query therefore answers yes for every pull request; this is intended, and the guard's own review rules apply unchanged. Otherwise the answer is no and names the first condition that failed. The answer is one input for the guard and replaces no review rule (§24.2).
 
 ## 25. Central operation (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§2–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.17 in the same diff. An explanation for the whole team is in [docs/central-operation.md](docs/central-operation.md); this section stays the binding rule.
+Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§1–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.17 in the same diff. An explanation for the whole team is in [docs/central-operation.md](docs/central-operation.md); this section stays the binding rule.
 
 ### 25.1 Goal and non-goals
 
@@ -1576,7 +1576,7 @@ Non-goals:
 | Device | One machine with the client installed and its own key pair. Assigned to exactly one staff member, its owner. |
 | Executor | A device that runs work it was given. |
 | Controller | A device that may also give work to executors. |
-| Task | What has to be done. Lives in the team record. |
+| Task | What has to be done. Lives in the team record. It is not the session task of the spine skill (§15, §19.5), which stays a row on its device and keeps its own states. |
 | Order | One attempt to do a task on one executor. |
 | Question | A decision a running session needs, with its allowed answers. |
 | Command | Any signed instruction that reaches a device through the hub: an order, an answer, input typed into a session, start, stop. |
@@ -1807,6 +1807,8 @@ Passing all model traffic through the hub is rejected: the hub would become a si
 | §20 Hub task machine | Refused | The task statuses of §25.8 live in the team record and are written by signed events, never by the hub |
 | §20 Token cost and stuck tasks on the website | Refused | Accepted as read-only views (§25.11) |
 | §24.2 Key kinds and agent key storage | `webauthn` or `ed25519`; agent key under `$AGENT_HOME` with mode `0600` | Also the key type of the machine's secure hardware, where the device key is kept there; the key is out of reach of the account that runs sessions (§25.6) |
+| §13 Data class | Local store, hub event log, connection state | Adds the session log and the access log, both unique (§25.9) |
+| §24.2 Agent keys and persons | An agent key is never registered under a person; the person is named where one exists | A device key names exactly one owning staff member (§25.3) |
 | Hub team file, owners of an agent | An agent login may have several owners | One owner per device; other staff members act through grants (§25.5) |
 
 ### 25.18 What stays refused
@@ -1840,4 +1842,4 @@ After the steps of §24.10, each step as its own pull request with the API parit
 
 - This section changes only by pull request. A change to the rights (§25.5), to the proofs (§25.6) or to what is recorded (§25.9) needs an explicit human decision recorded in that pull request.
 - The rules of §24.10 apply: record data and session logs never enter a repository, an issue, a pull request, a log or an error message, and no private repository, internal hostname or internal infrastructure is named here or in code.
-- Every implementation pull request carries tests for its refusal paths: an unknown key, a key outside the allow list, an expired session key, an expired or removed grant, a replayed command, a command outside its permission, a change of an allow list signed by a session key, and a session-key expiry beyond the device's limit.
+- Every implementation pull request carries tests for its refusal paths: an unknown key, a key outside the allow list, an expired session key, an expired or removed grant, a replayed command, a command outside its permission, a change of an allow list signed by a session key, a session-key expiry beyond the device's limit, and a team-record event signed by an expired session key.
