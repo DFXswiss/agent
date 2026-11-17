@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from agent_cli.allow import (
     CHECKLIST_KEYS,
     JA_EVIDENCE_REQUIRED,
@@ -13,6 +15,13 @@ from agent_cli.allow import (
     requires_evidence,
 )
 from agent_cli.model_slots import ModelSlotsError
+from driver_fixtures import install_recorded_slots
+
+
+@pytest.fixture(autouse=True)
+def _recorded_slots() -> None:
+    """Stored names of earlier versions read with the placeholder ``recorded_slots``."""
+    install_recorded_slots()
 
 
 def _approved_gates(head: str = "abc123") -> list[dict]:
@@ -25,10 +34,10 @@ def _approved_gates(head: str = "abc123") -> list[dict]:
             "head_sha": head,
         }
         for stage, dim, vendor in (
-            ("review-1", "quality", "grok"),
-            ("review-1", "logic", "grok"),
-            ("review-2", "quality", "codex"),
-            ("review-2", "logic", "codex"),
+            ("review-1", "quality", "driver-a"),
+            ("review-1", "logic", "driver-a"),
+            ("review-2", "quality", "driver-b"),
+            ("review-2", "logic", "driver-b"),
         )
     ]
 
@@ -109,8 +118,8 @@ class TestEvaluateAllow(unittest.TestCase):
 
     def test_claim_done_rejects_an_implementer_pinned_to_models_second(self) -> None:
         task = _ready_task()
-        task["models"] = {"first": "claude", "second": "codex"}
-        task["implementer"] = "codex"
+        task["models"] = {"first": "driver-c", "second": "driver-b"}
+        task["implementer"] = "driver-b"
         with self.assertRaisesRegex(
             ModelSlotsError, "implementer must differ from models.second"
         ):
@@ -237,7 +246,7 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertFalse(r.allowed)
         self.assertTrue(any("review_1_quality=unavailable" in b for b in r.blocking))
 
-    def test_both_codex_n_a_skips_codex_ready_blockers(self) -> None:
+    def test_both_second_n_a_skips_second_ready_blockers(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         task["checklist"]["review_2_logic"] = "n_a"
@@ -259,7 +268,7 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertNotIn("review-2", joined)
         self.assertEqual(blocking, [])
 
-    def test_both_codex_n_a_without_the_evidence_still_blocks(self) -> None:
+    def test_both_second_n_a_without_the_evidence_still_blocks(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         task["checklist"]["review_2_logic"] = "n_a"
@@ -279,7 +288,7 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertIn("review_2_quality=n_a", joined)
         self.assertIn("review_2_logic=n_a", joined)
 
-    def test_both_codex_n_a_without_trusted_list_still_blocks(self) -> None:
+    def test_both_second_n_a_without_trusted_list_still_blocks(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         task["checklist"]["review_2_logic"] = "n_a"
@@ -289,13 +298,13 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertIn("review_2_quality=n_a", joined)
         self.assertIn("review_2_logic=n_a", joined)
 
-    def test_only_codex_quality_n_a_still_blocks(self) -> None:
+    def test_only_second_quality_n_a_still_blocks(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         blocking = ready_for_done_blocking(task)
         self.assertTrue(any("review_2_quality" in b for b in blocking))
 
-    def test_both_codex_n_a_still_blocks_grok_n_a(self) -> None:
+    def test_both_second_n_a_still_blocks_first_n_a(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         task["checklist"]["review_2_logic"] = "n_a"
@@ -303,7 +312,7 @@ class TestEvaluateAllow(unittest.TestCase):
         blocking = ready_for_done_blocking(task)
         self.assertTrue(any("review_1_quality" in b for b in blocking))
 
-    def test_both_codex_n_a_still_blocks_missing_grok_gate(self) -> None:
+    def test_both_second_n_a_still_blocks_missing_first_gate(self) -> None:
         task = _ready_task()
         task["checklist"]["review_2_quality"] = "n_a"
         task["checklist"]["review_2_logic"] = "n_a"

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.chain import (
     CHAINS,
@@ -18,8 +20,16 @@ from agent_cli.chain import (
     steps_for,
 )
 from agent_cli.model_slots import ModelSlots
+from driver_fixtures import install_recorded_slots
 
-CONFIGURED_MODELS = ModelSlots("grok", "codex")
+
+@pytest.fixture(autouse=True)
+def _recorded_slots() -> None:
+    """Stored names of earlier versions read with the placeholder ``recorded_slots``."""
+    install_recorded_slots()
+
+
+CONFIGURED_MODELS = ModelSlots("driver-a", "driver-b")
 
 
 def _pending(workflow: str) -> dict[str, str]:
@@ -53,7 +63,7 @@ class TestNextSteps(unittest.TestCase):
         self.assertEqual(nxt, {"spec_written"})
         self.assertNotIn("implementer_done", nxt)
 
-    def test_parallel_grok_gates_after_push(self) -> None:
+    def test_parallel_first_gates_after_push(self) -> None:
         cl = _pending("implement")
         for k in (
             "session_registered",
@@ -67,7 +77,7 @@ class TestNextSteps(unittest.TestCase):
         nxt = {s.key for s in next_steps("implement", cl)}
         self.assertEqual(nxt, {"review_1_quality", "review_1_logic"})
 
-    def test_codex_waits_for_both_grok_gates(self) -> None:
+    def test_second_waits_for_both_first_gates(self) -> None:
         cl = _pending("implement")
         for k in (
             "session_registered",
@@ -97,8 +107,8 @@ class TestNextSteps(unittest.TestCase):
         # Keep legacy keys here to verify stored-checklist compatibility.
         del cl["review_1_quality"]
         del cl["review_1_logic"]
-        cl["grok_pr_quality"] = "ja"
-        cl["grok_pr_logic"] = "ja"
+        cl["driver-a_pr_quality"] = "ja"
+        cl["driver-a_pr_logic"] = "ja"
 
         nxt = {step.key for step in next_steps("implement", cl)}
 
@@ -145,7 +155,7 @@ class TestCloseAllowed(unittest.TestCase):
             evidence="round 1",
             snapshot={
                 "agents": [
-                    {"role": "implementer", "vendor": "grok", "status": "done", "note": "done"}
+                    {"role": "implementer", "vendor": "driver-a", "status": "done", "note": "done"}
                 ]
             },
         )
@@ -199,7 +209,7 @@ class TestCloseAllowed(unittest.TestCase):
             evidence="round 1",
             snapshot={
                 "agents": [
-                    {"role": "implementer", "vendor": "grok", "status": "done", "note": ""}
+                    {"role": "implementer", "vendor": "driver-a", "status": "done", "note": ""}
                 ],
                 "implementer_verdict": "done",
             },
@@ -213,7 +223,7 @@ class TestCloseAllowed(unittest.TestCase):
             evidence="round 1",
             snapshot={
                 "agents": [
-                    {"role": "implementer", "vendor": "grok", "status": "done", "note": ""}
+                    {"role": "implementer", "vendor": "driver-a", "status": "done", "note": ""}
                 ],
                 "implementer_verdict": "blocked",
             },
@@ -227,7 +237,7 @@ class TestCloseAllowed(unittest.TestCase):
         cl["implementer_done"] = "ja"
         snap_ok = {
             "agents": [
-                {"role": "reviewer", "vendor": "grok", "status": "done", "note": ""}
+                {"role": "reviewer", "vendor": "driver-a", "status": "done", "note": ""}
             ],
             "reviewer_verdict": "approved",
         }
@@ -245,7 +255,7 @@ class TestCloseAllowed(unittest.TestCase):
             "agents": [
                 {
                     "role": "reviewer",
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "status": "done",
                     "note": "unapproved",
                 }
@@ -294,7 +304,7 @@ class TestCloseAllowed(unittest.TestCase):
                     {
                         "stage": "review-1",
                         "dimension": "quality",
-                        "vendor": "grok",
+                        "vendor": "driver-a",
                         "verdict": "approved",
                     }
                 ]
@@ -334,8 +344,8 @@ class TestCloseAllowed(unittest.TestCase):
         text = handoff_prompt(
             impl, task_id="31", session_id="sess", models=CONFIGURED_MODELS
         )
-        self.assertIn("who=grok implementer", text)
-        self.assertNotIn("grok|codex", text)
+        self.assertIn("who=driver-a implementer", text)
+        self.assertNotIn("driver-a|driver-b", text)
         conflicts = next(
             s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
         )
@@ -343,13 +353,13 @@ class TestCloseAllowed(unittest.TestCase):
         conflicts_text = handoff_prompt(
             conflicts, task_id="31", session_id="sess", models=CONFIGURED_MODELS
         )
-        self.assertIn("who=grok implementer", conflicts_text)
+        self.assertIn("who=driver-a implementer", conflicts_text)
         reviewer = next(s for s in steps_for("implement") if s.key == "reviewer_approved")
         self.assertEqual(reviewer.slot, "first")
         reviewer_text = handoff_prompt(
             reviewer, task_id="31", session_id="sess", models=CONFIGURED_MODELS
         )
-        self.assertIn("who=grok reviewer", reviewer_text)
+        self.assertIn("who=driver-a reviewer", reviewer_text)
         script = next(s for s in steps_for("implement") if s.key == "session_registered")
         script_text = handoff_prompt(script, task_id="31", session_id="sess")
         self.assertIn("who=- script", script_text)
@@ -376,7 +386,7 @@ class TestCloseAllowed(unittest.TestCase):
                     {
                         "stage": "review-1",
                         "dimension": "quality",
-                        "vendor": "grok",
+                        "vendor": "driver-a",
                         "verdict": "approved",
                     }
                 ]
@@ -395,7 +405,7 @@ class TestCloseAllowed(unittest.TestCase):
                     {
                         "stage": "review-1",
                         "dimension": "quality",
-                        "vendor": "grok",
+                        "vendor": "driver-a",
                         "verdict": "unavailable",
                     }
                 ]
@@ -511,7 +521,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertNotIn("review_2_quality", nxt)
         self.assertNotIn("review_2_logic", nxt)
 
-    def test_codex_n_a_second_review_not_posted(self) -> None:
+    def test_second_n_a_second_review_not_posted(self) -> None:
         cl = _pending("review")
         cl["session_registered"] = "ja"
         cl["contributing_read"] = "ja"
@@ -556,19 +566,19 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(denied.allowed)
         self.assertIn("second review not posted", denied.reason)
-        grok = _pending("review")
-        grok["session_registered"] = "ja"
-        grok["contributing_read"] = "ja"
-        grok_denied = close_allowed(
+        first = _pending("review")
+        first["session_registered"] = "ja"
+        first["contributing_read"] = "ja"
+        first_denied = close_allowed(
             "review",
             "review_1_quality",
-            checklist=grok,
+            checklist=first,
             source="script",
             evidence="second review not posted",
             snapshot={},
             status="n_a",
         )
-        self.assertFalse(grok_denied.allowed)
+        self.assertFalse(first_denied.allowed)
 
     def test_external_second_review_requires_a38_marker_and_first_gate_head(self) -> None:
         head = "a" * 40
@@ -582,13 +592,13 @@ class TestCloseAllowed(unittest.TestCase):
             cl[key] = "ja"
         evidence = f"external second review by reviewer at {head}: https://example.invalid/review"
         snapshot = {
-            "models": {"first": "grok", "second": None},
+            "models": {"first": "driver-a", "second": None},
             "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
             "gates": [
                 {
                     "stage": "review-1",
                     "dimension": dimension,
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "verdict": "approved",
                     "head_sha": head,
                 }
@@ -644,7 +654,7 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(denied.allowed)
 
-    def test_codex_n_a_satisfies_mergeable_need(self) -> None:
+    def test_second_n_a_satisfies_mergeable_need(self) -> None:
         cl = _pending("resolve-conflicts")
         for key in (
             "session_registered",
@@ -668,7 +678,7 @@ class TestCloseAllowed(unittest.TestCase):
         nxt = {s.key for s in next_steps("resolve-conflicts", cl)}
         self.assertNotIn("mergeable", nxt)
 
-    def test_posted_codex_review_replaces_n_a_with_ja(self) -> None:
+    def test_posted_second_review_replaces_n_a_with_ja(self) -> None:
         cl = _pending("review")
         for key in (
             "session_registered",
@@ -684,13 +694,13 @@ class TestCloseAllowed(unittest.TestCase):
                 {
                     "stage": "review-2",
                     "dimension": "quality",
-                    "vendor": "codex",
+                    "vendor": "driver-b",
                     "verdict": "approved",
                 },
                 {
                     "stage": "review-2",
                     "dimension": "logic",
-                    "vendor": "codex",
+                    "vendor": "driver-b",
                     "verdict": "approved",
                 },
             ]
@@ -738,12 +748,12 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(missing_gate.allowed)
         self.assertIn("not approved", missing_gate.reason)
-        grok = dict(cl)
-        grok["review_1_quality"] = "n_a"
+        first = dict(cl)
+        first["review_1_quality"] = "n_a"
         denied = close_allowed(
             "review",
             "review_1_quality",
-            checklist=grok,
+            checklist=first,
             source="script",
             evidence="posted",
             snapshot={
@@ -751,7 +761,7 @@ class TestCloseAllowed(unittest.TestCase):
                     {
                         "stage": "review-1",
                         "dimension": "quality",
-                        "vendor": "grok",
+                        "vendor": "driver-a",
                         "verdict": "approved",
                     }
                 ]
@@ -846,13 +856,13 @@ class TestSmallChangeEvidenceInEveryState(unittest.TestCase):
         if key == "implementer_done":
             snapshot: dict = {
                 "agents": [
-                    {"role": "implementer", "vendor": "grok", "status": "done"}
+                    {"role": "implementer", "vendor": "driver-a", "status": "done"}
                 ],
                 "implementer_verdict": "done",
             }
         else:
             snapshot = {
-                "agents": [{"role": "reviewer", "vendor": "grok", "status": "done"}],
+                "agents": [{"role": "reviewer", "vendor": "driver-a", "status": "done"}],
                 "reviewer_verdict": "approved",
             }
         snapshot.update({"state": state, "workflow": "implement"})
@@ -905,7 +915,7 @@ class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
     def test_an_unpinned_task_closes_with_a_second_slot_row(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         snapshot = {
-            "agents": [{"role": "implementer", "vendor": "codex", "status": "done"}],
+            "agents": [{"role": "implementer", "vendor": "driver-b", "status": "done"}],
             "implementer_verdict": "done",
             "models_pinned": False,
         }
@@ -919,38 +929,38 @@ class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         snapshot = {
             "agents": [
-                {"role": "implementer", "vendor": "grok", "status": "working"},
-                {"role": "implementer", "vendor": "codex", "status": "done"},
+                {"role": "implementer", "vendor": "driver-a", "status": "working"},
+                {"role": "implementer", "vendor": "driver-b", "status": "done"},
             ],
             "implementer_verdict": "done",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "models_pinned": True,
         }
         self.assertEqual(_artifact_ok(impl, snapshot), "no finished implementer agent")
-        snapshot["agents"].append({"role": "implementer", "vendor": "grok", "status": "done"})
+        snapshot["agents"].append({"role": "implementer", "vendor": "driver-a", "status": "done"})
         self.assertEqual(_artifact_ok(impl, snapshot), "")
 
     def test_a_separate_implementer_pin_closes_only_with_that_provider(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         snapshot = {
             "agents": [
-                {"role": "implementer", "vendor": "grok", "status": "done"},
+                {"role": "implementer", "vendor": "driver-a", "status": "done"},
             ],
             "implementer_verdict": "done",
-            "models": {"first": "grok", "second": "codex"},
-            "implementer": "deepseek",
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "implementer": "driver-e",
             "models_pinned": True,
         }
         self.assertEqual(_artifact_ok(impl, snapshot), "no finished implementer agent")
         snapshot["agents"].append(
-            {"role": "implementer", "vendor": "deepseek", "status": "done"}
+            {"role": "implementer", "vendor": "driver-e", "status": "done"}
         )
         self.assertEqual(_artifact_ok(impl, snapshot), "")
 
     def test_a_row_outside_the_slots_does_not_close_the_step(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         snapshot = {
-            "agents": [{"role": "implementer", "vendor": "claude", "status": "done"}],
+            "agents": [{"role": "implementer", "vendor": "driver-c", "status": "done"}],
             "implementer_verdict": "done",
             "models_pinned": False,
         }

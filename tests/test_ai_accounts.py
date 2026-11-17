@@ -10,7 +10,6 @@ from agent_cli.ai_accounts import (
     ACCESS_VALUES,
     LANE_EXECUTION_ERROR,
     READ_ONLY_WORKFLOW_KINDS,
-    SUPPORTED_PROVIDERS,
     AccountError,
     AIAccount,
     AIAccounts,
@@ -18,8 +17,27 @@ from agent_cli.ai_accounts import (
     AISubscription,
     load_ai_accounts,
     load_ai_subscriptions,
+    load_driver_configuration,
+    load_model_configuration,
+    load_recorded_names,
+)
+from agent_cli.drivers import (
+    DRIVERS_NOT_CONFIGURED,
+    NETWORK_OVERRIDE_ENV,
+    RecordedNames,
+    role_clear_env,
 )
 from agent_cli.model_slots import ModelSlots
+from driver_fixtures import (
+    DECLARED_DRIVERS,
+    LANE_DRIVERS,
+    WINDOWS_DRIVER_ID,
+    accounts_document,
+    driver_document,
+    windows_driver,
+    write_accounts,
+    write_drivers,
+)
 
 pytestmark = pytest.mark.no_pg
 
@@ -29,51 +47,54 @@ UNCONFIGURED_MODELS_MESSAGE = (
 )
 
 
-def write_config(home: Path, data: dict) -> None:
+def write_config(home: Path, data: dict, *, drivers: bool = True) -> None:
+    """Write ``ai-accounts.json``, and the placeholder ``drivers.json`` unless told not to."""
+    if drivers:
+        write_drivers(home)
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def sample_config() -> dict:
     return {
         "lane_execution": {"mode": "this-device-is-lane-host"},
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
-            "grok-primary": {
-                "provider": "grok",
-                "config_dir": "/operator/path/grok-primary",
+            "driver-a-primary": {
+                "provider": "driver-a",
+                "config_dir": "/operator/path/driver-a-primary",
             },
-            "codex-primary": {
-                "provider": "codex",
-                "config_dir": "/operator/path/codex-primary",
+            "driver-b-primary": {
+                "provider": "driver-b",
+                "config_dir": "/operator/path/driver-b-primary",
             },
-            "grok-secondary": {
-                "provider": "grok",
-                "config_dir": "/operator/path/grok-secondary",
+            "driver-a-secondary": {
+                "provider": "driver-a",
+                "config_dir": "/operator/path/driver-a-secondary",
             },
         },
         "roles": {
             "builder": {
-                "account": "grok-primary",
+                "account": "driver-a-primary",
                 "model": "operator-selected-model",
                 "access": "workspace-write",
             },
             "reader": {
-                "account": "grok-primary",
+                "account": "driver-a-primary",
                 "model": "operator-selected-model",
                 "access": "read-only",
             },
-            "codex-builder": {
-                "account": "codex-primary",
-                "model": "operator-codex-model",
+            "driver-b-builder": {
+                "account": "driver-b-primary",
+                "model": "operator-driver-b-model",
                 "access": "workspace-write",
             },
-            "codex-reader": {
-                "account": "codex-primary",
-                "model": "operator-codex-model",
+            "driver-b-reader": {
+                "account": "driver-b-primary",
+                "model": "operator-driver-b-model",
                 "access": "read-only",
             },
             "alt-builder": {
-                "account": "grok-secondary",
+                "account": "driver-a-secondary",
                 "model": "alt-model",
                 "access": "workspace-write",
             },
@@ -82,18 +103,18 @@ def sample_config() -> dict:
             "chosen-session": {
                 "interactive": "builder",
                 "lanes": {
-                    "grok:implementer": "builder",
-                    "grok:reviewer": "reader",
-                    "grok:pr-reviewer-quality": "reader",
-                    "grok:pr-reviewer-logic": "reader",
-                    "codex:implementer": "codex-builder",
-                    "codex:pr-reviewer-quality": "codex-reader",
-                    "codex:pr-reviewer-logic": "codex-reader",
+                    "driver-a:implementer": "builder",
+                    "driver-a:reviewer": "reader",
+                    "driver-a:pr-reviewer-quality": "reader",
+                    "driver-a:pr-reviewer-logic": "reader",
+                    "driver-b:implementer": "driver-b-builder",
+                    "driver-b:pr-reviewer-quality": "driver-b-reader",
+                    "driver-b:pr-reviewer-logic": "driver-b-reader",
                 },
             },
             "lanes-only": {
                 "lanes": {
-                    "grok:implementer": "alt-builder",
+                    "driver-a:implementer": "alt-builder",
                 },
             },
         },
@@ -120,19 +141,18 @@ def test_installation_without_models_is_unconfigured(tmp_path: Path, data) -> No
 def test_many_profiles_and_roles_load_without_fixed_count(tmp_path: Path) -> None:
     write_config(tmp_path, sample_config())
     loaded = load_ai_accounts(tmp_path)
-    assert set(loaded.accounts) == {"grok-primary", "codex-primary", "grok-secondary"}
+    assert set(loaded.accounts) == {"driver-a-primary", "driver-b-primary", "driver-a-secondary"}
     assert set(loaded.roles) == {
         "builder",
         "reader",
-        "codex-builder",
-        "codex-reader",
+        "driver-b-builder",
+        "driver-b-reader",
         "alt-builder",
     }
-    assert loaded.accounts["grok-primary"].provider == "grok"
-    assert loaded.accounts["codex-primary"].config_dir == "/operator/path/codex-primary"
+    assert loaded.accounts["driver-a-primary"].provider == "driver-a"
+    assert loaded.accounts["driver-b-primary"].config_dir == "/operator/path/driver-b-primary"
     assert loaded.roles["builder"].access == "workspace-write"
-    assert loaded.roles["reader"].account is loaded.accounts["grok-primary"]
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude", "openrouter"})
+    assert loaded.roles["reader"].account is loaded.accounts["driver-a-primary"]
     assert ACCESS_VALUES == frozenset({"read-only", "workspace-write"})
 
 
@@ -141,19 +161,19 @@ def test_explicit_session_and_lane_resolution(tmp_path: Path) -> None:
     loaded = load_ai_accounts(tmp_path)
     interactive = loaded.for_session("chosen-session")
     assert interactive.name == "builder"
-    assert interactive.account.provider == "grok"
-    implementer = loaded.for_lane("chosen-session", "implementer", "grok")
+    assert interactive.account.provider == "driver-a"
+    implementer = loaded.for_lane("chosen-session", "implementer", "driver-a")
     assert implementer.name == "builder"
     assert implementer.access == "workspace-write"
-    reviewer = loaded.for_lane("chosen-session", "reviewer", "grok")
+    reviewer = loaded.for_lane("chosen-session", "reviewer", "driver-a")
     assert reviewer.name == "reader"
     assert reviewer.access == "read-only"
-    alt = loaded.for_lane("lanes-only", "implementer", "grok")
+    alt = loaded.for_lane("lanes-only", "implementer", "driver-a")
     assert alt.name == "alt-builder"
     with pytest.raises(AccountError, match="No interactive AI role"):
         loaded.for_session("lanes-only")
     with pytest.raises(AccountError, match="No AI lane configured"):
-        loaded.for_lane("lanes-only", "reviewer", "grok")
+        loaded.for_lane("lanes-only", "reviewer", "driver-a")
 
 
 def test_missing_lane_execution_preserves_reads_but_refuses_launch_resolution(
@@ -165,7 +185,7 @@ def test_missing_lane_execution_preserves_reads_but_refuses_launch_resolution(
     loaded = load_ai_accounts(tmp_path)
     assert loaded.for_session("chosen-session").name == "builder"
     with pytest.raises(AccountError) as excinfo:
-        loaded.for_lane("chosen-session", "implementer", "grok")
+        loaded.for_lane("chosen-session", "implementer", "driver-a")
     assert str(excinfo.value) == LANE_EXECUTION_ERROR
     with pytest.raises(AccountError) as load_exc:
         loaded.require_lane_execution()
@@ -179,7 +199,7 @@ def test_remote_lane_execution_is_unsupported(tmp_path: Path) -> None:
     loaded = load_ai_accounts(tmp_path)
     assert loaded.for_session("chosen-session").name == "builder"
     with pytest.raises(AccountError, match="remote.*not supported"):
-        loaded.for_lane("chosen-session", "implementer", "grok")
+        loaded.for_lane("chosen-session", "implementer", "driver-a")
     with pytest.raises(AccountError, match="remote.*not supported"):
         loaded.require_lane_execution()
 
@@ -202,29 +222,29 @@ def test_read_only_workflow_kinds_reject_writable_bindings(
     tmp_path: Path, kind: str
 ) -> None:
     data = sample_config()
-    data["sessions"]["chosen-session"]["lanes"][f"grok:{kind}"] = "builder"
+    data["sessions"]["chosen-session"]["lanes"][f"driver-a:{kind}"] = "builder"
     write_config(tmp_path, data)
     loaded = load_ai_accounts(tmp_path)
     with pytest.raises(AccountError, match="requires read-only access"):
-        loaded.for_lane("chosen-session", kind, "grok")
+        loaded.for_lane("chosen-session", kind, "driver-a")
 
 
 def test_check_kind_resolves_a_read_only_binding(tmp_path: Path) -> None:
     data = sample_config()
-    data["sessions"]["chosen-session"]["lanes"]["grok:check"] = "reader"
+    data["sessions"]["chosen-session"]["lanes"]["driver-a:check"] = "reader"
     write_config(tmp_path, data)
     assert (
         load_ai_accounts(tmp_path)
-        .for_lane("chosen-session", "check", "grok")
+        .for_lane("chosen-session", "check", "driver-a")
         .name
         == "reader"
     )
 
-    data["sessions"]["chosen-session"]["lanes"]["grok:check"] = "builder"
+    data["sessions"]["chosen-session"]["lanes"]["driver-a:check"] = "builder"
     write_config(tmp_path, data)
     with pytest.raises(AccountError) as excinfo:
         load_ai_accounts(tmp_path).for_lane(
-            "chosen-session", "check", "grok"
+            "chosen-session", "check", "driver-a"
         )
     assert str(excinfo.value) == (
         "Workflow kind check requires read-only access; refusing writable binding"
@@ -233,11 +253,11 @@ def test_check_kind_resolves_a_read_only_binding(tmp_path: Path) -> None:
 
 def test_wrong_provider_on_lane_resolution_fails(tmp_path: Path) -> None:
     data = sample_config()
-    data["sessions"]["chosen-session"]["lanes"]["grok:implementer"] = "codex-builder"
+    data["sessions"]["chosen-session"]["lanes"]["driver-a:implementer"] = "driver-b-builder"
     write_config(tmp_path, data)
     loaded = load_ai_accounts(tmp_path)
     with pytest.raises(AccountError, match="provider does not match"):
-        loaded.for_lane("chosen-session", "implementer", "grok")
+        loaded.for_lane("chosen-session", "implementer", "driver-a")
 
 
 def test_env_prefix_clears_tokens_without_mutating_process(
@@ -245,48 +265,43 @@ def test_env_prefix_clears_tokens_without_mutating_process(
 ) -> None:
     write_config(tmp_path, sample_config())
     loaded = load_ai_accounts(tmp_path)
-    monkeypatch.setenv("XAI_API_KEY", "parent-xai")
-    monkeypatch.setenv("GROK_API_KEY", "parent-grok")
-    monkeypatch.setenv("OPENAI_API_KEY", "parent-openai")
-    monkeypatch.setenv("CODEX_API_KEY", "parent-codex")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "parent-anthropic")
-    monkeypatch.setenv("CLAUDECODE", "1")
-    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
-    monkeypatch.setenv("GROK_HOME", "/ambient/grok")
-    monkeypatch.setenv("CODEX_HOME", "/ambient/codex")
+    monkeypatch.setenv("TOOL_A_API_KEY", "parent-tool-a")
+    monkeypatch.setenv("TOOL_B_API_KEY", "parent-tool-b")
+    monkeypatch.setenv("TOOL_C_API_KEY", "parent-tool-c")
+    monkeypatch.setenv("TOOL_C_TOKEN", "parent-tool-c-token")
+    monkeypatch.setenv("TOOL_D_API_KEY", "parent-tool-d")
+    monkeypatch.setenv("TOOL_A_HOME", "/ambient/driver-a")
+    monkeypatch.setenv("TOOL_B_HOME", "/ambient/driver-b")
     monkeypatch.setenv("UNRELATED_KEEP", "keep-me")
 
-    grok_prefix = loaded.roles["builder"].env_prefix()
-    assert grok_prefix[0] == "env"
+    driver_a_prefix = loaded.roles["builder"].env_prefix(loaded.drivers)
+    assert driver_a_prefix[0] == "env"
     for key in (
-        "XAI_API_KEY",
-        "GROK_API_KEY",
-        "OPENAI_API_KEY",
-        "CODEX_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "CLAUDECODE",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "GROK_HOME",
-        "CODEX_HOME",
+        "TOOL_A_API_KEY",
+        "TOOL_B_API_KEY",
+        "TOOL_C_API_KEY",
+        "TOOL_C_TOKEN",
+        "TOOL_D_API_KEY",
+        "TOOL_A_HOME",
+        "TOOL_B_HOME",
+        "TOOL_C_CONFIG",
     ):
-        assert key in grok_prefix
-        assert grok_prefix[grok_prefix.index(key) - 1] == "-u"
-    assert "GROK_HOME=/operator/path/grok-primary" in grok_prefix
-    assert not any(part.startswith("CODEX_HOME=") for part in grok_prefix)
+        assert key in driver_a_prefix
+        assert driver_a_prefix[driver_a_prefix.index(key) - 1] == "-u"
+    assert "TOOL_A_HOME=/operator/path/driver-a-primary" in driver_a_prefix
+    assert not any(part.startswith("TOOL_B_HOME=") for part in driver_a_prefix)
 
-    codex_prefix = loaded.roles["codex-builder"].env_prefix()
-    assert "CODEX_HOME=/operator/path/codex-primary" in codex_prefix
-    assert not any(part.startswith("GROK_HOME=") for part in codex_prefix)
+    driver_b_prefix = loaded.roles["driver-b-builder"].env_prefix(loaded.drivers)
+    assert "TOOL_B_HOME=/operator/path/driver-b-primary" in driver_b_prefix
+    assert not any(part.startswith("TOOL_A_HOME=") for part in driver_b_prefix)
 
-    assert os.environ["XAI_API_KEY"] == "parent-xai"
-    assert os.environ["GROK_API_KEY"] == "parent-grok"
-    assert os.environ["OPENAI_API_KEY"] == "parent-openai"
-    assert os.environ["CODEX_API_KEY"] == "parent-codex"
-    assert os.environ["ANTHROPIC_API_KEY"] == "parent-anthropic"
-    assert os.environ["CLAUDECODE"] == "1"
-    assert os.environ["CLAUDE_CODE_ENTRYPOINT"] == "cli"
-    assert os.environ["GROK_HOME"] == "/ambient/grok"
-    assert os.environ["CODEX_HOME"] == "/ambient/codex"
+    assert os.environ["TOOL_A_API_KEY"] == "parent-tool-a"
+    assert os.environ["TOOL_B_API_KEY"] == "parent-tool-b"
+    assert os.environ["TOOL_C_API_KEY"] == "parent-tool-c"
+    assert os.environ["TOOL_C_TOKEN"] == "parent-tool-c-token"
+    assert os.environ["TOOL_D_API_KEY"] == "parent-tool-d"
+    assert os.environ["TOOL_A_HOME"] == "/ambient/driver-a"
+    assert os.environ["TOOL_B_HOME"] == "/ambient/driver-b"
     assert os.environ["UNRELATED_KEEP"] == "keep-me"
 
 
@@ -314,8 +329,8 @@ def test_env_prefix_clears_proxy_and_ca_overrides(
     loaded = load_ai_accounts(tmp_path)
     for key in PROXY_AND_CA_ENV:
         monkeypatch.setenv(key, "/ambient/intercept")
-    for role in ("builder", "codex-builder"):
-        prefix = loaded.roles[role].env_prefix()
+    for role in ("builder", "driver-b-builder"):
+        prefix = loaded.roles[role].env_prefix(loaded.drivers)
         for key in PROXY_AND_CA_ENV:
             assert prefix[prefix.index(key) - 1] == "-u", (role, key)
         assert "/ambient/intercept" not in prefix
@@ -366,15 +381,15 @@ def test_malformed_configuration_is_rejected(tmp_path: Path, change: str) -> Non
     elif change == "sessions-not-object":
         data["sessions"] = 1
     elif change == "account-unknown-field":
-        data["accounts"]["grok-primary"]["token"] = "not-allowed"
+        data["accounts"]["driver-a-primary"]["token"] = "not-allowed"
     elif change == "role-unknown-field":
         data["roles"]["builder"]["temperature"] = 0.2
     elif change == "session-unknown-field":
         data["sessions"]["chosen-session"]["default"] = "builder"
     elif change == "missing-provider":
-        del data["accounts"]["grok-primary"]["provider"]
+        del data["accounts"]["driver-a-primary"]["provider"]
     elif change == "missing-config-dir":
-        del data["accounts"]["grok-primary"]["config_dir"]
+        del data["accounts"]["driver-a-primary"]["config_dir"]
     elif change == "missing-role-account":
         del data["roles"]["builder"]["account"]
     elif change == "missing-model":
@@ -382,27 +397,27 @@ def test_malformed_configuration_is_rejected(tmp_path: Path, change: str) -> Non
     elif change == "missing-access":
         del data["roles"]["builder"]["access"]
     elif change == "unsupported-provider":
-        data["accounts"]["grok-primary"]["provider"] = "gemini"
+        data["accounts"]["driver-a-primary"]["provider"] = "driver-x"
     elif change == "invalid-access":
         data["roles"]["builder"]["access"] = "full"
     elif change == "relative-config-dir":
-        data["accounts"]["grok-primary"]["config_dir"] = "./relative"
+        data["accounts"]["driver-a-primary"]["config_dir"] = "./relative"
     elif change == "parent-traversal":
-        data["accounts"]["grok-primary"]["config_dir"] = "/operator/path/../secret"
+        data["accounts"]["driver-a-primary"]["config_dir"] = "/operator/path/../secret"
     elif change == "config-dir-newline":
-        data["accounts"]["grok-primary"]["config_dir"] = "/operator/path\n/other"
+        data["accounts"]["driver-a-primary"]["config_dir"] = "/operator/path\n/other"
     elif change == "config-dir-cr":
-        data["accounts"]["grok-primary"]["config_dir"] = "/operator/path\r/other"
+        data["accounts"]["driver-a-primary"]["config_dir"] = "/operator/path\r/other"
     elif change == "config-dir-nul":
-        data["accounts"]["grok-primary"]["config_dir"] = "/operator/path\x00/other"
+        data["accounts"]["driver-a-primary"]["config_dir"] = "/operator/path\x00/other"
     elif change == "empty-account-name":
         data["accounts"][""] = {
-            "provider": "grok",
+            "provider": "driver-a",
             "config_dir": "/operator/path/empty",
         }
     elif change == "empty-role-name":
         data["roles"][" "] = {
-            "account": "grok-primary",
+            "account": "driver-a-primary",
             "model": "m",
             "access": "read-only",
         }
@@ -415,11 +430,11 @@ def test_malformed_configuration_is_rejected(tmp_path: Path, change: str) -> Non
     elif change == "dangling-interactive":
         data["sessions"]["chosen-session"]["interactive"] = "missing"
     elif change == "dangling-lane-role":
-        data["sessions"]["chosen-session"]["lanes"]["grok:implementer"] = "missing"
+        data["sessions"]["chosen-session"]["lanes"]["driver-a:implementer"] = "missing"
     elif change == "lanes-not-object":
         data["sessions"]["chosen-session"]["lanes"] = ["builder"]
     elif change == "token-field":
-        data["accounts"]["grok-primary"]["api_key"] = "secret-must-not-load"
+        data["accounts"]["driver-a-primary"]["api_key"] = "secret-must-not-load"
     if change == "invalid-json":
         (tmp_path / "ai-accounts.json").write_text("{", encoding="utf-8")
     else:
@@ -428,7 +443,7 @@ def test_malformed_configuration_is_rejected(tmp_path: Path, change: str) -> Non
         load_ai_accounts(tmp_path)
     message = str(excinfo.value)
     assert "secret-must-not-load" not in message
-    assert "parent-xai" not in message
+    assert "parent-tool-a" not in message
 
 
 def test_errors_do_not_echo_credential_like_values(tmp_path: Path) -> None:
@@ -436,10 +451,10 @@ def test_errors_do_not_echo_credential_like_values(tmp_path: Path) -> None:
     write_config(
         tmp_path,
         {
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "accounts": {
                 "probe": {
-                    "provider": "grok",
+                    "provider": "driver-a",
                     "config_dir": "/operator/path",
                     "api_key": secret,
                 }
@@ -461,14 +476,14 @@ def test_account_error_extends_store_error() -> None:
 
 
 def test_frozen_dataclasses_expose_required_fields() -> None:
-    account = AIAccount("n", "grok", "/absolute/config")
+    account = AIAccount("n", "driver-a", "/absolute/config")
     role = AIRole("r", account, "model-x", "read-only")
     accounts = AIAccounts(
         {"n": account},
         {"r": role},
         {},
-        ModelSlots("grok", "codex"),
-        "grok",
+        ModelSlots("driver-a", "driver-b"),
+        "driver-a",
     )
     assert account.name == "n"
     assert role.model == "model-x"
@@ -477,16 +492,16 @@ def test_frozen_dataclasses_expose_required_fields() -> None:
         account.name = "other"  # type: ignore[misc]
 
 
-def test_openrouter_always_sets_claude_config_dir_for_default_named_path(
+def test_driver_d_always_sets_the_shared_config_dir_for_the_default_named_path(
     tmp_path: Path,
 ) -> None:
-    default_dir = str(Path.home() / ".claude")
+    default_dir = str(Path.home() / ".tool-c")
     write_config(
         tmp_path,
         {
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "accounts": {
-                "or": {"provider": "openrouter", "config_dir": default_dir}
+                "or": {"provider": "driver-d", "config_dir": default_dir}
             },
             "roles": {
                 "or-reader": {
@@ -496,15 +511,16 @@ def test_openrouter_always_sets_claude_config_dir_for_default_named_path(
             "sessions": {},
         },
     )
-    prefix = load_ai_accounts(tmp_path).roles["or-reader"].env_prefix()
-    assert f"CLAUDE_CONFIG_DIR={default_dir}" in prefix
+    loaded = load_ai_accounts(tmp_path)
+    prefix = loaded.roles["or-reader"].env_prefix(loaded.drivers)
+    assert f"TOOL_C_CONFIG={default_dir}" in prefix
 
 
 def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     data = sample_config()
     data["accounts"]["or"] = {
-        "provider": "openrouter",
-        "config_dir": "/operator/path/openrouter",
+        "provider": "driver-d",
+        "config_dir": "/operator/path/driver-d",
     }
     data["usage_accounts"] = ["or"]
     write_config(tmp_path, data)
@@ -515,19 +531,22 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match="unknown account"):
         load_ai_accounts(tmp_path)
 
+    document = driver_document()
+    document["drivers"][WINDOWS_DRIVER_ID] = windows_driver()
     data["accounts"]["seat"] = {
-        "provider": "claude",
-        "config_dir": "/operator/path/claude-seat",
+        "provider": WINDOWS_DRIVER_ID,
+        "config_dir": "/operator/path/driver-w-seat",
     }
     data["usage_accounts"] = ["or", "seat"]
-    write_config(tmp_path, data)
+    write_drivers(tmp_path, document)
+    write_config(tmp_path, data, drivers=False)
     assert load_ai_accounts(tmp_path).usage_accounts == ("or", "seat")
+    del data["accounts"]["seat"]
 
-    for other in ("grok-primary", "codex-primary"):
-        data["usage_accounts"] = [other]
-        write_config(tmp_path, data)
-        with pytest.raises(AccountError, match="must use provider openrouter or claude"):
-            load_ai_accounts(tmp_path)
+    data["usage_accounts"] = ["driver-a-primary"]
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="has no spend usage section"):
+        load_ai_accounts(tmp_path)
 
     data["usage_accounts"] = ["or", "or"]
     write_config(tmp_path, data)
@@ -565,20 +584,20 @@ def test_subscription_inventory_reads_entries(tmp_path: Path) -> None:
         {
             "subscriptions": [
                 {
-                    "provider": "claude",
+                    "provider": "driver-a",
                     "account": "seat-1@example.com",
                     "label": "Team seat 1",
                     "status": "active",
                     "note": "free text",
                 },
-                {"provider": "openrouter", "account": "router-a"},
+                {"provider": "driver-b", "account": "spend-a"},
                 {"provider": "other-plan-2", "account": "seat-1@example.com", "note": None},
             ]
         },
     )
     assert load_ai_subscriptions(tmp_path) == (
-        AISubscription("claude", "seat-1@example.com", "Team seat 1", "active", "free text"),
-        AISubscription("openrouter", "router-a"),
+        AISubscription("driver-a", "seat-1@example.com", "Team seat 1", "active", "free text"),
+        AISubscription("driver-b", "spend-a"),
         AISubscription("other-plan-2", "seat-1@example.com"),
     )
 
@@ -590,45 +609,45 @@ def test_subscription_inventory_reads_entries(tmp_path: Path) -> None:
         ({}, "accepts only subscriptions"),
         ({"subscriptions": [], "extra": 1}, "accepts only subscriptions"),
         ({"subscriptions": {}}, "subscriptions must be a list"),
-        ({"subscriptions": ["claude"]}, r"subscriptions\[0\] must be an object"),
+        ({"subscriptions": ["driver-a"]}, r"subscriptions\[0\] must be an object"),
         (
-            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "plan": "max"}]},
+            {"subscriptions": [{"provider": "driver-a", "account": "a@example.com", "plan": "max"}]},
             r"subscriptions\[0\] has unknown keys: plan",
         ),
         ({"subscriptions": [{"account": "a@example.com"}]}, r"subscriptions\[0\]\.provider"),
         (
-            {"subscriptions": [{"provider": "Claude", "account": "a@example.com"}]},
+            {"subscriptions": [{"provider": "Driver-A", "account": "a@example.com"}]},
             r"subscriptions\[0\]\.provider must be a lowercase token",
         ),
         (
-            {"subscriptions": [{"provider": "claude ai", "account": "a@example.com"}]},
+            {"subscriptions": [{"provider": "driver a", "account": "a@example.com"}]},
             r"subscriptions\[0\]\.provider must be a lowercase token",
         ),
-        ({"subscriptions": [{"provider": "claude"}]}, r"subscriptions\[0\]\.account"),
+        ({"subscriptions": [{"provider": "driver-a"}]}, r"subscriptions\[0\]\.account"),
         (
-            {"subscriptions": [{"provider": "claude", "account": " "}]},
+            {"subscriptions": [{"provider": "driver-a", "account": " "}]},
             r"subscriptions\[0\]\.account must be a non-empty",
         ),
         (
-            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "label": 3}]},
+            {"subscriptions": [{"provider": "driver-a", "account": "a@example.com", "label": 3}]},
             r"subscriptions\[0\]\.label",
         ),
         (
-            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "status": ""}]},
+            {"subscriptions": [{"provider": "driver-a", "account": "a@example.com", "status": ""}]},
             r"subscriptions\[0\]\.status",
         ),
         (
-            {"subscriptions": [{"provider": "claude", "account": "a@example.com", "note": "a\nb"}]},
+            {"subscriptions": [{"provider": "driver-a", "account": "a@example.com", "note": "a\nb"}]},
             r"subscriptions\[0\]\.note",
         ),
         (
             {
                 "subscriptions": [
-                    {"provider": "claude", "account": "Seat@Example.com"},
-                    {"provider": "claude", "account": "seat@example.com"},
+                    {"provider": "driver-a", "account": "Seat@Example.com"},
+                    {"provider": "driver-a", "account": "seat@example.com"},
                 ]
             },
-            r"subscriptions\[1\] repeats provider claude",
+            r"subscriptions\[1\] repeats provider driver-a",
         ),
     ],
 )
@@ -645,8 +664,8 @@ def test_subscription_inventory_allows_one_account_under_two_providers(tmp_path:
         tmp_path,
         {
             "subscriptions": [
-                {"provider": "claude", "account": "seat@example.com"},
-                {"provider": "grok", "account": "seat@example.com"},
+                {"provider": "driver-a", "account": "seat@example.com"},
+                {"provider": "driver-b", "account": "seat@example.com"},
             ]
         },
     )
@@ -657,3 +676,289 @@ def test_subscription_inventory_rejects_unreadable_json(tmp_path: Path) -> None:
     (tmp_path / "ai-subscriptions.json").write_text("{", encoding="utf-8")
     with pytest.raises(AccountError, match="Cannot read ai-subscriptions.json"):
         load_ai_subscriptions(tmp_path)
+
+
+# --- drivers.json next to ai-accounts.json -----------------------------------
+
+
+def _names_driver_file(message: str) -> bool:
+    return "drivers.json" in message and "docs/ai-accounts.md" in message
+
+
+def test_placeholder_drivers_load_next_to_accounts(tmp_path: Path) -> None:
+    write_drivers(tmp_path)
+    write_accounts(tmp_path)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.lane_drivers() == LANE_DRIVERS
+    assert loaded.declared_drivers() == DECLARED_DRIVERS
+    assert loaded.models == ModelSlots("driver-a", "driver-b")
+    assert loaded.implementer == "driver-a"
+    assert loaded.recorded_slots == RecordedNames("driver-a", "driver-b")
+    assert loaded.pane_driver == "driver-a"
+    assert loaded.driver("driver-c").home_env == "TOOL_C_CONFIG"
+    assert loaded.for_lane("any", "implementer", "driver-c").name == "driver-c-writer"
+    with pytest.raises(AccountError) as excinfo:
+        loaded.driver("driver-x")
+    assert _names_driver_file(str(excinfo.value))
+    assert load_model_configuration(tmp_path) == (
+        ModelSlots("driver-a", "driver-b"),
+        "driver-a",
+    )
+
+
+def test_a_missing_driver_file_configures_no_driver(tmp_path: Path) -> None:
+    config = load_driver_configuration(tmp_path)
+    assert config.present is False and config.drivers == {}
+    write_config(tmp_path, {"accounts": {}, "roles": {}, "sessions": {}}, drivers=False)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == UNCONFIGURED_MODELS_MESSAGE
+    deferred = load_ai_accounts(tmp_path, defer_model_configuration=True)
+    assert deferred.drivers == {} and deferred.lane_drivers() == ()
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"accounts": {"a": {"provider": "driver-a", "config_dir": "/operator/a"}}},
+        {"models": {"first": "driver-a", "second": "driver-b"}},
+        {"implementer": "driver-e"},
+        {"lanes": {"driver-a:implementer": "missing-role"}},
+        {"sessions": {"s": {"lanes": {"driver-a:reviewer": "missing-role"}}}},
+    ],
+    ids=["accounts", "models", "implementer", "lanes", "session-lanes"],
+)
+def test_a_missing_driver_file_fails_loudly_when_a_driver_is_named(
+    tmp_path: Path, data: dict
+) -> None:
+    write_config(tmp_path, data, drivers=False)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == DRIVERS_NOT_CONFIGURED
+    assert _names_driver_file(DRIVERS_NOT_CONFIGURED)
+
+
+def test_a_missing_driver_file_defers_with_the_model_selection(tmp_path: Path) -> None:
+    write_config(
+        tmp_path, {"models": {"first": "driver-a", "second": "driver-b"}}, drivers=False
+    )
+    deferred = load_ai_accounts(tmp_path, defer_model_configuration=True)
+    with pytest.raises(AccountError) as excinfo:
+        deferred.require_model_configuration()
+    assert str(excinfo.value) == DRIVERS_NOT_CONFIGURED
+    with pytest.raises(AccountError) as model_exc:
+        load_model_configuration(tmp_path)
+    assert str(model_exc.value) == DRIVERS_NOT_CONFIGURED
+
+
+def _set_session_usage(data: dict) -> None:
+    data["sessions"]["session-a"]["interactive"] = "driver-b-writer"
+    data["usage_session"] = "session-a"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda d: d["accounts"]["driver-a-account"].update(provider="driver-x"),
+            "Unsupported provider for account driver-a-account: drivers.json configures no such driver",
+        ),
+        (
+            lambda d: d["accounts"]["driver-a-account"].update(provider="driver-e"),
+            "Unsupported provider for account driver-a-account: driver driver-e has no home_env",
+        ),
+        (
+            lambda d: d["models"].update(first="driver-e"),
+            "models.first must be one of driver-a|driver-b|driver-c|driver-d",
+        ),
+        (
+            lambda d: d["models"].update(second="driver-x"),
+            "models.second must be null or one of driver-a|driver-b|driver-c|driver-d",
+        ),
+        (
+            lambda d: d.update(implementer="driver-x"),
+            "implementer must be one of driver-a|driver-b|driver-c|driver-d|driver-e",
+        ),
+        (
+            lambda d: d["lanes"].update({"driver-e:implementer": "driver-a-writer"}),
+            "Lane slot driver-e:implementer must name a driver with a lane section",
+        ),
+        (
+            lambda d: d["lanes"].update({"driver-a": "driver-a-writer"}),
+            "Lane slot driver-a must name a driver with a lane section",
+        ),
+        (
+            lambda d: d["sessions"]["session-a"].update(
+                lanes={"driver-x:reviewer": "driver-a-reader"}
+            ),
+            "Lane slot driver-x:reviewer must name a driver with a lane section",
+        ),
+        (
+            _set_session_usage,
+            "usage_session uses driver driver-b, which has no period usage section",
+        ),
+        (
+            lambda d: d.update(usage_accounts=["driver-a-account"]),
+            "usage_accounts account driver-a-account uses driver driver-a, which has no spend usage section",
+        ),
+    ],
+)
+def test_names_must_match_configured_drivers(
+    tmp_path: Path, mutate, message: str
+) -> None:
+    write_drivers(tmp_path)
+    data = accounts_document()
+    mutate(data)
+    write_accounts(tmp_path, data)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert message in str(excinfo.value)
+    assert _names_driver_file(str(excinfo.value))
+
+
+def test_record_only_implementer_and_usage_selections(tmp_path: Path) -> None:
+    write_drivers(tmp_path)
+    data = accounts_document()
+    data["implementer"] = "driver-e"
+    data["usage_session"] = "session-a"
+    data["usage_accounts"] = ["driver-d-account"]
+    write_accounts(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.implementer == "driver-e"
+    assert loaded.usage_session == "session-a"
+    assert loaded.usage_accounts == ("driver-d-account",)
+
+
+def test_driver_file_errors_name_the_file(tmp_path: Path) -> None:
+    write_accounts(tmp_path)
+    (tmp_path / "drivers.json").write_text("{", encoding="utf-8")
+    with pytest.raises(AccountError) as unreadable:
+        load_ai_accounts(tmp_path)
+    assert str(unreadable.value) == "Cannot read drivers.json (docs/ai-accounts.md#drivers)"
+
+    write_drivers(tmp_path, {"drivers": {}, "extra": 1})
+    with pytest.raises(AccountError) as invalid:
+        load_ai_accounts(tmp_path)
+    assert "drivers.json accepts only drivers, recorded_slots, pane_driver" in str(
+        invalid.value
+    )
+    assert _names_driver_file(str(invalid.value))
+
+    # A scrubbed variable that is a home variable would run the wrong account.
+    document = driver_document()
+    document["drivers"]["driver-a"]["credential_env"] = ["TOOL_B_HOME"]
+    write_drivers(tmp_path, document)
+    with pytest.raises(AccountError) as overlap:
+        load_ai_accounts(tmp_path)
+    assert str(overlap.value) == (
+        "drivers.driver-a.credential_env[0] names home_env TOOL_B_HOME of driver "
+        "driver-b (see drivers.json, docs/ai-accounts.md#drivers)"
+    )
+
+    # ai-accounts.json keeps its own keys; drivers live only in drivers.json.
+    write_drivers(tmp_path)
+    data = accounts_document()
+    data["drivers"] = {}
+    write_accounts(tmp_path, data)
+    with pytest.raises(AccountError, match="accepts only accounts"):
+        load_ai_accounts(tmp_path)
+
+
+@pytest.mark.parametrize("document", ["null", "[]", '"drivers"', "1", "true"])
+@pytest.mark.parametrize(
+    "load",
+    [
+        load_driver_configuration,
+        load_recorded_names,
+        load_ai_accounts,
+        load_model_configuration,
+    ],
+)
+def test_driver_file_that_is_not_an_object_fails(
+    tmp_path: Path, load, document: str
+) -> None:
+    # Only an absent file means no drivers; a null document is not absent.
+    write_accounts(tmp_path)
+    (tmp_path / "drivers.json").write_text(document, encoding="utf-8")
+    with pytest.raises(AccountError) as excinfo:
+        load(tmp_path)
+    assert str(excinfo.value) == (
+        "drivers.json must be an object (see drivers.json, docs/ai-accounts.md#drivers)"
+    )
+
+
+def test_env_prefix_reads_home_variables_and_scrub_from_drivers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default_dir = str(tmp_path / ".tool-c")
+    write_drivers(tmp_path)
+    data = accounts_document()
+    data["accounts"]["driver-c-account"]["config_dir"] = default_dir
+    write_accounts(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    cleared = role_clear_env(loaded.drivers)
+    assert cleared == (
+        "TOOL_A_API_KEY",
+        "TOOL_B_API_KEY",
+        "TOOL_C_API_KEY",
+        "TOOL_C_TOKEN",
+        "TOOL_D_API_KEY",
+        *NETWORK_OVERRIDE_ENV,
+        "TOOL_A_HOME",
+        "TOOL_B_HOME",
+        "TOOL_C_CONFIG",
+    )
+    unset = [part for key in cleared for part in ("-u", key)]
+    assert loaded.roles["driver-a-writer"].env_prefix(loaded.drivers) == [
+        "env",
+        *unset,
+        "TOOL_A_HOME=/operator/path/tool-a",
+    ]
+    # The driver CLI's default directory is selected by leaving the variable unset.
+    assert loaded.roles["driver-c-reader"].env_prefix(loaded.drivers) == ["env", *unset]
+    # Another driver with the same variable and no default directory sets it.
+    shared = AIRole("shared", AIAccount("x", "driver-d", default_dir), "m", "read-only")
+    assert shared.env_prefix(loaded.drivers)[-1] == f"TOOL_C_CONFIG={default_dir}"
+    record_only = AIRole("r", AIAccount("x", "driver-e", "/operator/e"), "m", "read-only")
+    with pytest.raises(AccountError, match="Unsupported provider for role r"):
+        record_only.env_prefix(loaded.drivers)
+    with pytest.raises(AccountError, match="Unsupported provider for role r"):
+        record_only.env_prefix({})
+
+
+def test_pane_markers_follow_the_interactive_driver_then_pane_driver(
+    tmp_path: Path,
+) -> None:
+    document = driver_document()
+    interactive = json.loads(json.dumps(document["drivers"]["driver-a"]["interactive"]))
+    interactive["pane"]["chrome"] = ["Footer C"]
+    document["drivers"]["driver-c"]["interactive"] = interactive
+    write_drivers(tmp_path, document)
+    data = accounts_document()
+    data["sessions"] = {
+        "session-a": {"interactive": "driver-a-writer"},
+        "session-c": {"interactive": "driver-c-writer"},
+        "session-b": {"interactive": "driver-b-writer"},
+        "session-raw": {"lanes": {}},
+    }
+    write_accounts(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.pane_markers("session-a").chrome == ("Status bar",)
+    assert loaded.pane_markers("session-c").chrome == ("Footer C",)
+    # No interactive driver behind the role, no role, or no session: pane_driver.
+    for session in ("session-b", "session-raw", "unconfigured"):
+        assert loaded.pane_markers(session).chrome == ("Status bar",)
+
+    document.pop("pane_driver")
+    write_drivers(tmp_path, document)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.pane_markers("session-c").chrome == ("Footer C",)
+    for session in ("session-b", "session-raw", "unconfigured"):
+        with pytest.raises(AccountError) as excinfo:
+            loaded.pane_markers(session)
+        assert str(excinfo.value) == (
+            f"session {session} has no interactive driver and no pane_driver is "
+            "configured; cannot classify its pane "
+            "(see drivers.json, docs/ai-accounts.md#drivers)"
+        )
