@@ -1587,6 +1587,8 @@ Three stores with three different rules:
 
 - Every command is in the team record with the key that signed it. A command that is not recorded is not executed.
 - This replaces the rule of §17 that live terminal bytes are never stored. They become part of the session log.
+- **Executors hide nothing** (decided on 2026-11-17). On an executor every AI session runs inside this system and is recorded in full. An AI session outside it is not allowed there; the device daemon reports one it finds.
+- **Controller devices may work outside.** A staff member may start an AI session on a controller device that does not use this system. It is not recorded and not visible. A session that does use the system is recorded like any other.
 - A session log can contain a secret or personal data that appeared on a screen. That is why it is a separate store and not part of the chain that can never be deleted. The device redacts known secret patterns before anything leaves it.
 - Session logs are kept and never deleted. A password, a name or similar data that was recorded by mistake may be **masked** afterwards (decided on 2026-11-17): the value is replaced by a marker on the hub, on the device and in every copy. The masking is itself a signed command in the team record that names who masked which place, when and why, and never the value. Masking covers only such a value, never a command, an answer or a decision.
 
@@ -1596,7 +1598,7 @@ On the hub a viewer picks a staff member, then a device, then a session, and see
 
 The owner may type into the session and answer questions that pop up. Every input is a recorded command (§25.7). Other team members watch only.
 
-Typing does not need a passkey touch per keystroke: a session key certified by the passkey signs each write (§25.17).
+The passkey is asked only at sign-in; after that a session key certified by the passkey signs each write (§25.17).
 
 ### 25.9 Overview
 
@@ -1618,18 +1620,27 @@ The hub shows data it does not own through read-only adapters:
 
 An adapter only reads, holds a read-only credential in the hub's configuration and shows each value with its fetch time. Such a value is a cache, never a second truth. Which sources exist is deployment configuration; this public repository names none.
 
-### 25.11 AI usage and an optional central account
+### 25.11 AI usage and the central broker account
 
 Usage per device and per day comes from the usage snapshots devices already record.
 
-Optional, later, and not part of the core: the team holds one central account at a model broker and the hub hands each device its own sub-key with a spending limit. The model traffic then still goes from the device straight to the broker, and the hub neither carries nor sees it. Passing all model traffic through the hub is the rejected variant: the hub would become a single point of failure for every session.
+**Central broker account** (decided on 2026-11-17, because the broker supports it). The team holds one account at a model broker. The hub holds only a management key of that account, which can create and limit keys but cannot call a model.
+
+- The hub creates one key per device with a spending limit and can lower the limit or disable the key at any time.
+- The key is sent to the device encrypted for that device's key and is stored only there. It is never written to the team record, a log or the website.
+- Model traffic goes from the device straight to the broker. The hub neither carries nor sees it, so a hub outage stops no running session.
+- The hub reads the usage of each key from the broker and shows it per device and per day.
+- Creating, limiting and disabling a key are recorded commands of a staff member.
+- Subscriptions that are bound to one device stay device configuration as today.
+
+Passing all model traffic through the hub is rejected: the hub would become a single point of failure for every session.
 
 ### 25.12 One interface for people and for AI
 
 - Every function is an operation of one documented API. The website and the phone app are clients of that API and of nothing else.
 - Nothing exists only in the website and nothing only in the API. A test fails the build when a website function has no API operation or the reverse.
 - A staff member's own AI uses the same API with the key of one of their controller devices. It has that device's rights and every action is recorded under that key.
-- The website can be installed on a phone as an app. It sends a push notification when a session has a question or an order ends. A push carries no content, only that something is waiting. The push services of the phone makers transport the encrypted notification; they decide no identity and can read nothing.
+- The website can be installed on a phone as an app. It sends a push notification when a session has a question or an order ends (decided on 2026-11-17). Delivery is standard Web Push with the hub's own key pair for the sender identity and no vendor kit in the app. The push services of the phone makers transport the notification; it is encrypted for the receiving browser, so they cannot read it and they decide no identity. A notification holds a kind, a short title, the link to open and a tag. When a question is answered, the notification is withdrawn on the person's other devices, and the app icon shows the number of waiting items. A subscription belongs to a signed-in staff member and ends when they sign out or their key is revoked.
 
 ### 25.13 What this changes in the locked decisions
 
@@ -1653,12 +1664,7 @@ Optional, later, and not part of the core: the team holds one central account at
 
 ### 25.15 Open decisions
 
-Each is decided by a human before the part it affects is built:
-
-- Whether the mechanism of §25.17 is confirmed as written, and which commands count as high-impact.
-- Whether sessions on a controller device that were not handed over are recorded in the same full detail.
-- Whether push through the phone makers' services is acceptable under the rule against third-party dependencies (§24.2 covers identity only).
-- Whether the optional central AI account (§25.11) is wanted.
+None at the moment. The open questions of §24 remain. A new one is added here and decided by a human before the part it affects is built.
 
 ### 25.16 Build order
 
@@ -1666,39 +1672,33 @@ After the steps of §24.10: device keys with levels and inventory; tasks, log en
 
 ### 25.17 Proof that reaches the device
 
-Decided on 2026-11-17: consent and access rights are proven with keys, like an SSH key, not by a statement of the hub. The mechanism below is the proposal for it and awaits confirmation (§25.15).
+Decided on 2026-11-17: consent and access rights are proven with keys, like an SSH key, not by a statement of the hub.
 
 **Principle.** A device obeys a command only when it has verified the proof itself. The hub also verifies, but the device does not rely on that. A hub that was taken over can delay, drop or read a command; it cannot create one that any device accepts.
 
-**What a device trusts.** When a device is connected, its owner confirms with their passkey, and the device stores the owner's public keys locally. From then on:
+**The allow list on the device.** Every device has one local file that lists every public key it obeys, like an SSH `authorized_keys` file. Each entry names the key, whom it belongs to, what it may do, for which repositories where that applies, and until when. A key that is not in this file can do nothing on this device, whatever the hub says.
 
-- A change to that list (a new passkey, a removed one) is accepted only when a key already on the list signed it. The hub and the keys file alone cannot change whom a device obeys.
+- When a device is connected, its owner confirms with their passkey, and the owner's keys become the first entries.
+- An entry is added, changed or removed only by a statement that an owner key already in the file signed, or by hand on the device itself. The hub and the keys file in the repository alone cannot change whom a device obeys.
 - If every key of the owner is lost, the device is connected again by hand on the device itself.
 
-**Three proofs, all verified by the device:**
+**Signing in.** A staff member signs in with their passkey, with biometrics or a PIN. That is the only time the passkey is asked. At sign-in the browser creates a session key that cannot be copied out of the browser, and the passkey signs that key together with its expiry. The session key lives at most one working day and signs every command after that; no further confirmation is needed while signed in.
 
-| Proof | Used for | What the device checks |
-|---|---|---|
-| Passkey signature over the command itself | High-impact commands: a grant, a key change, masking, starting or stopping a session, anything on another staff member's device | The WebAuthn signature against the pinned passkey; its challenge is the hash of this exact command; the user was verified (biometrics or PIN) for this one command |
-| Session key certified by the passkey | Routine writes of the owner: typing, answering a question, submitting an order to an own device | The passkey signature over the session key, its expiry and its scope; then the session key's signature over the command |
-| Device key | Commands from a controller device, including a staff member's own AI | The signature against a key the owner approved, or against a grant |
+**What the device checks on every command:**
 
-- The session key is created in the browser as a non-exportable key at sign-in and lives at most one working day. It cannot be copied out of the browser.
+| Sender | Check |
+|---|---|
+| A signed-in staff member | The passkey is in the allow list; the passkey's signature over the session key and its expiry is valid; the session key's signature over this command is valid |
+| A controller device, including a staff member's own AI | The device key is in the allow list and its signature over this command is valid |
+
+- The command must be within what the allow-list entry permits.
 - Every command names its target device and carries a sequence number and a time. A device refuses a command it has seen, one out of order and one that is too old.
 - The device keeps every proof with the command in its local log, so that the decision can be checked later without the hub.
 
-**Grant: consent of another staff member.** A grant is a statement signed with the passkey of the device's owner, for this one statement:
+**Grant: consent of another staff member.** To let a colleague's key act on their device, the owner signs a grant: which key, on which device, what it may do (for example submit orders and nothing else), for which repositories, until when. The device verifies the grant against the owner's key and writes it into its allow list. A grant always expires. The owner can remove it earlier with a signed statement or by hand on the device. Grants and their removal are also in the team record. This is the same idea as an SSH certificate: the owner is the authority for their own devices.
 
-- which key may act (a controller device or a staff member),
-- on which of the owner's devices,
-- what it may do (for example submit orders, and nothing else),
-- for which repositories, where that applies,
-- until when.
+**Keys in hardware.** A passkey must require user verification. A device key is kept in the machine's secure hardware where the machine has one; for that case the allow list also accepts the key type that this hardware offers.
 
-The executor verifies the grant against its owner's pinned key on every command that uses it. A grant always expires. The owner can revoke it earlier with a signed command; the device stores the revocation and refuses the grant from then on. Grants and revocations are in the team record. This is the same idea as an SSH certificate: the owner is the authority for their own devices.
-
-**Keys in hardware.** A passkey must require user verification. A device key is kept in the machine's secure hardware where the machine has one; for that case the keys file also accepts the key type that this hardware offers.
-
-**What stays a risk.** The website's code is delivered by the hub. A hub that was taken over could deliver code that shows one command and asks the passkey to sign another. Against that: the website is built from this public repository and the hub serves it with a published hash that a controller device can check; and a high-impact command can always be issued from a controller device instead, whose code the hub does not deliver.
+**What stays a risk.** The website's code is delivered by the hub. A hub that was taken over could deliver code that shows one command and signs another while a staff member is signed in. Against that: the website is built from this public repository and the hub serves it with a published hash that a controller device can check; the session key expires after a working day; and a command can always be issued from a controller device instead, whose code the hub does not deliver.
 
 **Relation to the wallet in the team's app.** The app derives a wallet seed from a passkey and keeps every key on the user's device, so that the server can never sign. The same principle applies here. The hub does not need a recoverable seed, so it uses a certified, expiring session key instead of a key derived from the passkey; that works on every platform with passkeys and leaves no long-lived key in the browser.
