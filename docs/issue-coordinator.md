@@ -527,9 +527,11 @@ A record of a check lane is closed the same way, but closing it does not retry t
    only (never the issue number). An order draft's `DE:` line is the stored
    full German change-summary sentence. When that sentence is not stored yet,
    or the stored sentence only repeats the English title, the open implementer
-   checkpoint supplies the German sentence. A stored sentence that only repeats
-   the English title is not the `DE:` line. Pushing an existing draft
-   replaces the published description with that sentence, including a
+   checkpoint supplies the German sentence and the refresh stores that full
+   sentence on the task as `change_summary_de`. A stored sentence that only
+   repeats the English title is not the `DE:` line. Pushing an existing draft
+   replaces the published description with
+   `Entwurf für Auftrag <eight characters>: <sentence>`, including a
    description whose `DE:` line is still the English title or cannot be read.
    The replacement is `gh api` `PATCH` of the pull request. A previous
    `gh pr edit` that was marked done without this check does not count as

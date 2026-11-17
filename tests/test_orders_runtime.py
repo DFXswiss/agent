@@ -587,6 +587,7 @@ def test_refresh_uses_the_checkpoint_sentence_when_the_stored_summary_is_the_tit
         "Authentifizierungsfehler zu melden."
     )
     assert _ORDER_TITLE not in published.split("DE:\n", 1)[1]
+    assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
 
 
 class _EchoPatchKeepsPublishedBody(FakeGh):
@@ -739,7 +740,7 @@ def test_refresh_reads_back_the_german_line_after_an_unchecked_edit(
         "Authentifizierungsfehler zu melden."
     )
     assert "Wait for the GitHub" not in published.split("DE:\n", 1)[1]
-    assert store.row("task", OID)["change_summary_de"] is None
+    assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
     checked = [
         row
         for row in store.rows("activity")

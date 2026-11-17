@@ -710,11 +710,11 @@ def _repeats_english_title(task: dict[str, Any], summary: str) -> bool:
 
 
 def _pending_implementer_summary(task: dict[str, Any]) -> str | None:
-    """German sentence from an implementer checkpoint that is not stored yet.
+    """German sentence from an implementer checkpoint.
 
-    The draft refresh runs before that sentence is saved on the task. The
-    checkpoint is the full sentence for this round. A stored summary that
-    only repeats the English title does not hide this sentence.
+    The draft refresh runs before the round commit saves that sentence, and
+    stores it itself. The checkpoint is the full sentence for this round. A
+    stored summary that only repeats the English title does not hide it.
     """
     outcome = coord(task).get("lane_outcome")
     if not isinstance(outcome, dict) or outcome.get("applied") is True:
@@ -756,6 +756,26 @@ def _published_de_error() -> CoordinatorError:
     return CoordinatorError(
         "published description DE line is not the stored German sentence"
     )
+
+
+def _stored_sentence_line(source: dict[str, Any], sentence: str) -> str | None:
+    """DE line for a full German sentence, not the order-only fallback."""
+    line = _description_de_line(draft_pr_body(source, summary_de=sentence))
+    short = str(source.get("order_id") or "")[:8]
+    if line is None or line == f"Entwurf für Auftrag {short}.":
+        return None
+    return line
+
+
+def _require_stored_sentence(
+    source: dict[str, Any], live_body: str | None, sentence: str | None
+) -> None:
+    """The read description has to show the stored German sentence."""
+    if sentence is None:
+        return
+    line = _stored_sentence_line(source, sentence)
+    if line is None or _description_de_line(live_body or "") != line:
+        raise _published_de_error()
 
 
 def _published_pr_body(
@@ -838,14 +858,14 @@ def refresh_draft_body(
 
     An order uses the full stored German sentence, not the English title.
     A sentence that is not stored yet, and a stored sentence that only
-    repeats the English title, is taken from the implementer checkpoint.
-    That sentence replaces an already published description even when the
-    reused and added list is absent, including a description whose DE line
-    is the English title or cannot be read. A missing sentence, or a
-    sentence that is only the English title, still replaces a published
-    description whose DE line is that title. The published description is
-    read back with ``gh pr view``; its DE line has to be the line just
-    written.
+    repeats the English title, is taken from the implementer checkpoint
+    and stored on the task as ``change_summary_de``. That full sentence
+    replaces an already published description even when the reused and
+    added list is absent, including a description whose DE line is the
+    English title or cannot be read. A missing sentence, or a sentence
+    that is only the English title, still replaces a published description
+    whose DE line is that title. The published description is read back
+    with ``gh pr view``; its DE line has to be the stored German sentence.
     """
     c = coord(task)
     reused = task.get("reused_lines")
@@ -859,6 +879,19 @@ def refresh_draft_body(
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     summary_de = _stored_de_summary(task, has_lists=has_lists)
     order = source.get("kind") == ORDER_KIND
+    sentence = None
+    if (
+        order
+        and isinstance(summary_de, str)
+        and summary_de.strip()
+        and "\n" not in summary_de
+        and not _repeats_english_title(task, summary_de)
+    ):
+        sentence = summary_de.strip()
+        if task.get("change_summary_de") != sentence:
+            task["change_summary_de"] = sentence
+            save_task(store, task)
+        summary_de = sentence
     if not has_lists and not order:
         return []
     if not isinstance(source.get("repo"), str) or (
@@ -884,8 +917,10 @@ def refresh_draft_body(
         live_de = _description_de_line(live) if isinstance(live, str) else None
         wanted_de = _description_de_line(body)
         if live_de == wanted_de:
+            _require_stored_sentence(source, live, sentence)
             return []
     if _published_description_matches(live, body):
+        _require_stored_sentence(source, live, sentence)
         return [posted] if has_lists else []
     # A checked pr.body row with this body is not run again. An older edit
     # that was marked done without reading the published description does
@@ -925,6 +960,7 @@ def refresh_draft_body(
     published = _published_pr_body(store, worker, runner, target, number)
     if not _published_description_matches(published, body):
         raise _published_de_error()
+    _require_stored_sentence(source, published, sentence)
     return [posted] if has_lists else [replaced]
 
 
