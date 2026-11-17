@@ -87,6 +87,12 @@ class LaneResult:
     # must never be reparsed because redaction can remove hidden duplicate
     # STATUS/RESULT records.
     protocol_result: str = ""
+    # STATUS record alone, parsed from the same unredacted text. ``status``
+    # above also requires one role-valid RESULT record and stays the verdict
+    # for every caller that acts on RESULT. Only the standalone ``agent lane
+    # run`` command reports this one, because its caller owns the result
+    # protocol. Empty when no lane text was parsed; then ``status`` applies.
+    lane_status: str = ""
     # The driver's lane.audit_stderr_when_empty: the lane.run audit text falls
     # back to stderr when the final text is empty.
     audit_stderr_when_empty: bool = False
@@ -834,11 +840,12 @@ def launch(
         )
         # The protocol is counted on the raw source exactly once. Only the
         # redacted body below is returned to callers or persisted.
-        from .coordinator_common import parse_model_result
+        from .coordinator_common import parse_lane_status, parse_model_result
 
         protocol_status, protocol_result = parse_model_result(
             finalized.source_text, returncode
         )
+        lane_status = parse_lane_status(finalized.source_text, returncode)
         if io.output_file and not finalized.text and stdout and not stderr:
             # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr
             # so the CLI and lane.run show why a lane produced no stream output.
@@ -860,6 +867,7 @@ def launch(
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
             protocol_result=protocol_result,
+            lane_status=lane_status,
             audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
     finally:

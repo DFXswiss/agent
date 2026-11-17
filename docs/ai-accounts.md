@@ -1505,3 +1505,14 @@ start --id chosen-session --provider driver-a`. Raw terminal
 `--cmd` remains an explicitly
 supplied script command, outside provider-profile launch enforcement; it is not
 a sandboxed model interface. No model lane may invoke these execution commands.
+
+`agent lane run` prints `lane role=ROLE vendor=DRIVER STATUS=VALUE rc=N` and
+exits 2 unless that status is `complete`. An output file that cannot be read
+or decoded gives `unavailable` whatever the exit code. Otherwise a non-zero
+exit gives `timeout` (124) or `unavailable`, and with exit 0 the status comes
+from the single standalone `STATUS:` line of the final lane text alone: no
+`STATUS:` line, a second one, or an unknown value gives `partial`. A `RESULT:`
+line belongs to the caller's own protocol there and does not change it.
+`agent run`, the runner, the conflict mandate and the coordinator still
+require exactly one `STATUS:` and exactly one role-valid `RESULT:` record
+before they act on a lane.
