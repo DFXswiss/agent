@@ -41,19 +41,49 @@ directories under `state/` are created on demand.
 
 ## Policy and runner configuration
 
-`policy.json` answers *who may ask for what*. It is the only file `ingest`
-reads, apart from the login check:
+`policy.json` answers *who may ask for what*. With `skills-catalog.json` it is
+what `ingest` reads, apart from the login check:
 
 ```json
 {
   "expected_gh_user": "example-bot",
   "enabled": true,
   "actors_allow": ["example-operator"],
-  "repos_allow": ["example-owner/example-repository"],
-  "job_types_allow": ["pr-review"],
+  "repos_allow": ["example-owner/*", "other/exact-repository"],
+  "job_types_allow": ["pr-ready"],
   "default_skill_on_mention": "pr-review"
 }
 ```
+
+A `repos_allow` entry is either an exact `owner/repository` or `<owner>/*`,
+which names every repository of that owner. `repos_deny` takes the same forms;
+a wildcard there denies the whole owner. A pattern that is not an exact name or
+`<owner>/*` (`*`, `*/*`, `owner/prefix*`, `owner/`) names nothing, so a typo
+cannot widen the list. `private_repos_allow` stays exact names only.
+
+`job_types_allow` names *queue types*, not skill ids. The catalogue maps each
+skill to one:
+
+```json
+{
+  "skills": [
+    {
+      "id": "pr-review",
+      "queue_type": "pr-ready",
+      "command_prefixes": ["/review"],
+      "body_patterns": ["please review"]
+    }
+  ]
+}
+```
+
+The skill id is what names a job and selects its worker and its `runner.json`
+settings. The queue type is what admission compares with `job_types_allow`. A
+mention is resolved to a skill by a command prefix on its first word or a body
+phrase; a match whose queue type is not allowed is denied rather than replaced
+by the default, so a request for a skill this instance does not run stays
+refused. No match at all uses `default_skill_on_mention`, which must name a
+catalogue skill id.
 
 `expected_gh_user` is required. Both `ingest` and `supervise` run
 `gh api user --jq .login` first and stop unless it matches the policy
@@ -62,8 +92,9 @@ every action to that account, so the check is fail-closed rather than a warning.
 
 `runner.json` answers *how this device runs work*. `dispatch`, `supervise` and
 `prune` read this file. `retry` needs no setting and reads neither this file nor
-the policy. `dispatch` also reads `policy.json` to refuse a policy that allows a
-job type the worker does not implement.
+the policy. `dispatch` also reads `policy.json` and `skills-catalog.json` to
+refuse a queue type that maps to no skill or to a skill whose worker does not
+exist.
 
 ```json
 {
@@ -95,35 +126,69 @@ catalogue; that check exists for the other workflows those settings serve.
 
 ### `agent runner ingest --session ID`
 
-Reads `policy.json`, verifies the GitHub login, scans notifications through
-`gh`, and inserts a queued row for every admitted mention. The session id is
-recorded on the row and may contain only letters, digits, `_` and `-`.
+Reads `policy.json` and `skills-catalog.json`, verifies the GitHub login, scans
+notifications through `gh`, and inserts or re-queues a row for every admitted
+mention. A comment written by the runner's own login is never a request. The
+session id is recorded on the row and may contain only letters, digits, `_` and
+`-`.
+
+A mention is identified by the comment that carries it
+(`comment:<repo>:<ref>:<comment id>`), not by the thread. An existing row is
+handled by its state: `queued` or `running` is left alone; `failed` is retried
+with its attempt count incremented and the previous attempt's activity,
+worktree and log files removed; `done` is queued again only when it is a pull
+request whose current head SHA is known and differs from the SHA stored on the
+row. A `done` row is otherwise a duplicate, and a row whose recorded trigger is
+missing (a row written before triggers existed) is treated as already handled.
+The recorded trigger is a high-water mark: only a comment newer than the
+recorded one counts as a new request, so a deleted or edited later mention does
+not bring back an earlier one. A new generation gets a fresh `created_at`, so it
+also gets a new status comment. Rows written for another device are skipped
+without marking the thread read. Where a thread is marked read without a new
+job and the comment is newer than the recorded trigger — the job is queued or
+running, or a finished job's head did not move — the handled comment is first
+recorded as the row's `trigger`, so a later failure or head change that makes
+the thread unread cannot select the same mention again. A path that leaves the
+thread unread leaves the trigger unchanged.
+
+The row carries `job_type` (the skill id), `queue_type`, `trigger` and
+`head_sha` alongside the fields dispatch records later. `head_sha` is written
+by ingest and overwritten by dispatch with the commit it checked out, so a
+later mention compares the reviewed commit rather than the one ingest saw.
 De-duplication uses the whole store, including rows written by other devices,
 so the same request is one job. A notification that led to a job is marked
-read, so a pruned job does not come back on the next pass by itself; a later
-mention makes the thread unread again and is evaluated afresh.
+read, so a pruned job does
+not come back on the next pass by itself; a later mention makes the thread
+unread again and is evaluated afresh. A re-queue that cannot remove the
+previous attempt's evidence leaves the thread unread so the next pass retries.
 
-Output: `job.queued <job-id>` per new job, or `job.queued none`; skipped
-notifications are counted on standard error. If the notification listing itself
-cannot be read as a list of pages, the command prints
-`ingest failed: notifications listing unusable` on standard error, exits 1, and
-prints no `job.queued` line: an unread listing is not an empty queue.
+Output: `job.queued <job-id>` per new job, then `job.requeued <job-id>` per
+re-queued job; `job.queued none` only when nothing was created and nothing was
+re-queued. Skipped notifications are counted on standard error. If the
+notification listing itself cannot be read as a list of pages, the command
+prints `ingest failed: notifications listing unusable` on standard error, exits
+1, and prints no `job.queued` line: an unread listing is not an empty queue.
 
 ### `agent runner dispatch`
 
 Starts queued jobs while capacity allows. Before taking the lock it checks that
-the worker can run at all: `prompts/pr-review.md` exists, `ai-accounts.json`
-names models and declares `lane_execution`, and `policy.json` names no job type
-without a worker. A failure stops the command before any row or worktree is
-created. For each job it ensures the bare clone exists, fetches, creates a
+the worker can run at all: `ai-accounts.json` names models and declares
+`lane_execution`, the catalogue is readable, and every queue type in
+`policy.json` maps to a catalogue skill whose id has a worker (and, for
+`pr-review`, that `prompts/pr-review.md` exists). An allowed queue type no
+catalogue skill carries is refused here. A failure stops the command before any
+row or worktree is created. For each job it ensures the bare clone exists, fetches, creates a
 detached worktree, records an output baseline, and starts a detached tmux
 session that runs `agent runner work` with `AGENT_HOME` set. The worktree holds
 the pull-request head, checked out detached, for a pull-request job, and the
 repository's default branch for an issue job; `ref` stays the number. A probe
 that cannot answer whether the number is a pull request leaves the job queued
-rather than choosing a commit. Stale `.exit` and `.transcript` files of queued
-jobs are removed first: a queued job has no live worker, and a leftover exit
-code would otherwise be read as the new attempt's result.
+rather than choosing a commit. A pull-request job whose checked-out commit
+cannot be resolved to a full lower-case commit id is likewise left queued,
+with its worktree removed, rather than started under the head ingest stored,
+which may name a different commit. Stale `.exit` and `.transcript` files of
+queued jobs are removed first: a queued job has no live worker, and a
+leftover exit code would otherwise be read as the new attempt's result.
 
 Once the worktree exists and before the output baseline is read, dispatch posts
 one comment on the issue or pull request: `Working on this now: job <id>.`, with
@@ -309,9 +374,11 @@ job.running <job-id> 2026-11-13T10:00:00Z
 Reads the runner configuration files, `ai-accounts.json`, and the environment,
 and reports every problem it can find rather than stopping at the first. It
 runs the three health checks and verifies `max_concurrent`. It requires the
-worker's model selection and `lane_execution` declaration, requires
-`prompts/pr-review.md` when the policy allows `pr-review`, and reports every
-allowed job type that has no worker. It requires the binaries `gh`, `git`,
+worker's model selection and `lane_execution` declaration and reports an
+allowed queue type that no catalogue skill carries, a catalogue skill with no
+worker, a `default_skill_on_mention` that names no catalogue skill, and a
+missing `prompts/pr-review.md` when an allowed queue type resolves to
+`pr-review`. It requires the binaries `gh`, `git`,
 `tmux` and `ps` on `PATH`. It checks that the runner directory and each existing
 directory under `state/` (`state`, `repos`, `work`, `logs`) is a writable
 directory; a missing one is created on first use. It also checks that the
@@ -366,12 +433,17 @@ mention already queued by another device must not be inserted again.
 - More prompt templates than `prompts/pr-review.md`.
 - A schedule or service unit for the subcommands.
 - Container packaging.
-- Owner wildcards (`owner/*`) in `repos_allow` and job-type detection from the
-  catalogue. Until this lands, a policy that lists only `owner/*` admits
-  nothing: admission is fail-closed.
 - The mergeable probe for `pr-mergeable` jobs; those jobs record
   `work_performed` as `unknown` until it is ported.
-- Ingest parity: re-queueing a finished job when it is mentioned again while
-  its row still exists. Today such a mention is skipped as a duplicate.
 - @-mentions in a lane's review text are posted as written: the worker does
   not strip or resolve them.
+- `scan_mentions` reads every unread notification and does not look at its
+  `reason`; a job needs a comment that @-mentions the bot and passes admission,
+  whatever the reason. The `review_requested` reason has no handling of its
+  own.
+- The rate limits (`max_jobs_per_actor_per_hour`,
+  `max_jobs_global_per_hour`) are not ported.
+- The replaced runner's public replies are not ported. Text that matches no
+  catalogue pattern uses `default_skill_on_mention`; a request whose skill's
+  queue type is not allowed is skipped without a reply.
+- The decision log is not ported.

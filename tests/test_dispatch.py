@@ -26,6 +26,8 @@ def _runner(
     default_rc: int = 0,
     default_stdout: str = "develop",
     fetch_pull_rc: int = 0,
+    rev_parse_rc: int = 0,
+    rev_parse_stdout: str = "c" * 40,
     add_rc: int = 0,
     remove_rc: int = 0,
     prune_rc: int = 0,
@@ -46,6 +48,8 @@ def _runner(
             return Completed(refspec_rc, "", "")
         if "fetch --prune" in joined:
             return Completed(fetch_rc, "", "")
+        if "rev-parse --verify" in joined:
+            return Completed(rev_parse_rc, rev_parse_stdout, "")
         if "refs/pull/" in joined:
             return Completed(fetch_pull_rc, "", "")
         if ".pull_request != null" in joined:
@@ -903,6 +907,148 @@ def test_a_pull_request_job_checks_out_the_pull_request_head(tmp_path: Path) -> 
             for command in joined
         )
         assert not any("refs/remotes/origin/7" in command for command in joined)
+    finally:
+        store.close()
+
+
+def test_a_pull_request_job_records_the_commit_the_worktree_really_uses(
+    tmp_path: Path,
+) -> None:
+    # Ingest stored the head it saw; the ref may have moved before this fetch,
+    # so the running row must name the commit that was actually checked out.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+            head_sha="a" * 40,
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true", rev_parse_stdout="c" * 40),
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["head_sha"] == "c" * 40
+        assert saved["head_sha"] != "a" * 40
+        resolved = [
+            argv for argv in calls if "rev-parse --verify" in " ".join(argv)
+        ]
+        assert len(resolved) == 1
+        assert "refs/remotes/origin/pull/7^{commit}" in " ".join(resolved[0])
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"rev_parse_rc": 1, "rev_parse_stdout": ""},
+        {"rev_parse_rc": 0, "rev_parse_stdout": "short"},
+        {"rev_parse_rc": 0, "rev_parse_stdout": "C" * 40},
+    ],
+    ids=["nonzero", "short", "upper-case"],
+)
+def test_an_unusable_rev_parse_leaves_the_job_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, object]
+) -> None:
+    # An answer that is not a full lower-case commit id must not start the job
+    # under the stored head, which may name a different commit. The row stays
+    # queued and unchanged, and the worktree just added is removed.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+            head_sha="a" * 40,
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        writes: list[dict[str, Any]] = []
+        original_write = store.write
+
+        def recording_write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            writes.append(dict(payload))
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", recording_write)
+
+        announced: list[str] = []
+
+        def announce(current: dict[str, Any]) -> bool:
+            announced.append(current["id"])
+            return True
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true", **options),  # type: ignore[arg-type]
+            announce=announce,
+        )
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        remove_at = next(
+            i for i, command in enumerate(joined) if "worktree remove" in command
+        )
+        prune_at = next(
+            i for i, command in enumerate(joined) if "worktree prune" in command
+        )
+        assert remove_at < prune_at
+        assert announced == []
+        # No baseline was taken and no worker was started.
+        assert not any("graphql" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+        assert writes == []
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved["head_sha"] == "a" * 40
+    finally:
+        store.close()
+
+
+def test_an_issue_job_does_not_ask_for_the_commit(tmp_path: Path) -> None:
+    # An issue has no pull-request ref to resolve; the stored head stays as it
+    # was.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, probe_stdout="false")
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        assert not any(
+            "rev-parse --verify" in " ".join(argv) for argv in calls
+        )
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["head_sha"] is None
     finally:
         store.close()
 
