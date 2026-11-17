@@ -579,7 +579,7 @@ def test_post_status_retires_an_announcement_whose_executor_raises(
 
     assert saved is not None
     assert saved["execution_status"] == "error"
-    assert saved["error"] == "announcement not posted before the job started"
+    assert saved["execution_error"] == "announcement not posted before the job started"
 
 
 def test_post_status_retires_an_announcement_left_pending(
@@ -600,7 +600,7 @@ def test_post_status_retires_an_announcement_left_pending(
 
     assert saved is not None
     assert saved["execution_status"] == "error"
-    assert saved["error"] == "announcement not posted before the job started"
+    assert saved["execution_error"] == "announcement not posted before the job started"
 
 
 def test_post_status_leaves_a_done_announcement_alone(
@@ -620,7 +620,7 @@ def test_post_status_leaves_a_done_announcement_alone(
 
     assert saved is not None
     assert saved["execution_status"] == "done"
-    assert "error" not in saved
+    assert "execution_error" not in saved
 
 
 def _insert_pending_announcement(store: Store) -> str:
@@ -670,7 +670,7 @@ def test_announce_status_retires_a_leftover_row_when_queueing_fails(
 
     assert saved is not None
     assert saved["execution_status"] == "error"
-    assert saved["error"] == "announcement not posted before the job started"
+    assert saved["execution_error"] == "announcement not posted before the job started"
 
 
 def test_announce_status_retires_a_leftover_row_without_an_account(
@@ -689,7 +689,7 @@ def test_announce_status_retires_a_leftover_row_without_an_account(
 
     assert saved is not None
     assert saved["execution_status"] == "error"
-    assert saved["error"] == "announcement not posted before the job started"
+    assert saved["execution_error"] == "announcement not posted before the job started"
 
 
 def test_announce_status_reports_unsafe_when_every_update_raises(
@@ -765,7 +765,7 @@ def test_announce_status_reports_a_safely_retired_announcement(
 
     assert saved is not None
     assert saved["execution_status"] == "error"
-    assert saved["error"] == "announcement not posted before the job started"
+    assert saved["execution_error"] == "announcement not posted before the job started"
 
 
 def test_announce_status_reports_unsafe_when_the_retirement_write_raises(
@@ -824,7 +824,7 @@ def test_post_status_does_not_retire_an_outcome_activity(
 
     assert saved is not None
     assert saved["execution_status"] == "pending"
-    assert "error" not in saved
+    assert "execution_error" not in saved
 
 
 def test_post_status_adopts_an_already_done_activity_without_executing_it(
@@ -954,9 +954,34 @@ def test_retire_status_activities_retires_both_pending_activities(
             saved = store.row("activity", activity_id)
             assert saved is not None
             assert saved["execution_status"] == "error"
-            assert saved["error"] == "superseded by a retry of the job"
+            assert saved["execution_error"] == "superseded by a retry of the job"
     finally:
         store.close()
+
+
+def test_retire_status_activities_replaces_an_older_execution_error(
+    tmp_path: Path,
+) -> None:
+    # The row is written back whole, so an older failed execution's reason
+    # must be replaced by the retirement reason instead of surviving it.
+    store = Store(tmp_path)
+    activity_id = _status_activity_id("announce")
+    payload = _activity_payload(activity_id, "pending")
+    payload["execution_error"] = "gh: rate limited"
+    try:
+        store.write("activity", "insert", activity_id, payload)
+
+        assert runner_status.retire_status_activities(
+            store, _job_generation()
+        ) is True
+
+        saved = store.row("activity", activity_id)
+    finally:
+        store.close()
+
+    assert saved is not None
+    assert saved["execution_status"] == "error"
+    assert saved["execution_error"] == "superseded by a retry of the job"
 
 
 def test_retire_status_activities_leaves_a_done_activity_alone(tmp_path: Path) -> None:
@@ -978,7 +1003,7 @@ def test_retire_status_activities_leaves_a_done_activity_alone(tmp_path: Path) -
 
     assert saved is not None
     assert saved["execution_status"] == "done"
-    assert "error" not in saved
+    assert "execution_error" not in saved
 
 
 def test_retire_status_activities_accepts_absent_activities(tmp_path: Path) -> None:

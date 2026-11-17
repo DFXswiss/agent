@@ -338,10 +338,12 @@ def test_retry_payload_drops_report_attempts() -> None:
     assert "report_attempts" not in result
 
 
-# The original deletes these three keys while nulling the ten beside them,
-# and the port keeps that shape. Behaviour is the same either way — the stall
-# check rejects a None exactly as it rejects a missing key — so what this pins
-# is the stored shape: no progress keys until a real measurement writes them.
+# The three progress keys are deleted, not set to None, because that keeps the
+# original's stored shape: the stall check rejects a None exactly as it rejects
+# a missing key, so what this pins is that no progress keys are stored until a
+# real measurement writes them. (`report_attempts` is deleted for a different
+# reason, pinned by the test above: a stored None there would skip the row in
+# `report_outcomes` for good.)
 def test_retry_payload_omits_the_progress_keys_from_the_result_rather_than_setting_them_to_none() -> None:
     row = {
         "id": "job-1",

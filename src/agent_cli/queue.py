@@ -172,15 +172,18 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     out["reported"] = False
     out["announced"] = False
     # Removed, not set to None — the one distinction the original draws
-    # here, nulling the ten fields above but deleting these three. It is
-    # not a behavioural difference: the stall check rejects a None the
-    # same way it rejects a missing key, and the caller reads both with
-    # .get(). Keeping the shape means a stored row carries no progress
-    # keys at all until the first real measurement writes them.
+    # here, nulling the ten fields above but deleting the three progress
+    # keys below. Keeping
+    # the original's stored shape is the reason: the stall check rejects a
+    # None the same way it rejects a missing key, and the caller reads both
+    # with .get(), so a stored row carries no progress keys at all until
+    # the first real measurement writes them.
     #
-    # `report_attempts` is popped for the same reason: a retried job gets a
-    # fresh budget for outcome comments instead of inheriting the previous
-    # attempt's exhausted count.
+    # `report_attempts` is deleted for a different reason: `report_outcomes`
+    # reads `row.get("report_attempts", 0)` and skips a row whose value is
+    # not an int, so a stored None would suppress the outcome comment for
+    # good. A retried job gets a fresh count instead of inheriting the
+    # previous attempt's exhausted one.
     for key in (
         "progress_check_epoch",
         "progress_transcript_size",

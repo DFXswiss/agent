@@ -1502,7 +1502,7 @@ def test_prune_retires_a_pending_status_activity_before_deleting_the_row(
     assert saved is None
     assert activity is not None
     assert activity["execution_status"] == "error"
-    assert activity["error"] == "superseded by pruning the job"
+    assert activity["execution_error"] == "superseded by pruning the job"
     assert f"job.pruned {row['id']}" in capsys.readouterr().out
 
 
@@ -1749,7 +1749,7 @@ def test_retry_retires_a_pending_status_activity_of_the_previous_attempt(
     assert saved["attempts"] == 1
     assert activity is not None
     assert activity["execution_status"] == "error"
-    assert activity["error"] == "superseded by a retry of the job"
+    assert activity["execution_error"] == "superseded by a retry of the job"
 
 
 def test_retry_refuses_when_a_status_activity_cannot_be_retired(

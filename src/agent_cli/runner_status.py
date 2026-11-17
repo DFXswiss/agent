@@ -264,7 +264,14 @@ def _retire_activity(
                 return None
             updated = _strip(current)
             updated["execution_status"] = "error"
-            updated["error"] = error
+            # The reason belongs on `execution_error`, the key every GitHub
+            # activity path writes and reads: `github_act._mark` stores it
+            # through `_safe_execution_error`, which redacts account paths and
+            # bounds the length. Because the whole row is written back, an
+            # older failed execution's reason is replaced rather than shown.
+            updated["execution_error"] = github_act._safe_execution_error(
+                store, current, error
+            )
             store.write("activity", "update", activity_id, updated)
             return False
     except (Exception, SystemExit):
