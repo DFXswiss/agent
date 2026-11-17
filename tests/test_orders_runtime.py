@@ -79,7 +79,7 @@ from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     OPEN_ORDER_SEEDS,
     FakeGh,
-    grok_messages_stream,
+    event_stream_output,
     insert_order_intent,
     lane_runner,
     make_order_worker,
@@ -186,7 +186,7 @@ def seed_issue_task(store, worker, tid: str, *, phase: str, **checkpoint) -> dic
         "payload": {"coordinator": c},
         "state": "open",
         "current_round": 0,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
         "change_summary_en": None,
@@ -425,7 +425,7 @@ def test_review_context_uses_the_order_text(
         store,
         worker,
         OID,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         text="ORDER-TEXT-MARKER full order text",
         worktree=str(wt),
         base_sha=fake.base,
@@ -450,7 +450,7 @@ def test_review_context_uses_the_order_text(
         store,
         worker,
         OID2,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         text=" ",
         worktree=str(wt2),
         base_sha=fake.base,
@@ -536,11 +536,11 @@ def test_order_implement_prompt_and_commit_message(
         task,
         fake,
         lambda _argv, _stdin: Completed(
-            0, grok_messages_stream(fake.model_outputs["implementer"]), ""
+            0, event_stream_output(fake.model_outputs["implementer"]), ""
         ),
     )
     assert messages == ["Implement the order."]
-    prompt = control_dir(worker, OID) / "implementer-grok.md"
+    prompt = control_dir(worker, OID) / "implementer-driver-a.md"
     body = prompt.read_text(encoding="utf-8")
     assert f"Source order: {OID}" in body
     assert "Implement the order. Edit files only." in body
@@ -580,7 +580,7 @@ def test_order_recovery_commit_uses_the_order_message(
             "task_id": OID,
             "round": 1,
             "role": "implementer",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "status": "done",
         },
     )
@@ -957,7 +957,7 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
         store,
         worker,
         OID,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         worktree=str(wt),
         base_sha=fake.base,
         head_sha=fake.head,
@@ -1025,12 +1025,12 @@ def test_incomplete_review_blocker_of_an_order_goes_to_the_pull_request(
         store.row("task", OID),
         fake,
         lane_runner(fake),
-        vendor="grok",
+        vendor="driver-a",
         stage="review-1",
     )
     c = coord(store.row("task", OID))
     assert c["phase"] == "blocked"
-    assert c["resume_phase"] == "pr_gates_grok"
+    assert c["resume_phase"] == "pr_gates_first"
     assert c["blocker_publish_kind"] == "provider-incomplete"
     qid = c["question_activity_id"]
     row = store.row("activity", qid)
@@ -1296,7 +1296,7 @@ def test_create_order_task_writes_one_queued_row(
     assert task["ref"] is None
     assert task["repo"] == "example/project"
     assert task["title"] == "worker-s - Add a widget"
-    assert task["models"] == {"first": "grok", "second": "codex"}
+    assert task["models"] == {"first": "driver-a", "second": "driver-b"}
     assert "implementer" not in task
     assert task["created_at"] == task["updated_at"]
     assert "source_issue" not in task["payload"]
@@ -1577,7 +1577,7 @@ def test_create_order_task_requires_the_check_lane(
     )
     with pytest.raises(
         CoordinatorError,
-        match="No AI lane configured for session worker-session slot grok:check",
+        match="No AI lane configured for session worker-session slot driver-a:check",
     ):
         submit_order(store, worker)
     assert store.rows("task") == []
@@ -1602,9 +1602,9 @@ def test_create_order_task_applies_the_creation_refusals_of_issue_tasks(
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     if case == "implementer":
-        data["implementer"] = "deepseek"
+        data["implementer"] = "driver-e"
     else:
-        data["models"] = {"first": "grok", "second": None}
+        data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(CoordinatorError, match=message):
         submit_order(store, worker)
@@ -1625,11 +1625,11 @@ def test_a38_order_pins_the_a38_block(
     )
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["models"] = {"first": "grok", "second": None}
+    data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data), encoding="utf-8")
     task = submit_order(store, worker)
     assert coord(task)["a38"] == {"enabled": True}
-    assert task["models"] == {"first": "grok", "second": None}
+    assert task["models"] == {"first": "driver-a", "second": None}
     store.close()
 
 
@@ -1681,22 +1681,22 @@ def test_order_pins_the_round_limit(
     assert coord(first)["round_limit"] == {
         "max_rounds": 10,
         "origin": "default",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 10,
     }
-    model_worker = replace(worker, max_rounds_by_model={"grok-model": 3})
+    model_worker = replace(worker, max_rounds_by_model={"driver-a-model": 3})
     second = submit_order(store, model_worker)
     assert coord(second)["round_limit"] == {
         "max_rounds": 3,
         "origin": "model",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 3,
     }
     third = submit_order(store, model_worker, max_rounds=4)
     assert coord(third)["round_limit"] == {
         "max_rounds": 4,
         "origin": "submit",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 4,
     }
     store.close()
@@ -1727,7 +1727,7 @@ def test_preflight_requires_the_check_lane_for_order_workers(
     assert len(lines) == 1
     assert lines[0].startswith("preflight blocked: ")
     assert "No AI lane configured" in lines[0]
-    assert "grok:check" in lines[0]
+    assert "driver-a:check" in lines[0]
     fake.issues = []
     assert run_tick(store, replace(worker, orders=False), fake, lane) == ["idle"]
     store.close()
@@ -2681,7 +2681,7 @@ def test_local_reply_waits_for_the_blocker_publication(
         worker,
         OID,
         phase="blocked",
-        resume_phase="pr_gates_grok",
+        resume_phase="pr_gates_first",
         pr_number=42,
         blocker="First-stage review output is unavailable",
         blocker_publish_once=True,
@@ -2698,7 +2698,7 @@ def test_local_reply_waits_for_the_blocker_publication(
     assert checkpoint(store, OID)["blocker_activity_id"]
     assert len(fake.pr_comments) == 1
     coordinator_runtime.advance_one(store, worker, runner=fake, lane_runner=lane)
-    assert checkpoint(store, OID)["phase"] == "pr_gates_grok"
+    assert checkpoint(store, OID)["phase"] == "pr_gates_first"
     assert store.row("activity", intent_id)["execution_status"] == "done"
     assert fake.launched == []
     store.close()

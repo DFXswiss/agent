@@ -354,7 +354,7 @@ def test_submit_prints_the_order_id(device, capsys) -> None:
         "round_limit": {
             "limit": 10,
             "max_rounds": 10,
-            "model": "grok-model",
+            "model": "driver-a-model",
             "origin": "default",
         },
         "skipped_checks": [],
@@ -683,7 +683,7 @@ def test_submit_with_a_skipped_check_and_a_round_limit(device, capsys) -> None:
     assert result["round_limit"] == {
         "max_rounds": 4,
         "origin": "submit",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 4,
     }
     task = device.store.row("task", result["order_id"])
@@ -953,7 +953,7 @@ def test_show_prints_the_round_limit_and_the_skips(device, capsys) -> None:
 def test_show_round_limit_names_the_model(device, capsys) -> None:
     config = order_config(device.home)
     config["workers"]["worker-session"]["max_rounds_by_model"] = {
-        "grok-model": 3
+        "driver-a-model": 3
     }
     (device.home / "coordinator.json").write_text(
         json.dumps(config), encoding="utf-8"
@@ -962,7 +962,7 @@ def test_show_round_limit_names_the_model(device, capsys) -> None:
     order_id = capsys.readouterr().out.split()[1]
     order("show", "--id", order_id)
     assert (
-        "round-limit 3 per-grant 3 origin model grok-model"
+        "round-limit 3 per-grant 3 origin model driver-a-model"
         in capsys.readouterr().out
     )
 
@@ -1127,7 +1127,7 @@ def test_show_while_blocked_lists_the_phase_bound_checks_of_the_resume_phase(
         device.worker,
         blocked,
         phase="blocked",
-        resume_phase="pr_gates_codex",
+        resume_phase="pr_gates_second",
         blocker="Needs a decision",
     )
     before = device.store.row("task", blocked)
@@ -2280,7 +2280,7 @@ def test_show_prints_the_assessment(device, capsys) -> None:
         round_limit={
             "max_rounds": 2,
             "origin": "submit",
-            "model": "grok-model",
+            "model": "driver-a-model",
             "limit": 2,
         },
         round_limit_question={

@@ -1,109 +1,76 @@
 from __future__ import annotations
 
-from agent_cli.pane_state import (
-    grok_pane_is_idle,
-    grok_pane_is_working,
-    grok_permission_prompt,
-)
+from dataclasses import replace
 
-THINKING = """
-  /agent-home/sessions/worker                                        15K / 500K
-     \u276f da ist Post id f82bd22b
-    \u280b Thinking\u2026 4.3s                                         16s \u21e3 15.1k [stop]
-  Help improve Grok                                         [Opt out] [Opt in]
-  Shift+Tab:mode  \u2502  Esc:cancel  \u2502  Ctrl+x:shortcuts
-"""
+from agent_cli.pane_state import pane_is_idle, pane_is_working, pane_permission_prompt
+from driver_fixtures import PANE_IDLE, PANE_PERMISSION, PANE_WORKING, pane_markers
 
-PREPARING = """
-    \u280b Preparing list_dir (4)\u2026 0.6s                          4.1s \u21e3 17.1k [stop]
-  Shift+Tab:mode  \u2502  Esc:cancel  \u2502  Ctrl+x:shortcuts
-"""
-
-IDLE = """
-     Worked for 1.8s
-  \u2502 \u276f                                                                        \u2502
-  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts
-"""
+MARKERS = pane_markers("driver-a")
 
 
-def test_thinking_is_working() -> None:
-    assert grok_pane_is_working(THINKING) is True
+def test_working_marker_is_working() -> None:
+    assert pane_is_working(PANE_WORKING, MARKERS) is True
+    assert pane_is_idle(PANE_WORKING, MARKERS) is False
 
 
-def test_preparing_tool_is_working() -> None:
-    assert grok_pane_is_working(PREPARING) is True
+def test_every_working_pattern_counts() -> None:
+    pane = "  tool call in flight                          4.1s [stop]\n"
+    assert pane_is_working(pane, MARKERS) is True
 
 
-def test_waiting_for_response_is_working() -> None:
-    pane = "    Waiting for response\u2026 1.2s                           27m43s [stop]\n"
-    assert grok_pane_is_working(pane) is True
+def test_working_pattern_keeps_its_own_flags() -> None:
+    # The first pattern is case-insensitive; the second matches exactly.
+    assert pane_is_working("  WORKING... 2s\n", MARKERS) is True
+    assert pane_is_working("  [STOP]\n", MARKERS) is False
 
 
 def test_idle_prompt_is_not_working() -> None:
-    assert grok_pane_is_working(IDLE) is False
+    assert pane_is_working(PANE_IDLE, MARKERS) is False
+    assert pane_is_idle(PANE_IDLE, MARKERS) is True
 
 
-def test_permission_prompt_is_not_working() -> None:
+def test_permission_prompt_is_not_working_and_not_idle() -> None:
+    assert pane_is_working(PANE_PERMISSION, MARKERS) is False
+    assert pane_permission_prompt(PANE_PERMISSION, MARKERS) is True
+    assert pane_is_idle(PANE_PERMISSION + "  > \n", MARKERS) is False
+
+
+def test_permission_marker_without_confirmation_is_not_a_prompt() -> None:
+    pane = "  The guide says the modal asks: approve?\n  > \n"
+    assert pane_permission_prompt(pane, MARKERS) is False
+    assert pane_is_idle(pane, MARKERS) is True
+
+
+def test_permission_confirmation_is_case_insensitive() -> None:
+    assert pane_permission_prompt("  Approve? edit a.txt\n  TAB:NEXT\n", MARKERS) is True
+
+
+def test_queued_group_needs_every_part() -> None:
+    assert pane_is_working("  1 Queued, press Enter to SEND NOW\n", MARKERS) is True
+    assert pane_is_working("  1 queued\n  > \n", MARKERS) is False
+
+
+def test_markers_without_queued_groups_ignore_queue_text() -> None:
+    markers = replace(MARKERS, queued=())
+    assert pane_is_working("  1 queued, send now\n", markers) is False
+
+
+def test_empty_pane_is_neither_working_nor_idle() -> None:
+    assert pane_is_working("", MARKERS) is False
+    assert pane_permission_prompt("", MARKERS) is False
+    assert pane_is_idle("", MARKERS) is False
+
+
+def test_ansi_sequences_are_stripped_before_matching() -> None:
+    pane = "\x1b[32m  working...\x1b[0m  2.0s\n"
+    assert pane_is_working(pane, MARKERS) is True
+
+
+def test_history_text_without_a_marker_is_not_working() -> None:
     pane = (
-        "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
-        "  1/3:select  \u2502  Tab:next option\n"
+        "  task started: sync the host app\n"
+        "  task completed in 5m48s\n"
+        "  Status bar: model-a\n"
     )
-    assert grok_pane_is_working(pane) is False
-    assert grok_permission_prompt(pane) is True
-
-
-def test_design_quote_is_not_a_permission_prompt() -> None:
-    pane = (
-        "A Grok tool-approval modal (`1/3:select` → Enter) is still cleared.\n"
-        "  │ ❯                                                                        │\n"
-        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
-    )
-    assert grok_permission_prompt(pane) is False
-    assert grok_pane_is_working(pane) is False
-
-
-def test_always_approve_footer_is_not_working() -> None:
-    pane = (
-        "     Worked for 1.8s\n"
-        "  \u2502 \u276f                                                                        \u2502\n"
-        "  \u2500 Grok 4.6 (high) \u00b7 always-approve \u2500\n"
-        "  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n"
-    )
-    assert grok_pane_is_working(pane) is False
-    assert grok_permission_prompt(pane) is False
-
-
-def test_empty_is_not_working() -> None:
-    assert grok_pane_is_working("") is False
-
-
-def test_ansi_thinking_is_working() -> None:
-    pane = "\x1b[32m  Thinking...\x1b[0m  2.0s   [stop]\n"
-    assert grok_pane_is_working(pane) is True
-
-
-def test_command_still_running_is_working() -> None:
-    pane = (
-        "  ❙  ◆ Run Check host remotes\n"
-        "  ◎ 1 command still running\n"
-        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
-    )
-    assert grok_pane_is_working(pane) is True
-
-
-def test_queued_follow_up_is_working() -> None:
-    pane = (
-        "  ◎ 1 queued — Enter to send now\n"
-        "  Shift+Tab:mode  │  Ctrl+;:queue  │  Ctrl+x:shortcuts\n"
-    )
-    assert grok_pane_is_working(pane) is True
-
-
-def test_task_started_in_history_is_not_working() -> None:
-    pane = (
-        "     ◆ Task started: Sync host app and run CI-equivalent Flutter tests\n"
-        "     ◆ Task completed in 5m48s\n"
-        "     Worked for 12m37s\n"
-        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
-    )
-    assert grok_pane_is_working(pane) is False
+    assert pane_is_working(pane, MARKERS) is False
+    assert pane_is_idle(pane, MARKERS) is False

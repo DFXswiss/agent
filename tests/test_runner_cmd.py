@@ -40,6 +40,7 @@ from agent_cli.runner_cmd import (
     work_dirs,
 )
 from agent_cli.store import Store
+from driver_fixtures import write_drivers
 
 
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> Completed:
@@ -167,11 +168,12 @@ def _write_policy(home: Path, **overrides: Any) -> None:
 def _write_worker_files(home: Path, **policy_overrides: Any) -> None:
     """Write the policy, AI selection and prompt a dispatch preflight needs."""
     _write_policy(home, **policy_overrides)
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(
         json.dumps(
             {
                 "lane_execution": {"mode": "this-device-is-lane-host"},
-                "models": {"first": "claude", "second": "codex"},
+                "models": {"first": "driver-a", "second": "driver-b"},
             }
         ),
         encoding="utf-8",
@@ -715,8 +717,9 @@ def test_dispatch_stops_before_state_without_a_lane_execution_declaration(
     home = tmp_path / "home"
     _write_runner_config(home, {"max_concurrent": 1})
     _write_worker_files(home)
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "claude", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENT_HOME", str(home))
@@ -1953,11 +1956,12 @@ def _healthy_runner_files(home: Path) -> RunnerPaths:
         ),
         encoding="utf-8",
     )
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(
         json.dumps(
             {
                 "lane_execution": {"mode": "this-device-is-lane-host"},
-                "models": {"first": "claude", "second": "codex"},
+                "models": {"first": "driver-a", "second": "driver-b"},
             }
         ),
         encoding="utf-8",
@@ -2231,8 +2235,9 @@ def test_doctor_reports_a_missing_lane_execution_declaration(
 ) -> None:
     home = tmp_path / "home"
     _healthy_runner_files(home)
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "claude", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENT_HOME", str(home))

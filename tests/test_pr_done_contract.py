@@ -65,7 +65,7 @@ def test_design_locks_ready_for_review() -> None:
     assert "do not substitute another vendor" in section_prose
     assert "agent task models" in section_prose
     assert "model slot `first`, then model slot `second`" in section_prose
-    assert "Vendors are `grok`, then `codex`" not in section_prose
+    assert "Vendors are `" not in section_prose
     assert "The first review run is required" in section_prose
     assert "Two review runs are required" in section_prose
     assert "one_review_authors" in section_prose

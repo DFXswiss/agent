@@ -208,8 +208,8 @@ def test_reference_flow_to_ready(
         for row in store.rows("agent")
         if row.get("stage") == "review-2"
     ]
-    assert {row.get("vendor") for row in first_pair} == {"grok"}
-    assert {row.get("vendor") for row in second_pair} == {"codex"}
+    assert {row.get("vendor") for row in first_pair} == {"driver-a"}
+    assert {row.get("vendor") for row in second_pair} == {"driver-b"}
     assert {
         row.get("role") for row in first_pair
     } == {"pr-reviewer-quality", "pr-reviewer-logic"}
@@ -223,9 +223,9 @@ def test_reference_flow_to_ready(
         "implement",
         "inner_review",
         "tests",
-        "pr_gates_grok",
+        "pr_gates_first",
         "a38_first_comment",
-        "pr_gates_codex",
+        "pr_gates_second",
         "a38_second_comment",
         "ci",
         "readiness",
@@ -319,9 +319,9 @@ def test_reference_flow_to_ready(
         "quality=approved logic=approved",
     ]
     assert [run["provider"] for run in report["reviews"]] == [
-        "grok",
-        "grok",
-        "codex",
+        "driver-a",
+        "driver-a",
+        "driver-b",
     ]
     comments_by_kind = {comment["kind"]: comment for comment in report["comments"]}
     assert set(comments_by_kind) == {"review-1", "review-2"}

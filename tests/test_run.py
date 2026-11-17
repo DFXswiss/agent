@@ -10,11 +10,12 @@ from agent_cli.lane import LaneResult, LaneUsage
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_cli import _last_agent_id, _last_task_id, run
+from driver_fixtures import write_drivers
 from github_support import configure_accounts
 
-OPERATOR_GROK_MODEL = "operator-run-grok-model"
-OPERATOR_GROK_HOME = "/operator/path/grok-run-a"
-OPERATOR_CODEX_HOME = "/operator/path/codex-run-a"
+OPERATOR_MODEL_A = "operator-run-driver-a-model"
+OPERATOR_HOME_A = "/operator/path/driver-a-run-a"
+OPERATOR_HOME_B = "/operator/path/driver-b-run-a"
 DEFAULT_SESSION = "sess-1"
 
 
@@ -27,25 +28,25 @@ def write_operator_ai_accounts(home: Path, *, sessions: dict | None = None) -> N
     """
     data = {
         "lane_execution": {"mode": "this-device-is-lane-host"},
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
-            "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
-            "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
+            "account-a": {"provider": "driver-a", "config_dir": OPERATOR_HOME_A},
+            "account-b": {"provider": "driver-b", "config_dir": OPERATOR_HOME_B},
         },
         "roles": {
             "run-builder": {
-                "account": "grok-a",
-                "model": OPERATOR_GROK_MODEL,
+                "account": "account-a",
+                "model": OPERATOR_MODEL_A,
                 "access": "workspace-write",
             },
             "run-reader": {
-                "account": "grok-a",
-                "model": OPERATOR_GROK_MODEL,
+                "account": "account-a",
+                "model": OPERATOR_MODEL_A,
                 "access": "read-only",
             },
-            "codex-builder": {
-                "account": "codex-a",
-                "model": "operator-run-codex-model",
+            "driver-b-builder": {
+                "account": "account-b",
+                "model": "operator-run-driver-b-model",
                 "access": "workspace-write",
             },
         },
@@ -54,12 +55,13 @@ def write_operator_ai_accounts(home: Path, *, sessions: dict | None = None) -> N
             DEFAULT_SESSION: {
                 "interactive": "run-builder",
                 "lanes": {
-                    "grok:implementer": "run-builder",
-                    "grok:reviewer": "run-reader",
+                    "driver-a:implementer": "run-builder",
+                    "driver-a:reviewer": "run-reader",
                 },
             },
         },
     }
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -173,7 +175,7 @@ def _finish_implementer(home: Path, tid: str, capsys: pytest.CaptureFixture[str]
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -196,7 +198,7 @@ def _finish_reviewer(home: Path, tid: str, capsys: pytest.CaptureFixture[str]) -
             "--role",
             "reviewer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -348,13 +350,13 @@ def test_run_prints_vendor_stdout(
     spec.write_text("implement this\n", encoding="utf-8")
     seen: dict = {}
     argv_model = "model-passed-in-run-argv"
-    lane_argv = ["grok", "-m", argv_model]
+    lane_argv = ["tool-a", "-m", argv_model]
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             model=argv_model,
             status="complete",
             argv=lane_argv,
@@ -388,7 +390,7 @@ def test_run_prints_vendor_stdout(
     assert seen.get("session_id") == "sess-1"
     assert seen.get("config_home") == tmp_path
     assert seen.get("role") == "implementer"
-    assert seen.get("vendor") == "grok"
+    assert seen.get("vendor") == "driver-a"
     assert seen.get("tmux") is False
     store = _store(tmp_path)
     try:
@@ -409,12 +411,12 @@ def test_cli_lane_run_records_usage_and_tools(
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
     argv_model = "model-passed-in-lane-argv"
-    lane_argv = ["grok", "-m", argv_model]
+    lane_argv = ["tool-a", "-m", argv_model]
 
     def fake_launch(**_kwargs):  # type: ignore[no-untyped-def]
         return LaneResult(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             model=argv_model,
             status="complete",
             argv=lane_argv,
@@ -429,7 +431,7 @@ def test_cli_lane_run_records_usage_and_tools(
     run(
         tmp_path,
         [
-            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "lane", "run", "--role", "implementer", "--vendor", "driver-a",
             "--session", DEFAULT_SESSION, "--spec-file", str(spec),
             "--cwd", str(tmp_path), "--no-tmux",
         ],
@@ -470,7 +472,7 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     monkeypatch.setattr(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
-            "implementer", "grok", OPERATOR_GROK_MODEL, "complete", ["grok"], 0,
+            "implementer", "driver-a", OPERATOR_MODEL_A, "complete", ["tool-a"], 0,
             "STATUS: complete\n", "",
         ),
     )
@@ -487,7 +489,7 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     run(
         tmp_path,
         [
-            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "lane", "run", "--role", "implementer", "--vendor", "driver-a",
             "--session", DEFAULT_SESSION, "--spec-file", str(spec),
             "--cwd", str(tmp_path), "--no-tmux",
         ],
@@ -512,10 +514,10 @@ def test_run_store_error_on_lane_audit_keeps_the_verdict(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
@@ -548,10 +550,10 @@ def test_run_spec_file_implementer_complete(
         seen.update(kwargs)
         return LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
@@ -621,10 +623,10 @@ def test_run_implementer_complete_without_one_role_valid_result_is_retryable(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout=stdout,
             stderr="",
@@ -666,13 +668,13 @@ def test_run_uses_the_raw_lane_verdict_without_reparsing_redacted_stdout(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             # The raw source contained a hidden duplicate record. Its redacted
             # body looks valid, but the one raw parse already failed closed.
             status="partial",
             protocol_result="",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\nRESULT: done\n[redacted]",
             stderr="",
@@ -710,10 +712,10 @@ def test_run_implementer_no_change_counts_as_implemented(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\nRESULT: no-change\n",
             stderr="",
@@ -738,17 +740,17 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
-    secret = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
+    secret = "sk-test-v1-abcdefghijklmnopqrstuvwxyz012345"
     marker = "\x1b[31m"
-    split_secret = secret.replace("sk-or-", f"sk-or-{marker}")
+    split_secret = secret.replace("sk-test-", f"sk-test-{marker}")
     monkeypatch.setattr(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="openrouter",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-d",
+            model=OPERATOR_MODEL_A,
             status="unavailable",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=2,
             stdout="",
             stderr=f"provider output {split_secret}\n",
@@ -790,15 +792,15 @@ def test_run_failed_lane_hides_control_interleaved_config_path_in_note_and_termi
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
     config_dir = "/opt/profiles/router"
-    split_path = "/opt/profi\x1b[31mles/router/openrouter-api-key"
+    split_path = "/opt/profi\x1b[31mles/router/tool-d-key"
     monkeypatch.setattr(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="openrouter",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-d",
+            model=OPERATOR_MODEL_A,
             status="unavailable",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=2,
             stdout="",
             stderr=f"provider output {split_path}\n",
@@ -819,14 +821,14 @@ def test_run_failed_lane_hides_control_interleaved_config_path_in_note_and_termi
     assert exc.value.code == 2
     assert "/opt/profiles/router" not in captured.out + captured.err
     assert "\x1b" not in captured.out + captured.err
-    assert "<config_dir>/openrouter-api-key" in captured.err
+    assert "<config_dir>/tool-d-key" in captured.err
     implementers = [
         agent for agent in _agents(tmp_path, tid)
         if agent.get("role") == "implementer"
     ]
     assert implementers
     assert implementers[0]["note"] == (
-        "aborted incomplete lane: provider output <config_dir>/openrouter-api-key"
+        "aborted incomplete lane: provider output <config_dir>/tool-d-key"
     )
 
 
@@ -841,10 +843,10 @@ def test_run_only_parsed_implementer_blocked_result_fails_the_task(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\nRESULT: blocked\n",
             stderr="",
@@ -872,19 +874,20 @@ def test_run_only_parsed_implementer_blocked_result_fails_the_task(
     assert implementers[0]["note"] == "lane STATUS=complete RESULT=blocked"
 
 
-def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
+def test_run_spec_file_invalid_driver_d_output_ends_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     router_config = tmp_path / "router-config"
     router_config.mkdir()
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
         json.dumps(
             {
                 "lane_execution": {"mode": "this-device-is-lane-host"},
-                "models": {"first": "openrouter", "second": "codex"},
+                "models": {"first": "driver-d", "second": "driver-b"},
                 "accounts": {
                     "router": {
-                        "provider": "openrouter",
+                        "provider": "driver-d",
                         "config_dir": str(router_config),
                     }
                 },
@@ -898,7 +901,7 @@ def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
                 "sessions": {
                     DEFAULT_SESSION: {
                         "interactive": "router-builder",
-                        "lanes": {"openrouter:implementer": "router-builder"},
+                        "lanes": {"driver-d:implementer": "router-builder"},
                     }
                 },
             }
@@ -916,7 +919,7 @@ def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
         argv: list[str], stdin_text: str | None, cwd: str | None = None
     ) -> object:
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         output_file = Path(argv[wrapper_index + 2])
         output_paths.append(output_file)
@@ -991,10 +994,10 @@ def test_run_incomplete_implementer_is_aborted_without_blocking_the_round(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="implementer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status=status,
-            argv=["grok"],
+            argv=["tool-a"],
             returncode={"partial": 0, "timeout": 124, "unavailable": 2}[status],
             stdout=f"STATUS: {status}\n",
             stderr="provider did not complete",
@@ -1140,7 +1143,7 @@ def test_run_provider_mismatch_leaves_no_working_agent(
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
     raw["sessions"] = {
-        DEFAULT_SESSION: {"lanes": {"grok:implementer": "codex-builder"}},
+        DEFAULT_SESSION: {"lanes": {"driver-a:implementer": "driver-b-builder"}},
     }
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
@@ -1164,7 +1167,7 @@ def test_run_writable_reviewer_binding_leaves_no_working_agent(
     capsys.readouterr()
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["sessions"][DEFAULT_SESSION]["lanes"]["grok:reviewer"] = "run-builder"
+    raw["sessions"][DEFAULT_SESSION]["lanes"]["driver-a:reviewer"] = "run-builder"
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "review-spec.md"
     spec.write_text("review this\n", encoding="utf-8")
@@ -1194,10 +1197,10 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         seen.update(kwargs)
         return LaneResult(
             role="reviewer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="STATUS: complete\n",
             stderr="",
@@ -1227,7 +1230,7 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
     assert seen.get("session_id") == "sess-1"
     assert seen.get("config_home") == tmp_path
     assert seen.get("role") == "reviewer"
-    assert seen.get("vendor") == "grok"
+    assert seen.get("vendor") == "driver-a"
 
 
 def test_run_unavailable_inner_reviewer_is_retryable_in_the_same_round(
@@ -1244,10 +1247,10 @@ def test_run_unavailable_inner_reviewer_is_retryable_in_the_same_round(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="reviewer",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="unavailable",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=2,
             stdout="STATUS: unavailable\n",
             stderr="provider unavailable",
@@ -1439,7 +1442,7 @@ def test_run_mergeable_after_gates(
     assert push_called["n"] == 1
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
-    for stage, vendor in (("review-1", "grok"), ("review-2", "codex")):
+    for stage, vendor in (("review-1", "driver-a"), ("review-2", "driver-b")):
         for dimension in ("quality", "logic"):
             _record_pr_gate(
                 tmp_path,
@@ -1472,9 +1475,9 @@ def test_run_unavailable_pr_reviewer_records_gate_and_can_retry(
             DEFAULT_SESSION: {
                 "interactive": "run-builder",
                 "lanes": {
-                    "grok:implementer": "run-builder",
-                    "grok:reviewer": "run-reader",
-                    "grok:pr-reviewer-quality": "run-reader",
+                    "driver-a:implementer": "run-builder",
+                    "driver-a:reviewer": "run-reader",
+                    "driver-a:pr-reviewer-quality": "run-reader",
                 },
             }
         },
@@ -1494,10 +1497,10 @@ def test_run_unavailable_pr_reviewer_records_gate_and_can_retry(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
             role="pr-reviewer-quality",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="unavailable",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=2,
             stdout="STATUS: unavailable\n",
             stderr="provider unavailable",
@@ -1542,14 +1545,14 @@ def test_run_launches_the_provider_pinned_on_the_task(
 ) -> None:
     import json as _json
 
-    from test_model_slots import write_claude_first
+    from test_model_slots import write_driver_c_first
 
-    write_claude_first(tmp_path)
+    write_driver_c_first(tmp_path)
     tid = _bootstrap_implement(tmp_path, capsys)
-    # The device switches to grok first after the task was created.
+    # The device switches to driver-a first after the task was created.
     path = tmp_path / "ai-accounts.json"
     data = _json.loads(path.read_text(encoding="utf-8"))
-    data["models"] = {"first": "grok", "second": "codex"}
+    data["models"] = {"first": "driver-a", "second": "driver-b"}
     path.write_text(_json.dumps(data), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
@@ -1558,15 +1561,15 @@ def test_run_launches_the_provider_pinned_on_the_task(
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
-            role="implementer", vendor=kwargs["vendor"], model="claude-model",
-            status="complete", argv=["claude"],
+            role="implementer", vendor=kwargs["vendor"], model="driver-c-model",
+            status="complete", argv=["tool-c"],
             returncode=0, stdout="done\nSTATUS: complete\nRESULT: done\n", stderr="",
             protocol_result="done",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)
     run(tmp_path, ["run", "--task", tid, "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path)])
-    assert seen.get("vendor") == "claude"
+    assert seen.get("vendor") == "driver-c"
 
 
 def test_invalid_pinned_models_end_in_a_clean_error(
@@ -1578,7 +1581,7 @@ def test_invalid_pinned_models_end_in_a_clean_error(
     store = open_store()
     try:
         row = {k: v for k, v in store.row("task", tid).items() if not k.startswith("_")}
-        row["models"] = {"first": "gemini", "second": "codex"}
+        row["models"] = {"first": "not a driver", "second": "driver-b"}
         store.write("task", "update", tid, row)
     finally:
         store.close()
@@ -1597,7 +1600,7 @@ def test_run_refuses_external_second_slot_without_launching_lane(
         task = store.row("task", tid)
         assert task is not None
         updated = {key: value for key, value in task.items() if not key.startswith("_")}
-        updated["models"] = {"first": "grok", "second": None}
+        updated["models"] = {"first": "driver-a", "second": None}
         store.write("task", "update", tid, updated)
     finally:
         store.close()
@@ -1617,7 +1620,7 @@ def test_run_refuses_external_second_slot_without_launching_lane(
             capsys,
             stage="review-1",
             dimension=dimension,
-            vendor="grok",
+            vendor="driver-a",
         )
         run(tmp_path, ["run", "--task", tid])
         capsys.readouterr()
@@ -1651,3 +1654,47 @@ def test_run_refuses_external_second_slot_without_launching_lane(
         )
     assert launches["count"] == 0
     assert len(_agents(tmp_path, tid)) == agents_before
+
+
+def test_run_hands_off_a_record_only_driver_and_refuses_an_unknown_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from driver_fixtures import write_accounts
+
+    write_drivers(tmp_path)
+    write_accounts(tmp_path)
+    tid = _bootstrap_implement(tmp_path, capsys)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+
+    def no_launch(**kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("a record-only or unknown driver never starts a lane")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    run_args = ["run", "--task", tid, "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path)]
+    run(
+        tmp_path,
+        [
+            "task", "models", "--id", tid, "--slot", "implementer",
+            "--vendor", "driver-e", "--reason", "external implementer",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as handoff:
+        run(tmp_path, run_args)
+    assert handoff.value.code == 2
+    assert "agent step" in capsys.readouterr().err
+
+    store = _store(tmp_path)
+    try:
+        row = {k: v for k, v in store.row("task", tid).items() if not k.startswith("_")}
+        row["implementer"] = "driver-x"
+        store.write("task", "update", tid, row)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit) as unknown:
+        run(tmp_path, run_args)
+    assert str(unknown.value) == (
+        "agent: vendor must be driver-a|driver-b|driver-c|driver-d|driver-e "
+        "(see drivers.json, docs/ai-accounts.md#drivers)"
+    )

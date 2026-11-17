@@ -49,7 +49,7 @@ CHANGE = (
 PIN = {
     "max_rounds": 2,
     "origin": "submit",
-    "model": "grok-model",
+    "model": "driver-a-model",
     "limit": 2,
 }
 
@@ -596,7 +596,7 @@ def test_missing_check_lane_gives_an_opinion_without_a_lane(
         assert value.status == "nein"
         assert value.opinion["reasoning"].startswith(
             "check lane is not configured: No AI lane configured for session "
-            "worker-session slot grok:check"
+            "worker-session slot driver-a:check"
         )
         assert fake.launched == []
         assert not [

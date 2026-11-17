@@ -402,7 +402,7 @@ def test_no_change_close_resumes_after_the_pull_request_is_closed(
             fake,
             tid=TID,
             phase="implement",
-            checklist_codex={},
+            checklist_second={},
         )
     else:
         store, worker, fake, task = _a38_external_review_env(
@@ -657,7 +657,7 @@ def test_close_pull_request_is_repeatable(
         fake,
         tid=TID,
         phase="implement",
-        checklist_codex={},
+        checklist_second={},
     )
 
     assert close_pull_request(
@@ -684,7 +684,7 @@ def test_close_pull_request_reports_a_merge(
         fake,
         tid=TID,
         phase="implement",
-        checklist_codex={},
+        checklist_second={},
     )
     fake.pr["state"] = "MERGED"
 
@@ -705,7 +705,7 @@ def test_close_pull_request_needs_the_published_comment(
         fake,
         tid=TID,
         phase="implement",
-        checklist_codex={},
+        checklist_second={},
     )
     monkeypatch.setattr(coordinator_git, "execute_github", lambda *_args, **_kwargs: [])
 
