@@ -46,7 +46,7 @@ patch = ["subprocess"]
 [tool.coverage.report]
 # Floor of the measured total line and branch coverage. It only moves up; see
 # CONTRIBUTING.md, "Complete test coverage is mandatory".
-fail_under = 86.18
+fail_under = 86.19
 precision = 2
 show_missing = true
 skip_covered = true
