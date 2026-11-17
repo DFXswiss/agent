@@ -465,13 +465,17 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
     command. A wrapper is only meaningful once the worker's configuration is
     present, so the preflight runs even when a wrapper was injected.
     """
-    from .main import open_store
+    from .main import die, open_store
 
     paths = _runner_base()
     if wrapper is None:
         from .runner_worker import worker_wrapper
 
-        wrapper = worker_wrapper(_agent_home())
+        try:
+            wrapper = worker_wrapper(_agent_home())
+        except ValueError as exc:
+            # The messages are fixed texts naming the missing absolute input.
+            die(f"dispatch: {exc}")
     _worker_preflight(paths)
     with runner_lock(paths) as acquired:
         if not acquired:
@@ -524,14 +528,30 @@ def _cmd_work(args: list[str]) -> None:
     and because dispatch starts it immediately before writing the row as running,
     so it waits for that update before validating the row. The exit file is the
     worker's result; `supervise` reads it.
+
+    The worker's working directory is the pull-request checkout, so `PATH` is
+    reduced to its absolute entries first: an empty, `.` or relative entry would
+    let a commit at the checkout root name the `git` or `gh` the worker runs.
     """
     from . import github_act, lane
     from .main import die, open_store
-    from .runner_worker import _worker_fail, _worker_job_id, run_worker
+    from .runner_worker import (
+        _absolute_path_entries,
+        _worker_fail,
+        _worker_job_id,
+        run_worker,
+    )
 
     if args:
         die(USAGE)
     paths = _runner_base()
+    sanitized_path = _absolute_path_entries(os.environ.get("PATH", ""))
+    if not sanitized_path:
+        job_id = _worker_job_id(paths, os.getcwd())
+        if job_id is None:
+            raise SystemExit(2)
+        raise SystemExit(_worker_fail(paths, job_id, "worker failed"))
+    os.environ["PATH"] = sanitized_path
     store = None
     try:
         store = open_store()

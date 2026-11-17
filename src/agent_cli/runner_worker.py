@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
 import shlex
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -49,6 +52,9 @@ MAX_REVIEW_CHARS = 60_000
 # usable; a larger diff is refused, never truncated, so the lane always reviews
 # exactly the change that was checked out.
 MAX_DIFF_CHARS = 400_000
+# A local diff that takes longer than this is treated as failed, not waited on,
+# because the heartbeat keeps a hung worker looking alive to the watchdog.
+DIFF_SECONDS = 300
 # The stall watchdog measures transcript growth. A quiet lane would otherwise
 # look stalled while it is still working, so the worker appends a fixed line
 # while it waits. The interval must stay well inside the shortest stall window
@@ -156,6 +162,20 @@ class _Transcript:
             self._handle = None
 
 
+def _absolute_path_entries(value: str) -> str:
+    """The absolute entries of `value`, in order and without duplicates.
+
+    The worker runs with the pull-request checkout as its working directory, so
+    an empty, `.` or relative entry would let a commit at the checkout root name
+    the command that entry resolves. Only absolute entries survive.
+    """
+    entries: list[str] = []
+    for entry in value.split(os.pathsep):
+        if os.path.isabs(entry) and entry not in entries:
+            entries.append(entry)
+    return os.pathsep.join(entries)
+
+
 def worker_wrapper(agent_home: Path | str) -> str:
     """The tmux command string that runs this worker for one worktree.
 
@@ -164,24 +184,34 @@ def worker_wrapper(agent_home: Path | str) -> str:
     current directory. A relative home would name two different places from the
     dispatching command and the job, so only an absolute path is accepted.
 
-    `-P` is passed because that working directory is the pull-request checkout:
-    without it `-m` puts the working directory first on `sys.path`, so a pull
-    request that ships an `agent_cli` package at its root would import its own
-    code instead of the installed worker. `-P` alone is not enough, because the
-    inherited `PYTHONPATH` is still searched and a relative or empty entry in it
-    resolves against that same checkout. The wrapper therefore replaces
-    `PYTHONPATH` with the one directory that contains the installed `agent_cli`
-    package, so only trusted code can be imported; `-P` stays because it drops
-    the working directory that `-m` would otherwise put first. `-I` would also
-    drop the environment the worker needs.
+    Nothing the worker starts may be resolved relative to the checkout it runs
+    in. `env` is named by its absolute path, `PATH` keeps only absolute entries,
+    `PYTHONHOME` and `PYTHONUSERBASE` are dropped so a relative value cannot
+    resolve against that directory, and the interpreter runs with `-P` and a
+    `PYTHONPATH` that names only the directory holding the installed `agent_cli`
+    package. `-P` alone is not enough because `-m` would otherwise put the
+    checkout first on `sys.path`, and `-P` does not affect `PYTHONPATH`; the
+    replaced `PYTHONPATH` is what keeps a package shipped by the pull request
+    from being imported. `-I` would also drop the environment the worker needs.
     """
     home = Path(agent_home)
     if not home.is_absolute():
         raise ValueError("worker wrapper requires an absolute agent home")
+    path = _absolute_path_entries(os.environ.get("PATH", ""))
+    if not path:
+        raise ValueError("worker wrapper requires an absolute PATH")
+    env = shutil.which("env", path=path)
+    if env is None or not os.path.isabs(env) or not os.path.isfile(env):
+        raise ValueError("worker wrapper requires an absolute env")
     trusted = Path(__file__).resolve().parent.parent
     return shlex.join(
         [
-            "env",
+            env,
+            "-u",
+            "PYTHONHOME",
+            "-u",
+            "PYTHONUSERBASE",
+            f"PATH={path}",
             f"AGENT_HOME={home}",
             f"PYTHONPATH={trusted}",
             sys.executable,
@@ -261,7 +291,15 @@ def _write_progress(transcript: _Sink, out: Any, message: str) -> None:
     try:
         out.write(data)
     except TypeError:
-        out.write(data.decode("utf-8", "replace"))
+        # A text mirror wants a string. Its own failure is swallowed exactly
+        # like a bytes write's, so a broken mirror cannot end the heartbeat
+        # thread; the transcript above is the surface the watchdog measures.
+        try:
+            out.write(data.decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            pass
+    except (OSError, ValueError):
+        pass
     flush = getattr(out, "flush", None)
     if callable(flush):
         try:
@@ -273,15 +311,17 @@ def _write_progress(transcript: _Sink, out: Any, message: str) -> None:
 def _heartbeat(
     progress: Callable[[str], None], interval: float, stop: threading.Event
 ) -> None:
-    """Keep the transcript and the job's output growing while one lane runs.
+    """Keep the transcript and the job's output growing for the whole worker.
 
-    Every beat goes through the one shared progress writer, so it is mirrored to
-    the job's standard output exactly like any other progress line.
+    The base-ref read, the diff and the review POST are network waits that grow
+    no transcript, so the beat covers every step and not only the lane. Every
+    beat goes through the one shared progress writer, so it is mirrored to the
+    job's standard output exactly like any other progress line.
     """
     if interval <= 0:
         return
     while not stop.wait(interval):
-        progress("review lane running")
+        progress("worker running")
 
 
 def _fence(text: str) -> str:
@@ -408,12 +448,83 @@ def _base_of(
     return base
 
 
+def _read_bounded(
+    argv: list[str], limit: int, *, timeout: float = DIFF_SECONDS
+) -> tuple[int, bytes, bool]:
+    """Read at most `limit` bytes of a command's stdout within `timeout` seconds.
+
+    Buffering the whole output before checking a cap would let a huge producer
+    exhaust the worker's memory, and a producer that stalls without closing
+    stdout would hold the worker forever. The reader therefore stops at
+    `limit + 1` bytes, keeps the first `limit`, kills a command that had more to
+    say, and gives up once the deadline has passed. The child is always killed
+    and reaped, however the read ends.
+    Returns `(returncode, data, truncated)`; stderr is discarded so no external
+    diagnostic is ever captured.
+    """
+    deadline = time.monotonic() + timeout
+    process: subprocess.Popen[bytes] | None = None
+    selector = selectors.DefaultSelector()
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        assert process.stdout is not None
+        fd = process.stdout.fileno()
+        selector.register(fd, selectors.EVENT_READ)
+        chunks: list[bytes] = []
+        remaining_bytes = limit + 1
+        while remaining_bytes > 0:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                process.kill()
+                process.wait()
+                raise TimeoutError("diff timed out")
+            chunk = os.read(fd, min(65536, remaining_bytes))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining_bytes -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            process.kill()
+            process.wait()
+            return process.returncode, data[:limit], True
+        remaining = deadline - time.monotonic()
+        try:
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise TimeoutError("diff timed out") from None
+        return process.returncode, data, False
+    except BaseException:
+        if process is not None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait()
+        raise
+    finally:
+        selector.close()
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+
+
 def _diff_of(
-    runner: Callable[[list[str]], Completed], worktree: str, base: str
+    read_diff: Callable[[list[str], int], tuple[int, bytes, bool]],
+    worktree: str,
+    base: str,
 ) -> str:
     """The local three-dot diff of the checked-out head against `base`."""
     try:
-        completed = runner(
+        returncode, data, truncated = read_diff(
             [
                 "git",
                 "-C",
@@ -423,13 +534,18 @@ def _diff_of(
                 "--no-ext-diff",
                 "--no-textconv",
                 f"refs/remotes/origin/{base}...HEAD",
-            ]
+            ],
+            # UTF-8 is at most four bytes per character, so this is the largest
+            # byte count that can still decode to `MAX_DIFF_CHARS` characters.
+            MAX_DIFF_CHARS * 4,
         )
     except OSError:
         raise _WorkerError(f"diff against {base} failed") from None
-    if completed.returncode != 0:
+    if truncated:
+        raise _WorkerError(FAILED_DIFF_TOO_LARGE)
+    if returncode != 0:
         raise _WorkerError(f"diff against {base} failed")
-    diff = completed.stdout or ""
+    diff = data.decode("utf-8", "replace")
     if not diff.strip():
         raise _WorkerError(f"pull request has no diff against {base}")
     if len(diff) > MAX_DIFF_CHARS:
@@ -606,7 +722,7 @@ def _run_worker_body(
     runner: Callable[[list[str]], Completed],
     launch: Callable[..., LaneResult],
     execute_activity: Callable[[Store, Callable[[list[str]], Completed], str], str | None],
-    heartbeat_seconds: float,
+    read_diff: Callable[[list[str], int], tuple[int, bytes, bool]],
     handoff_seconds: float,
     handoff_poll_seconds: float,
     transcript: _Sink,
@@ -692,7 +808,7 @@ def _run_worker_body(
     progress(f"pull request {repo}#{number} at {head[:12]}")
 
     base = _base_of(gh, runner, repo=repo, number=number)
-    diff = _diff_of(runner, worktree, base)
+    diff = _diff_of(read_diff, worktree, base)
 
     spec = build_review_spec(
         template,
@@ -721,35 +837,18 @@ def _run_worker_body(
         raise _WorkerError(_lane_start_message(exc)) from exc
 
     progress("review lane running")
-    stop = threading.Event()
-    heartbeat = threading.Thread(
-        target=_heartbeat,
-        args=(progress, heartbeat_seconds, stop),
-        name=f"runner-worker-heartbeat-{job_id}",
-        daemon=True,
-    )
-    heartbeat.start()
     try:
-        try:
-            result = launch(
-                role="reviewer",
-                vendor=vendor,
-                spec_file=str(prompt_file),
-                cwd=worktree,
-                tmux=False,
-                config_home=home,
-                session_id=session_id,
-            )
-        except (SystemExit, AIAccountError, StoreError, ModelSlotsError, OSError) as exc:
-            raise _WorkerError(_lane_start_message(exc)) from exc
-    finally:
-        # Stop and join before the result is read or the exit file is written:
-        # no heartbeat may outlive the step it keeps alive. The loop waits on
-        # the stop event between beats, so an unconditional join returns once a
-        # write already in progress finishes and never while a beat can still
-        # land.
-        stop.set()
-        heartbeat.join()
+        result = launch(
+            role="reviewer",
+            vendor=vendor,
+            spec_file=str(prompt_file),
+            cwd=worktree,
+            tmux=False,
+            config_home=home,
+            session_id=session_id,
+        )
+    except (SystemExit, AIAccountError, StoreError, ModelSlotsError, OSError) as exc:
+        raise _WorkerError(_lane_start_message(exc)) from exc
 
     # The lane's already-redacted text is part of the job's transcript.
     transcript.write(result.stdout or "")
@@ -804,6 +903,7 @@ def run_worker(
     execute_activity: Callable[
         [Store, Callable[[list[str]], Completed], str], str | None
     ],
+    read_diff: Callable[[list[str], int], tuple[int, bytes, bool]] = _read_bounded,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     handoff_seconds: float = HANDOFF_SECONDS,
     handoff_poll_seconds: float = HANDOFF_POLL_SECONDS,
@@ -838,6 +938,17 @@ def run_worker(
         with progress_lock:
             _write_progress(transcript, stdout, message)
 
+    # The heartbeat covers the whole worker, not only the lane: the base-ref
+    # read, the diff and the review POST are network waits with no transcript
+    # growth, and a stall watchdog would otherwise kill a job mid-post.
+    stop = threading.Event()
+    heartbeat = threading.Thread(
+        target=_heartbeat,
+        args=(progress, heartbeat_seconds, stop),
+        name=f"runner-worker-heartbeat-{job_id}",
+        daemon=True,
+    )
+    heartbeat.start()
     message: str | None = None
     try:
         _run_worker_body(
@@ -848,7 +959,7 @@ def run_worker(
             runner=runner,
             launch=launch,
             execute_activity=execute_activity,
-            heartbeat_seconds=heartbeat_seconds,
+            read_diff=read_diff,
             handoff_seconds=handoff_seconds,
             handoff_poll_seconds=handoff_poll_seconds,
             transcript=transcript,
@@ -860,6 +971,14 @@ def run_worker(
         # Never carry the exception text: it may hold provider diagnostics or a
         # path. The transcript already records which step was reached.
         message = FAILED_WORKER
+    finally:
+        # Stop and join before the exit file is written, on the success path
+        # and on every failure: no heartbeat may outlive the worker, because
+        # the exit file is its last effect. The loop waits on the stop event
+        # between beats, so an unconditional join returns once a write already
+        # in progress finishes and never while a beat can still land.
+        stop.set()
+        heartbeat.join()
 
     if message is None:
         progress("review posted")

@@ -11,6 +11,7 @@ import fcntl
 import json
 import os
 import shlex
+import shutil
 import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -835,11 +836,20 @@ def test_dispatch_uses_the_installed_worker_by_default(
     started = [argv for argv in calls if "new-session" in " ".join(argv)]
     assert len(started) == 1
     wrapper = started[0][-1]
-    # The exact command tmux runs: this interpreter, this module entry point,
-    # and the agent home passed explicitly rather than inferred from the cwd.
+    # The exact command tmux runs: an absolute `env`, only absolute PATH
+    # entries, no inherited PYTHONHOME/PYTHONUSERBASE, this interpreter, this
+    # module entry point, and the agent home passed explicitly rather than
+    # inferred from the cwd.
+    path = runner_worker._absolute_path_entries(os.environ.get("PATH", ""))
+    env = shutil.which("env", path=path)
     trusted = Path(runner_worker.__file__).resolve().parent.parent
     assert shlex.split(wrapper) == [
-        "env",
+        env,
+        "-u",
+        "PYTHONHOME",
+        "-u",
+        "PYTHONUSERBASE",
+        f"PATH={path}",
         f"AGENT_HOME={home}",
         f"PYTHONPATH={trusted}",
         sys.executable,
@@ -850,6 +860,25 @@ def test_dispatch_uses_the_installed_worker_by_default(
         "work",
     ]
     assert f"job.started {row['id']}" in capsys.readouterr().out
+
+
+def test_dispatch_refuses_without_an_absolute_path_for_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only relative PATH entries would leave the worker resolving its commands
+    # against the pull-request checkout; dispatch stops with a fixed message
+    # before it starts anything.
+    _preflight_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("PATH", ".:bin")
+    calls: list[list[str]] = []
+    monkeypatch.setattr("agent_cli.runner_cmd.run_argv", _dispatch_runner(calls))
+
+    with pytest.raises(SystemExit) as stopped:
+        runner_cmd._cmd_dispatch([])
+
+    assert str(stopped.value) == "agent: dispatch: worker wrapper requires an absolute PATH"
+    assert not any("new-session" in " ".join(argv) for argv in calls)
+    assert "job.started" not in capsys.readouterr().out
 
 
 def test_dispatch_only_starts_this_devices_jobs(
@@ -993,6 +1022,47 @@ def test_work_runs_the_worker_with_the_production_dependencies(
     assert seen["launch"] is lane.launch
     assert seen["execute_activity"] is github_act.execute_activity
     assert store.closed is True
+
+
+def test_work_reduces_the_inherited_path_to_absolute_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A directly started worker runs in the checkout too, so it resolves its
+    # own `git` and `gh` through the same absolute-only PATH the wrapper uses.
+    _worker_worktree(tmp_path, monkeypatch)
+    store = _FakeStore()
+    monkeypatch.setenv("PATH", ".:/usr/bin::bin:/bin:/usr/bin")
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: store)
+    monkeypatch.setattr(runner_worker, "run_worker", lambda *_a, **_k: 0)
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["work"])
+
+    assert raised.value.code == 0
+    assert os.environ["PATH"] == "/usr/bin:/bin"
+
+
+def test_work_fails_with_a_fixed_message_when_no_absolute_path_entry_remains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home, _worktree = _worker_worktree(tmp_path, monkeypatch)
+    store = _FakeStore()
+    monkeypatch.setenv("PATH", ".:bin::")
+    opened: list[bool] = []
+    monkeypatch.setattr(
+        "agent_cli.main.open_store", lambda: (opened.append(True), store)[1]
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["work"])
+
+    assert raised.value.code == 2
+    assert opened == []
+    logs = runner_paths(home / "runner").logs
+    assert (logs / "job-1.exit").read_text(encoding="utf-8").strip() == "2"
+    assert runner_worker.FAILED_WORKER in (logs / "job-1.transcript").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_work_records_a_fixed_failure_when_the_worker_raises(

@@ -129,12 +129,13 @@ Output: `job.started <job-id>` per job, or `job.started none`.
 ### `agent runner work`
 
 The detached worker for one job. `dispatch` starts it with the job worktree as
-its working directory and runs the interpreter with `-P` and a `PYTHONPATH`
-that names only the directory holding the installed `agent_cli` package, so an
-`agent_cli` package shipped by the pull request is never imported — even
-through a relative or empty entry the session inherited; an operator does not
-normally run it. It performs one `pr-review` job and writes
-`state/logs/<id>.exit` last:
+its working directory and resolves nothing relative to that checkout: `env` is
+absolute, `PATH` keeps only absolute entries, `PYTHONHOME` and `PYTHONUSERBASE`
+are unset, and the interpreter runs with `-P` and a `PYTHONPATH` that names
+only the directory holding the installed `agent_cli` package, so an `agent_cli`
+package or an executable shipped by the pull request is never imported or run;
+an operator does not normally run it. It performs one `pr-review` job and
+writes `state/logs/<id>.exit` last:
 
 1. Identify the job from the current directory: it must be exactly the direct
    child worktree named by a safe job id. Require the row to be this device's,
@@ -168,9 +169,10 @@ normally run it. It performs one `pr-review` job and writes
 6. Start exactly one `reviewer` lane through `lane.launch` with model slot
    `first` (`ai-accounts.json`), `tmux=False`, the worktree as its directory and
    the agent home as its configuration home. `reviewer` is a read-only workflow
-   kind, so a writable binding is refused. While the lane runs, a heartbeat
-   appends `worker: review lane running` to the transcript so the stall
-   watchdog sees progress.
+   kind, so a writable binding is refused. For the whole worker — from before
+   the base-ref read through the review POST — a heartbeat appends
+   `worker: worker running` to the transcript so the stall watchdog sees
+   progress during network waits that grow no transcript.
 7. Require `STATUS: complete` and `RESULT: approved` or `RESULT: rejected`,
    remove the protocol lines, and refuse an empty review or a formatted body
    over 60,000 characters.

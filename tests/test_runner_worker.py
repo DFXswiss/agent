@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -261,6 +262,23 @@ class _DispatchHandoff:
         return self._inner.row(table, row_id)
 
 
+def _recording_reader(runner: Any) -> Any:
+    """A bounded reader that delegates to the fake runner and records its argv.
+
+    The diff argv therefore stays in the same `calls` list the other fakes use,
+    and the fake's stdout becomes the bytes the reader returns.
+    """
+
+    def read(argv: list[str], limit: int) -> tuple[int, bytes, bool]:
+        completed = runner(argv)
+        data = (completed.stdout or "").encode("utf-8", "replace")
+        if len(data) > limit:
+            return completed.returncode, data[:limit], True
+        return completed.returncode, data, False
+
+    return read
+
+
 def _run(
     paths: Any,
     tmp_path: Path,
@@ -270,6 +288,7 @@ def _run(
     runner: Any = None,
     launch: Any = None,
     execute: Any = None,
+    read_diff: Any = None,
     heartbeat_seconds: float = 60,
     handoff_seconds: float = runner_worker.HANDOFF_SECONDS,
     handoff_poll_seconds: float = runner_worker.HANDOFF_POLL_SECONDS,
@@ -280,15 +299,17 @@ def _run(
     own_store = store is None
     if store is None:
         store = Store(tmp_path)
+    fake_runner = runner or _fake_runner()
     try:
         code = runner_worker.run_worker(
             paths,
             store,
             cwd if cwd is not None else str(paths.work / job_id),
             home=tmp_path,
-            runner=runner or _fake_runner(),
+            runner=fake_runner,
             launch=launch or _fake_launch([]),
             execute_activity=execute or _done_executor(),
+            read_diff=read_diff or _recording_reader(fake_runner),
             heartbeat_seconds=heartbeat_seconds,
             handoff_seconds=handoff_seconds,
             handoff_poll_seconds=handoff_poll_seconds,
@@ -314,13 +335,28 @@ def _exit_code(paths: Any, job_id: str = "job-1") -> str:
 
 
 def test_worker_wrapper_runs_the_work_subcommand_with_the_exact_argv(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The inherited PATH may hold relative and empty entries; the wrapper keeps
+    # only the absolute ones and names `env` by its absolute path.
+    real_env_dir = os.path.dirname(shutil.which("env") or "/usr/bin/env")
+    monkeypatch.setenv(
+        "PATH",
+        f".:{tmp_path}:{real_env_dir}:{os.path.dirname(sys.executable)}::{tmp_path}",
+    )
     wrapper = runner_worker.worker_wrapper(tmp_path)
 
+    path = runner_worker._absolute_path_entries(os.environ["PATH"])
+    env = shutil.which("env", path=path)
+    assert env is not None and os.path.isabs(env)
     trusted = Path(runner_worker.__file__).resolve().parent.parent
     assert shlex.split(wrapper) == [
-        "env",
+        env,
+        "-u",
+        "PYTHONHOME",
+        "-u",
+        "PYTHONUSERBASE",
+        f"PATH={path}",
         f"AGENT_HOME={tmp_path}",
         f"PYTHONPATH={trusted}",
         sys.executable,
@@ -332,11 +368,81 @@ def test_worker_wrapper_runs_the_work_subcommand_with_the_exact_argv(
     ]
 
 
-def test_worker_wrapper_refuses_a_relative_agent_home() -> None:
+def test_absolute_path_entries_keeps_only_absolute_entries_once() -> None:
+    # An empty, `.` or relative entry names the checkout the worker runs in;
+    # a duplicate absolute entry adds nothing.
+    assert (
+        runner_worker._absolute_path_entries(".:/usr/bin::bin:/bin:/usr/bin")
+        == "/usr/bin:/bin"
+    )
+
+
+def test_worker_wrapper_refuses_an_agent_home_that_is_relative() -> None:
     # The dispatching command and the job run in different directories; a
     # relative home would name two places.
     with pytest.raises(ValueError, match="absolute"):
         runner_worker.worker_wrapper("home")
+
+
+def test_worker_wrapper_refuses_a_path_with_no_absolute_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With nothing absolute, every name would resolve against the checkout.
+    monkeypatch.setenv("PATH", ".:bin::")
+    with pytest.raises(ValueError, match="absolute PATH"):
+        runner_worker.worker_wrapper(tmp_path)
+
+
+def test_worker_wrapper_resolves_nothing_against_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real subprocess, run the way tmux runs the wrapper: the shell resolves
+    # the wrapper's first word, then `env` applies the absolute PATH and drops
+    # the inherited PYTHONHOME/PYTHONUSERBASE. Executables committed at the
+    # checkout root must never be the ones that run.
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    marker = tmp_path / "shadow-ran"
+    for name in ("env", "git"):
+        script = checkout / name
+        script.write_text(
+            f"#!/bin/sh\nprintf x >> {shlex.quote(str(marker))}\n", encoding="utf-8"
+        )
+        script.chmod(0o755)
+    real_env = shutil.which("env")
+    assert real_env is not None
+    directories = f".:{os.path.dirname(real_env)}:{os.path.dirname(sys.executable)}"
+    monkeypatch.setenv("PATH", directories)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    argv = shlex.split(runner_worker.worker_wrapper(home))
+    index = argv.index("-m")
+    probe = argv[:index] + [
+        "-c",
+        "import os, subprocess; "
+        "subprocess.run(['git', '--version'], check=False); "
+        "print(os.environ.get('PYTHONHOME'), os.environ.get('PYTHONUSERBASE'))",
+    ]
+
+    completed = subprocess.run(
+        ["/bin/sh", "-c", shlex.join(probe)],
+        cwd=str(checkout),
+        env={
+            **os.environ,
+            "PATH": directories,
+            "PYTHONHOME": "relative",
+            "PYTHONUSERBASE": "relative",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    # `git --version` inherits the probe's stdout; the printed values are last.
+    assert completed.stdout.strip().splitlines()[-1] == "None None"
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("inherited_pythonpath", [".", "", ":", "agent_cli/.."])
@@ -1054,6 +1160,142 @@ def test_worker_rejects_an_oversized_diff_instead_of_truncating_it(
     assert not (paths.logs / "job-1.prompt").exists()
 
 
+def test_worker_rejects_a_diff_the_bounded_reader_had_to_truncate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reader stops the producer at the byte cap; a truncated read is never
+    # decoded, checked against the character cap and treated as a diff.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(launches),
+        read_diff=lambda _argv, _limit: (0, b"", True),
+    )
+
+    assert code == 2
+    assert launches == []
+    assert runner_worker.FAILED_DIFF_TOO_LARGE in _transcript(paths)
+    assert not (paths.logs / "job-1.prompt").exists()
+
+
+def test_worker_reports_a_timed_out_diff_as_a_failed_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+
+    def timed_out(_argv: list[str], _limit: int) -> tuple[int, bytes, bool]:
+        raise TimeoutError("diff timed out")
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(launches),
+        read_diff=timed_out,
+    )
+
+    assert code == 2
+    assert launches == []
+    assert "diff against develop failed" in _transcript(paths)
+    assert not (paths.logs / "job-1.prompt").exists()
+
+
+def test_read_bounded_stops_and_truncates_at_the_limit() -> None:
+    returncode, data, truncated = runner_worker._read_bounded(
+        [sys.executable, "-c", "print('x'*100)"], 10
+    )
+
+    # The child may have exited on its own before the kill; what matters is
+    # that its whole output was never read.
+    assert returncode is not None
+    assert len(data) == 10
+    assert truncated is True
+
+
+def test_read_bounded_returns_the_whole_output_within_the_limit() -> None:
+    returncode, data, truncated = runner_worker._read_bounded(
+        [sys.executable, "-c", "print('x'*100)"], 1000
+    )
+
+    assert returncode == 0
+    assert data == b"x" * 100 + b"\n"
+    assert truncated is False
+
+
+def test_read_bounded_gives_up_on_a_producer_that_stops_writing() -> None:
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        runner_worker._read_bounded(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('x', flush=True); time.sleep(30)",
+            ],
+            1000,
+            timeout=0.5,
+        )
+
+    assert time.monotonic() - started < 10
+
+
+def test_read_bounded_gives_up_when_stdout_closes_before_the_process_exits() -> None:
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        runner_worker._read_bounded(
+            [sys.executable, "-c", "import os, time; os.close(1); time.sleep(30)"],
+            1000,
+            timeout=0.5,
+        )
+
+    assert time.monotonic() - started < 10
+
+
+def test_read_bounded_kills_the_child_when_a_read_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processes: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+    real_read = os.read
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        stdout_fd = process.stdout.fileno()
+
+        # Only the child's stdout is unreadable; Popen itself reads its own
+        # exec-error pipe through the same module function.
+        def failing_read(fd: int, size: int) -> bytes:
+            if fd == stdout_fd:
+                raise OSError("read failed")
+            return real_read(fd, size)
+
+        monkeypatch.setattr(runner_worker.os, "read", failing_read)
+        return process
+
+    monkeypatch.setattr(runner_worker.subprocess, "Popen", recording_popen)
+
+    with pytest.raises(OSError):
+        runner_worker._read_bounded(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('x', flush=True); time.sleep(30)",
+            ],
+            1000,
+            timeout=30,
+        )
+
+    assert len(processes) == 1
+    assert processes[0].poll() is not None
+
+
 @pytest.mark.parametrize("status", ["partial", "timeout", "", "unavailable"])
 def test_worker_fails_closed_when_the_lane_is_not_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
@@ -1414,14 +1656,13 @@ def test_heartbeat_writes_every_beat_to_the_transcript_and_out(
     )
 
     assert code == 0
-    heartbeat = "worker: review lane running"
+    heartbeat = "worker: worker running"
     text = _transcript(paths)
     stdout = out.getvalue().decode("utf-8")
-    # The worker writes one "review lane running" line before it starts the
-    # lane; only the occurrences after it are heartbeat beats. Every beat must
-    # reach both surfaces, not just the transcript.
-    assert text.count(heartbeat) - 1 >= 2
-    assert stdout.count(heartbeat) - 1 >= 2
+    # The beat is a fixed text of its own, so every occurrence is a heartbeat.
+    # Every beat must reach both surfaces, not just the transcript.
+    assert text.count(heartbeat) >= 2
+    assert stdout.count(heartbeat) >= 2
 
 
 def test_heartbeat_stops_when_the_lane_raises(
@@ -1452,12 +1693,100 @@ def test_heartbeat_stops_when_the_lane_raises(
     )
 
 
+class _CountingSink:
+    """An output mirror that counts the heartbeat beats it receives."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self.beats = 0
+        self._buffer = io.BytesIO()
+
+    def write(self, data: bytes | str) -> int:
+        text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+        if text.strip() == "worker: worker running":
+            with self._guard:
+                self.beats += 1
+        raw = data if isinstance(data, bytes) else data.encode("utf-8")
+        return self._buffer.write(raw)
+
+    def flush(self) -> None:
+        self._buffer.flush()
+
+
+def test_heartbeat_keeps_beating_while_the_review_is_posted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The review POST is a network wait that grows no transcript. The fake
+    # executor holds until a beat written after it began, with a bounded wait
+    # so a heartbeat that stopped after the lane fails the test, not hangs it.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    sink = _CountingSink()
+    beats_at_post: list[int] = []
+
+    def execute(store: Store, _runner: Any, activity_id: str) -> str:
+        start = sink.beats
+        deadline = time.monotonic() + 5
+        while sink.beats == start and time.monotonic() < deadline:
+            time.sleep(0.005)
+        beats_at_post.append(sink.beats - start)
+        return _mark_done(store, activity_id)
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        execute=execute,
+        heartbeat_seconds=0.01,
+        out=sink,
+    )
+
+    assert code == 0
+    assert beats_at_post and beats_at_post[0] >= 1
+
+
+class _FailingSink:
+    """A mirror whose every write raises, like a closed tmux pane."""
+
+    def __init__(self) -> None:
+        self.beats = 0
+
+    def write(self, data: bytes | str) -> int:
+        text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+        if text.strip() == "worker: worker running":
+            self.beats += 1
+        raise OSError("mirror is gone")
+
+    def flush(self) -> None:
+        raise OSError("mirror is gone")
+
+
+def test_a_broken_output_mirror_does_not_stop_the_heartbeats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only the transcript feeds the watchdog, so a failing standard-output
+    # mirror must not end the heartbeat thread and let the job look stalled.
+    paths = _write_worker_files(tmp_path)
+    _insert_job(tmp_path, paths, monkeypatch)
+    sink = _FailingSink()
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch([], sleep=0.2),
+        heartbeat_seconds=0.01,
+        out=sink,
+    )
+
+    assert code == 0
+    assert sink.beats >= 2
+
+
 class _BlockingHeartbeatSink:
     """An output stream that blocks one heartbeat write until the test releases it.
 
-    The worker writes one "review lane running" progress line before the lane
-    starts; the second occurrence of that text is the first heartbeat, and it is
-    the write that blocks.
+    The block is armed only once the lane is running, so the heartbeat is not
+    stopped in an earlier step while the worker still has to call `progress`.
+    The first matching write after arming holds the shared progress lock.
     """
 
     def __init__(self, heartbeat_text: str) -> None:
@@ -1465,16 +1794,17 @@ class _BlockingHeartbeatSink:
         self._seen = 0
         self._guard = threading.Lock()
         self._buffer = io.BytesIO()
+        self.armed = threading.Event()
         self.blocked = threading.Event()
         self.release = threading.Event()
 
     def write(self, data: bytes | str) -> int:
         text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
         block = False
-        if text.strip() == self._heartbeat_text:
+        if text.strip() == self._heartbeat_text and self.armed.is_set():
             with self._guard:
                 self._seen += 1
-                block = self._seen == 2
+                block = self._seen == 1
         if block:
             self.blocked.set()
             # The test always releases this in a finally; the timeout only
@@ -1490,12 +1820,12 @@ class _BlockingHeartbeatSink:
 def test_exit_file_waits_for_a_blocked_heartbeat_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The join after the lane must be unconditional: a heartbeat write still in
-    # progress may not leave the exit file behind it while the worker can still
-    # write another transcript line.
+    # The join before the exit file must be unconditional: a heartbeat write
+    # still in progress may not leave the exit file behind it while the worker
+    # can still write another transcript line.
     paths = _write_worker_files(tmp_path)
     _insert_job(tmp_path, paths, monkeypatch)
-    sink = _BlockingHeartbeatSink("worker: review lane running")
+    sink = _BlockingHeartbeatSink("worker: worker running")
     exit_path = paths.logs / "job-1.exit"
     lane_running = threading.Event()
     finish_lane = threading.Event()
@@ -1503,8 +1833,8 @@ def test_exit_file_waits_for_a_blocked_heartbeat_write(
     failures: list[BaseException] = []
 
     def launch(**kwargs: Any) -> LaneResult:
-        # Hold the lane open while the heartbeat beats, so the blocked write is
-        # guaranteed to belong to a running lane rather than a stopped one.
+        # Hold the lane open while a beat blocks, so the write belongs to a
+        # worker that still has work to do rather than one already stopping.
         lane_running.set()
         finish_lane.wait(5)
         return LaneResult(
@@ -1536,9 +1866,11 @@ def test_exit_file_waits_for_a_blocked_heartbeat_write(
     worker.start()
     try:
         assert lane_running.wait(5), "the lane never started"
+        sink.armed.set()
         assert sink.blocked.wait(5), "the heartbeat never reached the output sink"
         finish_lane.set()
-        # The lane is over, so the worker can only be in the heartbeat join now.
+        # The lane is over, but the beat still holds the progress lock, so the
+        # worker can only be waiting to finish.
         time.sleep(0.2)
         assert worker.is_alive()
         assert not exit_path.exists()
