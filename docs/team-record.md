@@ -136,7 +136,8 @@ sequenceDiagram
     B->>H: I want to sign in
     H->>B: Challenge (random value)
     Note over B: You confirm with fingerprint,<br/>face or security key
-    B->>H: Challenge signed by your passkey
+    Note over B: The browser creates a session key
+    B->>H: Your passkey's signature over the challenge,<br/>the session key and its expiry
     H->>H: Check signature against your<br/>registered public key
     H->>B: Signed in
 ```
@@ -405,11 +406,12 @@ None at the moment. Three earlier questions were decided on 2026-11-17:
 
 1. **Passkey sync.** A staff member's passkey may be synced by their platform between their own
    devices.
-2. **What "released" and "done" mean.** A task is done when its pull requests are merged into
-   the default branch. A security issue is done only after a staff member has also confirmed
+2. **What "released" and "done" mean.** A task is done when every linked pull request is
+   merged or closed and at least one of them is merged into the default branch. A security issue is done only after a staff member has also confirmed
    that the change is rolled out to production and was checked there. The rule can be changed
-   per task. A release query is answered with yes when the pull request is linked to a task
-   that has an assignee, is in progress or ready for review, and has no unanswered question.
+   per task. A release query is answered with yes only when the pull request is linked to at
+   least one task, every linked task has an assignee and is in progress or ready for review,
+   and no question of an order for a linked task is unanswered.
    The binding text is [DESIGN.md §24.11](../DESIGN.md#2411-done-and-released).
 3. **Reading at the edge.** It is accepted that the network edge can read content in transit.
    It still cannot forge or replay anything.
@@ -437,7 +439,7 @@ None at the moment. Three earlier questions were decided on 2026-11-17:
 | **Scope** | A right attached to a key, such as `record:read` |
 | **Service key** | The key of an external program, with minimal scopes and an expiry |
 | **Event** | One signed change to one object |
-| **Chain** | All events in order, each pointing to the one before by its fingerprint |
+| **Chain** | The events signed by one key, each pointing to that key's previous event by its fingerprint; the hub's record keeps all events in arrival order with a running fingerprint |
 | **Fingerprint (hash)** | A short value computed from data; any change to the data changes it |
 | **Nonce** | A random value used once, so an old message cannot be sent again |
 | **Fold** | Applying events in order to get the state at a moment |

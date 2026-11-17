@@ -114,7 +114,7 @@ sequenceDiagram
 ```
 
 - Orders on one executor run one after another.
-- When several answers arrive, the first valid one wins.
+- When several answers arrive, the executor accepts the first valid one and refuses the rest.
 - If the hub is unreachable, the executor keeps working on what it accepted and keeps
   recording. Everything is synced afterwards without a gap.
 - Handing over is the normal way and stays voluntary. A session on your controller may do the
@@ -129,8 +129,15 @@ SSH: the machine holds a list of public keys it accepts, and nothing else gets i
 
 **The allow list.** Every device has one local file that lists every public key it obeys, what
 that key may do and until when. A key that is not in the file can do nothing on the device,
-whatever the hub says. An entry is added only by a statement signed with a key of the owner
-that is already in the file, or by hand on the device.
+whatever the hub says.
+
+- The first entries are set by hand on the device, when you connect it: you confirm there the
+  fingerprint of each key to be listed.
+- Later, an entry is added, changed or removed only from one of your controller devices,
+  signed with that device's key after you confirmed it there, or by hand on the device. The
+  website can ask for such a change; it cannot make it.
+- Sessions, orders and direct logins run under a different system account and cannot read or
+  change the allow list or the device's key.
 
 **Signing in.** You sign in with your passkey, confirmed by fingerprint, face or PIN. That is
 the only time you are asked. Your browser then creates a session key that cannot be copied out
@@ -146,23 +153,25 @@ sequenceDiagram
     B->>H: Command, signed with the session key,<br/>with the passkey's certificate
     H->>H: Checks both signatures
     H->>X: Delivers command and certificate
-    X->>X: Passkey in my allow list?<br/>Certificate valid and not expired?<br/>Command signature valid?<br/>Not seen before, not too old?
+    X->>X: Passkey in my allow list?<br/>Certificate valid, not expired,<br/>not longer than one working day?<br/>Command signature valid?<br/>Not seen before, not too old?
     X->>X: Writes command and proofs<br/>to its local log, then runs it
 ```
 
-**A grant** is how a colleague allows you something on their device. They sign a statement:
-which key, which device, what exactly, for which repositories, until when. Their device checks
-it and writes it into its allow list. A grant always expires and can be removed earlier.
+**A grant** is how a colleague allows you something on their device. They sign a statement
+from one of their controller devices: which key, which device, what exactly, for which
+repositories, until when. Their device checks it and writes it into its allow list. A grant always expires and can be removed earlier.
 
 **Taking a key away.** A revoked key is refused by the hub at once, and the hub tells every
 device to stop obeying it. On the hub's word a device may obey less, never more.
 
 **What this protects against.** Someone who takes over the hub can delay, drop or read
-commands. They cannot create a command that any device accepts.
+commands. They cannot create a command signed by a device key, and they cannot change whom a
+device obeys.
 
 **What stays a risk.** The website's code is delivered by the hub. A hub that was taken over
-could show you one command and sign another while you are signed in. The session key's short
-life and a published hash of the website reduce that risk. They do not remove it. A command
+could show you one command and sign another while you sign in or are signed in, in your name.
+That ends when the session key expires, and it never reaches an allow list. The session key's
+short life and a published hash of the website reduce the risk. They do not remove it. A command
 can always be issued from a controller device instead, whose program does not come from the
 hub.
 
@@ -184,7 +193,8 @@ the work has no clear home.
 | done | Finished. |
 | closed | Ended without being done. |
 
-**When is a task done?** Normally when its pull requests are merged into the default branch. A
+**When is a task done?** Normally when every linked pull request is merged or closed and at
+least one of them is merged into the default branch. A
 security issue is done only after a staff member has also confirmed that the change is rolled
 out to production and was checked there. The rule can be changed per task.
 
@@ -200,17 +210,18 @@ there.
 | Store | Holds | Rule |
 |---|---|---|
 | Team record | Tasks, log entries, orders, questions, answers, grants, every command | Signed, chained, never deleted, no secrets and no personal data |
-| Session log | Everything a session shows and receives | Recorded on the device first, synced completely, never deleted |
-| Access log | Every request to the hub, including every page view | Written by the hub |
+| Session log | Everything a session shows and receives | Recorded on the device first, synced completely, never deleted; the only later change is masking |
+| Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
 
-- A command that cannot be recorded is not executed.
+- A command that cannot be written to the device's local log is not executed.
 - **Executors hide nothing.** Every AI session on an executor runs inside this system and is
   recorded in full. Direct logins to an executor are recorded too.
 - **Your controller may work outside.** You may start an AI session on your controller that
   does not use this system. It is then not recorded and not visible.
 - A session log can contain a password or a name that appeared on the screen by mistake. Such
-  a value may be **masked** afterwards. Who masked what, when and why is recorded. A command,
-  an answer or a decision can never be masked.
+  a value may be **masked** afterwards, also inside typed text. Who masked what, when and why
+  is recorded. Who sent a command, an answer or a decision, to which target and when, and what
+  was decided, can never be masked.
 
 ## 9. Watching and steering a session
 
@@ -224,7 +235,7 @@ questions that pop up. Otherwise you watch.
 
 The start page shows the whole team at once:
 
-- **Tasks:** done, merged and waiting for the check in production, in progress, stalled for 60
+- **Tasks:** done, closed, merged and waiting for the check in production, in progress, stalled for 60
   minutes, ready for review, to do, unassigned.
 - **Pull requests:** draft, ready for review, merged, closed. They are read from the code host.
 - **Devices:** connected, working, idle. **Sessions:** working, waiting for an answer, idle.
@@ -267,11 +278,11 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 
 | Event | What happens |
 |---|---|
-| You join | Your passkeys are added by pull request. You connect your devices and confirm each with a passkey. |
-| You add a device | A new key is created on it and added by pull request. You confirm on the device. |
+| You join | Your passkeys are added by pull request. You connect your devices. |
+| You add a device | A new key is created on it and added by pull request. On the device you confirm the keys it will obey. |
 | You leave | Your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
-| A device is lost | Its key is revoked and its broker key disabled. Its history stays in the hub. |
-| A passkey is lost | A pull request revokes it, and your devices stop obeying it. You sign in with another passkey and remove it from your devices. |
+| A device is lost | Its key is revoked and its broker key disabled. You end its open orders and withdraw their questions. Its history stays in the hub. |
+| A passkey is lost | A pull request revokes it, and your devices stop obeying it. You remove it from your devices from a controller device. |
 
 ## 15. What stays refused
 
@@ -334,15 +345,17 @@ Only sessions that use this system. A session you start outside it on your contr
 neither recorded nor visible.
 
 **How often do I confirm with my fingerprint?**
-Once, when you sign in. The session key then lasts at most one working day.
+Once, when you sign in. The session key then lasts at most one working day. Connecting a
+device and changing its allow list are confirmed on a device, not with the passkey.
 
 **What if the hub is down?**
 Executors keep working on what they accepted and keep recording. You can still submit work on
 the device itself. Everything syncs afterwards.
 
 **What if someone breaks into the hub?**
-They can read, delay and drop. They cannot make any device do anything, because each device
-checks every command against its own allow list.
+They can read, delay and drop. They cannot sign as a device and cannot change whom a device
+obeys. While you are signed in, a changed website could get a command signed in your name
+until your session key expires (section 6, What stays a risk).
 
 **Where did the issues and the lists go?**
 They were imported once. The old place points to the hub and is no longer edited.
