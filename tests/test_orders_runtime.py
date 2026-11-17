@@ -30,6 +30,7 @@ from agent_cli.coordinator_git import (
     control_dir,
     draft_pr_body,
     refresh_draft_body,
+    replace_existing_order_draft_body,
 )
 from agent_cli.coordinator_github import (
     _apply_readiness_checklist,
@@ -457,6 +458,79 @@ def test_refresh_draft_body_updates_an_order_draft(
     )
     assert "Entwurf für Auftrag" not in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
+
+
+def test_done_pr_body_does_not_keep_an_english_title_under_de(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
+    source = coord(task)["source"]
+    intended = draft_pr_body(source, None, None, None, None)
+    activity_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{intended}")
+    )
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "pr.body",
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": intended,
+            },
+            "execution_status": "done",
+        },
+    )
+    fake.pr["body"] = (
+        "EN:\nDraft for order 11111111: Add a widget.\n\n"
+        "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
+    )
+    assert replace_existing_order_draft_body(store, worker, task, fake) == [
+        "replaced order draft body on example/project#42"
+    ]
+    assert fake.pr["body"] == intended
+    assert "DE:" not in fake.pr["body"]
+    assert "Entwurf für Auftrag" not in fake.pr["body"]
+    listed = seed_order_task(store, worker, OID2, phase="implement", pr_number=42)
+    reused = ["`src/pay.ts:40` existing gift invoice"]
+    added = ["`src/habit.ts:12` member habit route"]
+    listed["reused_lines"] = reused
+    listed["added_lines"] = added
+    save_task(store, listed)
+    listed_body = draft_pr_body(coord(listed)["source"], reused, added, None, None)
+    listed_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-pr-body:{listed['id']}:{listed_body}")
+    )
+    store.write(
+        "activity",
+        "insert",
+        listed_id,
+        {
+            "id": listed_id,
+            "session_id": worker.session_id,
+            "type": "pr.body",
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": listed_body,
+            },
+            "execution_status": "done",
+        },
+    )
+    fake.pr["body"] = (
+        "EN:\nDraft for order 33333333: Add a widget.\n\n"
+        "DE:\nEntwurf für Auftrag 33333333: Add a widget.\n\n"
+    )
+    assert refresh_draft_body(store, worker, listed, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    assert fake.pr["body"] == listed_body
+    assert "Entwurf für Auftrag" not in fake.pr["body"]
 
 
 def test_review_context_uses_the_order_text(
