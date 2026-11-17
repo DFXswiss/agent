@@ -1587,7 +1587,8 @@ Three stores with three different rules:
 
 - Every command is in the team record with the key that signed it. A command that is not recorded is not executed.
 - This replaces the rule of §17 that live terminal bytes are never stored. They become part of the session log.
-- A session log can contain a secret or personal data that appeared on a screen. That is why it is a separate store and not part of the chain that can never be deleted. The device redacts known secret patterns before anything leaves it. How long session logs are kept is an open decision (§25.15).
+- A session log can contain a secret or personal data that appeared on a screen. That is why it is a separate store and not part of the chain that can never be deleted. The device redacts known secret patterns before anything leaves it.
+- Session logs are kept and never deleted. A password, a name or similar data that was recorded by mistake may be **masked** afterwards (decided on 2026-11-17): the value is replaced by a marker on the hub, on the device and in every copy. The masking is itself a signed command in the team record that names who masked which place, when and why, and never the value. Masking covers only such a value, never a command, an answer or a decision.
 
 ### 25.8 Watching and steering a session
 
@@ -1654,7 +1655,6 @@ Optional, later, and not part of the core: the team holds one central account at
 
 Each is decided by a human before the part it affects is built:
 
-- How long session logs are kept, and whether they follow the never-delete rule of the team record.
 - Whether a controller device may give work only to executors of the same staff member, or also to others with their consent.
 - Whether sessions on a controller device that were not handed over are recorded in the same full detail.
 - Whether push through the phone makers' services is acceptable under the rule against third-party dependencies (§24.2 covers identity only).
