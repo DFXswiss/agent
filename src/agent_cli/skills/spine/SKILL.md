@@ -25,11 +25,14 @@ The static script owns execution and progression. A model lane must not invoke
 Tests and lane starts in the workflow below are script responsibilities; models
 return their implementation or review results. See
 [DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
-Every vendor-lane start also requires `ai-accounts.json` to mark the current
-device as a lane host. The local harness's lane starter starts the command on
-that external host; Agent does not mirror work there. Missing, invalid, or
-`remote` `lane_execution` fails closed; `--no-tmux` is not an execution-device
-bypass.
+Every vendor-lane start also requires `ai-accounts.json` to declare
+`lane_execution`. The local harness's lane starter starts the command on that
+external lane host; or a `delegate` declaration names one local foreground
+operator command that runs each headless model lane elsewhere. Agent does not
+mirror work itself; the operator command does the copy and transport. Missing,
+invalid, or `remote` `lane_execution` fails closed; `--no-tmux` is not an
+execution-device bypass. A `delegate` declaration satisfies the check for an
+interactive start, which stays local and is never prefixed.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 

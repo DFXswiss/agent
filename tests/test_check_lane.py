@@ -502,6 +502,50 @@ def test_check_lane_runs_in_an_empty_directory(
     assert store.row("task", ORDER_ID) is not None
 
 
+def test_check_lane_delegate_prefixes_the_judgment_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, _task, fake, ctx = setup(tmp_path, monkeypatch)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/operator/lane", "--flag"],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    ordinary = order_lane_runner(fake)
+    seen: list[list[str]] = []
+
+    def runner(argv, stdin=None):  # noqa: ANN001
+        seen.append(list(argv))
+        return ordinary(argv, stdin)
+
+    result = _resolve(replace(ctx, lane_runner=runner))
+    assert isinstance(result, CheckValue) and result.status == "ja"
+    argv = seen[0]
+    cwd = control_dir(worker, ORDER_ID) / "checks" / "duplicates_checked" / "cwd"
+    spec = control_dir(worker, ORDER_ID) / "check-duplicates_checked-driver-a.md"
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(cwd)
+    reads = [
+        argv[index + 1]
+        for index, item in enumerate(argv[:-1])
+        if item == "--read"
+    ]
+    assert str(spec) in reads
+    assert "/test/driver-a" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert [
+        argv[index + 1]
+        for index, item in enumerate(argv[:-1])
+        if item == "--write-back"
+    ] == []
+
+
 def test_check_lane_refuses_a_foreign_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1015,3 +1059,237 @@ def test_check_lane_runs_the_driver_judgment_template(tmp_path: Path) -> None:
         "--tools", "", "--mode", "default",
     ]
     assert stdin == "Is this a duplicate?"
+
+
+def test_check_lane_missing_task_models_is_a_coordinator_error(
+    tmp_path: Path,
+) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-a")
+    with pytest.raises(CoordinatorError, match="task models is not configured"):
+        _run_placeholder_check(replace(ctx, task={"id": ORDER_ID}))
+
+
+def test_check_lane_unreadable_accounts_is_a_coordinator_error(
+    tmp_path: Path,
+) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-a")
+    (ctx.store.home / "ai-accounts.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+    with pytest.raises(CoordinatorError, match="Cannot read ai-accounts.json"):
+        _run_placeholder_check(ctx)
+
+
+def test_check_lane_unwritable_control_directory_is_a_configuration_error(
+    tmp_path: Path,
+) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-a")
+    (ctx.worker.workspace_root / ".coordinator-control").write_text(
+        "blocked\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        CoordinatorError, match="cannot create a fresh check lane directory"
+    ):
+        _run_placeholder_check(ctx)
+
+
+def test_check_lane_uses_run_bounded_without_a_lane_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[list[str], int, str, str | None]] = []
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "RESULT: ok",
+    }
+
+    def run_bounded(
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: str,
+        stdin_text: str | None = None,
+    ) -> Completed:
+        seen.append((list(argv), timeout, cwd, stdin_text))
+        return Completed(0, json.dumps(payload), "")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_check_lane.run_bounded", run_bounded
+    )
+    ctx = _placeholder_check_context(tmp_path, "driver-c")
+    outcome = _run_placeholder_check(ctx)
+
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    argv, timeout, cwd, stdin_text = seen[0]
+    expected = (
+        control_dir(ctx.worker, ORDER_ID)
+        / "checks"
+        / "duplicates_checked"
+        / "cwd"
+    )
+    assert cwd == str(expected)
+    assert timeout == ctx.worker.lane_timeout
+    assert stdin_text == "Is this a duplicate?"
+    assert "tool-c" in argv
+
+
+def test_check_lane_empty_final_text_is_failed(tmp_path: Path) -> None:
+    ctx = _placeholder_check_context(
+        tmp_path,
+        "driver-a",
+        lanes=lambda argv, stdin=None: Completed(0, "", ""),
+    )
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.detail) == ("failed", "empty output")
+
+
+def test_check_lane_does_not_reclose_an_agent_row_already_closed(
+    tmp_path: Path,
+) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-c")
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "RESULT: ok",
+    }
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        for row in ctx.store.rows("agent"):
+            if (
+                row.get("task_id") == ORDER_ID
+                and row.get("role") == "check"
+                and row.get("status") == "working"
+            ):
+                closed = strip_row(row)
+                closed["status"] = "done"
+                closed["finished_at"] = "2026-01-01T00:00:01Z"
+                ctx.store.write("agent", "update", str(row["id"]), closed)
+        return Completed(0, json.dumps(payload), "")
+
+    outcome = _run_placeholder_check(replace(ctx, lane_runner=lane))
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    rows = [
+        row for row in ctx.store.rows("agent") if row.get("task_id") == ORDER_ID
+    ]
+    assert [row["status"] for row in rows] == ["done"]
+    assert _lane_runs(ctx.store)
+
+
+def test_check_lane_ignores_an_unlink_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "RESULT: ok",
+    }
+    outputs: list[Path] = []
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        wrapper = next(
+            index for index, value in enumerate(argv) if "tool-d-key" in value
+        )
+        output = Path(argv[wrapper + 2])
+        outputs.append(output)
+        output.write_text(json.dumps(payload), encoding="utf-8")
+        return Completed(0, "", "")
+
+    ctx = _placeholder_check_context(tmp_path, "driver-d", lanes=lane)
+    real_unlink = Path.unlink
+
+    def refusing_unlink(self, *args: Any, **kwargs: Any) -> None:
+        if self.name.startswith("agent-check-"):
+            raise OSError("output file is busy")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refusing_unlink)
+    outcome = _run_placeholder_check(ctx)
+
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    assert outputs and outputs[0].exists()
+    real_unlink(outputs[0])
+
+
+def test_check_lane_delegate_writes_the_judgment_output_file_back(
+    tmp_path: Path,
+) -> None:
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/lane", "--profile", "work"],
+    }
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "RESULT: ok",
+    }
+    seen: list[list[str]] = []
+    stdins: list[str | None] = []
+    profiles: list[Path] = []
+    outputs: list[Path] = []
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        stdins.append(stdin)
+        reads = [
+            argv[index + 1]
+            for index, value in enumerate(argv[:-1])
+            if value == "--read"
+        ]
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        wrapper = next(
+            index for index, value in enumerate(argv) if "tool-d-key" in value
+        )
+        output = Path(argv[wrapper + 2])
+        outputs.append(output)
+        output.write_text(json.dumps(payload), encoding="utf-8")
+        return Completed(0, "", "")
+
+    ctx = _placeholder_check_context(
+        tmp_path, "driver-d", accounts=accounts, lanes=lane
+    )
+    outcome = _run_placeholder_check(ctx)
+
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    argv = seen[0]
+    cwd = (
+        control_dir(ctx.worker, ORDER_ID)
+        / "checks"
+        / "duplicates_checked"
+        / "cwd"
+    )
+    spec = (
+        control_dir(ctx.worker, ORDER_ID)
+        / "check-duplicates_checked-driver-d.md"
+    )
+    assert argv[:3] == ["/opt/operator/lane", "--profile", "work"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(cwd)
+    reads = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--read"
+    ]
+    assert str(spec) in reads
+    assert "/operator/path/tool-d" in reads
+    assert str(profiles[0]) in reads
+    write_backs = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--write-back"
+    ]
+    assert write_backs == [str(outputs[0])]
+    assert stdins == ["Is this a duplicate?"]
+    assert not profiles[0].exists()
+    assert not outputs[0].exists()

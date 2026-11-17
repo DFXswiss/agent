@@ -20584,3 +20584,1379 @@ def test_legacy_passing_second_review_recovers_activity_timestamp(
     assert result == ["blocker merged-without-second-review"]
     assert isinstance(state.get("requirement_satisfied_at"), str)
     assert "requirement_satisfied_legacy" not in state
+
+
+def _set_delegate_execution(store: Store, argv: list[str]) -> None:
+    """Declare one local operator command as this device's lane execution."""
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {"mode": "delegate", "argv": argv}
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _delegate_flag_values(argv: list[str], flag: str) -> list[str]:
+    """Values that follow one operator flag in a delegated lane argv."""
+    return [
+        argv[index + 1] for index, item in enumerate(argv[:-1]) if item == flag
+    ]
+
+
+def _seed_delegate_implementer_task(
+    store: Store, worker: Any, tid: str, worktree: Path
+) -> dict[str, Any]:
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "models": {"first": "driver-a", "second": "driver-b"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", tid, task)
+    return task
+
+
+def test_delegate_lane_execution_changes_the_execution_binding(
+    tmp_path: Path,
+) -> None:
+    """The binding hashes the operator command only in delegate mode."""
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    local_binding = execution_binding(store, worker, repo)
+    local = load_ai_accounts(store.home).require_lane_execution()
+    assert local.binding_object() == {"mode": "this-device-is-lane-host"}
+
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    delegated_binding = execution_binding(store, worker, repo)
+    delegated = load_ai_accounts(store.home).require_lane_execution()
+
+    assert delegated_binding != local_binding
+    assert delegated.binding_object() == {
+        "mode": "delegate",
+        "argv": ["/operator/lane", "--flag"],
+    }
+
+
+def test_launch_lane_delegate_prefixes_the_lane_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "delegate-prefix"
+    worktree.mkdir()
+    (worktree / ".git").mkdir()
+    (worktree / ".git" / "HEAD").write_text(
+        "ref: refs/heads/develop\n", encoding="utf-8"
+    )
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    task = _seed_delegate_implementer_task(
+        store, worker, "aa000001-0000-4000-8000-0000000000f1", worktree
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        (worktree / "tracked.py").write_text("changed\n", encoding="utf-8")
+        return Completed(
+            0,
+            event_stream_output(
+                "STATUS: complete\n"
+                "RESULT: done\n"
+                "SUMMARY_EN: Added the widget.\n"
+                "SUMMARY_DE: Widget hinzugefuegt.\n"
+            ),
+            "",
+        )
+
+    _agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="driver-a",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=run,
+    )
+
+    assert result.status == "complete"
+    argv = seen[0]
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(worktree)
+    reads = _delegate_flag_values(argv, "--read")
+    assert any(value.endswith("implementer-driver-a.md") for value in reads)
+    assert "/test/driver-a" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert _delegate_flag_values(argv, "--write-back") == [str(worktree)]
+    assert "tool-a" in argv[separator + 1 :]
+
+
+def test_run_prepared_delegate_prefixes_a_pr_review_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import control_dir
+
+    tid = "aa000001-0000-4000-8000-0000000000f4"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        output = Path(_delegate_flag_values(argv, "--last-message")[0])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=run
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    argv = seen[0]
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(prepared["worktree"])
+    reads = _delegate_flag_values(argv, "--read")
+    assert str(prepared["worktree"]) in reads
+    assert str(control_dir(worker, tid)) in reads
+    assert str(prepared["spec_file"]) in reads
+    assert "/test/driver-b" in reads
+    assert any(
+        Path(value).name.startswith("agent-lane-empty-gh-") for value in reads
+    )
+    assert _delegate_flag_values(argv, "--write-back") == [
+        str(prepared["output_file"])
+    ]
+
+
+def _launch_store(tmp_path: Path) -> tuple[Store, Any]:
+    """A Store with the worker/manifest fixtures every launch_lane test needs."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    return store, make_worker(tmp_path)
+
+
+def _edit_ai_accounts(store: Store, edit: Any) -> None:
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    edit(data)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _launch_task(
+    store: Store,
+    worker: Any,
+    tid: str,
+    *,
+    worktree: str,
+    models: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "models": models or {"first": "driver-a", "second": "driver-b"},
+        "payload": {
+            "coordinator": {"worktree": worktree, "head_sha": "a" * 40}
+        },
+    }
+    store.write("task", "insert", tid, task)
+    return task
+
+
+def _seed_blocking_reviewer(
+    store: Store,
+    worker: Any,
+    tid: str,
+    *,
+    vendor: str,
+) -> dict[str, Any]:
+    aid = "aa000002-0000-4000-8000-0000000000b1"
+    store.write(
+        "agent",
+        "insert",
+        aid,
+        {
+            "id": aid,
+            "session_id": worker.session_id,
+            "task_id": tid,
+            "round": 1,
+            "role": "reviewer",
+            "vendor": vendor,
+            "provider": vendor,
+            "model": "driver-a-model",
+            "prompt": "Review.",
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+            "head_sha": "a" * 40,
+            "dimension": "inner",
+            "stage": "inner-review",
+        },
+    )
+    row = store.row("agent", aid)
+    assert row is not None
+    return row
+
+
+def _patch_checkout_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+
+
+def _accept(argv: list[str]) -> Completed:
+    return Completed(0, "", "")
+
+
+def test_launch_lane_missing_task_models_is_a_coordinator_error(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    task = {"id": "aa000001-0000-4000-8000-0000000000c1"}
+    with pytest.raises(CoordinatorError, match="task models is not configured"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=_accept,
+            lane_runner=None,
+        )
+
+
+def test_launch_lane_reviewer_retry_returns_the_pending_spool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.lane import LaneResult
+    from agent_cli.store import StoreError
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "retry"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c2"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    existing = _seed_blocking_reviewer(store, worker, tid, vendor="driver-a")
+    _patch_checkout_identity(monkeypatch)
+    pending = LaneResult(
+        role="reviewer",
+        vendor="driver-a",
+        model="driver-a-model",
+        status="complete",
+        argv=["tool-a"],
+        returncode=0,
+        stdout="approved",
+        stderr="",
+    )
+
+    def unreadable(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError("reviewer spool unreadable")
+
+    monkeypatch.setattr(
+        coordinator_lanes, "_retry_reviewer_checkpoint", unreadable
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_read_reviewer_spool",
+        lambda *args, **kwargs: (pending, None, None),
+    )
+
+    agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="reviewer",
+        vendor="driver-a",
+        round_num=1,
+        spec_body="Review.",
+        runner=_accept,
+        lane_runner=None,
+    )
+
+    assert result is pending
+    assert agent["id"] == existing["id"]
+
+
+def test_launch_lane_reviewer_retry_without_a_pending_spool_reraises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.store import StoreError
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "retry-none"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c3"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _seed_blocking_reviewer(store, worker, tid, vendor="driver-a")
+    _patch_checkout_identity(monkeypatch)
+
+    def unreadable(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError("reviewer spool unreadable")
+
+    monkeypatch.setattr(
+        coordinator_lanes, "_retry_reviewer_checkpoint", unreadable
+    )
+    monkeypatch.setattr(
+        coordinator_lanes, "_read_reviewer_spool", lambda *args, **kwargs: None
+    )
+
+    with pytest.raises(StoreError, match="reviewer spool unreadable"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="reviewer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Review.",
+            runner=_accept,
+            lane_runner=None,
+        )
+
+
+def test_launch_lane_reviewer_retry_without_recovery_discards_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "retry-empty"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c4"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _seed_blocking_reviewer(store, worker, tid, vendor="driver-a")
+    _patch_checkout_identity(monkeypatch)
+    discarded: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        coordinator_lanes, "_retry_reviewer_checkpoint", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "_discard_failed_reviewer_spool",
+        lambda store, worker, task_id, agent_id, output_file: discarded.append(
+            (task_id, agent_id)
+        ),
+    )
+
+    with pytest.raises(
+        LaneFailedError, match="a lane record of an earlier tick is still open"
+    ):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="reviewer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Review.",
+            runner=_accept,
+            lane_runner=None,
+        )
+    assert discarded and discarded[0][0] == tid
+
+
+def test_launch_lane_missing_worktree_is_a_coordinator_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000c5"
+    task = _launch_task(store, worker, tid, worktree="")
+    _patch_checkout_identity(monkeypatch)
+    with pytest.raises(CoordinatorError, match="worktree missing"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=_accept,
+            lane_runner=None,
+        )
+
+
+def test_launch_lane_unreadable_accounts_is_a_coordinator_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "accounts"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c6"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    (store.home / "ai-accounts.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(CoordinatorError, match="Cannot read ai-accounts.json"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=_accept,
+            lane_runner=None,
+        )
+
+
+def test_launch_lane_missing_lane_execution_is_a_coordinator_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "execution"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c7"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    _edit_ai_accounts(store, lambda data: data.pop("lane_execution", None))
+    with pytest.raises(CoordinatorError, match="lane_execution is not configured"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=_accept,
+            lane_runner=None,
+        )
+
+
+def test_launch_lane_survive_run_bounded_uses_the_capture_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without an injected runner the lane survives with its durable profile."""
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import control_dir
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "survive"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c8"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    seen: list[tuple[list[str], dict[str, Any], Path]] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assignment = next(
+            value for value in argv if value.startswith("GH_CONFIG_DIR=")
+        )
+        profile = Path(assignment.split("=", 1)[1])
+        assert profile.is_dir()
+        seen.append((list(argv), dict(kwargs), profile))
+        return Completed(
+            0,
+            event_stream_output(
+                "STATUS: complete\n"
+                "RESULT: done\n"
+                "SUMMARY_EN: Added the widget.\n"
+                "SUMMARY_DE: Widget hinzugefuegt.\n"
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="driver-a",
+        round_num=1,
+        spec_body="Implement.",
+        runner=_accept,
+        lane_runner=None,
+    )
+
+    assert result.status == "complete"
+    argv, kwargs, profile = seen[0]
+    lanes = control_dir(worker, tid) / "lanes"
+    expected = lanes / f"{agent['id']}.status.gh"
+    assert profile == expected
+    assert kwargs["survive_stop"] is True
+    assert kwargs["stdout_path"] == str(lanes / f"{agent['id']}.stdout")
+    assert kwargs["stderr_path"] == str(lanes / f"{agent['id']}.stderr")
+    assert kwargs["status_path"] == str(lanes / f"{agent['id']}.status")
+    assert kwargs["pid_path"] == str(lanes / f"{agent['id']}.pid")
+    assert argv[:2] == ["/operator/lane", "--flag"]
+    assert argv[argv.index("--workdir") + 1] == str(worktree)
+    reads = _delegate_flag_values(argv, "--read")
+    assert str(profile) in reads
+    assert _delegate_flag_values(argv, "--write-back") == [str(worktree)]
+    assert not profile.exists()
+
+
+def test_launch_lane_delegated_reviewer_passes_the_output_write_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delegated reviewer writes its output file back, then an interrupt closes it."""
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import control_dir
+
+    store, worker = _launch_store(tmp_path)
+    _edit_ai_accounts(
+        store,
+        lambda data: data["sessions"]["worker-session"]["lanes"].__setitem__(
+            "driver-b:reviewer", "driver-b-rev"
+        ),
+    )
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    worktree = worker.workspace_root / "delegated-review"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000c9"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    profiles: list[Path] = []
+    outputs: list[Path] = []
+    seen: list[list[str]] = []
+
+    def runner(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        reads = _delegate_flag_values(argv, "--read")
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        out = Path(_delegate_flag_values(argv, "--last-message")[0])
+        outputs.append(out)
+        for row in store.rows("agent"):
+            if (
+                row.get("task_id") == tid
+                and row.get("role") == "reviewer"
+                and row.get("status") == "working"
+            ):
+                closed = {
+                    key: value
+                    for key, value in row.items()
+                    if not key.startswith("_")
+                }
+                closed["status"] = "done"
+                closed["finished_at"] = "2026-01-01T00:00:01Z"
+                store.write("agent", "update", str(row["id"]), closed)
+        raise RuntimeError("lane failed")
+
+    with pytest.raises(LaneFailedError, match="lane interrupted: lane failed"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="reviewer",
+            vendor="driver-b",
+            round_num=1,
+            spec_body="Review.",
+            runner=_accept,
+            lane_runner=runner,
+        )
+
+    argv = seen[0]
+    assert argv[argv.index("--workdir") + 1] == str(worktree)
+    reads = _delegate_flag_values(argv, "--read")
+    assert str(control_dir(worker, tid)) in reads
+    assert "/test/driver-b" in reads
+    assert _delegate_flag_values(argv, "--write-back") == [str(outputs[0])]
+    assert profiles and not profiles[0].exists()
+    assert all(row["status"] != "working" for row in store.rows("agent"))
+
+
+def test_launch_lane_delegated_writer_passes_the_output_and_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+
+    def grant_writer(data: dict[str, Any]) -> None:
+        data["roles"]["driver-b-impl"] = {
+            "account": "driver-b-w",
+            "model": "driver-b-model",
+            "access": "workspace-write",
+        }
+        data["sessions"]["worker-session"]["lanes"]["driver-b:implementer"] = (
+            "driver-b-impl"
+        )
+
+    _edit_ai_accounts(store, grant_writer)
+    _set_delegate_execution(store, ["/operator/lane", "--flag"])
+    worktree = worker.workspace_root / "delegated-write"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000ca"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    profiles: list[Path] = []
+    outputs: list[Path] = []
+    seen: list[list[str]] = []
+
+    def runner(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        profile = next(
+            Path(value)
+            for value in _delegate_flag_values(argv, "--read")
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        out = Path(_delegate_flag_values(argv, "--last-message")[0])
+        assert out.exists()
+        outputs.append(out)
+        # driver-b writes its final message to a last-message file, not an
+        # event stream.
+        out.write_text(
+            "STATUS: complete\n"
+            "RESULT: done\n"
+            "SUMMARY_EN: Added the widget.\n"
+            "SUMMARY_DE: Widget hinzugefuegt.\n",
+            encoding="utf-8",
+        )
+        assert stdin is not None
+        return Completed(0, "", "")
+
+    agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="driver-b",
+        round_num=1,
+        spec_body="Implement.",
+        runner=_accept,
+        lane_runner=runner,
+    )
+
+    assert result.status == "complete"
+    argv = seen[0]
+    assert argv[argv.index("--workdir") + 1] == str(worktree)
+    assert _delegate_flag_values(argv, "--write-back") == [
+        str(outputs[0]),
+        str(worktree),
+    ]
+    assert agent["status"] == "done"
+    assert profiles and not profiles[0].exists()
+    assert outputs and not outputs[0].exists()
+
+
+def test_launch_lane_reviewer_spool_system_exit_leaves_the_lane_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "spool-stop"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000cb"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+
+    def stop(*args: Any, **kwargs: Any) -> Any:
+        raise SystemExit(42)
+
+    monkeypatch.setattr(coordinator_lanes, "_write_reviewer_spool", stop)
+    with pytest.raises(SystemExit) as info:
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="reviewer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Review.",
+            runner=_accept,
+            lane_runner=lambda argv, stdin=None: Completed(
+                0, event_stream_output("STATUS: complete\nRESULT: approved"), ""
+            ),
+        )
+    assert info.value.code == 42
+    assert any(
+        row.get("task_id") == tid
+        and row.get("role") == "reviewer"
+        and row.get("status") == "working"
+        for row in store.rows("agent")
+    )
+
+
+def test_launch_lane_non_store_system_exit_leaves_the_lane_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A coordinator stop propagates and keeps the lane process registered."""
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "stop"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000cd"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+    forgotten: list[str] = []
+
+    def forget(worker_arg: Any, task_id: str, agent_id: str) -> None:
+        forgotten.append(agent_id)
+
+    monkeypatch.setattr(coordinator_lanes, "forget_lane_process", forget)
+
+    def stop(argv: list[str], stdin: str | None = None) -> Completed:
+        raise SystemExit(42)
+
+    with pytest.raises(SystemExit) as info:
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            round_num=1,
+            spec_body="Implement.",
+            runner=_accept,
+            lane_runner=stop,
+        )
+    assert info.value.code == 42
+    assert forgotten == []
+    assert any(
+        row.get("task_id") == tid and row.get("status") == "working"
+        for row in store.rows("agent")
+    )
+
+
+def test_launch_lane_records_a_non_reviewer_lane_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_common import coord
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "pr-quality"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000cc"
+    task = _launch_task(store, worker, tid, worktree=str(worktree))
+    _patch_checkout_identity(monkeypatch)
+
+    agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-a",
+        round_num=1,
+        spec_body="Review.",
+        runner=_accept,
+        lane_runner=lambda argv, stdin=None: Completed(
+            0, event_stream_output("STATUS: complete\nRESULT: approved"), ""
+        ),
+    )
+
+    assert result.status == "complete"
+    assert agent["status"] == "done"
+    assert coord(task)["lane"]["state"] == "finished"
+    assert coord(task)["lane"]["agent_id"] == agent["id"]
+
+
+def test_execution_binding_refuses_an_unconfigured_repository_owner(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_common import CoordinatorError
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store, worker = _launch_store(tmp_path)
+    assert worker.repository_owners == ()
+    with pytest.raises(
+        CoordinatorError, match="repository owner other is no longer configured"
+    ):
+        execution_binding(
+            store,
+            worker,
+            "other/project",
+            repository_config=worker.repositories["example/project"],
+            owner_scoped=True,
+        )
+
+
+def _pr_review_task(
+    store: Store,
+    worker: Any,
+    tid: str,
+    worktree: Path,
+    *,
+    models: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _launch_task(
+        store,
+        worker,
+        tid,
+        worktree=str(worktree),
+        models=models,
+    )
+
+
+def test_prepare_pr_review_agent_refuses_a_task_without_models(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    with pytest.raises(CoordinatorError, match="task models is not configured"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            {"id": "aa000001-0000-4000-8000-0000000000d1"},
+            role="pr-reviewer-quality",
+            vendor="driver-b",
+            stage="review-2",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_refuses_a_vendor_the_stage_does_not_pin(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "pinned"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d2"
+    task = _pr_review_task(store, worker, tid, worktree)
+    with pytest.raises(CoordinatorError, match="stage review-2 requires vendor driver-b"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-a",
+            stage="review-2",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_refuses_an_open_lane(tmp_path: Path) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "open"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d3"
+    task = _pr_review_task(store, worker, tid, worktree)
+    store.write(
+        "agent",
+        "insert",
+        "aa000003-0000-4000-8000-0000000000d3",
+        {
+            "id": "aa000003-0000-4000-8000-0000000000d3",
+            "session_id": worker.session_id,
+            "task_id": tid,
+            "round": None,
+            "role": "pr-reviewer-quality",
+            "vendor": "driver-b",
+            "provider": "driver-b",
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+        },
+    )
+    with pytest.raises(
+        LaneFailedError, match="a lane record of an earlier tick is still open"
+    ):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-b",
+            stage="review-2",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_unreadable_accounts_is_a_coordinator_error(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "unreadable"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d4"
+    task = _pr_review_task(store, worker, tid, worktree)
+    (store.home / "ai-accounts.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(CoordinatorError, match="Cannot read ai-accounts.json"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-b",
+            stage="review-2",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_requires_read_only_access(
+    tmp_path: Path,
+) -> None:
+    """The role kind is validated here even when a writable binding is passed."""
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "writable"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d5"
+    task = _pr_review_task(store, worker, tid, worktree)
+    with pytest.raises(CoordinatorError, match="PR review lane requires read-only access"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="driver-a",
+            stage="review-1",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_refuses_a_config_dir_inside_the_worktree(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "overlap"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d6"
+    task = _pr_review_task(
+        store,
+        worker,
+        tid,
+        worktree,
+        models={"first": "driver-d", "second": "driver-b"},
+    )
+
+    def register(data: dict[str, Any]) -> None:
+        data["accounts"]["driver-d-w"] = {
+            "provider": "driver-d",
+            "config_dir": str(worktree),
+        }
+        data["roles"]["driver-d-rev"] = {
+            "account": "driver-d-w",
+            "model": "driver-d-model",
+            "access": "read-only",
+        }
+        data["sessions"]["worker-session"]["lanes"][
+            "driver-d:pr-reviewer-quality"
+        ] = "driver-d-rev"
+
+    _edit_ai_accounts(store, register)
+    with pytest.raises(
+        CoordinatorError, match="driver-d worktree overlaps account config_dir"
+    ):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-d",
+            stage="review-1",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_requires_lane_execution(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "execution"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d7"
+    task = _pr_review_task(store, worker, tid, worktree)
+    _edit_ai_accounts(store, lambda data: data.pop("lane_execution", None))
+    with pytest.raises(CoordinatorError, match="lane_execution is not configured"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-b",
+            stage="review-2",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def test_prepare_pr_review_agent_propagates_a_provider_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without an output file the failure path has nothing to unlink."""
+    from agent_cli import coordinator_lanes
+
+    store, worker = _launch_store(tmp_path)
+    worktree = worker.workspace_root / "provider-fail"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000d8"
+    task = _pr_review_task(
+        store,
+        worker,
+        tid,
+        worktree,
+        models={"first": "driver-a", "second": "driver-b"},
+    )
+
+    def fail(*args: Any, **kwargs: Any) -> list[str]:
+        raise OSError("provider argv failed")
+
+    monkeypatch.setattr(coordinator_lanes, "lane_argv", fail)
+    with pytest.raises(OSError, match="provider argv failed"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="driver-a",
+            stage="review-1",
+            head="a" * 40,
+            spec_body="Review.",
+        )
+
+
+def _minimal_prepared(tmp_path: Path, *, agent_id: str = "aid") -> dict[str, Any]:
+    return {
+        "agent_id": agent_id,
+        "io": LaneIO(
+            output="event-stream",
+            output_file=False,
+            stdin=False,
+            audit_stderr_when_empty=True,
+        ),
+        "argv": ["tool-a"],
+        "stdin_text": None,
+        "worktree": str(tmp_path),
+    }
+
+
+def test_run_prepared_requires_all_capture_paths(tmp_path: Path) -> None:
+    from agent_cli import coordinator_lanes
+
+    prepared = _minimal_prepared(tmp_path)
+    prepared["stdout_path"] = str(tmp_path / "lane.stdout")
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=5, lane_runner=None
+    )
+    assert agent_id == "aid"
+    assert isinstance(outcome, CoordinatorError)
+    assert str(outcome) == "lane capture paths are required"
+
+
+def test_run_prepared_pr_reviewer_survives_through_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e1"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    seen: list[dict[str, Any]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert kwargs["survive_stop"] is True
+        seen.append(dict(kwargs))
+        profiles.append(Path(prepared["profile_dir"]))
+        assert profiles[-1].is_dir()
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    assert seen[0]["stdout_path"] == prepared["stdout_path"]
+    assert seen[0]["stderr_path"] == prepared["stderr_path"]
+    assert seen[0]["status_path"] == prepared["status_path"]
+    assert seen[0]["pid_path"] == prepared["pid_path"]
+    assert profiles and not profiles[0].exists()
+
+
+def test_run_prepared_pr_reviewer_without_capture_paths_uses_plain_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second PR-reviewer runner branch has no durable capture files."""
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e2"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-logic",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    for key in ("stdout_path", "stderr_path", "status_path", "pid_path", "profile_dir"):
+        prepared.pop(key)
+    seen: list[dict[str, Any]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert "survive_stop" not in kwargs
+        seen.append(dict(kwargs))
+        assignment = next(
+            value for value in argv if value.startswith("GH_CONFIG_DIR=")
+        )
+        profile = Path(assignment.split("=", 1)[1])
+        assert profile.is_dir()
+        profiles.append(profile)
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    assert seen and "stdout_path" not in seen[0]
+    assert profiles and not profiles[0].exists()
+
+
+def _assert_delegated_lane_argv(
+    argv: list[str],
+    prepared: dict[str, Any],
+    *,
+    profile_dir: str,
+) -> None:
+    """Assert the operator prefix, workdir, reads and write-backs of one lane."""
+    assert argv[0] == "/opt/operator/run-lane"
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(prepared["worktree"])
+    reads = _delegate_flag_values(argv, "--read")
+    assert reads == [
+        str(prepared["worktree"]),
+        *prepared["read_dirs"],
+        str(prepared["spec_file"]),
+        str(prepared["config_dir"]),
+        profile_dir,
+    ]
+    assert _delegate_flag_values(argv, "--write-back") == [
+        str(prepared["output_file"])
+    ]
+
+
+def test_run_prepared_delegate_pr_reviewer_survives_through_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delegate mode keeps the durable capture files of a surviving reviewer."""
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e3"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/opt/operator/run-lane"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-quality",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    seen: list[list[str]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert kwargs["survive_stop"] is True
+        seen.append(list(argv))
+        profiles.append(Path(prepared["profile_dir"]))
+        assert profiles[-1].is_dir()
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    _assert_delegated_lane_argv(
+        seen[0], prepared, profile_dir=str(prepared["profile_dir"])
+    )
+    assert profiles and not profiles[0].exists()
+
+
+def test_run_prepared_delegate_reviewer_without_capture_paths_uses_plain_run_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The non-surviving delegate branch hands a temporary profile to the operator."""
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-0000000000e4"
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    _set_delegate_execution(store, ["/opt/operator/run-lane"])
+    prepared = coordinator_lanes._prepare_pr_review_agent(
+        store,
+        worker,
+        task,
+        role="pr-reviewer-logic",
+        vendor="driver-b",
+        stage="review-2",
+        head=_POSTED_HEAD,
+        spec_body="Review.",
+    )
+    for key in ("stdout_path", "stderr_path", "status_path", "pid_path", "profile_dir"):
+        prepared.pop(key)
+    seen: list[list[str]] = []
+    profiles: list[Path] = []
+
+    def run_bounded(argv: list[str], **kwargs: Any) -> Completed:
+        assert "survive_stop" not in kwargs
+        seen.append(list(argv))
+        reads = _delegate_flag_values(argv, "--read")
+        profiles.append(
+            next(
+                Path(value)
+                for value in reads
+                if Path(value).name.startswith("agent-lane-empty-gh-")
+            )
+        )
+        assert profiles[-1].is_dir()
+        Path(prepared["output_file"]).write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_lanes, "run_bounded", run_bounded)
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared, timeout=10, lane_runner=None
+    )
+
+    assert agent_id == prepared["agent_id"]
+    assert outcome.status == "complete"
+    _assert_delegated_lane_argv(
+        seen[0], prepared, profile_dir=str(profiles[0])
+    )
+    assert profiles and not profiles[0].exists()
+
+
+def test_run_prepared_non_store_system_exit_leaves_the_lane_running(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    forgotten: list[str] = []
+    prepared = _minimal_prepared(tmp_path)
+    prepared["forget"] = lambda: forgotten.append("forgot")
+
+    def runner(argv: list[str], stdin: str | None = None) -> Completed:
+        raise SystemExit(42)
+
+    with pytest.raises(SystemExit) as info:
+        coordinator_lanes._run_prepared(
+            prepared, timeout=5, lane_runner=runner
+        )
+    assert info.value.code == 42
+    assert forgotten == []
+
+
+def test_run_prepared_store_error_propagates_and_forgets_the_lane(
+    tmp_path: Path,
+) -> None:
+    """A lane failure is a StoreError; it still releases the registered lane."""
+    from agent_cli import coordinator_lanes
+
+    forgotten: list[str] = []
+    prepared = _minimal_prepared(tmp_path)
+    prepared["forget"] = lambda: forgotten.append("forgot")
+
+    def runner(argv: list[str], stdin: str | None = None) -> Completed:
+        raise CoordinatorError("lane record closed")
+
+    with pytest.raises(CoordinatorError, match="lane record closed"):
+        coordinator_lanes._run_prepared(
+            prepared, timeout=5, lane_runner=runner
+        )
+    assert forgotten == ["forgot"]

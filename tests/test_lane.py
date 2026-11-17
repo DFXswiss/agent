@@ -9,10 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
+from agent_cli.ai_accounts import (
+    LANE_EXECUTION_ERROR,
+    AccountError,
+    LaneExecution,
+)
 from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
     redact as redact_shared,
@@ -32,6 +37,7 @@ from agent_cli.lane import (
     LaneResult,
     LaneUsage,
     _run_in_tmux,
+    delegated_lane_argv,
     finalize_lane_output,
     hide_config_dir,
     launch,
@@ -140,6 +146,7 @@ def write_operator_ai_accounts(
     home: Path,
     *,
     sessions: dict | None = None,
+    lane_execution: dict | None = None,
 ) -> None:
     """Write an operator-supplied ai-accounts.json for positive lane scenarios.
 
@@ -147,7 +154,9 @@ def write_operator_ai_accounts(
     positive cases; negative tests leave the home unconfigured.
     """
     data = {
-        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "lane_execution": (
+            lane_execution or {"mode": "this-device-is-lane-host"}
+        ),
         "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
             "account-a": {"provider": "driver-a", "config_dir": OPERATOR_HOME_A},
@@ -3018,6 +3027,357 @@ def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
     assert called["n"] == 0
 
 
+def test_delegated_lane_argv_local_mode_is_unchanged() -> None:
+    argv = ["env", "TOOL_A_HOME=/profile", "tool-a", "--prompt-file", "/spec.md"]
+    execution = LaneExecution("this-device-is-lane-host")
+    assert (
+        delegated_lane_argv(
+            execution, argv, workdir="/work", reads=("/profile",)
+        )
+        == argv
+    )
+
+
+def test_delegated_lane_argv_prefixes_order_and_dedupes(tmp_path: Path) -> None:
+    execution = LaneExecution(
+        "delegate", ("/opt/operator/run-lane", "--profile", "work")
+    )
+    workdir = tmp_path / "work"
+    read_one = tmp_path / "one"
+    read_two = tmp_path / "two"
+    write_back = tmp_path / "out.txt"
+
+    argv = delegated_lane_argv(
+        execution,
+        ["env", "tool-a"],
+        workdir=str(workdir),
+        reads=(str(read_two), str(read_one), str(read_two), ""),
+        write_backs=(str(write_back), str(write_back)),
+    )
+
+    assert argv == [
+        "/opt/operator/run-lane",
+        "--profile",
+        "work",
+        "--workdir",
+        str(workdir),
+        "--read",
+        str(read_two),
+        "--read",
+        str(read_one),
+        "--write-back",
+        str(write_back),
+        "--",
+        "env",
+        "tool-a",
+    ]
+
+
+def test_launch_delegate_prefixes_argv_and_skips_tmux(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane", "--profile", "work"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        reads = [
+            argv[index + 1]
+            for index, value in enumerate(argv[:-1])
+            if value == "--read"
+        ]
+        assert str(spec.resolve()) in reads
+        assert OPERATOR_HOME_A in reads
+        assert any("agent-lane-empty-gh-" in Path(value).name for value in reads)
+        assert all(Path(value).is_absolute() for value in reads)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert len(seen) == 1
+    argv = seen[0]
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    separator = argv.index("--")
+    operator = argv[len(prefix) + 1 : separator]
+    assert operator[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    assert operator[3:5] == ["--workdir", str(tmp_path.resolve())]
+    assert argv[argv.index("--workdir") + 1] == str(tmp_path.resolve())
+    assert argv[argv.index("--read") + 1] == str(spec.resolve())
+    assert argv.count("--workdir") == 1
+    assert argv[separator + 1 : separator + 1 + len(prefix)] == prefix
+    assert "tmux" not in argv
+    assert result.tmux_session is None
+    assert result.status == "complete"
+    assert OPERATOR_MODEL_A in result.argv[result.argv.index("--") :]
+
+
+def test_launch_delegate_propagates_runner_exception_without_git_change(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        raise RuntimeError("runner failed")
+
+    with pytest.raises(RuntimeError, match="runner failed"):
+        launch(
+            role="implementer",
+            vendor="driver-a",
+            spec_file=str(spec),
+            cwd=str(worktree),
+            runner=fake,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
+def test_launch_delegate_allows_tracked_file_write_back(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        (worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    assert result.status == "complete"
+    assert (worktree / "tracked.txt").read_text(encoding="utf-8") == "changed\n"
+
+
+def test_launch_delegate_hardens_the_provider_argv(tmp_path: Path) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane", "--no-shell"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    operator = argv[len(prefix) + 1 : argv.index("--")]
+    assert operator[:2] == ["/opt/operator/run-lane", "--no-shell"]
+    provider = argv[argv.index("--") + 1 :]
+    assert "--no-shell" in provider
+    assert provider[-2:] == ["--deny", "Shell"]
+
+
+def test_launch_delegate_clears_github_for_the_default_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+
+    def fake_default(
+        argv: list[str], _stdin_text: str | None, _cwd: str | None
+    ) -> object:
+        seen.append(list(argv))
+        assert argv[: len(prefix)] == prefix
+        assignment = argv[len(prefix)]
+        assert assignment.startswith("GH_CONFIG_DIR=")
+        profile = Path(assignment.split("=", 1)[1])
+        assert profile.is_dir()
+        assert list(profile.iterdir()) == []
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    separator = argv.index("--")
+    operator = argv[len(prefix) + 1 : separator]
+    assert operator[:3] == [
+        "/opt/operator/run-lane",
+        "--workdir",
+        str(tmp_path.resolve()),
+    ]
+    provider = argv[separator + 1 :]
+    assert provider[: len(prefix)] == prefix
+    assert provider[len(prefix)].startswith("GH_CONFIG_DIR=")
+    assert "tool-a" in provider
+    assert sum(item.startswith("GH_CONFIG_DIR=") for item in argv) == 2
+
+
+def test_launch_local_mode_keeps_the_github_clearing_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake_default(
+        argv: list[str], _stdin_text: str | None, _cwd: str | None
+    ) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    assert argv[0] == "env"
+    assert "--" not in argv
+    assert "tool-a" in argv
+    assert sum(item.startswith("GH_CONFIG_DIR=") for item in argv) == 1
+
+
+def test_launch_local_mode_keeps_the_provider_argv_unhardened(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    assert "--no-shell" not in seen[0]
+    assert "--deny" not in seen[0]
+
+
 def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
@@ -4403,3 +4763,284 @@ def test_audit_text_falls_back_to_stderr_only_when_configured(
     assert store.row["payload"]["final_text"] == (
         "driver failed before output" if fallback else ""
     )
+
+
+def test_launch_refuses_an_unknown_role_before_reading_configuration() -> None:
+    with pytest.raises(SystemExit, match="role must be"):
+        launch(
+            role="reviewer-pro",
+            vendor="driver-a",
+            spec_file="/tmp/spec.md",
+            cwd="/tmp",
+        )
+
+
+def test_launch_refuses_a_binding_for_another_provider(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    spec = _placeholder_home(tmp_path)
+    selected = load_ai_accounts(tmp_path).for_lane(
+        PLACEHOLDER_SESSION, "implementer", "driver-b", require_execution=False
+    )
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on a binding mismatch")
+
+    with pytest.raises(
+        SystemExit, match="lane binding provider does not match requested vendor"
+    ):
+        _placeholder_launch(
+            tmp_path,
+            spec,
+            "driver-a",
+            runner=boom,
+            tmux=False,
+            binding=selected,
+        )
+
+
+def test_launch_refuses_an_empty_spec_file(tmp_path: Path) -> None:
+    spec = _placeholder_home(tmp_path)
+    spec.write_text("   \n", encoding="utf-8")
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on an empty spec")
+
+    with pytest.raises(SystemExit, match="spec-file is empty"):
+        _placeholder_launch(
+            tmp_path, spec, "driver-a", role="implementer", runner=boom, tmux=False
+        )
+
+
+def test_launch_delegate_read_only_lane_writes_only_its_output_file(
+    tmp_path: Path,
+) -> None:
+    """A read-only delegated lane has no worktree write-back, only its output file."""
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    seen: list[list[str]] = []
+    stdins: list[str | None] = []
+    profiles: list[Path] = []
+    outputs: list[Path] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        stdins.append(stdin_text)
+        reads = [
+            argv[index + 1]
+            for index, value in enumerate(argv[:-1])
+            if value == "--read"
+        ]
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        output = Path(argv[argv.index("--last-message") + 1])
+        outputs.append(output)
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = _placeholder_launch(
+        tmp_path,
+        spec,
+        "driver-b",
+        role="reviewer",
+        runner=fake,
+        tmux=True,
+    )
+
+    assert result.status == "complete"
+    assert result.tmux_session is None
+    assert stdins and stdins[0] is not None
+    argv = seen[0]
+    # The whole prefixed argv is wrapped once more with the GitHub-clearing
+    # env command; the operator command follows it.
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    operator = argv[len(prefix) + 1 :]
+    assert operator[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    separator = argv.index("--")
+    assert argv.index("--workdir") < separator
+    assert argv[argv.index("--workdir") + 1] == str(tmp_path.resolve())
+    reads = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--read"
+    ]
+    assert str(spec.resolve()) in reads
+    assert "/operator/path/tool-b" in reads
+    assert str(profiles[0]) in reads
+    write_backs = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--write-back"
+    ]
+    assert write_backs == [str(outputs[0])]
+    assert not profiles[0].exists()
+    assert not outputs[0].exists()
+
+
+def test_launch_delegate_prefix_failure_cleans_the_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import lane as lane_module
+
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    profiles: list[Path] = []
+
+    def fail(
+        execution: LaneExecution,
+        argv: list[str],
+        *,
+        workdir: str,
+        reads: tuple[str, ...] = (),
+        write_backs: tuple[str, ...] = (),
+    ) -> list[str]:
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        raise RuntimeError("operator prefix failed")
+
+    monkeypatch.setattr(lane_module, "delegated_lane_argv", fail)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start after a prefix failure")
+
+    with pytest.raises(RuntimeError, match="operator prefix failed"):
+        _placeholder_launch(
+            tmp_path, spec, "driver-a", role="implementer", runner=boom, tmux=False
+        )
+    assert profiles and not profiles[0].exists()
+
+
+def test_launch_tmux_wrap_failure_without_a_profile_reraises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+
+    def fail(inner: list[str], *, name: str, cwd: str) -> list[str]:
+        raise RuntimeError("tmux wrap failed")
+
+    monkeypatch.setattr("agent_cli.lane.tmux_wrap_argv", fail)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start after a wrap failure")
+
+    with pytest.raises(RuntimeError, match="tmux wrap failed"):
+        _placeholder_launch(
+            tmp_path,
+            spec,
+            "driver-a",
+            role="implementer",
+            runner=boom,
+            dry_run=True,
+            tmux=True,
+        )
+
+
+def test_launch_delegate_dry_run_cleans_the_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import lane as lane_module
+
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run-lane", "--profile", "work"],
+    }
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    real = lane_module.delegated_lane_argv
+    profiles: list[Path] = []
+
+    def record(
+        execution: LaneExecution,
+        argv: list[str],
+        *,
+        workdir: str,
+        reads: tuple[str, ...] = (),
+        write_backs: tuple[str, ...] = (),
+    ) -> list[str]:
+        profile = next(
+            Path(value)
+            for value in reads
+            if Path(value).name.startswith("agent-lane-empty-gh-")
+        )
+        assert profile.is_dir()
+        profiles.append(profile)
+        return real(
+            execution,
+            argv,
+            workdir=workdir,
+            reads=reads,
+            write_backs=write_backs,
+        )
+
+    monkeypatch.setattr(lane_module, "delegated_lane_argv", record)
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("runner must not start on a dry run")
+
+    result = _placeholder_launch(
+        tmp_path,
+        spec,
+        "driver-a",
+        role="implementer",
+        runner=boom,
+        dry_run=True,
+        tmux=True,
+    )
+
+    assert result.returncode == 0
+    assert result.status == ""
+    assert result.argv[result.argv.index("--workdir") + 1] == str(
+        tmp_path.resolve()
+    )
+    assert profiles and not profiles[0].exists()
+
+
+def test_launch_tmux_argv_without_a_command_separator_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.lane.tmux_wrap_argv",
+        lambda inner, *, name, cwd: list(inner),
+    )
+    with pytest.raises(SystemExit, match="tmux argv missing command separator"):
+        _placeholder_launch(tmp_path, spec, "driver-a", role="implementer", tmux=True)
+
+
+def test_launch_tmux_without_a_session_name_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.lane.lane_tmux_name", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.lane.tmux_wrap_argv",
+        lambda inner, *, name, cwd: ["tmux", "new-session", "--", *inner],
+    )
+    with pytest.raises(SystemExit, match="tmux session name missing"):
+        _placeholder_launch(tmp_path, spec, "driver-a", role="implementer", tmux=True)

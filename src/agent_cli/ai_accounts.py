@@ -79,6 +79,10 @@ LANE_EXECUTION_ERROR = (
 REMOTE_LANE_EXECUTION_ERROR = (
     f'{LANE_EXECUTION_ERROR}; lane_execution mode "remote" is not supported'
 )
+DELEGATE_LANE_EXECUTION_ERROR = (
+    f'{LANE_EXECUTION_ERROR}; lane_execution mode "delegate" requires exactly '
+    "the keys mode and argv, with argv a nonempty list of nonempty single-line strings"
+)
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
@@ -262,6 +266,18 @@ class AISessionBinding:
 @dataclass(frozen=True)
 class LaneExecution:
     mode: str
+    argv: tuple[str, ...] = ()
+
+    @property
+    def delegated(self) -> bool:
+        """Whether an operator command runs this device's model lanes."""
+        return self.mode == "delegate"
+
+    def binding_object(self) -> dict[str, Any]:
+        """The hashed execution object; local mode stays exactly its one key."""
+        if self.delegated:
+            return {"mode": self.mode, "argv": list(self.argv)}
+        return {"mode": self.mode}
 
 
 @dataclass(frozen=True)
@@ -646,12 +662,38 @@ def _parse_lane_execution(value: Any) -> LaneExecution | None:
     mode = value.get("mode")
     if mode == "this-device-is-lane-host" and set(value) == {"mode"}:
         return LaneExecution(mode=mode)
+    if mode == "delegate" and set(value) == {"mode", "argv"}:
+        argv = value.get("argv")
+        if (
+            isinstance(argv, list)
+            and argv
+            and all(_lane_execution_arg(item) for item in argv)
+        ):
+            return LaneExecution(mode=mode, argv=tuple(argv))
     return None
 
 
+def _lane_execution_arg(value: Any) -> bool:
+    """One operator argv element: a non-empty single-line string.
+
+    This mirrors the coordinator argv string rule in its own layer so an
+    invalid declaration stays fail-closed here instead of raising early.
+    """
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and "\x00" not in value
+        and "\n" not in value
+        and "\r" not in value
+    )
+
+
 def _lane_execution_error(value: Any) -> str:
-    if isinstance(value, dict) and value.get("mode") == "remote":
-        return REMOTE_LANE_EXECUTION_ERROR
+    if isinstance(value, dict) and _parse_lane_execution(value) is None:
+        if value.get("mode") == "remote":
+            return REMOTE_LANE_EXECUTION_ERROR
+        if value.get("mode") == "delegate":
+            return DELEGATE_LANE_EXECUTION_ERROR
     return LANE_EXECUTION_ERROR
 
 

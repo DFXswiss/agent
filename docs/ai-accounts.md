@@ -91,7 +91,7 @@ device-wide:
 
 ## Lane execution device
 
-`lane_execution` has exactly one accepted form. The external lane host marks
+`lane_execution` has exactly two accepted forms. The external lane host marks
 itself explicitly:
 
 ```json
@@ -100,30 +100,99 @@ itself explicitly:
 }
 ```
 
-Agent does not provide its own remote lane transport or workspace mirroring.
-The local harness's lane starter starts the Agent lane command on the external
-lane host, with its workspace and provider configuration already present there.
-Every lane child, including subprocess, tmux, and injected-runner paths, clears
-the four GitHub token environment variables and receives a fresh empty temporary
-`GH_CONFIG_DIR` that exists for the lifetime of that child. It never inherits an
-ambient `gh` login from the lane host.
-Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
-the `models` and `lane_execution` checks pass. The `remote` mode, remote
-manifests, and copy-back are not supported by Agent.
+A work device may instead name one local foreground operator command that runs
+each model lane:
 
-`--no-tmux` changes only the process holder and never authorizes execution on
-an undeclared device. Omitting `lane_execution`, adding fields, or using any
-other mode refuses all model-lane starts with:
+```json
+{
+  "lane_execution": {
+    "mode": "delegate",
+    "argv": ["/opt/operator/run-lane", "--profile", "work"]
+  }
+}
+```
+
+The `delegate` object must have exactly the keys `mode` and `argv`. `argv` is a
+nonempty list of nonempty single-line strings. An absent declaration, an extra
+key, or any other mode refuses every model-lane start with:
 
 ```text
 lane_execution is not configured: lanes never run on a work device; start lanes through the local harness's lane starter on an external lane host, or mark this device as a lane host
 ```
 
-The rejected `remote` mode also reports that it is not supported. Model
-display and other read-only configuration inspection do not launch a lane and
-remain available without this declaration.
+A malformed `delegate` object reports the same text extended with
+`; lane_execution mode "delegate" requires exactly the keys mode and argv, with argv a nonempty list of nonempty single-line strings`.
+The rejected `remote` mode keeps its own `remote is not supported` text.
+
+With `delegate`, every model lane runs as:
+
+```text
+<argv...> --workdir <abs> [--read <abs>]... [--write-back <abs>]... -- <sanitized lane argv...>
+```
+
+Agent builds that command locally and runs it as a foreground process. It does
+not interpret the command, name a host, or open a connection. Agent itself
+implements no SSH, rsync, or workspace mirroring; the operator command does the
+copy and the transport. The provider argv after `--` is unchanged and still
+clears the four GitHub token environment variables and receives an empty
+`GH_CONFIG_DIR` that exists for the lifetime of the child.
+
+The prefixed launches are the coordinator implementer and inner reviewer, the
+PR reviewers, judgment check lanes, and `agent lane run`, the runner worker and
+the conflict-mandate lane. An interactive start is never prefixed: a `delegate`
+declaration satisfies its check, and that session stays local. Checks
+(`check_argv`, `readiness_argv`, A38) are not prefixed. Local tmux holds only
+`this-device-is-lane-host`; `delegate` always takes the non-tmux path, and
+`--no-tmux` still does not choose the execution device.
+
+Agent does not verify the worktree's git metadata after a delegated lane. The
+operator command must not write back `.git`, the gitdir, or anything under it
+(see the worktree write-back item in the operator contract). A delegate that
+changes git metadata breaks the checkout the coordinator commits from.
+
+Agent hashes the local object exactly as
+`{"mode": "this-device-is-lane-host"}`. A `delegate` declaration hashes
+`{"mode": "delegate", "argv": [...]}`, so changing the mode or any argv element
+changes the binding and stops a pinned task with
+`task execution configuration changed or is unpinned`.
+
+The `remote` mode, remote manifests, and copy-back inside Agent are still not
+supported. Interactive tmux sessions may still use
+`$AGENT_HOME/runtime-targets.json` after the `models` and `lane_execution`
+checks pass. Model display and other read-only configuration inspection do not
+launch a lane and remain available without this declaration.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
+
+### Operator contract
+
+The harness implements this command; Agent does not.
+
+1. Stay in the foreground. Do not daemonize. Agent records this local process
+   as the lane pid and adopts it with local `ps`.
+2. Mirror each `--read` path and the workdir onto the target, at the same
+   absolute path or a mapped path. If mapped, rewrite those exact strings in
+   the argv, in streamed stdout and stderr, and in written-back files back to
+   the local paths before emitting them. Agent redacts only local roots.
+3. Exec the argv array after `--`. Do not pass it through a shell. Forward
+   stdin unchanged. Stream stdout and stderr as they arrive. The timeout kills
+   this local process, so output still buffered only at the end is lost.
+4. Exit with the remote exit code. Finish every `--write-back` before exiting,
+   including when the remote exit is non-zero, because the coordinator reads
+   output files after a non-zero return. Publish each file by writing a
+   temporary sibling and renaming it. If the copy fails, exit non-zero and
+   leave the previous local file in place.
+5. Worktree write-back copies worktree content and skips `.git`, including a
+   gitfile and hooks.
+6. Remote lifetime is tied to this local process, including SIGKILL. The
+   timeout path kills the local process group and does not give the command a
+   handler that is guaranteed to run. Connection loss has to reap the remote
+   process group.
+7. Run the argv's own
+   `env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN`
+   and its empty `GH_CONFIG_DIR`. Do not add those variables, do not copy a
+   real `gh` config, and do not mirror `github-accounts.json` or `$AGENT_HOME`
+   beyond the listed paths.
 
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
@@ -212,7 +281,9 @@ may name a command-capable driver when a separate implementer is configured.
 It hashes the device's `models`, `lane_execution`, and the `implementer`
 selection only when it differs from `models.first` into each accepted
 task's execution binding: a later change stops the task with "task execution
-configuration changed" until the accepted configuration is restored. A task
+configuration changed" until the accepted configuration is restored. A
+`this-device-is-lane-host` declaration hashes only its mode; a `delegate`
+declaration hashes its mode and argv, so changing either stops the task. A task
 accepted before the current hash formula accepts the matching legacy formula
 once and is immediately repinned; this compatibility covers only
 the newly added `lane_execution` field and the former omission of a `models`
@@ -894,9 +965,10 @@ driver's `interactive.read_only_args`, and every start appends its
 `interactive.hardening_args`. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
 a changed or missing binding requires a new session. Existing unbound interactive session IDs are not silently adopted under a newly
-configured account. Interactive provider starts run only on a declared lane
-host. Agent does not provide its own remote lane transport or workspace
-mirroring. Interactive tmux sessions may still use
+configured account. Interactive provider starts require a `lane_execution`
+declaration, and a `delegate` declaration satisfies it. They stay local and are
+never prefixed with the operator command. Agent does not provide its own remote
+lane transport or workspace mirroring. Interactive tmux sessions may still use
 `$AGENT_HOME/runtime-targets.json` after the `models` and `lane_execution` checks
 pass.
 
@@ -1489,9 +1561,10 @@ vendor/role lists and built-in model choices in code. After adopting
 4. Choose the two model slots in `models` and bind the lanes, device-wide in
    the top-level `lanes` map or per session: keys such as `driver-a:implementer`
    and, when needed, `interactive`.
-5. On the external lane host, set `lane_execution` to
-   `{"mode":"this-device-is-lane-host"}` before enabling launch paths. The
-   local harness's lane starter is responsible for starting work on that host.
+5. Set `lane_execution` before enabling launch paths: on the external lane host
+   to `{"mode":"this-device-is-lane-host"}`, or on a work device to the
+   `delegate` form above. The local harness's lane starter is responsible for
+   starting work on that host.
 6. Sessions without a binding of their own use the device-wide `lanes` map.
    An empty or missing file does not authorize a fallback identity.
 

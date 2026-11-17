@@ -8,9 +8,11 @@ description: >-
 # Review loop
 
 Requires **spine**. Roles: `implementer`, `reviewer`. The reviewer runs on model slot `first`; the implementer uses the task's separate implementer pin when present and otherwise also uses `first`. Read them with `agent models first --task <uuid>` and `agent models implementer --task <uuid>`. `agent models` without `--task` shows the device setting, which applies to new tasks only. Model slot `first` is required for review-loop. Non-A38 tasks also require model slot `second` for their attached pull-request review, while coordinator A38 tasks must set `models.second: null` unless their worker sets `a38_second_review: "model"`, which requires a provider there; there is no built-in provider assignment.
-That manifest must also declare the current device as a lane host. The local
-harness's lane starter starts lanes on that external host; Agent has no remote
-SSH execution mode.
+That manifest must also declare `lane_execution`. The local harness's lane
+starter starts lanes on that external host; or a `delegate` declaration names
+one local foreground operator command that runs each headless lane elsewhere.
+Agent has no remote SSH execution mode of its own; the operator command does the
+copy and transport.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 
