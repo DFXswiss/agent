@@ -1004,7 +1004,7 @@ events and acknowledge them.
 
 `agent order reply`, `agent order override`, and `agent order cancel` write an
 `order.reply` row for the next coordinator tick. A reply resumes the exact
-`resume_phase` like an authorized pull-request or issue comment. A repeated
+`resume_phase` directly; a pull-request comment never does. A repeated
 question requires a new reply. A cancel closes an open pull request of the
 order with the fixed comment and ends the order as failed with kind
 `cancelled`. Without an open pull request (none yet, or a closed one) it ends
@@ -1157,8 +1157,8 @@ Without `conflict_remedy`, no resolution starts and the order receives the
 After a remedy push, the script adopts the published head, removes old-head
 evidence and continues at tests. Tests, report, both review pairs and CI run
 again; recorded overrides and skips remain. Open remedy outcomes retry under
-`lane_retries`. Only a final blocker produces a pull-request conflict comment
-and a `question` event for `pr_mergeable`, accepting `reply` and `cancel`. A
+`lane_retries`. Only a final blocker produces a `question` event for
+`pr_mergeable`, accepting `reply` and `cancel`; no pull-request comment. A
 reply measures mergeability again and may start another resolution. At most
 `max_attempts` resolutions start between human decisions. Start and success
 produce no event.
