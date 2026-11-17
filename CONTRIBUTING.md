@@ -39,7 +39,7 @@ Complete test coverage is the goal of this repository. Every pull request helps 
 
 ### The coverage floor
 
-CI measures line and branch coverage of `src/agent_cli` with `coverage` on every pull request (`.github/workflows/test.yml`, settings under `[tool.coverage]` in `pyproject.toml`). `fail_under` is the floor of the measured total. A pull request never lowers it. A pull request that raises the measured total raises `fail_under` to the new value, rounded down to two decimals, in the same change.
+CI measures line and branch coverage of `src/agent_cli` with `coverage` on every pull request (`.github/workflows/test.yml`, settings under `[tool.coverage]` in `pyproject.toml`). `fail_under` is the floor of the measured total, rounded down to one decimal. Runs of the same code have measured totals 0.01 apart (86.18 and 86.19), so the floor keeps that much room. A pull request never lowers it. A pull request whose measured total, rounded down to one decimal, is above `fail_under` raises `fail_under` to that value in the same change.
 
 Tests marked `timing` assert wall-clock bounds. Coverage tracing slows the measured code, so CI runs them in a separate step without it. Run the same measurement locally with:
 
