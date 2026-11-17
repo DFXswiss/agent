@@ -302,7 +302,10 @@ for worker in workers.values():
   The coordinator remembers that reset time, ends the current tick, and does
   not call GitHub again before it. Assignment watch and the knock loop read
   that same stored reset and skip GitHub for the account until the time is
-  reached. A rate limit skips the current watch line instead of becoming an
+  reached. `scan_github` skips only further pending rows of that account in
+  the same poll and still executes pending rows of other accounts. The knock
+  handler catches a rate-limit error only when one still escapes that loop.
+  A rate limit skips the current watch line instead of becoming an
   authentication failure. Commands that do not catch it locally, and the
   review-account binding, stop with that short rate-limit text. Supervise's
   issue read and the merge-base helpers treat it as the same controlled stop

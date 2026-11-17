@@ -541,6 +541,9 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
         if isinstance(task_id, str) and task_id:
             bound_report_tasks.setdefault(task_id, set()).add(aid)
     class Scoped:
+        def __init__(self) -> None:
+            self._github_rate_limits: list[Any] = []
+
         def __getattr__(self, name):
             return getattr(store, name)
         def pending_work(self):
@@ -590,7 +593,13 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
                                 table, operation, row_id, data, **kwargs
                             )
             raise CoordinatorError('GitHub executor attempted an unrelated write')
-    return github_act.scan_github(Scoped(), runner)
+    scoped = Scoped()
+    lines = github_act.scan_github(scoped, runner)
+    # The device poll skips a limited account and returns. This step still
+    # raises so the coordinator keeps the task phase.
+    if scoped._github_rate_limits:
+        raise scoped._github_rate_limits[0]
+    return lines
 
 
 def draft_pr_body(

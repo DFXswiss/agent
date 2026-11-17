@@ -35,7 +35,10 @@ paths. When GitHub exhausts that account's rate limit, the coordinator waits
 until the reset time and continues the same task phase by itself. A limit
 during a tick ends that tick, so GitHub is not called again before the reset.
 Assignment watch and the knock loop use that same stored reset and do not
-call GitHub again for the account before it. The limit is not reported as an
+call GitHub again for the account before it. In that poll, `scan_github`
+skips only that account's pending rows and still runs other accounts. The
+knock handler catches a rate-limit error only when one still escapes that
+scan. The limit is not reported as an
 authentication failure and it does not ask a person to unblock it. Other
 commands stop with the short rate-limit text. A real authentication failure
 still stops with no fallback.

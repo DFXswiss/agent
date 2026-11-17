@@ -769,6 +769,9 @@ the workflow is enabled on a deployment:
   task keeps its phase and round, the current tick stops, and the coordinator
   does not open a blocker. Assignment watch and the knock loop keep that same
   reset and do not call GitHub for the account before it.
+  `scan_github` skips only that account's pending rows in the poll and still
+  runs other accounts. The knock handler catches a rate-limit error only when
+  one still escapes that scan.
   Authentication failure stays a blocker with no fallback.
   No worker, account or role is installed by default.
 

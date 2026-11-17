@@ -859,14 +859,125 @@ def test_scan_github_remembers_and_does_not_call_again(
             )
         return Completed(1, "", _SECONDARY_BARE)
 
-    with pytest.raises(RateLimitError, match="resets at"):
-        scan_github(store, runner)
+    assert scan_github(store, runner) == []
     assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "test") == _stamp(EPOCH + 120)
     assert store.row("activity", "act-1")["execution_status"] == "pending"
     before = len(calls)
-    with pytest.raises(RateLimitError, match="resets at"):
-        scan_github(store, runner)
+    assert scan_github(store, runner) == []
     assert len(calls) == before
     stored = json.dumps(store.row("activity", "act-1"))
     assert "HTTP/2.0" not in stored
     assert "Retry-After" not in stored
+    from agent_cli.coordinator_git import execute_github
+
+    with pytest.raises(RateLimitError, match="resets at") as caught:
+        execute_github(store, runner, activity_ids=("act-1",))
+    assert len(calls) == before
+    assert store.row("activity", "act-1")["execution_status"] == "pending"
+    assert "HTTP/2.0" not in str(caught.value)
+    assert "Retry-After" not in str(caught.value)
+
+
+def test_scan_github_runs_another_account_in_the_same_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.github_act import scan_github
+
+    monkeypatch.setattr("agent_cli.github_accounts.time.time", lambda: EPOCH)
+    monkeypatch.setattr("agent_cli.coordinator_runtime.utcnow", lambda: _stamp(EPOCH))
+    store = Store(tmp_path)
+    store.write(
+        "session", "insert", "s-limited", {"id": "s-limited", "kind": "human", "status": "active"}
+    )
+    store.write(
+        "session", "insert", "s-other", {"id": "s-other", "kind": "human", "status": "active"}
+    )
+    (store.home / "github-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "limited": {
+                        "login": "limited-bot",
+                        "gh_config_dir": "/test/gh-limited",
+                    },
+                    "other": {
+                        "login": "other-bot",
+                        "gh_config_dir": "/test/gh-other",
+                    },
+                },
+                "sessions": {"s-limited": "limited", "s-other": "other"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store.write(
+        "activity",
+        "insert",
+        "act-limited",
+        {
+            "id": "act-limited",
+            "session_id": "s-limited",
+            "type": "pr.open",
+            "payload": {"repo": "example/project"},
+            "execution_status": "pending",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "act-other",
+        {
+            "id": "act-other",
+            "session_id": "s-other",
+            "type": "review.post",
+            "payload": {"repo": "example/project", "number": 3, "body": "finding"},
+            "execution_status": "pending",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        cmd = _gh(argv)
+        calls.append(cmd)
+        config = next(
+            part.split("=", 1)[1] for part in argv if part.startswith("GH_CONFIG_DIR=")
+        )
+        if config == "/test/gh-limited":
+            if cmd[:3] != ["gh", "api", "user"]:
+                raise AssertionError(cmd)
+            if "--include" in cmd:
+                return Completed(
+                    1,
+                    "HTTP/2.0 403 Forbidden\nRetry-After: 120\n\n",
+                    _SECONDARY_BARE,
+                )
+            return Completed(1, "", _SECONDARY_BARE)
+        if config != "/test/gh-other":
+            raise AssertionError(config)
+        if cmd[:4] == ["gh", "api", "user", "--jq"]:
+            return Completed(0, "other-bot\n", "")
+        if "-X" in cmd:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 77,
+                        "html_url": "https://github.com/example/project/pull/3#pullrequestreview-77",
+                    }
+                ),
+                "",
+            )
+        if cmd[:2] == ["gh", "api"]:
+            return Completed(0, "[]", "")
+        raise AssertionError(cmd)
+
+    assert scan_github(store, runner) == ["review.post act-other done"]
+    assert store.row("activity", "act-limited")["execution_status"] == "pending"
+    assert store.row("activity", "act-other")["execution_status"] == "done"
+    assert store.sync_get(GITHUB_RATE_LIMIT_PREFIX + "limited") == _stamp(EPOCH + 120)
+    stored = json.dumps(store.rows("activity"))
+    assert "HTTP/2.0" not in stored
+    assert "Retry-After" not in stored
+    before = len(calls)
+    assert scan_github(store, runner) == []
+    assert len(calls) == before

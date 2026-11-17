@@ -1139,16 +1139,39 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
+    A rate limit skips the remaining pending rows of that account and leaves
+    them pending. Pending rows of other accounts in the same poll still run.
     """
     lines: list[str] = []
+    limited_accounts: set[str] = set()
+    from .coordinator_runtime import (
+        account_github_rate_limit,
+        remember_github_rate_limit,
+    )
+
+    def note_rate_limit(exc: BaseException) -> None:
+        remember_github_rate_limit(store, exc)
+        named = getattr(exc, "account", None)
+        if isinstance(named, str) and named != "":
+            limited_accounts.add(named)
+        # execute_github sets this list. The knock poll's store does not, so a
+        # limit there stays inside this loop. The step raises after the scan.
+        if hasattr(store, "_github_rate_limits"):
+            sink = store._github_rate_limits
+            if isinstance(sink, list):
+                sink.append(exc)
+
+    def fail_row(row: dict[str, Any], typ: object, exc: BaseException) -> None:
+        rid = str(row.get("id") or "?")
+        _mark(store, row, status="error", error=str(exc))
+        label = typ if isinstance(typ, str) else "activity"
+        lines.append(f"{label} {rid} error")
 
     def execute(row: dict[str, Any], *, a38_report: bool = False) -> str:
         typ = row.get("type")
         account = load_accounts(store.home).for_session(
             str(row.get("session_id") or "")
         )
-        from .coordinator_runtime import account_github_rate_limit
-
         waiting = account_github_rate_limit(store, account.name)
         if waiting is not None:
             raise RateLimitError(waiting, retry_at=None, account=account.name)
@@ -1207,6 +1230,21 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
         }:
             continue
         try:
+            account = load_accounts(store.home).for_session(
+                str(row.get("session_id") or "")
+            )
+        except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
+            fail_row(row, typ, exc)
+            continue
+        if account.name in limited_accounts:
+            continue
+        waiting = account_github_rate_limit(store, account.name)
+        if waiting is not None:
+            note_rate_limit(
+                RateLimitError(waiting, retry_at=None, account=account.name)
+            )
+            continue
+        try:
             if typ == "comment.post" and _is_a38_report_activity(store, row):
                 task_id = _a38_report_task_id(store, row)
                 with ExitStack() as locks:
@@ -1237,12 +1275,8 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
             lines.append(execute(row))
         except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
             if is_rate_limit_error(exc):
-                from .coordinator_runtime import remember_github_rate_limit
-
-                remember_github_rate_limit(store, exc)
-                raise
-            rid = str(row.get("id") or "?")
-            _mark(store, row, status="error", error=str(exc))
-            label = typ if isinstance(typ, str) else "activity"
-            lines.append(f"{label} {rid} error")
+                note_rate_limit(exc)
+                limited_accounts.add(account.name)
+                continue
+            fail_row(row, typ, exc)
     return lines
