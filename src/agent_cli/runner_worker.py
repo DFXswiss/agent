@@ -51,8 +51,12 @@ MAX_REVIEW_CHARS = 60_000
 MAX_DIFF_CHARS = 400_000
 # The stall watchdog measures transcript growth. A quiet lane would otherwise
 # look stalled while it is still working, so the worker appends a fixed line
-# while it waits.
-HEARTBEAT_SECONDS = 60
+# while it waits. The interval must stay well inside the shortest stall window
+# `doctor` accepts — one minute, from `stall_minutes` 1 — because the watchdog
+# compares a whole-second baseline with `stall_minutes * 60` and a supervise
+# pass can sample just after a beat. Twice the interval is still inside that
+# window, so one missed beat cannot be judged a stall.
+HEARTBEAT_SECONDS = 20
 # `dispatch` starts the job's tmux session before it writes the row that makes
 # the job running and records its worktree. The worker is already running by
 # then, so it waits for that handoff instead of treating the still-queued row
@@ -66,6 +70,10 @@ PROMPT_FILE = "pr-review.md"
 
 _LOWER_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _PROTOCOL_LINE_RE = re.compile(r"(?im)^(?:STATUS|RESULT):[^\r\n]*(?:\r?\n|$)")
+# The five tokens an operator template may carry. They are matched together in
+# one pass, so text inserted for one token is never offered to another.
+_PLACEHOLDERS = ("{{REPO}}", "{{NUMBER}}", "{{BASE}}", "{{HEAD}}", "{{JOB_ID}}")
+_PLACEHOLDER_RE = re.compile("|".join(re.escape(token) for token in _PLACEHOLDERS))
 
 # A worker failure is reported with one of these fixed messages. No provider or
 # gh diagnostic is ever carried in one: the transcript and the exit file are
@@ -298,21 +306,24 @@ def build_review_spec(
 ) -> str:
     """Render the one reviewer prompt from the operator template and the facts.
 
-    The operator's template owns the instructions; this function only performs
-    the five literal replacements and appends the fixed data-and-contract
-    section the operator cannot remove. The replacements happen before the diff
-    is appended, so repository data is never interpreted as a placeholder. The
-    runner, not the lane, decides what happens after the protocol record.
+    The operator's template owns the instructions; this function only fills the
+    five known tokens and appends the fixed data-and-contract section the
+    operator cannot remove. Substitution is one pass over the original
+    template, so a value is never read as a placeholder: a base ref such as
+    `release{{HEAD}}` stays literal instead of being rewritten inside the
+    instruction part. The substitutions happen before the diff is appended, so
+    repository data is never interpreted as a placeholder either. A callable
+    replacement is used because it is not interpreted for backslash escapes.
+    The runner, not the lane, decides what happens after the protocol record.
     """
-    rendered = template
-    for placeholder, value in (
-        ("{{REPO}}", str(repo)),
-        ("{{NUMBER}}", str(number)),
-        ("{{BASE}}", base),
-        ("{{HEAD}}", head),
-        ("{{JOB_ID}}", job_id),
-    ):
-        rendered = rendered.replace(placeholder, value)
+    values = {
+        "{{REPO}}": str(repo),
+        "{{NUMBER}}": str(number),
+        "{{BASE}}": base,
+        "{{HEAD}}": head,
+        "{{JOB_ID}}": job_id,
+    }
+    rendered = _PLACEHOLDER_RE.sub(lambda match: values[match.group(0)], template)
     fence = _fence(diff)
     return (
         rendered.rstrip()

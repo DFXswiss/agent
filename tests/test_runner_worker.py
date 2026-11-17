@@ -1385,6 +1385,20 @@ def test_worker_resets_a_failed_activity_to_pending_before_executing_it(
 # ------------------------------------------------------------------ heartbeat
 
 
+def test_heartbeat_interval_stays_inside_the_shortest_stall_window() -> None:
+    # `doctor` accepts the smallest positive whole `stall_minutes`, and the
+    # watchdog turns it into a window of `stall_minutes * 60` seconds against
+    # a baseline stored as whole seconds. The beat must leave room for a beat
+    # to be missed and a supervise pass to sample just after one, or a quiet
+    # but healthy lane is judged stalled and killed at the minimum budget.
+    from agent_cli import health
+
+    shortest_minutes = next(
+        minutes for minutes in range(1, 10) if health._positive_budget(minutes)
+    )
+    assert runner_worker.HEARTBEAT_SECONDS * 2 < shortest_minutes * 60
+
+
 def test_heartbeat_writes_every_beat_to_the_transcript_and_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1568,6 +1582,41 @@ def test_build_review_spec_replaces_only_the_five_known_placeholders() -> None:
     )
 
     assert f"{REPO}#7 develop {HEAD} job-1 {{{{UNKNOWN}}}}" in spec
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "release{{HEAD}}",
+        "release{{JOB_ID}}",
+        "release\\1",
+        "release\\g<0>",
+    ],
+)
+def test_build_review_spec_substitutes_once_and_never_rescans_a_value(
+    base: str,
+) -> None:
+    # A value filled in for one token must not be offered to the others. The
+    # base ref is a branch name `git check-ref-format --branch` accepts, so it
+    # can legitimately contain braces; as data it must stay literal. A value
+    # with a backslash sequence must come out literally too, which is why the
+    # replacement is callable and not a template string.
+    spec = runner_worker.build_review_spec(
+        "base={{BASE}} head={{HEAD}} job={{JOB_ID}} end",
+        repo=REPO,
+        number=7,
+        base=base,
+        head=HEAD,
+        job_id="job-1",
+        diff=DIFF,
+    )
+
+    instruction = spec.split("\n\nEverything below", 1)[0]
+    assert instruction == f"base={base} head={HEAD} job=job-1 end"
+    # The head SHA appears only where the template had {{HEAD}}, and the job id
+    # only where it had {{JOB_ID}}.
+    assert instruction.count(HEAD) == 1
+    assert instruction.count("job-1") == 1
 
 
 def test_build_review_spec_never_interprets_placeholders_in_the_diff() -> None:
