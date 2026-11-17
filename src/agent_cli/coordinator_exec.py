@@ -716,17 +716,11 @@ def _stop_survive_wrapper(proc: subprocess.Popen) -> None:
 
     The starter is in its own session. SIGKILL of the wrapper does not run the
     wrapper's handler and does not reach that session. SIGKILL follows only
-    when the wrapper ignores SIGTERM.
+    when the wrapper ignores SIGTERM. That grace is `_terminate`.
     """
-    _kill_group(proc.pid, signal.SIGTERM)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        _kill_group(proc.pid, signal.SIGKILL)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+    from .daemon import _terminate
+
+    _terminate(proc)
 
 
 def _kill_group(pid: int, sig: signal.Signals) -> None:
