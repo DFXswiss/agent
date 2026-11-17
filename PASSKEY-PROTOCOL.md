@@ -504,7 +504,8 @@ the proposed keys-file id with the invite, which then has status `received`, and
 The page also computes the fingerprint itself from the public key that
 `AuthenticatorAttestationResponse.getPublicKey()` returns (the last 65 bytes of that P-256
 SubjectPublicKeyInfo) and shows it. When `getPublicKey()` returns `null` or the two differ, it
-shows an error and no fingerprint.
+shows an error and no fingerprint. When the finish request is refused, the page shows the
+`error` value and no fingerprint.
 The page tells the person to compare this fingerprint with the administrator over a channel other
 than the link.
 
@@ -1433,7 +1434,8 @@ These run with Node.js like the existing dashboard tests:
   clock message of section 10.1, and with 120 seconds behind it passes
 - the fingerprint function gives the vector of section 2's format; the invite page shows an error
   and no fingerprint when `getPublicKey()` returns `null` and when its fingerprint differs from
-  the hub's
+  the hub's; for a finish answered `401` `registration_unknown` it shows that error and no
+  fingerprint
 
 ### 13.8 End to end, in headless Chromium
 
