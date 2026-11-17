@@ -608,10 +608,11 @@ pair.
    publication. The coordinator checks this condition before reconciling saved
    rejection intents. In a gate phase it then blocks the task with a
    `phase-error` blocker that names that gate phase as resume phase, so the
-   task waits instead of being advanced on every tick. Until that blocker is
-   verified as published and its reply checkpoint is saved, each later visit
-   repeats the same publication, and an order reply or an override of
-   `review_2` waits for it. A task that is already blocked or asking on such a
+   task waits instead of being advanced on every tick. For an issue task,
+   until that blocker is verified as published and its reply checkpoint is
+   saved, each later visit repeats the same publication. An order has no
+   comment target, so the blocker is only recorded, and an order reply or an
+   override of `review_2` does not wait for a publication. A task that is already blocked or asking on such a
    resume phase otherwise returns without publishing another blocker and reads
    no comment reply while the history cannot be ordered; an order reply given
    with `agent order reply` or from the dashboard resumes the gate phase, which
