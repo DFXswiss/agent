@@ -32,7 +32,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import github_accounts, reap, workspace
+from . import github_accounts, reap, runner_status, workspace
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .github_accounts import AccountError as GitHubAccountError
@@ -591,37 +591,25 @@ def _queue_review(
     that failed is reset to `pending` so this attempt executes it again.
     """
     payload: dict[str, Any] = {
-        "id": activity_id,
-        "session_id": session_id,
-        "type": "review.post",
-        "payload": {
-            "repo": repo,
-            "number": number,
-            "body": body,
-            # A review comment reports; it never holds the merge closed.
-            "event": "COMMENT",
-            "commit_id": head,
-        },
-        "execution_status": "pending",
+        "repo": repo,
+        "number": number,
+        "body": body,
+        # A review comment reports; it never holds the merge closed.
+        "event": "COMMENT",
+        "commit_id": head,
     }
-    existing = store.row("activity", activity_id)
-    if existing is None:
-        payload["execution_account"] = {
-            "account": account.name,
-            "login": account.login.casefold(),
-        }
-        store.write("activity", "insert", activity_id, payload)
-        return True
-    if existing.get("_origin_device_id") != store.device_id():
-        raise _WorkerError(FAILED_ACTIVITY)
-    if existing.get("execution_status") == "done":
-        return False
-    # Preserve the executor's pinned identity from the authoritative row, so a
-    # retry cannot silently switch the account that posts this review.
-    if existing.get("execution_account") is not None:
-        payload["execution_account"] = existing["execution_account"]
-    store.write("activity", "update", activity_id, payload)
-    return True
+    try:
+        return runner_status.queue_activity(
+            store,
+            activity_id=activity_id,
+            session_id=session_id,
+            activity_type="review.post",
+            payload=payload,
+            account=account,
+        )
+    except ValueError:
+        # A row owned by another device is not this worker's to re-open.
+        raise _WorkerError(FAILED_ACTIVITY) from None
 
 
 def _lane_start_message(exc: BaseException) -> str:

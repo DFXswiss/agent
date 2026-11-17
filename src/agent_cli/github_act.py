@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .coordinator_common import redact
 from .github_accounts import AccountError, load_accounts
+from .runner_status import STATUS_MARKER_RE
 from .runtime import Completed
 from .store import Store
 from .text_sanitize import redact_terminal_interleaved_secret
@@ -982,6 +983,16 @@ def _run_comment_post(
     expected_login: str,
     before_post: Callable[[], str | None] | None = None,
 ) -> str:
+    """Post one comment, or edit the newest matching own comment.
+
+    `edit_marker`, when present in the payload, must be the runner's status
+    marker (`STATUS_MARKER_RE`, exactly what `runner_status.status_marker`
+    produces), contained in `body`, and is incompatible with `exact_body`.
+    Every status activity of one job generation carries the same marker: the
+    first posts the comment, and later ones edit the newest comment of the
+    posting account that carries it instead of adding another. No other HTML
+    comment is accepted, so an activity cannot edit another module's comment.
+    """
     rid = str(row["id"])
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -1010,6 +1021,27 @@ def _run_comment_post(
             return f"comment.post {rid} error"
         target = str(target_raw)
     marker = ACTIVITY_MARKER.format(id=rid)
+    edit_marker: str | None = None
+    if "edit_marker" in payload:
+        raw_edit_marker = payload.get("edit_marker")
+        if (
+            not isinstance(raw_edit_marker, str)
+            or STATUS_MARKER_RE.fullmatch(raw_edit_marker) is None
+            or raw_edit_marker not in body
+            or exact_body
+        ):
+            _mark(
+                store,
+                row,
+                status="error",
+                error=(
+                    "comment.post edit_marker must be the runner status "
+                    "marker <!-- agent-runner-job:<job id>:<UTC timestamp> "
+                    "--> present in body and exact_body must be false"
+                ),
+            )
+            return f"comment.post {rid} error"
+        edit_marker = raw_edit_marker
     owner, name = repo.split("/", 1)
     try:
         comments_raw = _gh_json(
@@ -1052,6 +1084,68 @@ def _run_comment_post(
                 result["created_at"] = created_at
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
+        if edit_marker is not None:
+            newest: dict[str, Any] | None = None
+            newest_key: tuple[bool, float, int] | None = None
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                cbody = comment.get("body")
+                if not isinstance(cbody, str) or edit_marker not in cbody:
+                    continue
+                # Only the posting account's own comment may be edited; a
+                # copied marker on someone else's comment is not a target.
+                user = comment.get("user")
+                login = user.get("login") if isinstance(user, dict) else None
+                if (
+                    not isinstance(login, str)
+                    or login.casefold() != expected_login.casefold()
+                ):
+                    continue
+                created = parse_utc_timestamp(comment.get("created_at"))
+                cid = _as_int(comment.get("id"))
+                key = (
+                    created is not None,
+                    0.0 if created is None else created.timestamp(),
+                    0 if cid is None else cid,
+                )
+                if newest_key is None or key > newest_key:
+                    newest = comment
+                    newest_key = key
+            if newest is not None:
+                comment_id = newest.get("id")
+                if (
+                    not isinstance(comment_id, int)
+                    or isinstance(comment_id, bool)
+                    or comment_id <= 0
+                ):
+                    raise _GhError("comment id is not a positive integer")
+                edited = _gh_json(
+                    [
+                        "gh",
+                        "api",
+                        "-X",
+                        "PATCH",
+                        f"repos/{owner}/{name}/issues/comments/{comment_id}",
+                        "-f",
+                        f"body={_with_marker(body, rid)}",
+                    ],
+                    runner,
+                )
+                if not isinstance(edited, dict):
+                    raise _GhError("comment response is not an object")
+                url = edited.get("html_url")
+                if not isinstance(url, str) or url == "":
+                    raise _GhError("comment response missing url")
+                result = {
+                    "repo": repo,
+                    "number": number,
+                    "url": url,
+                    "id": comment_id,
+                    "edited": True,
+                }
+                _mark(store, row, status="done", result=result)
+                return f"comment.post {rid} done"
         post_body = body if exact_body else _with_marker(body, rid)
         if target == "pr":
             argv = [

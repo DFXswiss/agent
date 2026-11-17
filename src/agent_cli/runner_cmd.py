@@ -465,6 +465,7 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
     command. A wrapper is only meaningful once the worker's configuration is
     present, so the preflight runs even when a wrapper was injected.
     """
+    from . import github_act, runner_status
     from .main import die, open_store
 
     paths = _runner_base()
@@ -483,10 +484,50 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
             return
         runner_config = load_json(paths.runner_config, "runner config")
         max_concurrent = _max_concurrent(runner_config)
+        # The announcement acts as the policy's login. Loading the policy here
+        # keeps the identity check close to the effect it guards.
+        policy = load_json(paths.policy, "policy")
+        login = expected_login(policy)
         _ensure_state_dirs(paths)
         store = open_store()
+        announced: list[str] = []
+        announce_failed: list[str] = []
         try:
             own = OwnJobs(store, work_root=paths.work)
+
+            def announce(row: dict[str, Any]) -> bool | None:
+                try:
+                    marker = runner_status.status_marker(
+                        row.get("id"), row.get("created_at")
+                    )
+                    body = runner_status.announce_body(
+                        row["id"], row["attempts"], marker=marker
+                    )
+                except (KeyError, TypeError, ValueError):
+                    # Without a usable generation no activity of this job can
+                    # exist, so there is nothing to post and nothing to retire.
+                    announce_failed.append(str(row.get("id")))
+                    return False
+                # The real store, not `own`: the executor needs its lock,
+                # its home and its activity rows, which the job view lacks.
+                done = runner_status.announce_status(
+                    store,
+                    run_argv,
+                    row=row,
+                    body=body,
+                    home=_agent_home(),
+                    expected_login=login,
+                    execute_activity=github_act.execute_activity,
+                )
+                if done is True:
+                    announced.append(str(row["id"]))
+                else:
+                    # False (safely unposted) and None (may still be posted)
+                    # are both undelivered; the dispatch decision uses the
+                    # distinction, the operator sees one line for either.
+                    announce_failed.append(str(row["id"]))
+                return done
+
             # A queued job has, by definition, no live worker, so a leftover
             # exit file or transcript belongs to an earlier attempt. finalize
             # would read the old exit code as this attempt's result.
@@ -506,9 +547,16 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
                 work_root=str(paths.work),
                 wrapper=wrapper,
                 max_concurrent=max_concurrent,
+                announce=announce,
             )
         finally:
             store.close()
+    for job_id in announced:
+        print(f"job.announced {job_id}")
+    for job_id in announce_failed:
+        # An undelivered announcement is informational; dispatch itself decides
+        # whether the job may start, and the exit status stays unchanged.
+        print(f"announce failed {job_id}", file=sys.stderr)
     for job_id in started:
         print(f"job.started {job_id}")
     if not started:
@@ -586,6 +634,7 @@ def _cmd_supervise(args: list[str]) -> None:
     This is not `agent supervise --session`, which watches one ledger session;
     this supervises the runner's detached jobs.
     """
+    from . import github_act, runner_status
     from .main import open_store
 
     paths = _runner_base()
@@ -630,6 +679,16 @@ def _cmd_supervise(args: list[str]) -> None:
                 now_epoch=now,
                 session_prefix=dispatch.SESSION_PREFIX,
             )
+            # Report what the pass just finalized as well as older failures
+            # that still need their outcome comment.
+            reported, report_failed = runner_status.report_outcomes(
+                own,
+                store,
+                run_argv,
+                home=_agent_home(),
+                expected_login=login,
+                execute_activity=github_act.execute_activity,
+            )
         finally:
             store.close()
     for job_id in finalized:
@@ -640,6 +699,12 @@ def _cmd_supervise(args: list[str]) -> None:
         print(f"worktree.removed {job_id}")
     for name in killed:
         print(f"session.killed {name}")
+    for job_id in reported:
+        print(f"job.reported {job_id}")
+    for job_id in report_failed:
+        # A failed report is retried on the next pass (up to
+        # MAX_REPORT_ATTEMPTS) and does not change the exit status.
+        print(f"report failed {job_id}", file=sys.stderr)
     for item in failed:
         print(f"reap failed {item}", file=sys.stderr)
     total_skipped = finalize_skipped + reap_skipped
@@ -653,6 +718,7 @@ def _cmd_supervise(args: list[str]) -> None:
 
 
 def _cmd_prune(args: list[str]) -> None:
+    from . import runner_status
     from .main import open_store
 
     paths = _runner_base()
@@ -680,6 +746,22 @@ def _cmd_prune(args: list[str]) -> None:
                 ):
                     row = own.row("job", job_id)
                     if row is None:
+                        continue
+                    # An interrupted dispatch or supervise can leave this
+                    # attempt's status activity pending. Deleting the row keeps
+                    # the activity, and a later scan could post it after a
+                    # re-ingested job's baseline, where finalize counts it as
+                    # that job's output. Retire it before anything else; a row
+                    # whose comment cannot be retired is kept for the next
+                    # prune, with its logs and worktree.
+                    if not runner_status.retire_status_activities(
+                        store, row, error="superseded by pruning the job"
+                    ):
+                        print(
+                            f"prune skipped {job_id}: a status comment could "
+                            "not be retired",
+                            file=sys.stderr,
+                        )
                         continue
                     # A failed job can leave its worktree behind (a failed
                     # `git worktree add`, or a cleanup `finalize` could not
@@ -773,6 +855,7 @@ def remove_job_worktree(
 
 
 def _cmd_retry(args: list[str]) -> None:
+    from . import runner_status
     from .main import die, open_store
 
     if len(args) != 1 or args[0].startswith("-"):
@@ -800,6 +883,15 @@ def _cmd_retry(args: list[str]) -> None:
             if payload is None:
                 die(
                     f"job {job_id} cannot be retried from state {row.get('state')}"
+                )
+            # A pending status activity of the attempt being retried would be
+            # posted by a later scan after the new attempt's baseline and be
+            # counted as its output. Retire those before touching anything
+            # else; a refused retry leaves both the row and its evidence alone.
+            if not runner_status.retire_status_activities(store, row):
+                die(
+                    f"job {job_id}: a status comment of the previous attempt "
+                    "could not be retired"
                 )
             problem = remove_job_worktree(paths, job_id, row, run_argv)
             if problem is not None:

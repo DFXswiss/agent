@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_cli.dispatch import dispatch_queued, running_slots, session_name, worktree_path
 from agent_cli.ingest import job_row
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 
 
 def _runner(
@@ -93,6 +94,7 @@ def _dispatch(
     runner: Callable[[list[str]], Completed],
     *,
     max_concurrent: int = 1,
+    announce: Callable[[dict[str, Any]], bool | None] | None = None,
 ) -> tuple[list[str], int]:
     return dispatch_queued(
         store,
@@ -102,6 +104,7 @@ def _dispatch(
         work_root="/tmp/work",
         wrapper="/bin/agent-wrapper",
         max_concurrent=max_concurrent,
+        announce=announce,
     )
 
 
@@ -226,6 +229,516 @@ def test_fetch_runs_when_the_bare_repository_already_exists(tmp_path: Path) -> N
         assert not any("clone --bare" in command for command in joined)
         assert any("fetch --prune" in command for command in joined)
         assert store.row("job", row["id"])["state"] == "running"
+    finally:
+        store.close()
+
+
+# ----------------------------------------------------------- announcement
+
+
+def test_the_announcement_comes_after_the_worktree_and_before_the_baseline(
+    tmp_path: Path,
+) -> None:
+    # A baseline taken before the bot's own comment would miss it, and the
+    # silent-failure check would count it as new output and pass every job.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        events: list[tuple[int, Any]] = []
+
+        def announce(current: dict[str, Any]) -> bool:
+            events.append((len(calls), current.get("pull_request")))
+            return True
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true"),
+            announce=announce,
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        joined = [" ".join(argv) for argv in calls]
+        add_at = next(i for i, call in enumerate(joined) if "worktree add" in call)
+        baseline_at = next(i for i, call in enumerate(joined) if "graphql" in call)
+        assert len(events) == 1
+        announce_at, pull_request = events[0]
+        assert pull_request is True
+        # `announce_at` counts the calls made before the announcement, so it is
+        # the index of the first call after it: the baseline itself.
+        assert add_at < announce_at <= baseline_at
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["announced"] is True
+        assert saved["pull_request"] is True
+    finally:
+        store.close()
+
+
+def test_the_announced_marker_is_written_before_the_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A later baseline failure leaves the job queued; the marker written now
+    # keeps the next pass from posting a second announcement.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        writes: list[dict[str, Any]] = []
+        marks: list[int] = []
+        original_write = store.write
+
+        def recording_write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            writes.append(dict(payload))
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", recording_write)
+
+        def announce(_row: dict[str, Any]) -> bool:
+            marks.append(len(writes))
+            return True
+
+        # Read the row at the moment the baseline is requested. Nothing later
+        # in dispatch can make this true retroactively, so the test observes
+        # the ordering instead of only the final row.
+        at_baseline: list[dict[str, Any]] = []
+        base_runner = _runner(calls=calls)
+
+        def runner(argv: list[str]) -> Completed:
+            if "graphql" in " ".join(argv):
+                current = store.row("job", row["id"])
+                assert current is not None
+                at_baseline.append(
+                    {
+                        "announced": current.get("announced"),
+                        "pull_request": current.get("pull_request"),
+                    }
+                )
+            return base_runner(argv)
+
+        _dispatch(store, runner, announce=announce)
+
+        assert marks == [0]
+        assert at_baseline == [{"announced": True, "pull_request": False}]
+        assert writes[0]["announced"] is True
+        assert writes[0]["pull_request"] is False
+        assert writes[0]["state"] == "queued"
+        assert len(writes) == 2
+        assert writes[1]["state"] == "running"
+        assert writes[1]["announced"] is True
+        assert writes[1]["pull_request"] is False
+    finally:
+        store.close()
+
+
+def test_a_baseline_failure_keeps_the_announcement_marker(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true", baseline_rc=1),
+            announce=announce,
+        )
+
+        assert started == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved["announced"] is True
+        assert saved["pull_request"] is True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreError("db down"), RuntimeError("db down")],
+    ids=["store-error", "runtime-error"],
+)
+def test_a_failed_announced_marker_write_cleans_the_worktree_and_skips_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # `StoreError` is a `SystemExit`, so an `except Exception` lets it escape
+    # and strand the worktree just added; the next pass then fails the job as
+    # workspace_failed. The row must stay queued and the worktree be cleaned
+    # up exactly as on a baseline failure.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        original_write = store.write
+
+        def write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            if (
+                table == "job"
+                and op == "update"
+                and payload.get("announced") is True
+            ):
+                raise error
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", write)
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        # No baseline was taken and no worker was started.
+        assert not any("graphql" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+        remove_at = next(
+            i for i, command in enumerate(joined) if "worktree remove" in command
+        )
+        prune_at = next(
+            i for i, command in enumerate(joined) if "worktree prune" in command
+        )
+        assert remove_at < prune_at
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved.get("announced") is not True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreError("db down"), RuntimeError("db down")],
+    ids=["store-error", "runtime-error"],
+)
+def test_a_failed_marker_write_does_not_stop_a_later_queued_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # The skipped job must not abort the pass: the other queued row still
+    # starts. The failing row must be dispatched first, so that replacing the
+    # `continue` with a `break` is visible. `rows()` orders by
+    # `updated_at DESC, row_id DESC`, and the store stamps a second-resolution
+    # `utcnow()` itself, so the failing row is inserted last and owns the
+    # higher id to win both the timestamp and the tie-break.
+    store = Store(tmp_path)
+    try:
+        later = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        failing = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="8",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        assert failing["id"] > later["id"]
+        store.write("job", "insert", later["id"], later)
+        store.write("job", "insert", failing["id"], failing)
+        assert [row["id"] for row in store.rows("job")] == [
+            failing["id"],
+            later["id"],
+        ]
+        calls: list[list[str]] = []
+        marker_attempts: list[str] = []
+        original_write = store.write
+
+        def write(
+            table: str, op: str, row_id: str, payload: dict[str, Any]
+        ) -> None:
+            # The marker write is the update that sets `announced` while the
+            # row is still queued; the later running-state write carries the
+            # flag too and is not a marker attempt.
+            if (
+                table == "job"
+                and op == "update"
+                and payload.get("announced") is True
+                and payload.get("state") == "queued"
+            ):
+                marker_attempts.append(row_id)
+                if row_id == failing["id"]:
+                    raise error
+            original_write(table, op, row_id, payload)
+
+        monkeypatch.setattr(store, "write", write)
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, skipped = _dispatch(
+            store,
+            _runner(calls=calls),
+            max_concurrent=2,
+            announce=announce,
+        )
+
+        assert marker_attempts == [failing["id"], later["id"]]
+        assert started == [later["id"]]
+        assert skipped == 1
+        assert store.row("job", failing["id"])["state"] == "queued"
+        assert store.row("job", later["id"])["state"] == "running"
+    finally:
+        store.close()
+
+
+def test_an_already_announced_row_is_not_announced_again(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row["announced"] = True
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        announced: list[str] = []
+
+        def announce(current: dict[str, Any]) -> bool:
+            announced.append(current["id"])
+            return True
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        assert announced == []
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+        assert saved["announced"] is True
+    finally:
+        store.close()
+
+
+def test_a_safely_unposted_announcement_does_not_stop_the_job(
+    tmp_path: Path,
+) -> None:
+    # False means the comment was not posted and cannot be posted later, so
+    # the user still gets the work they asked for.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        def announce(_row: dict[str, Any]) -> bool | None:
+            return False
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+        assert saved.get("announced") is not True
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("unsafe", ["none", "raise"])
+def test_an_unsafe_announcement_leaves_the_job_queued(
+    tmp_path: Path, unsafe: str
+) -> None:
+    # None, like an exception, means the activity may still be posted by a
+    # later scan. Starting the job now would let that comment land after the
+    # output baseline and be counted as the job's own output.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        def announce(_row: dict[str, Any]) -> bool | None:
+            if unsafe == "raise":
+                raise RuntimeError("gh unavailable")
+            return None
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls), announce=announce
+        )
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        # No baseline was taken and no worker was started.
+        assert not any("graphql" in command for command in joined)
+        assert not any("new-session" in command for command in joined)
+        # The prepared worktree was removed and pruned, exactly as on a
+        # baseline failure.
+        assert any("worktree remove" in command for command in joined)
+        assert any("worktree prune" in command for command in joined)
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "queued"
+        assert saved.get("announced") is not True
+    finally:
+        store.close()
+
+
+def test_a_workspace_failure_records_the_target_for_the_outcome_comment(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        announced: list[str] = []
+
+        def announce(current: dict[str, Any]) -> bool:
+            announced.append(current["id"])
+            return True
+
+        started, _skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true", add_rc=1),
+            announce=announce,
+        )
+
+        assert started == []
+        # The worktree never existed, so the announcement was never reached.
+        assert announced == []
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["outcome"] == "workspace_failed"
+        assert saved["pull_request"] is True
+        assert saved["reported"] is False
+    finally:
+        store.close()
+
+
+def test_a_crashed_start_records_the_target_and_the_announcement(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        def announce(_row: dict[str, Any]) -> bool:
+            return True
+
+        started, _skipped = _dispatch(
+            store,
+            _runner(calls=calls, probe_stdout="true", start_rc=1),
+            announce=announce,
+        )
+
+        assert started == []
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["outcome"] == "crashed"
+        assert saved["pull_request"] is True
+        assert saved["announced"] is True
+        assert saved["reported"] is False
+    finally:
+        store.close()
+
+
+def test_without_an_announce_callback_the_dispatch_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, probe_stdout="true")
+        )
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "running"
+        assert saved["pull_request"] is True
+        assert "announced" not in saved
     finally:
         store.close()
 

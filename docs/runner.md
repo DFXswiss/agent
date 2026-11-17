@@ -6,7 +6,8 @@ queued jobs (`dispatch`), runs one job inside its worktree (`work`), supervises
 and cleans up jobs (`supervise`, `prune`, `retry`), and reports on the queue and
 the configuration (`status`, `doctor`). The command group owns the external
 effects; the rules it applies live in the tested modules `jobs`, `ingest`,
-`dispatch`, `finalize`, `reap`, `queue`, `health` and `runner_worker`.
+`dispatch`, `finalize`, `reap`, `queue`, `health`, `runner_worker` and
+`runner_status`.
 
 The runner's own files live under `$AGENT_HOME/runner`, and every subcommand
 resolves those paths from that base, so moving `$AGENT_HOME` moves its
@@ -124,7 +125,42 @@ rather than choosing a commit. Stale `.exit` and `.transcript` files of queued
 jobs are removed first: a queued job has no live worker, and a leftover exit
 code would otherwise be read as the new attempt's result.
 
-Output: `job.started <job-id>` per job, or `job.started none`.
+Once the worktree exists and before the output baseline is read, dispatch posts
+one comment on the issue or pull request: `Working on this now: job <id>.`, with
+` (attempt N)` on a retry. The order is worktree → announcement → baseline. A
+baseline taken before the announcement would miss the bot's own comment, and the
+silent-failure check in `supervise` would count it as new output and pass every
+job. An announcement that was not posted but is safely retired does not stop
+the job. If it may still be posted later, the job stays queued and its worktree
+is removed, exactly as on a baseline failure: that comment would otherwise
+land after the baseline and count as the job's output. Either undelivered case
+is reported as `announce failed <job-id>` on standard error. The comment is a
+`comment.post` activity, never a direct `gh` call.
+
+All status activities of one job generation share an `edit_marker`, the only
+marker the executor accepts:
+`<!-- agent-runner-job:<job id>:<UTC timestamp> -->`. The job id matches
+`[A-Za-z0-9_-]+` without `--`, and the timestamp has the form
+`YYYY-MM-DDTHH:MM:SSZ`. The announcement creates the comment the first time it
+runs; every later status activity (a retry's announcement or a failure
+outcome) edits that same comment in place, so the issue or pull request keeps
+one status comment per job. The
+announcement still has to precede the output baseline: the first announcement
+is what creates the comment, and an edit never creates a new comment id, so a
+later edit can never count as new output.
+
+The row records `pull_request` (whether the probe answered that the number is a
+pull request) and `announced` once the announcement ended `done`. Writing
+`announced` at once means a later baseline failure, which leaves the job
+queued, does not announce it again on the next pass. If that write fails, the
+job is left queued and its worktree is removed and pruned, as on a baseline
+failure. The next pass finds the deterministic announcement activity already
+`done`, posts no second comment, and sets the marker then.
+
+Output: `job.announced <job-id>` per delivered announcement, `job.started
+<job-id>` per job, or `job.started none`; an undelivered announcement is
+`announce failed <job-id>` on standard error. Neither line changes the exit
+status.
 
 ### `agent runner work`
 
@@ -203,10 +239,25 @@ worktrees and sessions left behind by killed workers. A row whose exit code is
 missing but whose session is alive is measured against the timeout and stall
 budgets; a row whose session has disappeared is recorded as crashed.
 
+A job that ends as failed gets one outcome comment describing how it ended:
+`agent_failed`, `timeout`, `stalled`, `crashed` or `workspace_failed`. A
+successful job gets none: its posted review is the output. The comment is a
+`comment.post` activity that edits the job's existing status comment in place,
+keeping the job to one status comment, and the timeout/stall sentence uses the
+same budget the watchdog applied. A row carries `reported`
+(`False` when the outcome comment is still owed, `True` after it is delivered)
+and `report_attempts`. A failed comment increments `report_attempts` and is
+retried on the next pass, up to five passes; after that the row is left alone.
+A row written before these fields existed has no `reported` key and is never
+reported. finalize marks a failed row `reported: False`; a done row is not
+marked.
+
 Output: `job.finalized <job-id>` (or `job.finalized none`),
-`worktree.removed <job-id>` and `session.killed <name>` per item, with failures
-reported as `reap failed <item>` on standard error. Any failed reap step makes
-the command exit with status 1 so a schedule notices.
+`worktree.removed <job-id>`, `session.killed <name>` and `job.reported
+<job-id>` per item, with failures reported as `reap failed <item>` and `report
+failed <job-id>` on standard error. Any failed reap step makes the command exit
+with status 1 so a schedule notices; a failed report does not change the exit
+status because the next pass retries it.
 
 This command is distinct from `agent supervise --session`, which watches one
 ledger session.
@@ -216,10 +267,17 @@ ledger session.
 Deletes finished queue rows and their log files once they are older than the
 retention configured for their state. Each of `done` and `failed` is handled
 independently; when a state has no retention setting, the command prints
-`prune <state> not configured` and keeps everything in that state. A leftover
-worktree under `state/work/<id>` is removed first with the same guards as
-`retry`; a row whose worktree cannot be removed safely is kept with its log
-files and reported as `prune skipped <job-id>: <reason>` on standard error.
+`prune <state> not configured` and keeps everything in that state. Before the
+row is deleted, its pending announcement and outcome activities are retired
+with the same locked check `retry` uses, recorded as `superseded by pruning
+the job`: the activities outlive the row, and a later scan could otherwise
+post one after a re-ingested job's baseline and have `finalize` count it as
+that job's output. A row whose status comment cannot be retired is kept with
+its logs and worktree and reported as `prune skipped <job-id>: a status
+comment could not be retired` on standard error. A leftover worktree under
+`state/work/<id>` is removed after that with the same guards as `retry`; a row
+whose worktree cannot be removed safely is likewise kept and reported as
+`prune skipped <job-id>: <reason>`.
 Output: `job.pruned <job-id>` per row, or `job.pruned none`.
 
 ### `agent runner retry JOB_ID`
@@ -229,7 +287,11 @@ previous attempt's result fields, and removes its log files and leftover
 worktree. The worktree is removed through `git worktree remove` and
 `worktree prune`. Only if the directory still exists is a recursive delete
 used, and only when the resolved path is strictly inside `state/work` and is
-not a symlink; anything else is refused rather than deleted.
+not a symlink; anything else is refused rather than deleted. Before the
+worktree is touched, a status activity of the previous attempt that is still
+`pending` is retired, so a later scan cannot post it after the new attempt's
+baseline and have it counted as that attempt's output; a status comment that
+cannot be retired refuses the retry and leaves the row unchanged.
 
 Output: `job.retried <job-id>`.
 
@@ -302,7 +364,6 @@ mention already queued by another device must not be inserted again.
   no worker. Dispatch refuses a policy that allows one, and the worker fails a
   queued one instead of guessing.
 - More prompt templates than `prompts/pr-review.md`.
-- GitHub announce and outcome comments for a job.
 - A schedule or service unit for the subcommands.
 - Container packaging.
 - Owner wildcards (`owner/*`) in `repos_allow` and job-type detection from the

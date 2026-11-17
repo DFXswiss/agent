@@ -294,6 +294,7 @@ def test_retry_payload_resets_the_previous_attempt_fields_to_none() -> None:
         "finished": "2026-01-15T10:05:00Z",
         "exit_code": 1,
         "outcome": "failed",
+        "limit_minutes": 12,
         "done_kind": "error",
         "work_performed": True,
         "contract_followed": False,
@@ -306,6 +307,7 @@ def test_retry_payload_resets_the_previous_attempt_fields_to_none() -> None:
     assert result["finished"] is None
     assert result["exit_code"] is None
     assert result["outcome"] is None
+    assert result["limit_minutes"] is None
     assert result["done_kind"] is None
     assert result["work_performed"] is None
     assert result["contract_followed"] is None
@@ -327,10 +329,21 @@ def test_retry_payload_resets_reported_and_announced_to_false() -> None:
     assert result["announced"] is False
 
 
-# The original deletes these three keys while nulling the nine beside them,
-# and the port keeps that shape. Behaviour is the same either way — the stall
-# check rejects a None exactly as it rejects a missing key — so what this pins
-# is the stored shape: no progress keys until a real measurement writes them.
+# A retried job gets a fresh budget for its outcome comment instead of
+# inheriting the previous attempt's exhausted count.
+def test_retry_payload_drops_report_attempts() -> None:
+    row = {"id": "job-1", "state": "failed", "report_attempts": 4}
+    result = retry_payload(row)
+    assert result is not None
+    assert "report_attempts" not in result
+
+
+# The three progress keys are deleted, not set to None, because that keeps the
+# original's stored shape: the stall check rejects a None exactly as it rejects
+# a missing key, so what this pins is that no progress keys are stored until a
+# real measurement writes them. (`report_attempts` is deleted for a different
+# reason, pinned by the test above: a stored None there would skip the row in
+# `report_outcomes` for good.)
 def test_retry_payload_omits_the_progress_keys_from_the_result_rather_than_setting_them_to_none() -> None:
     row = {
         "id": "job-1",

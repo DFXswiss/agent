@@ -205,6 +205,7 @@ def finalize_running(
             skipped += 1
             continue
 
+        limit_minutes: int | None = None
         exit_code = exit_code_of(job_id)
         if exit_code is not None:
             outcome = "success" if exit_code == 0 else "agent_failed"
@@ -230,6 +231,7 @@ def finalize_running(
                 if overdue:
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "timeout"
+                    limit_minutes = timeout_minutes
                 else:
                     stall_minutes = _budget(runner_config, job_type, "stall_minutes")
                     if stall_minutes is None:
@@ -285,6 +287,7 @@ def finalize_running(
                     # verdict == "stalled"
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "stalled"
+                    limit_minutes = stall_minutes
             else:
                 outcome = "crashed"
 
@@ -330,10 +333,11 @@ def finalize_running(
             runner(workspace.worktree_remove_argv(bare, worktree))
             runner(workspace.worktree_prune_argv(bare))
 
+        final_state = "done" if final_outcome == "success" else "failed"
         updated = _strip(row)
         updated.update(
             {
-                "state": "done" if final_outcome == "success" else "failed",
+                "state": final_state,
                 "outcome": final_outcome,
                 "exit_code": exit_code,
                 "done_kind": kind,
@@ -343,6 +347,14 @@ def finalize_running(
                 "updated_at": utcnow(),
             }
         )
+        if limit_minutes is not None:
+            # The budget the watchdog actually applied, so the outcome
+            # comment does not report whatever the configuration says later.
+            updated["limit_minutes"] = limit_minutes
+        if final_state == "failed":
+            # `supervise` posts the outcome comment for this row. A done row
+            # keeps no report marker: its posted review is the output.
+            updated["reported"] = False
         try:
             store.write("job", "update", job_id, updated)
             finalized.append(job_id)

@@ -383,6 +383,109 @@ def test_a_non_zero_exit_code_records_agent_failed_without_querying_outputs(tmp_
         store.close()
 
 
+def test_a_failed_final_state_marks_the_row_for_an_outcome_report(
+    tmp_path: Path,
+) -> None:
+    # `supervise` posts the outcome comment for exactly these rows.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        _finalize(
+            store,
+            _runner(calls=calls),
+            exit_code_of=lambda jid: 1,
+            transcript_of=lambda jid: "",
+        )
+
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "failed"
+        assert saved["reported"] is False
+    finally:
+        store.close()
+
+
+def test_a_successful_final_state_keeps_no_report_marker(tmp_path: Path) -> None:
+    # A done job's posted review is its output, so no outcome comment is owed.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        _finalize(
+            store,
+            _runner(
+                calls=calls,
+                baseline_stdout=json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "issueOrPullRequest": {
+                                    "__typename": "PullRequest",
+                                    "comments": {"nodes": []},
+                                    "reviews": {
+                                        "nodes": [
+                                            {
+                                                "id": "C_new",
+                                                "author": {"login": "davidleomay"},
+                                                "createdAt": "2026-01-02T00:00:00Z",
+                                                "submittedAt": "2026-01-02T00:00:00Z",
+                                                "state": "APPROVED",
+                                            }
+                                        ]
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ),
+            ),
+            exit_code_of=lambda jid: 0,
+            transcript_of=lambda jid: "DONE review PR 7",
+        )
+
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["state"] == "done"
+        assert "reported" not in saved
+    finally:
+        store.close()
+
+
 def test_no_exit_code_and_dead_session_records_crashed(tmp_path: Path) -> None:
     # Missing exit file plus dead tmux session must record outcome=crashed.
     store = Store(tmp_path)
@@ -686,8 +789,59 @@ def test_overdue_worker_is_killed_and_recorded_timeout(tmp_path: Path) -> None:
         saved = store.row("job", row["id"])
         assert saved["state"] == "failed"
         assert saved["outcome"] == "timeout"
+        # The budget the watchdog applied is recorded for the outcome text.
+        assert saved["limit_minutes"] == 1
         assert saved["work_performed"] == "n_a"
         assert any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_a_timeout_records_the_limit_the_watchdog_applied(tmp_path: Path) -> None:
+    # The row carries the limit used, so a later outcome comment does not
+    # report whatever the configuration says by then.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        runner_config = {
+            "skills": {"pr-review": {"timeout_minutes": 12, "stall_minutes": 10}}
+        }
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            runner_config=runner_config,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved["outcome"] == "timeout"
+        assert saved["limit_minutes"] == 12
     finally:
         store.close()
 
@@ -737,6 +891,7 @@ def test_worker_inside_budget_but_stalled_is_killed(tmp_path: Path) -> None:
         saved = store.row("job", row["id"])
         assert saved["state"] == "failed"
         assert saved["outcome"] == "stalled"
+        assert saved["limit_minutes"] == 1
         assert any("kill-session" in " ".join(argv) for argv in calls)
     finally:
         store.close()
