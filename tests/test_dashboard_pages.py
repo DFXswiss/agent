@@ -115,6 +115,12 @@ def test_state_carries_the_subscription_overview(monkeypatch, tmp_path) -> None:
         assert state["subscriptions"]["error"] is None
         assert [row["listed"] for row in state["subscriptions"]["rows"]] == [False]
         assert len(state["usage"]) == 1
+        overview = {entry["provider"]: entry for entry in state["usage_overview"]}
+        assert {"claude", "codex", "grok", "openrouter"} <= set(overview)
+        # A snapshot without windows is no data, not 0 %.
+        assert overview["claude"]["status"] == "no data"
+        assert [a["account"] for a in overview["claude"]["accounts"]] == ["seat-1@example.com"]
+        assert overview["codex"]["summary"] == "Codex not read"
 
         path = tmp_path / "ai-subscriptions.json"
         path.write_text(

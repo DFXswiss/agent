@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,14 @@ from agent_cli.main import (
     _subscription_dashboard_rows,
     _subscriptions_dashboard,
     _usage_dashboard_rows,
+    _usage_duration_text,
+    _usage_overview,
 )
 from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
+from agent_cli.usage import _openrouter_snapshot, claude_snapshot, snapshot_from_payloads
+from test_usage import SETTINGS, _credits, _openrouter_body
+from test_usage_claude import usage_body
 
 pytestmark = pytest.mark.no_pg
 
@@ -354,6 +360,275 @@ console.log(JSON.stringify({
     assert out["invalid"] == "<tr><td colspan='11'>—</td></tr>"
     assert out["invalidError"] == "ai-subscriptions.json: subscriptions must be a list"
     assert out["configuredEmpty"] == "<tr><td colspan='11'>—</td></tr>"
+
+
+OVERVIEW_NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
+
+
+def _recorded(payload: dict, device: str = "device-a") -> dict:
+    return {"type": "usage.snapshot", "_origin_device_id": device, "payload": payload}
+
+
+def _overview_rows() -> list[dict]:
+    """Subscription rows built from the payloads usage.py stores."""
+    seat_1 = claude_snapshot("seat-1@example.com", "max_20x", usage_body(), "2026-11-17T09:56:00+00:00")
+    seat_3 = claude_snapshot(
+        "seat-3@example.com", "max_5x", usage_body(weekly=32.0), "2026-11-17T08:00:00+00:00"
+    )
+    grok = snapshot_from_payloads(
+        _credits(used=0.0), SETTINGS, "2026-11-17T09:59:30+00:00", "grok@example.com"
+    )
+    grok["period_end"] = "2026-11-20T14:00:00+00:00"
+    router = _openrouter_snapshot("router-a", _openrouter_body(), "2026-11-17T09:00:00+00:00")
+    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, grok, router)])
+    inventory = (
+        AISubscription("claude", "seat-1@example.com", "Team seat 1"),
+        AISubscription("claude", "seat-2@example.com"),
+        AISubscription("codex", "seat-1@example.com"),
+    )
+    return _subscription_dashboard_rows(inventory, usage)
+
+
+def test_usage_duration_text() -> None:
+    assert _usage_duration_text(-5) == "<1 min"
+    assert _usage_duration_text(59) == "<1 min"
+    assert _usage_duration_text(4 * 60 + 59) == "4 min"
+    assert _usage_duration_text(3 * 3600 + 12 * 60) == "3 h 12 min"
+    assert _usage_duration_text(5 * 86400 + 19 * 3600 + 59 * 60) == "5 d 19 h"
+
+
+def test_usage_overview_one_entry_per_provider() -> None:
+    overview = {entry["provider"]: entry for entry in _usage_overview(_overview_rows(), OVERVIEW_NOW)}
+    assert list(overview) == ["claude", "codex", "grok", "openrouter"]
+
+    claude = overview["claude"]
+    # The headline is the weekly window of the most used account.
+    assert (claude["used_percent"], claude["window"], claude["resets_in"]) == (32.0, "Week", "6 d 0 h")
+    assert claude["summary"] == "Claude 32% 6 d 0 h"
+    assert claude["status"] is None and claude["recorded"] == "2026-11-17T09:56:00+00:00"
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+        ("Week", 32.0, "6 d 0 h"),
+        ("Week Fable", 21.0, "6 d 0 h"),
+    ]
+    assert [
+        (a["account"], a["label"], a["used_percent"], a["status"], a["recorded"]) for a in claude["accounts"]
+    ] == [
+        ("seat-1@example.com", "Team seat 1", 14.0, None, "2026-11-17T09:56:00+00:00"),
+        ("seat-2@example.com", None, None, "no data", None),
+        ("seat-3@example.com", None, 32.0, None, "2026-11-17T08:00:00+00:00"),
+    ]
+
+    assert [a["has_snapshot"] for a in claude["accounts"]] == [True, False, True]
+
+    codex = overview["codex"]
+    assert codex["status"] == "not read" and codex["used_percent"] is None
+    assert codex["summary"] == "Codex not read"
+    assert [(a["account"], a["status"]) for a in codex["accounts"]] == [("seat-1@example.com", "not read")]
+
+    grok = overview["grok"]
+    assert grok["summary"] == "Grok 0% 3 d 4 h"
+    assert grok["used_percent"] == 0.0 and grok["recorded"] == "2026-11-17T09:59:30+00:00"
+    assert [(w["name"], w["used_percent"]) for w in grok["windows"]] == [("Weekly", 0.0), ("GrokBuild", 0.0)]
+
+    router = overview["openrouter"]
+    assert router["summary"] == "OpenRouter 12.5% 13 d 14 h"
+    assert router["accounts"][0]["text"] == "$1.25 / $10"
+
+
+def test_usage_overview_without_data_never_shows_zero() -> None:
+    overview = {entry["provider"]: entry for entry in _usage_overview([], OVERVIEW_NOW)}
+    assert [(p, e["status"], e["summary"]) for p, e in overview.items()] == [
+        ("claude", "no data", "Claude no data"),
+        ("codex", "not read", "Codex not read"),
+        ("grok", "no data", "Grok no data"),
+        ("openrouter", "no data", "OpenRouter no data"),
+    ]
+    unlimited = _openrouter_body()
+    unlimited["data"].update({"limit": None, "limit_remaining": None, "limit_reset": "monthly"})
+    claude = claude_snapshot("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x")
+    rows = _subscription_dashboard_rows(
+        (),
+        [
+            _recorded(_openrouter_snapshot("router-a", unlimited, "2026-11-17T09:00:00+00:00")),
+            _recorded(claude),
+        ],
+    )
+    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
+    router = overview["openrouter"]
+    assert router["used_percent"] is None and router["status"] is None
+    assert router["summary"] == "OpenRouter $1.25 / unlimited (monthly)"
+    assert overview["claude"]["status"] == "no data"
+    assert overview["claude"]["accounts"][0]["used_percent"] is None
+    assert overview["claude"]["accounts"][0]["status"] == "no data"
+    assert overview["claude"]["accounts"][0]["recorded"] is None
+
+
+def test_usage_overview_claude_headline_is_weekly_only() -> None:
+    body = usage_body(five_hour={"utilization": 80.0, "resets_at": "2026-11-17T12:00:00+00:00"})
+    body.update({"seven_day": None, "limits": []})
+    only_five_hour = claude_snapshot("seat-1@example.com", None, body, "2026-11-17T09:56:00+00:00")
+    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["provider"] == "claude"
+    # The five-hour window is shown, but never as the weekly headline.
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+        ("5h", 80.0, "2 h 0 min")
+    ]
+    assert claude["used_percent"] is None and claude["window"] is None
+    assert claude["status"] == "no data" and claude["summary"] == "Claude no data"
+    assert claude["accounts"][0]["used_percent"] is None
+    assert claude["accounts"][0]["status"] == "no data"
+
+    weekly = claude_snapshot("seat-2@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour), _recorded(weekly)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["summary"] == "Claude 14% 6 d 0 h"
+
+
+def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
+    edge = "0001-01-01T00:00:00+14:00"
+    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), edge)
+    snapshot["windows"]["weekly"]["resets_at"] = edge
+    rows = _subscription_dashboard_rows((), [_recorded(snapshot)])
+    claude = _usage_overview(rows, OVERVIEW_NOW)[0]
+    assert claude["used_percent"] == 14.0 and claude["resets_in"] is None
+    assert claude["recorded"] is None and claude["summary"] == "Claude 14%"
+
+
+def test_usage_overview_ignores_numbers_outside_the_float_range() -> None:
+    snapshot = claude_snapshot("seat-1@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
+    snapshot["windows"]["weekly"]["used_percent"] = 10**400
+    snapshot["windows"]["weekly_models"][0]["used_percent"] = float("inf")
+    router = _openrouter_body()
+    router["data"].update({"limit": 1e308, "limit_remaining": -1e308})
+    rows = _subscription_dashboard_rows(
+        (),
+        [
+            _recorded(snapshot),
+            _recorded(_openrouter_snapshot("router-a", router, "2026-11-17T09:00:00+00:00")),
+        ],
+    )
+    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
+    claude = overview["claude"]
+    assert [(w["name"], w["used_percent"]) for w in claude["windows"]] == [("Week", None), ("Week Fable", None)]
+    assert claude["used_percent"] is None and claude["status"] == "no data"
+    assert overview["openrouter"]["used_percent"] is None
+    assert overview["openrouter"]["summary"] == "OpenRouter $1.25 / $1e+308"
+    json.dumps(list(overview.values()), allow_nan=False)
+
+
+def test_usage_overview_markup() -> None:
+    index = PAGE.read_text(encoding="utf-8")
+    assert '<p>Subscriptions: <span id="usage-summary">—</span></p>' in index
+    assert 'setHtml(document.getElementById("usage-summary"), usageSummaryHtml(data.usage_overview || []));' in index
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    assert '<div id="usage-overview"></div>' in html
+    assert 'id="usage-detailed"' in html and 'id="usage-sort"' in html
+    # The viewer's open providers follow the details element, outside "detailed".
+    assert 'addEventListener("toggle", event => {' in html
+    assert "if (details.open) usageOpen.add(details.dataset.provider);" in html
+    assert "usageOverview = data.usage_overview || [];" in html
+
+
+def test_usage_overview_renders_in_node() -> None:
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
+    helpers = "\n".join(
+        line for line in script.splitlines() if line.startswith(("    function esc(", "    const NO_USAGE"))
+    )
+    functions = "\n".join(
+        section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
+    )
+    # The shared block brings stateIcon and stateCellAttributes.
+    helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
+    overview = _usage_overview(_overview_rows(), OVERVIEW_NOW)
+    overview[0]["accounts"][0]["label"] = "<b>seat</b>"
+    harness = helpers + "\n" + functions + f"""
+const overview = {json.dumps(overview)};
+const NOW = Date.parse("2026-11-17T10:00:00Z");
+console.log(JSON.stringify({{
+  closed: usageOverviewHtml(overview, new Set(), false, false, NOW),
+  open: usageOverviewHtml(overview, new Set(["claude"]), false, false, NOW),
+  detailed: usageOverviewHtml(overview, new Set(), true, false, NOW),
+  sorted: usageOverviewHtml(overview, new Set(), false, true, NOW),
+  none: usageOverviewHtml([], new Set(), false, false, NOW),
+}}));
+"""
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout)
+    closed = out["closed"]
+    assert closed.count('<details class="usage-provider"') == 4
+    assert " open>" not in closed
+    assert (
+        '<summary><span class="usage-line"><span><b>Claude</b></span><span>6 d 0 h</span>'
+        '<meter min="0" max="100" low="70" high="90" optimum="0" value="32" title="32%"></meter>'
+        "<span>32%</span></span></summary>"
+    ) in closed
+    not_read = state_icons(html)["not read"]
+    assert (
+        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
+        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
+    ) in closed
+    # A listed account without a snapshot carries the table's explanation on its
+    # name; its icon keeps the state word as title.
+    no_data = state_icons(html)["no data"]
+    assert (
+        '<span class="usage-line"><span title="No usage: no paired device polls this login">'
+        "seat-2@example.com</span><span></span>"
+        '<span title="no data" aria-label="no data">'
+        f'<span class="state-icon" role="img" aria-label="no data">{no_data}&#xFE0E;</span></span>'
+    ) in out["open"]
+    assert out["open"].count("No usage: no paired device polls this login") == 1
+    assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
+    # The browser renders the age of the raw timestamp with the shared elapsedText.
+    assert '<span class="usage-muted" title="2026-11-17T09:56:00+00:00">recorded 4 min ago</span>' in closed
+    assert "recorded 2 h ago" in closed
+    assert '<p class="usage-muted" title="2026-11-17T09:59:30+00:00">recorded 30 s ago</p>' in closed
+    assert "&lt;b&gt;seat&lt;/b&gt;" in closed and "<b>seat</b>" not in closed
+    assert '<details class="usage-provider" data-provider="claude" open>' in out["open"]
+    assert out["open"].count(" open>") == 1
+    assert out["detailed"].count(" open>") == 4
+    order = re.findall(r'data-provider="([a-z]+)"', out["sorted"])
+    assert order == ["claude", "openrouter", "grok", "codex"]
+    assert out["none"] == '<p class="usage-muted">—</p>'
+
+
+def test_usage_summary_renders_in_node() -> None:
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    index = static_page("index.html")
+    script = re.findall(r"<script>(.*?)</script>", index, flags=re.S)[0]
+    helpers = "\n".join(line for line in script.splitlines() if line.startswith("    function esc("))
+    harness = (
+        helpers
+        + "\nconst document = { addEventListener() {} };\n"
+        + common_block(index)
+        + section_function(index, "usageSummaryHtml")
+        + f"""
+console.log(JSON.stringify({{
+  line: usageSummaryHtml({json.dumps(_usage_overview(_overview_rows(), OVERVIEW_NOW))}),
+  none: usageSummaryHtml([]),
+}}));
+"""
+    )
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout)
+    not_read = state_icons(index)["not read"]
+    assert out["line"] == (
+        "Claude 32% 6 d 0 h · Codex "
+        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
+        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
+        " · Grok 0% 3 d 4 h · OpenRouter 12.5% 13 d 14 h"
+    )
+    assert out["none"] == "—"
 
 
 def static_page(name: str) -> str:
@@ -824,6 +1099,8 @@ def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
         ("ja",),
         ("nein",),
         ("pending",),
+        ("no data",),
+        ("not read",),
     )
     family_icons = []
     for family in families:
@@ -948,7 +1225,7 @@ def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> Non
     assert 'if (value === null || value === undefined) return "—";' in top_level_function(
         code, "orderCell"
     )
-    elapsed = top_level_function(code, "elapsedText")
+    elapsed = section_function(common_block(static_page("index.html")), "elapsedText")
     for unit in ('" s"', '" min"', '" h"', '" d"'):
         assert unit in elapsed
     assert "setInterval(ordersTick, 2000);" in code
@@ -956,15 +1233,19 @@ def test_updated_at_shows_as_updated_before_with_the_timestamp_as_title() -> Non
 
 def test_a_timestamp_without_a_zone_counts_as_utc() -> None:
     code = orders_script()
-    # Every parse of a timestamp goes through timestampMs.
-    assert "(now - timestampMs(timestamp))" in top_level_function(code, "elapsedText")
+    shared = common_block(static_page("index.html"))
+    # Every parse of a timestamp goes through timestampMs, which the shared block
+    # carries with elapsedText on every page.
+    assert "function timestampMs(" not in code and "function elapsedText(" not in code
+    assert "(now - timestampMs(timestamp))" in section_function(shared, "elapsedText")
     assert (
         'typeof value === "string" && !Number.isNaN(timestampMs(value))'
         in top_level_function(code, "isTimestamp")
     )
-    for name in ("elapsedText", "isTimestamp", "elapsedCell"):
+    assert "Date.parse(" not in section_function(shared, "elapsedText")
+    for name in ("isTimestamp", "elapsedCell"):
         assert "Date.parse(" not in top_level_function(code, name), name
-    parse = top_level_function(code, "timestampMs")
+    parse = section_function(shared, "timestampMs")
     assert (
         "return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);"
         in parse
@@ -1015,8 +1296,6 @@ def page_behaviour() -> dict:
         top_level_function(code, name)
         for name in (
             "orderCell",
-            "timestampMs",
-            "elapsedText",
             "isTimestamp",
             "elapsedCell",
             "repoPart",

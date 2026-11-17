@@ -593,6 +593,29 @@ gets the neutral fallback icon. A file that does not validate is shown as an err
 page; the rest of the dashboard keeps working. `/api/state` delivers the joined
 rows as `subscriptions` (`configured`, `error`, `rows`).
 
+Above that table the page shows one compact line per provider: every provider
+Agent knows (`claude`, `codex`, `grok`, `openrouter`) and every provider of the
+inventory. The line shows the time until the quota resets, a bar and the used
+percentage of the headline window (Claude: weekly; Grok: the billing period;
+OpenRouter: the key limit, when it has one). A provider Agent has no usage
+reader for (today `codex`) shows `not read`. A provider with a reader shows
+`no data` when none of its snapshots has a headline percentage or another
+figure; OpenRouter without a limit shows its USD usage instead. Neither is
+shown as 0 %, and both are shown as icons of the dashboard's state mapping.
+Opening a provider lists each quota window (Claude: five hours, weekly and the
+weekly per-model windows) with its reset and bar, then each account with its
+own bar and the age of its newest snapshot (`recorded 4 min ago`). A snapshot is
+stored only when a value changed, so that age is the time of the last change.
+With several accounts a provider window shows the highest use among them.
+`detailed` opens every provider, `sort by used` orders providers by the
+headline percentage. The main page shows one summary line, for example
+`Claude 32% 5 d 19 h · Codex ⊗ · Grok 0% 3 d 4 h`, where a status shows as its
+icon with the word as its title. On `/usage`, a listed account of a provider
+with a usage reader and without any snapshot shows `No usage: no paired device
+polls this login` on its name, as in the table. The figures come only from
+stored `usage.snapshot` payloads and the inventory; `/api/state` delivers
+them as `usage_overview`.
+
 Each session may include:
 
 - `interactive`: role name for the interactive runner, or omit/null when none

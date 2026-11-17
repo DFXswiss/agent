@@ -33,6 +33,15 @@
     button.copy-id.copied { color: #060; }
     button.copy-id.copy-failed { color: #c00; }
     .state-unknown { color: #777; }
+    #usage-overview { background: #fff; border: 1px solid #e0d8c8; margin-bottom: 12px; }
+    .usage-provider { border-bottom: 1px solid #eee; }
+    .usage-provider > summary { cursor: pointer; padding: 8px 10px; }
+    .usage-line { display: grid; grid-template-columns: minmax(8em, 14em) 7em minmax(6em, 1fr) 6em; gap: 10px; align-items: center; font-size: 0.92rem; }
+    .usage-provider > summary .usage-line { display: inline-grid; width: calc(100% - 24px); }
+    .usage-line meter { width: 100%; }
+    .usage-detail { padding: 4px 10px 10px 28px; }
+    .usage-detail .usage-line { padding: 3px 0; }
+    .usage-muted { color: #777; }
   </style>
 </head>
 <body>
@@ -54,6 +63,11 @@
 
   <section class="dashboard-section" data-section="usage">
     <h2>Subscriptions</h2>
+    <div class="control-form">
+      <label><input type="checkbox" id="usage-detailed" /> detailed</label>
+      <label><input type="checkbox" id="usage-sort" /> sort by used</label>
+    </div>
+    <div id="usage-overview"></div>
     <table id="usage"><thead><tr><th>Provider</th><th>Account</th><th>Label</th><th>Status</th><th>Note</th><th>Listed</th><th>Tier</th><th>Used</th><th>Reset</th><th>Owner</th><th>Fetched</th></tr></thead><tbody></tbody></table>
   </section>
 
@@ -126,7 +140,7 @@
     // One icon for every state or status value the code produces, one family per line:
     // running or active, task in progress, open or waiting, blocked, ready, merged or done,
     // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
-    // unavailable) and unknown.
+    // unavailable), usage without a figure (no data, not read) and unknown.
     const STATE_ICONS = {
       "running": "▶", "active": "▶", "working": "▶",
       "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
@@ -138,6 +152,7 @@
       "failed": "✖", "error": "✖",
       "cancelled": "⊘",
       "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
+      "no data": "∅", "not read": "⊗",
       "unknown": "?"
     };
     const STATE_FALLBACK_ICON = "◌";
@@ -248,6 +263,23 @@
       el.innerHTML = html;
       restoreCopyFocus(focus);
     }
+
+    // Milliseconds of a timestamp, or NaN. The store writes UTC, so an ISO
+    // date-time without a zone designator, which the browser would read as local
+    // time, is read as UTC.
+    function timestampMs(value) {
+      const zoneless = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(value);
+      return Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : value);
+    }
+
+    // Short elapsed time since an ISO timestamp: "45 s", "5 min", "2 h", "3 d".
+    function elapsedText(timestamp, now) {
+      const seconds = Math.max(0, Math.floor((now - timestampMs(timestamp)) / 1000));
+      if (seconds < 60) return seconds + " s";
+      if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+      if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
+      return Math.floor(seconds / 86400) + " d";
+    }
     /* DASHBOARD_COMMON_END */
 
     const SUBSCRIPTION_COLUMNS = 11;
@@ -308,6 +340,58 @@
     // The error line text for an invalid inventory file, or null.
     function subscriptionsErrorText(subscriptions) {
       return subscriptions.error ? "ai-subscriptions.json: " + subscriptions.error : null;
+    }
+
+    // A bar of 0–100 % used; the meter turns amber from 70 % and red from 90 %.
+    function usageMeter(percent) {
+      if (typeof percent !== "number") return "<span></span>";
+      return `<meter min="0" max="100" low="70" high="90" optimum="0" value="${esc(percent)}" title="${esc(percent)}%"></meter>`;
+    }
+
+    // One line: name, time until the reset, bar and percentage; without a
+    // percentage the status icon or the figure stands in place of the bar.
+    // nameTitle is an optional tooltip of the name.
+    function usageLineHtml(name, resetsIn, percent, text, status, nameTitle) {
+      let bar;
+      if (typeof percent === "number") bar = usageMeter(percent) + `<span>${esc(percent)}%</span>`;
+      else if (status) bar = `<span${stateCellAttributes(status)}>${stateIcon(status)}</span><span></span>`;
+      else bar = `<span class="usage-muted">${esc(text || "—")}</span><span></span>`;
+      const nameAttributes = nameTitle ? ` title="${esc(nameTitle)}"` : "";
+      return `<span class="usage-line"><span${nameAttributes}>${name}</span><span>${esc(resetsIn || "")}</span>${bar}</span>`;
+    }
+
+    // The compact provider list of /api/state usage_overview. Each provider opens
+    // to its quota windows and its accounts; open providers stay open.
+    function usageOverviewHtml(providers, open, detailed, sortByUsed, now) {
+      const list = providers.slice();
+      if (sortByUsed) {
+        list.sort((a, b) => (typeof b.used_percent === "number" ? b.used_percent : -1) - (typeof a.used_percent === "number" ? a.used_percent : -1));
+      }
+      return list.map(p => {
+        const head = usageLineHtml(`<b>${esc(p.name)}</b>`, p.resets_in, p.used_percent, p.text, p.status);
+        const windows = (p.windows || []).map(w => usageLineHtml(esc(w.name), w.resets_in, w.used_percent, "")).join("");
+        const accounts = (p.accounts || []).map(a => {
+          const label = a.label ? ` <span class="usage-muted">${esc(a.label)}</span>` : "";
+          const age = a.recorded ? `<br><span class="usage-muted" title="${esc(a.recorded)}">recorded ${esc(elapsedText(a.recorded, now))} ago</span>` : "";
+          // A listed account without any snapshot explains itself on its name as the table below does.
+          const nameTitle = a.status === "no data" && !a.has_snapshot ? NO_USAGE : null;
+          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text, a.status, nameTitle);
+        }).join("");
+        const isOpen = detailed || open.has(p.provider);
+        const recorded = p.recorded ? `<p class="usage-muted" title="${esc(p.recorded)}">recorded ${esc(elapsedText(p.recorded, now))} ago</p>` : "";
+        return `<details class="usage-provider" data-provider="${esc(p.provider)}"${isOpen ? " open" : ""}><summary>${head}</summary>`
+          + `<div class="usage-detail">${windows || ""}${accounts ? "<p><b>Accounts</b></p>" + accounts : ""}${recorded}</div></details>`;
+      }).join("") || `<p class="usage-muted">—</p>`;
+    }
+
+    let usageOverview = [];
+    // Providers the viewer opened; a refresh re-renders them open.
+    const usageOpen = new Set();
+
+    function renderUsageOverview() {
+      setHtml(document.getElementById("usage-overview"), usageOverviewHtml(usageOverview, usageOpen,
+        document.getElementById("usage-detailed").checked,
+        document.getElementById("usage-sort").checked, Date.now()));
     }
 
     async function postControl(id, body) {
@@ -404,6 +488,9 @@
         setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
 
+        usageOverview = data.usage_overview || [];
+        renderUsageOverview();
+
         const subscriptions = data.subscriptions || {};
         setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(subscriptionRowHtml).join("")
           || subscriptionsEmptyHtml(subscriptions));
@@ -473,6 +560,15 @@
         err.textContent = String(e);
       }
     }
+    // toggle does not bubble, so it is caught in the capture phase. While
+    // "detailed" opens every provider, the viewer's own choice is kept as it was.
+    document.getElementById("usage-overview").addEventListener("toggle", event => {
+      const details = event.target;
+      if (!(details instanceof HTMLDetailsElement) || document.getElementById("usage-detailed").checked) return;
+      if (details.open) usageOpen.add(details.dataset.provider); else usageOpen.delete(details.dataset.provider);
+    }, true);
+    document.getElementById("usage-detailed").onchange = renderUsageOverview;
+    document.getElementById("usage-sort").onchange = renderUsageOverview;
     tick();
     setInterval(tick, 2000);
   </script>
