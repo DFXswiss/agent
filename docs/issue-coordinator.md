@@ -1033,7 +1033,9 @@ agent order report --id UUID [--json]
 `show` prints state, phase, round, pull request, head, last event, pending
 checkpoint, last answer and its fate, the current action's checks, overridable
 checks, round limit and origin, and submit-time skips. It never prints raw lane
-output. `wait` polls the local store at `poll_seconds`; it exits 0 with events
+output. The JSON checkpoint also carries `digest` and `opinion` of that event.
+The printed checkpoint line does not. The dashboard order detail shows those
+two fields as the open question. `wait` polls the local store at `poll_seconds`; it exits 0 with events
 and 3 on timeout.
 
 Order states are derived: `queued`, `running`, `waiting`, `ready`, `merged`,

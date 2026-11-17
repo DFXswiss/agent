@@ -1178,7 +1178,11 @@ def test_show_prints_the_pending_checkpoint_even_when_acknowledged(device, capsy
         "check",
         "acked",
         "answers",
+        "digest",
+        "opinion",
     }
+    assert result["checkpoint"]["digest"] == "Blocked: CI needs a decision"
+    assert result["checkpoint"]["opinion"] is None
 
 
 def test_show_prints_the_last_answer(device, capsys) -> None:
@@ -2337,6 +2341,11 @@ def test_show_prints_the_assessment(device, capsys) -> None:
         "reasoning": "The same finding returns.",
         "approach": "Use an allowlist.",
     }
+    order("show", "--id", order_id, "--json")
+    checkpoint = json.loads(capsys.readouterr().out)["checkpoint"]
+    assert checkpoint["event_id"] == event["id"]
+    assert checkpoint["digest"] == "Round limit reached"
+    assert checkpoint["opinion"] == event["opinion"]
 
     other_id = str(uuid.uuid4())
     seed_order_task(

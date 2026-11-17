@@ -520,9 +520,13 @@ def test_order_events_have_their_own_page() -> None:
     assert "Acknowledge" not in main
     assert 'orderCall("ack"' not in main
     assert 'orderCall("events"' not in main
-    assert "cp.digest" not in main
-    assert "cp.opinion" not in main
-    assert 'key === "digest" || key === "opinion"' not in main
+    assert 'const digest = cp.digest ? cp.digest : "";' in main
+    assert "question.textContent = digest;" in main
+    assert 'question.hidden = digest === "";' in main
+    assert 'cp.opinion !== null && typeof cp.opinion === "object"' in main
+    assert "orderRowsHtml(key, cp.opinion[key])" in main
+    assert 'getElementById("od-question")' in main
+    assert 'getElementById("od-opinion")' in main
     assert 'getElementById("order-events")' not in main
     assert 'getElementById("ev-wake")' not in main
     assert 'getElementById("ev-unacked")' not in main
@@ -560,6 +564,8 @@ def test_order_events_have_their_own_page() -> None:
         "check",
         "acked",
         "answers",
+        "digest",
+        "opinion",
     ]
 
 

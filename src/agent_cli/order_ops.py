@@ -396,6 +396,8 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
             "check": pending_view["check"],
             "acked": pending_view["acked"],
             "answers": pending_view["answers"],
+            "digest": pending_view["digest"],
+            "opinion": pending_view["opinion"],
         }
 
     intent = latest_order_intent(store, order_id)
@@ -791,6 +793,8 @@ OPERATIONS: tuple[Operation, ...] = (
                     "check",
                     "acked",
                     "answers",
+                    "digest",
+                    "opinion",
                 ),
             ),
             ("last_intent", ("id", "kind", "status", "error", "at")),
