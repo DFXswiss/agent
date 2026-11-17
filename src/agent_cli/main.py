@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from .ai_accounts import (
+    USAGE_ACCOUNT_PROVIDERS,
     AISubscription,
     load_ai_accounts,
     load_ai_subscriptions,
@@ -85,6 +86,7 @@ from .model_slots import (
     ModelSlots,
     ModelSlotsError,
     PinnedModelSlotsError,
+    SUPPORTED_PROVIDERS,
     canonical_checklist,
     canonical_key,
     canonical_stage,
@@ -121,6 +123,7 @@ from .small_change import (
 )
 from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import (
+    VENDOR as GROK_VENDOR,
     AccountUsageError,
     AuthStale,
     scan_claude_usage,
@@ -2496,6 +2499,228 @@ def _subscriptions_dashboard(
     }
 
 
+# Providers whose usage this device can read (Grok billing, usage_accounts).
+USAGE_READ_PROVIDERS = USAGE_ACCOUNT_PROVIDERS | {GROK_VENDOR}
+USAGE_PROVIDER_NAMES = {
+    "claude": "Claude",
+    "codex": "Codex",
+    "grok": "Grok",
+    "openrouter": "OpenRouter",
+}
+USAGE_NOT_READ = "not read"
+USAGE_NO_DATA = "no data"
+
+
+def _usage_time(value: Any) -> datetime | None:
+    """An ISO-8601 time of a usage snapshot as aware UTC, or ``None``."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _usage_duration_text(seconds: float) -> str:
+    """A short duration such as ``5 d 19 h``, ``3 h 12 min`` or ``4 min``."""
+    minutes = int(max(seconds, 0) // 60)
+    if minutes < 1:
+        return "<1 min"
+    days, rest = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(rest, 60)
+    if days:
+        return f"{days} d {hours} h"
+    if hours:
+        return f"{hours} h {minutes} min"
+    return f"{minutes} min"
+
+
+def _usage_resets_in(resets_at: Any, now: datetime) -> str | None:
+    """Time until a reset; ``due`` once it has passed; ``None`` when unknown."""
+    when = _usage_time(resets_at)
+    if when is None:
+        return None
+    seconds = (when - now).total_seconds()
+    return "due" if seconds <= 0 else _usage_duration_text(seconds)
+
+
+def _usage_rank(window: dict[str, Any]) -> float:
+    """Order windows by use; an unreported value ranks below 0 %."""
+    value = window.get("used_percent")
+    return value if isinstance(value, float) else -1.0
+
+
+def _usage_percent_text(value: float) -> str:
+    return f"{value:g}%"
+
+
+def _usage_windows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int, str | None]:
+    """Quota windows of one snapshot, the index of its headline window, and a
+    figure without a percentage (OpenRouter without a limit).
+
+    Each window is ``{"name", "used_percent", "resets_at"}``; a value the
+    snapshot does not report stays ``None``, never 0 %.
+    """
+    provider = payload.get("provider") or payload.get("vendor")
+
+    def percent(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    def window(name: str, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        return {
+            "name": name,
+            "used_percent": percent(raw.get("used_percent")),
+            "resets_at": raw.get("resets_at") if isinstance(raw.get("resets_at"), str) else None,
+        }
+
+    if provider == "claude":
+        raw = payload.get("windows") if isinstance(payload.get("windows"), dict) else {}
+        windows = [w for w in (window("5h", raw.get("five_hour")), window("Week", raw.get("weekly"))) if w]
+        models = raw.get("weekly_models")
+        for item in models if isinstance(models, list) else []:
+            model = item.get("model") if isinstance(item, dict) else None
+            found = window("Week " + (model if isinstance(model, str) and model else "scoped"), item)
+            if found:
+                windows.append(found)
+        weekly = [i for i, w in enumerate(windows) if w["name"] == "Week"]
+        return windows, weekly[0] if weekly else 0, None
+    if provider == "grok":
+        period = payload.get("period_type")
+        name = "Period"
+        if isinstance(period, str) and period:
+            name = period.removeprefix("USAGE_PERIOD_TYPE_").replace("_", " ").capitalize()
+        end = payload.get("period_end") if isinstance(payload.get("period_end"), str) else None
+        windows = [{"name": name, "used_percent": percent(payload.get("used_percent")), "resets_at": end}]
+        products = payload.get("products")
+        for item in products if isinstance(products, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("product"), str):
+                windows.append(
+                    {"name": item["product"], "used_percent": percent(item.get("used_percent")), "resets_at": end}
+                )
+        return windows, 0, None
+    if provider == "openrouter":
+        usage = percent(payload.get("usage_usd"))
+        limit = percent(payload.get("limit_usd"))
+        remaining = percent(payload.get("limit_remaining_usd"))
+        reset = payload.get("limit_reset") if isinstance(payload.get("limit_reset"), str) else None
+        used: float | None = None
+        if limit and limit > 0 and remaining is not None:
+            used = round((limit - remaining) / limit * 100, 1)
+        resets_at = reset if _usage_time(reset) else None
+        text = None
+        if usage is not None:
+            text = f"${usage:g} / " + (f"${limit:g}" if limit is not None else "unlimited")
+            if reset and resets_at is None:
+                text += f" ({reset})"
+        return [{"name": "Limit", "used_percent": used, "resets_at": resets_at}], 0, text
+    return [], 0, None
+
+
+def _usage_overview(
+    subscription_rows: list[dict[str, Any]], now: datetime
+) -> list[dict[str, Any]]:
+    """One compact entry per provider for the dashboard.
+
+    Built from the joined subscription rows, so it uses only recorded
+    ``usage.snapshot`` payloads and the inventory. Every known provider has an
+    entry: one without a usage reader on this device is ``not read``, one
+    with a reader but no snapshot is ``no data``. A provider window shows the
+    highest use among its accounts; the headline is the headline window of
+    the most used account.
+    """
+    providers = sorted(
+        set(SUPPORTED_PROVIDERS)
+        | {row["provider"] for row in subscription_rows if isinstance(row.get("provider"), str)}
+    )
+    overview: list[dict[str, Any]] = []
+    for provider in providers:
+        accounts: list[dict[str, Any]] = []
+        windows: dict[str, dict[str, Any]] = {}
+        headline: dict[str, Any] | None = None
+        text: str | None = None
+        newest: datetime | None = None
+        for row in subscription_rows:
+            if row.get("provider") != provider:
+                continue
+            event = row.get("usage") if isinstance(row.get("usage"), dict) else None
+            payload = event.get("payload") if event and isinstance(event.get("payload"), dict) else None
+            account = {
+                "account": row.get("account"),
+                "label": row.get("label"),
+                "listed": row.get("listed"),
+                "origin": event.get("_origin_device_id") if event else None,
+                "used_percent": None,
+                "resets_in": None,
+                "text": None,
+                "recorded": None,
+            }
+            accounts.append(account)
+            if payload is None:
+                account["text"] = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
+                continue
+            own, primary, figure = _usage_windows(payload)
+            fetched = _usage_time(payload.get("fetched_at"))
+            if fetched is not None:
+                account["recorded"] = _usage_duration_text((now - fetched).total_seconds()) + " ago"
+                newest = fetched if newest is None or fetched > newest else newest
+            main = own[primary] if own else None
+            if main is not None:
+                account["used_percent"] = main["used_percent"]
+                account["resets_in"] = _usage_resets_in(main["resets_at"], now)
+            account["text"] = figure
+            for item in own:
+                shown = windows.get(item["name"])
+                if shown is None or _usage_rank(item) > _usage_rank(shown):
+                    windows[item["name"]] = {
+                        "name": item["name"],
+                        "used_percent": item["used_percent"],
+                        "resets_in": _usage_resets_in(item["resets_at"], now),
+                    }
+            if main is not None and main["used_percent"] is not None and (
+                headline is None or main["used_percent"] > headline["used_percent"]
+            ):
+                headline = {**main, "resets_in": account["resets_in"]}
+            if text is None:
+                text = figure
+        status: str | None = None
+        if headline is None and text is None:
+            status = USAGE_NO_DATA if provider in USAGE_READ_PROVIDERS else USAGE_NOT_READ
+        name = USAGE_PROVIDER_NAMES.get(provider, provider)
+        if headline is not None:
+            summary = f"{name} {_usage_percent_text(headline['used_percent'])}"
+            if headline["resets_in"]:
+                summary += f" {headline['resets_in']}"
+        else:
+            summary = f"{name} {status or text}"
+        overview.append(
+            {
+                "provider": provider,
+                "name": name,
+                "status": status,
+                "used_percent": headline["used_percent"] if headline else None,
+                "window": headline["name"] if headline else None,
+                "resets_in": headline["resets_in"] if headline else None,
+                "text": None if headline else text,
+                "summary": summary,
+                "recorded": (
+                    _usage_duration_text((now - newest).total_seconds()) + " ago"
+                    if newest is not None
+                    else None
+                ),
+                "windows": list(windows.values()),
+                "accounts": accounts,
+            }
+        )
+    return overview
+
+
 def cmd_dashboard(args: list[str]) -> None:
     from .cli_bridge import MAX_REQUEST_BYTES
     from .dashboard_orders import PREFIX as ORDER_PREFIX, handle_order_request
@@ -2592,6 +2817,9 @@ def cmd_dashboard(args: list[str]) -> None:
                 snap["subscriptions"] = _subscriptions_dashboard(
                     store_home if isinstance(store_home, Path) else home(),
                     snap["usage"],
+                )
+                snap["usage_overview"] = _usage_overview(
+                    snap["subscriptions"]["rows"], datetime.now(timezone.utc)
                 )
                 _canonicalize_snapshot_names(snap)
                 self._json(200, snap)

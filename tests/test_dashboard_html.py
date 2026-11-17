@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,14 @@ from agent_cli.main import (
     _subscription_dashboard_rows,
     _subscriptions_dashboard,
     _usage_dashboard_rows,
+    _usage_duration_text,
+    _usage_overview,
 )
 from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
+from agent_cli.usage import _openrouter_snapshot, claude_snapshot, snapshot_from_payloads
+from test_usage import SETTINGS, _credits, _openrouter_body
+from test_usage_claude import usage_body
 
 pytestmark = pytest.mark.no_pg
 
@@ -332,6 +338,160 @@ console.log(JSON.stringify({
     assert out["invalid"] == "<tr><td colspan='11'>—</td></tr>"
     assert out["invalidError"] == "ai-subscriptions.json: subscriptions must be a list"
     assert out["configuredEmpty"] == "<tr><td colspan='11'>—</td></tr>"
+
+
+OVERVIEW_NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
+
+
+def _recorded(payload: dict, device: str = "device-a") -> dict:
+    return {"type": "usage.snapshot", "_origin_device_id": device, "payload": payload}
+
+
+def _overview_rows() -> list[dict]:
+    """Subscription rows built from the payloads usage.py stores."""
+    seat_1 = claude_snapshot("seat-1@example.com", "max_20x", usage_body(), "2026-11-17T09:56:00+00:00")
+    seat_3 = claude_snapshot(
+        "seat-3@example.com", "max_5x", usage_body(weekly=32.0), "2026-11-17T08:00:00+00:00"
+    )
+    grok = snapshot_from_payloads(
+        _credits(used=0.0), SETTINGS, "2026-11-17T09:59:30+00:00", "grok@example.com"
+    )
+    grok["period_end"] = "2026-11-20T14:00:00+00:00"
+    router = _openrouter_snapshot("router-a", _openrouter_body(), "2026-11-17T09:00:00+00:00")
+    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, grok, router)])
+    inventory = (
+        AISubscription("claude", "seat-1@example.com", "Team seat 1"),
+        AISubscription("claude", "seat-2@example.com"),
+        AISubscription("codex", "seat-1@example.com"),
+    )
+    return _subscription_dashboard_rows(inventory, usage)
+
+
+def test_usage_duration_text() -> None:
+    assert _usage_duration_text(-5) == "<1 min"
+    assert _usage_duration_text(59) == "<1 min"
+    assert _usage_duration_text(4 * 60 + 59) == "4 min"
+    assert _usage_duration_text(3 * 3600 + 12 * 60) == "3 h 12 min"
+    assert _usage_duration_text(5 * 86400 + 19 * 3600 + 59 * 60) == "5 d 19 h"
+
+
+def test_usage_overview_one_entry_per_provider() -> None:
+    overview = {entry["provider"]: entry for entry in _usage_overview(_overview_rows(), OVERVIEW_NOW)}
+    assert list(overview) == ["claude", "codex", "grok", "openrouter"]
+
+    claude = overview["claude"]
+    # The headline is the weekly window of the most used account.
+    assert (claude["used_percent"], claude["window"], claude["resets_in"]) == (32.0, "Week", "6 d 0 h")
+    assert claude["summary"] == "Claude 32% 6 d 0 h"
+    assert claude["status"] is None and claude["recorded"] == "4 min ago"
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in claude["windows"]] == [
+        ("Week", 32.0, "6 d 0 h"),
+        ("Week Fable", 21.0, "6 d 0 h"),
+    ]
+    assert [
+        (a["account"], a["label"], a["used_percent"], a["text"], a["recorded"]) for a in claude["accounts"]
+    ] == [
+        ("seat-1@example.com", "Team seat 1", 14.0, None, "4 min ago"),
+        ("seat-2@example.com", None, None, "no data", None),
+        ("seat-3@example.com", None, 32.0, None, "2 h 0 min ago"),
+    ]
+
+    codex = overview["codex"]
+    assert codex["status"] == "not read" and codex["used_percent"] is None
+    assert codex["summary"] == "Codex not read"
+    assert [(a["account"], a["text"]) for a in codex["accounts"]] == [("seat-1@example.com", "not read")]
+
+    grok = overview["grok"]
+    assert grok["summary"] == "Grok 0% 3 d 4 h"
+    assert grok["used_percent"] == 0.0 and grok["recorded"] == "<1 min ago"
+    assert [(w["name"], w["used_percent"]) for w in grok["windows"]] == [("Weekly", 0.0), ("GrokBuild", 0.0)]
+
+    router = overview["openrouter"]
+    assert router["summary"] == "OpenRouter 12.5% 13 d 14 h"
+    assert router["accounts"][0]["text"] == "$1.25 / $10"
+
+
+def test_usage_overview_without_data_never_shows_zero() -> None:
+    overview = {entry["provider"]: entry for entry in _usage_overview([], OVERVIEW_NOW)}
+    assert [(p, e["status"], e["summary"]) for p, e in overview.items()] == [
+        ("claude", "no data", "Claude no data"),
+        ("codex", "not read", "Codex not read"),
+        ("grok", "no data", "Grok no data"),
+        ("openrouter", "no data", "OpenRouter no data"),
+    ]
+    unlimited = _openrouter_body()
+    unlimited["data"].update({"limit": None, "limit_remaining": None, "limit_reset": "monthly"})
+    claude = claude_snapshot("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x")
+    rows = _subscription_dashboard_rows(
+        (),
+        [
+            _recorded(_openrouter_snapshot("router-a", unlimited, "2026-11-17T09:00:00+00:00")),
+            _recorded(claude),
+        ],
+    )
+    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW)}
+    router = overview["openrouter"]
+    assert router["used_percent"] is None and router["status"] is None
+    assert router["summary"] == "OpenRouter $1.25 / unlimited (monthly)"
+    assert overview["claude"]["status"] == "no data"
+    assert overview["claude"]["accounts"][0]["used_percent"] is None
+    assert overview["claude"]["accounts"][0]["recorded"] is None
+
+
+def test_usage_overview_markup() -> None:
+    index = PAGE.read_text(encoding="utf-8")
+    assert '<p>Subscriptions: <span id="usage-summary">—</span></p>' in index
+    assert "(data.usage_overview || []).map(p => p.summary).join(\" · \")" in index
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    assert '<div id="usage-overview"></div>' in html
+    assert 'id="usage-detailed"' in html and 'id="usage-sort"' in html
+    assert "usageOverview = data.usage_overview || [];" in html
+
+
+def test_usage_overview_renders_in_node() -> None:
+    if NODE is None:
+        pytest.skip("node is not installed; the static tests above cover the source")
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
+    helpers = "\n".join(line for line in script.splitlines() if line.startswith("    function esc("))
+    functions = "\n".join(
+        section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
+    )
+    overview = _usage_overview(_overview_rows(), OVERVIEW_NOW)
+    overview[0]["accounts"][0]["label"] = "<b>seat</b>"
+    harness = helpers + "\n" + functions + f"""
+const overview = {json.dumps(overview)};
+console.log(JSON.stringify({{
+  closed: usageOverviewHtml(overview, new Set(), false, false),
+  open: usageOverviewHtml(overview, new Set(["claude"]), false, false),
+  detailed: usageOverviewHtml(overview, new Set(), true, false),
+  sorted: usageOverviewHtml(overview, new Set(), false, true),
+  none: usageOverviewHtml([], new Set(), false, false),
+}}));
+"""
+    completed = subprocess.run(
+        [NODE, "-"], input=harness, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout)
+    closed = out["closed"]
+    assert closed.count('<details class="usage-provider"') == 4
+    assert " open>" not in closed
+    assert (
+        '<summary><span class="usage-line"><span><b>Claude</b></span><span>6 d 0 h</span>'
+        '<meter min="0" max="100" low="70" high="90" optimum="0" value="32" title="32%"></meter>'
+        "<span>32%</span></span></summary>"
+    ) in closed
+    assert '<span class="usage-muted">not read</span>' in closed
+    assert "0%" not in closed.split('data-provider="codex"', 1)[1].split("</summary>", 1)[0]
+    assert "recorded 4 min ago" in closed
+    assert "&lt;b&gt;seat&lt;/b&gt;" in closed and "<b>seat</b>" not in closed
+    assert '<details class="usage-provider" data-provider="claude" open>' in out["open"]
+    assert out["open"].count(" open>") == 1
+    assert out["detailed"].count(" open>") == 4
+    order = re.findall(r'data-provider="([a-z]+)"', out["sorted"])
+    assert order == ["claude", "openrouter", "grok", "codex"]
+    assert out["none"] == '<p class="usage-muted">—</p>'
 
 
 def static_page(name: str) -> str:

@@ -42,6 +42,7 @@
   <h1>Agent</h1>
   <p class="sub">Local replica including teammates after sync. <span id="stamp"></span></p>
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
+  <p>Subscriptions: <span id="usage-summary">—</span></p>
 
   <h2>Orders</h2>
   <p id="orders-note" class="watch-note" hidden></p>
@@ -241,6 +242,8 @@
         document.getElementById("stamp").textContent = data.generated_at;
         setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
+        document.getElementById("usage-summary").textContent =
+          (data.usage_overview || []).map(p => p.summary).join(" · ") || "—";
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);

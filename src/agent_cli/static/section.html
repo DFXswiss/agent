@@ -33,6 +33,15 @@
     button.copy-id.copied { color: #060; }
     button.copy-id.copy-failed { color: #c00; }
     .state-unknown { color: #777; }
+    #usage-overview { background: #fff; border: 1px solid #e0d8c8; margin-bottom: 12px; }
+    .usage-provider { border-bottom: 1px solid #eee; }
+    .usage-provider > summary { cursor: pointer; padding: 8px 10px; }
+    .usage-line { display: grid; grid-template-columns: minmax(8em, 14em) 7em minmax(6em, 1fr) 6em; gap: 10px; align-items: center; font-size: 0.92rem; }
+    .usage-provider > summary .usage-line { display: inline-grid; width: calc(100% - 24px); }
+    .usage-line meter { width: 100%; }
+    .usage-detail { padding: 4px 10px 10px 28px; }
+    .usage-detail .usage-line { padding: 3px 0; }
+    .usage-muted { color: #777; }
   </style>
 </head>
 <body>
@@ -54,6 +63,11 @@
 
   <section class="dashboard-section" data-section="usage">
     <h2>Subscriptions</h2>
+    <div class="control-form">
+      <label><input type="checkbox" id="usage-detailed" /> detailed</label>
+      <label><input type="checkbox" id="usage-sort" /> sort by used</label>
+    </div>
+    <div id="usage-overview"></div>
     <table id="usage"><thead><tr><th>Provider</th><th>Account</th><th>Label</th><th>Status</th><th>Note</th><th>Listed</th><th>Tier</th><th>Used</th><th>Reset</th><th>Owner</th><th>Fetched</th></tr></thead><tbody></tbody></table>
   </section>
 
@@ -310,6 +324,53 @@
       return subscriptions.error ? "ai-subscriptions.json: " + subscriptions.error : null;
     }
 
+    // A bar of 0–100 % used; the meter turns amber from 70 % and red from 90 %.
+    function usageMeter(percent) {
+      if (typeof percent !== "number") return "<span></span>";
+      return `<meter min="0" max="100" low="70" high="90" optimum="0" value="${esc(percent)}" title="${esc(percent)}%"></meter>`;
+    }
+
+    // One line: name, time until the reset, bar and percentage; without a
+    // percentage the figure or status word stands in place of the bar.
+    function usageLineHtml(name, resetsIn, percent, text) {
+      const bar = typeof percent === "number"
+        ? usageMeter(percent) + `<span>${esc(percent)}%</span>`
+        : `<span class="usage-muted">${esc(text || "—")}</span><span></span>`;
+      return `<span class="usage-line"><span>${name}</span><span>${esc(resetsIn || "")}</span>${bar}</span>`;
+    }
+
+    // The compact provider list of /api/state usage_overview. Each provider opens
+    // to its quota windows and its accounts; open providers stay open.
+    function usageOverviewHtml(providers, open, detailed, sortByUsed) {
+      const list = providers.slice();
+      if (sortByUsed) {
+        list.sort((a, b) => (typeof b.used_percent === "number" ? b.used_percent : -1) - (typeof a.used_percent === "number" ? a.used_percent : -1));
+      }
+      return list.map(p => {
+        const head = usageLineHtml(`<b>${esc(p.name)}</b>`, p.resets_in, p.used_percent, p.status || p.text);
+        const windows = (p.windows || []).map(w => usageLineHtml(esc(w.name), w.resets_in, w.used_percent, "")).join("");
+        const accounts = (p.accounts || []).map(a => {
+          const label = a.label ? ` <span class="usage-muted">${esc(a.label)}</span>` : "";
+          const age = a.recorded ? `<br><span class="usage-muted">recorded ${esc(a.recorded)}</span>` : "";
+          return usageLineHtml(esc(a.account) + label + age, a.resets_in, a.used_percent, a.text);
+        }).join("");
+        const isOpen = detailed || open.has(p.provider);
+        const recorded = p.recorded ? `<p class="usage-muted">recorded ${esc(p.recorded)}</p>` : "";
+        return `<details class="usage-provider" data-provider="${esc(p.provider)}"${isOpen ? " open" : ""}><summary>${head}</summary>`
+          + `<div class="usage-detail">${windows || ""}${accounts ? "<p><b>Accounts</b></p>" + accounts : ""}${recorded}</div></details>`;
+      }).join("") || `<p class="usage-muted">—</p>`;
+    }
+
+    let usageOverview = [];
+    // Providers the viewer opened; a refresh re-renders them open.
+    const usageOpen = new Set();
+
+    function renderUsageOverview() {
+      setHtml(document.getElementById("usage-overview"), usageOverviewHtml(usageOverview, usageOpen,
+        document.getElementById("usage-detailed").checked,
+        document.getElementById("usage-sort").checked));
+    }
+
     async function postControl(id, body) {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
         method: "POST",
@@ -404,6 +465,9 @@
         setHtml(document.getElementById("dev"), idOrText(data.device_id));
         document.getElementById("login").textContent = data.login || "not paired";
 
+        usageOverview = data.usage_overview || [];
+        renderUsageOverview();
+
         const subscriptions = data.subscriptions || {};
         setHtml(document.querySelector("#usage tbody"), (subscriptions.rows || []).map(subscriptionRowHtml).join("")
           || subscriptionsEmptyHtml(subscriptions));
@@ -473,6 +537,14 @@
         err.textContent = String(e);
       }
     }
+    document.getElementById("usage-overview").addEventListener("click", event => {
+      const summary = event.target instanceof Element ? event.target.closest("summary") : null;
+      if (!summary) return;
+      const provider = summary.parentElement.dataset.provider;
+      if (usageOpen.has(provider)) usageOpen.delete(provider); else usageOpen.add(provider);
+    });
+    document.getElementById("usage-detailed").onchange = renderUsageOverview;
+    document.getElementById("usage-sort").onchange = renderUsageOverview;
     tick();
     setInterval(tick, 2000);
   </script>
