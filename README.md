@@ -121,7 +121,7 @@ agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # pins the hub key 
 agent key whoami --id ID                                  # signed GET /api/key/whoami to the configured hub; prints the verified answer
 ```
 
-No key exists until `agent key create` runs. The key directory has mode `0700`, every key file and `hub-key.json` mode `0600`; an existing key file is never overwritten, and a pinned hub key is replaced only with `--replace`. `agent key whoami` uses the hub URL stored by `agent pair`, stops with `hub key is not pinned` before sending anything when no hub key is pinned, never follows a redirect, and reports `hub answer not verified` without using the body unless the pinned hub key signed the answer to this exact request within 120 seconds of this device's clock.
+No key exists until `agent key create` runs. The key directory has mode `0700`, every key file and `hub-key.json` mode `0600`; an existing key file is never overwritten, and a pinned hub key is replaced only with `--replace`. `agent key whoami` uses the hub URL stored by `agent pair`, stops with `hub key is not pinned` before sending anything when no hub key is pinned, never follows a redirect, and prints the body only when the pinned hub key signed the answer to this exact request within 120 seconds of this device's clock. Otherwise it reports `hub answer not verified`; for an unsigned refusal it adds the plain `error` value of the body, marked as unverified.
 
 ## Record work
 

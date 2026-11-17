@@ -11,7 +11,6 @@ A private key never appears in an output line or in an error message.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
@@ -110,10 +109,7 @@ def b64url_decode(text: str, length: int) -> bytes:
     """
     if BASE64URL_PATTERN.fullmatch(text) is None or len(text) % 4 == 1:
         raise ValueError("not base64url without padding")
-    try:
-        raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except (binascii.Error, ValueError):
-        raise ValueError("not base64url without padding") from None
+    raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
     if b64url_encode(raw) != text:
         raise ValueError("not canonical base64url")
     if len(raw) != length:
@@ -209,6 +205,14 @@ def _write_new_file(path: Path, data: bytes) -> None:
             path.unlink()
 
 
+def _ensure_home(agent_home: Path) -> None:
+    """Create ``$AGENT_HOME`` with mode 0700 when it does not exist; an existing home is left as it is."""
+    if agent_home.is_dir():
+        return
+    agent_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(agent_home, 0o700)
+
+
 def keys_directory(agent_home: Path) -> Path:
     return agent_home / KEYS_DIR
 
@@ -249,9 +253,8 @@ def create_key(agent_home: Path, key_id: str) -> str:
         raise KeyProtocolError(f"key {key_id} already exists at {path}; nothing was written")
     if directory.is_symlink():
         raise KeyProtocolError(f"{directory} is a symbolic link; nothing was written")
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if not directory.is_dir():
-        raise KeyProtocolError(f"{directory} is not a directory; nothing was written")
+    _ensure_home(agent_home)
+    directory.mkdir(mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
     private = Ed25519PrivateKey.generate()
     seed = private.private_bytes(
@@ -298,7 +301,7 @@ def pin_hub_key(agent_home: Path, hub_id: str, public_key: str, replace: bool) -
         ) from None
     path = agent_home / HUB_KEY_FILE
     payload = (json.dumps({"id": hub_id, "public_key": public_key}, indent=2) + "\n").encode("utf-8")
-    agent_home.mkdir(parents=True, exist_ok=True)
+    _ensure_home(agent_home)
     if not replace:
         try:
             _write_new_file(path, payload)
@@ -329,7 +332,7 @@ def load_hub_pin(agent_home: Path) -> HubPin:
         raise KeyProtocolError(f"cannot read {path}: {exc}") from None
     try:
         data = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise KeyProtocolError(f"{path} is not valid JSON") from None
     if (
         not isinstance(data, dict)
@@ -360,7 +363,10 @@ def hub_origin(hub_url: str) -> HubOrigin:
     """
     if "?" in hub_url or "#" in hub_url:
         raise KeyProtocolError("the configured hub URL must not carry a query or fragment")
-    parts = urlsplit(hub_url)
+    try:
+        parts = urlsplit(hub_url)
+    except ValueError as exc:
+        raise KeyProtocolError(f"the configured hub URL is invalid: {exc}") from None
     scheme = parts.scheme
     if scheme not in _DEFAULT_PORTS:
         raise KeyProtocolError("the configured hub URL must use http or https")

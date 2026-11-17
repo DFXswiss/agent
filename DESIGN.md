@@ -1382,7 +1382,7 @@ This revision records the decision of 2026-11-17 for central operation (§25): d
 
 ## 24. Team record and key identity (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule. Of the first build step (§24.10), the client commands `agent key` exist (§16); the hub side is not built.
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule. Of the first build step (§24.10), the client commands `agent key` exist (§16), and the hub side — the keys file, the signature checks and `GET /api/key/whoami` — is built in agent-core; no key is registered in the keys file yet.
 
 Decided on 2026-11-17, after the first version of this section:
 
