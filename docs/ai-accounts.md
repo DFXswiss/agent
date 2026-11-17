@@ -542,7 +542,10 @@ an agent row or check the account's `config_dir`. Every fresh coordinator start
 chooses at that moment, from local data only (no network request):
 
 1. Login: the member's identity from its `account_file`, as the window-usage
-   poll reads it. No login → not eligible (`no login`).
+   poll reads it. No login (no account file, or no login entry in it) → not
+   eligible (`no login`). An account file that exists but cannot be read, is
+   not valid JSON, is not an object, or has a missing or invalid field → not
+   eligible (`unreadable login file`).
 2. Usage: the newest own `usage.snapshot` for that driver and login, with the
    same match the poll uses (equal vendor, `account_email` equal without regard
    to case). None → not eligible (`no usage snapshot`). The snapshot's
@@ -552,8 +555,10 @@ chooses at that moment, from local data only (no network request):
    `windows.weekly`. A `null` window counts 0 %, and so does a window whose
    `resets_at` is at or before the start time, because it has reset since the
    snapshot. `weekly_models` is not used: its names are display names that do
-   not map to role models. A load of 100 % or more → not eligible
-   (`exhausted at N %`).
+   not map to role models. A snapshot whose `windows`, a load window, its
+   `used_percent` or its `resets_at` does not have the expected shape → not
+   eligible (`unreadable usage snapshot`). A load of 100 % or more → not
+   eligible (`exhausted at N %`).
 4. Running lanes: the agent rows of this device that are still `working` and
    recorded this account.
 

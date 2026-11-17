@@ -294,6 +294,29 @@ def test_no_eligible_member_raises_with_every_reason(tmp_path: Path) -> None:
     assert "@" not in str(excinfo.value)
 
 
+def test_unreadable_login_file_is_skipped_with_its_own_reason(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    logins = tmp_path / "logins"
+    ai = configure(store.home, logins, seats=("seat-1", "seat-2"))
+    # seat-1 has an account file that is not valid JSON, and a snapshot.
+    (logins / "seat-1").mkdir(parents=True)
+    (logins / "seat-1" / WINDOWS_ACCOUNT_FILE).write_text("{not json", encoding="utf-8")
+    record_snapshot(store, login_of("seat-1"), five_hour=None, weekly=window(1))
+    # seat-2 has no login on this device.
+    with pytest.raises(AccountError) as excinfo:
+        choose(store, ai)
+    assert str(excinfo.value) == (
+        "Role pooled has no usable pool account (seat-1: unreadable login file; "
+        "seat-2: no login)"
+    )
+
+    write_login(logins / "seat-2", login_of("seat-2"))
+    record_snapshot(store, login_of("seat-2"), five_hour=None, weekly=window(50))
+    choice = choose(store, ai)
+    assert choice.account.name == "seat-2"
+    assert choice.load == 50
+
+
 class UntouchableStore:
     """A store that fails any read: a single-account role reads nothing."""
 

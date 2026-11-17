@@ -27,7 +27,12 @@ from typing import Any
 
 from .ai_accounts import AccountError, AIAccount, AIAccountPool, AIAccounts, AIRole
 from .store import Store, StoreError
-from .usage import last_usage_snapshot, load_login_account, window_snapshot_match
+from .usage import (
+    AuthStale,
+    last_usage_snapshot,
+    load_login_account,
+    window_snapshot_match,
+)
 
 # Agent-row field that records the account a lane was launched with.
 LANE_ACCOUNT_FIELD = "account"
@@ -174,9 +179,11 @@ def _member_load(
     spec = accounts.drivers[account.provider]
     try:
         email = load_login_account(spec, account.config_dir)
-    except StoreError:
-        # AuthStale (no login) and an unreadable account file alike.
+    except AuthStale:
         return None, "no login"
+    except StoreError:
+        # The account file exists but cannot be read, parsed or used.
+        return None, "unreadable login file"
     snapshot = last_usage_snapshot(store, window_snapshot_match(account.provider, email))
     if snapshot is None:
         return None, "no usage snapshot"
