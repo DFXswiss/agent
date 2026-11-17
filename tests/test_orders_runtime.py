@@ -397,6 +397,27 @@ def test_draft_body_for_an_order() -> None:
     assert "Draft for example/project#7." in draft_pr_body(
         {"repo": "example/project", "number": 7}
     )
+    summarized = draft_pr_body(
+        order_source(OID),
+        summary_en="Moves order events onto their own page.",
+        summary_de="Verschiebt die Auftragsereignisse auf eine eigene Seite.",
+    )
+    assert summarized.startswith(
+        "EN:\nMoves order events onto their own page.\n\n"
+        "DE:\nVerschiebt die Auftragsereignisse auf eine eigene Seite.\n\n"
+    )
+    assert "Entwurf für Auftrag" not in summarized
+    with pytest.raises(CoordinatorError, match="draft change summary is incomplete"):
+        draft_pr_body(
+            order_source(OID),
+            summary_en="Moves order events onto their own page.",
+        )
+    with pytest.raises(CoordinatorError, match="draft change summary must be one line"):
+        draft_pr_body(
+            order_source(OID),
+            summary_en="Moves order events onto their own page.",
+            summary_de="Erste Zeile.\nZweite Zeile.",
+        )
 
 
 def test_refresh_draft_body_updates_an_order_draft(
@@ -413,6 +434,16 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
+
+    task["change_summary_en"] = "Moves order events onto their own page."
+    task["change_summary_de"] = "Verschiebt die Auftragsereignisse auf eine eigene Seite."
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    assert "DE:\nVerschiebt die Auftragsereignisse auf eine eigene Seite.\n" in fake.pr["body"]
+    assert "Entwurf für Auftrag" not in fake.pr["body"]
+    assert "existing gift invoice" in fake.pr["body"]
 
 
 def test_review_context_uses_the_order_text(

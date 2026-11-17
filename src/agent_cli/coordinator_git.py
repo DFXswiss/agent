@@ -593,10 +593,44 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
     return github_act.scan_github(Scoped(), runner)
 
 
+def _summary_line(value: object) -> str | None:
+    """One stored change-summary line, or None when that language is absent."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or "\n" in value or "\r" in value or value.strip() == "":
+        raise CoordinatorError("draft change summary must be one line")
+    return value.strip()
+
+
+def _draft_visible_summary(
+    source: dict[str, Any], summary_en: object, summary_de: object
+) -> str:
+    """Visible EN/DE block. Stored summaries replace the placeholder; one language alone is an error."""
+    english = _summary_line(summary_en)
+    german = _summary_line(summary_de)
+    if english is None and german is None:
+        if source.get("kind") == ORDER_KIND:
+            short = str(source.get("order_id") or "")[:8]
+            title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+            return (
+                f"EN:\nDraft for order {short}: {title}.\n\n"
+                f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
+            )
+        return (
+            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        )
+    if english is None or german is None:
+        raise CoordinatorError("draft change summary is incomplete")
+    return f"EN:\n{english}\n\nDE:\n{german}\n\n"
+
+
 def draft_pr_body(
     source: dict[str, Any],
     reused: list[str] | None = None,
     added: list[str] | None = None,
+    summary_en: object = None,
+    summary_de: object = None,
 ) -> str:
     """Draft text. The reused and added list and its headings appear only when the script posts a list."""
     details = ""
@@ -604,18 +638,7 @@ def draft_pr_body(
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
-    if source.get("kind") == ORDER_KIND:
-        short = str(source.get("order_id") or "")[:8]
-        title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
-        visible = (
-            f"EN:\nDraft for order {short}: {title}.\n\n"
-            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
-        )
-    else:
-        visible = (
-            f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-            f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
-        )
+    visible = _draft_visible_summary(source, summary_en, summary_de)
     if not details:
         return visible
     return visible + (
@@ -646,7 +669,13 @@ def refresh_draft_body(
     target = target_repo(task)
     if number is None or target == "":
         raise CoordinatorError("reused and added list has no draft to update")
-    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    body = draft_pr_body(
+        source,
+        [str(line) for line in reused],
+        [str(line) for line in added],
+        task.get("change_summary_en"),
+        task.get("change_summary_de"),
+    )
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
     queue_activity(
         store,
