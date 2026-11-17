@@ -12,6 +12,8 @@ behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
+The third build step, the team record and the security-issue object, is specified in
+[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
 
 ## 1. Scope of what is built now
 

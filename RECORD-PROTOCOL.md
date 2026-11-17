@@ -1,0 +1,1313 @@
+# Record protocol
+
+This document fixes the team record of the third build step: the signed events, the objects
+task and security issue, the rules that compute their state, the endpoints under
+`/api/key/record/`, the release rule over the record, the storage in PostgreSQL, verification,
+backup, and the tests the step must carry.
+
+**Status:** specified, not built. The rules behind it are in
+[DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
+repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
+Signed requests, signed answers, the keys file and the release query are specified in
+[KEY-PROTOCOL.md](KEY-PROTOCOL.md); this document builds on them and does not repeat them.
+[PROTOCOL.md](PROTOCOL.md) stays the contract for the session store, which this step does not
+change.
+
+The key words of this document are rules. "Must", "is" and "never" state a rule; there is no
+optional behaviour unless a sentence says "may".
+
+## 1. Scope of what is built in this step
+
+Built in this step:
+
+- the event: its canonical signed text, its hash, the chain of each key and the hub's record
+  hash over arrival order (section 4)
+- the objects task (with the kinds `work` and `security`; a security issue is a task of kind
+  `security`) and comment (section 5)
+- the reducer: the deterministic rules that compute the state of every object from the events
+  and refuse an invalid event at write time (section 6)
+- the endpoints under `/api/key/record/` (section 7)
+- the interface of the watcher, an external program that writes status events (section 8)
+- the release rule over the record, replacing `release_answer` (section 9)
+- storage in PostgreSQL with a writer role that can only insert and read (section 11)
+- verification at start and on request, signed checkpoints of the record hash, export, offline
+  verification and restore (section 12)
+- two new scopes in the keys file, `record:security` and `record:watch` (section 3)
+
+Not built in this step, and named here only so that nothing below is read as building it:
+
+- session keys of staff members and their certificates (DESIGN.md §25.6). Section 10 fixes how
+  events of staff members will be accepted once they exist. Until then, no staff member can
+  write to the record, because a `webauthn` key never signs a request (KEY-PROTOCOL.md section
+  5, check 5).
+- discussions and messages (DESIGN.md §24.4), orders and questions (DESIGN.md §25)
+- the dashboard and the state of the record at a past date (DESIGN.md §24.6). The rules of this
+  document make it computable (`received_at` never decreases, section 4.6); no endpoint answers
+  it yet.
+- reading pull requests from the code host (DESIGN.md §24.5). The hub does not call the code
+  host in this step.
+- the client commands for the record. They are specified in the client repository.
+
+No existing endpoint changes, with two exceptions: the release query computes its answer from
+the record (section 9), and it can answer `503` (section 7.1). The session store stays in SQLite
+(`AGENT_CORE_DATABASE`); the nonce store of KEY-PROTOCOL.md stays there too.
+
+## 2. Encodings and terms
+
+Everything in KEY-PROTOCOL.md section 2 applies unchanged: base64url without padding and
+canonical, SHA-256 as 64 lowercase hex characters, times as `YYYY-MM-DDTHH:MM:SSZ` in whole
+seconds, signed text as UTF-8 lines joined by one `\n` without a trailing line feed, plain
+Ed25519. In addition:
+
+| Thing | Form |
+|---|---|
+| UUID | 36 characters, lowercase hex in groups 8-4-4-4-12 joined by `-`, any version, not the nil UUID (all zeros). Compared as text. |
+| Handle | The handle rule of KEY-PROTOCOL.md section 3. |
+| Repository | The subject rule of KEY-PROTOCOL.md section 3: `owner/name`, lowercase. |
+| Pull-request reference | `<repository>#<number>`, where `number` is decimal 1 to 2147483647 without sign and without leading zero. Example: `example-org/example-repo#42`. |
+| Commit reference | `<repository>@<40 lowercase hex characters>`. |
+| Single-line text | Valid UTF-8 (no surrogates, no overlong forms) of Unicode scalar values other than U+0000 to U+001F, U+007F to U+009F, U+2028 and U+2029, not starting or ending with U+0020. |
+| Multi-line text | As single-line text, but U+000A (line feed) and U+0009 (tab) are allowed and the rule about U+0020 at the start and end does not apply. U+000D is never allowed. |
+| Position | A decimal integer from 1 to 9223372036854775807, without sign and without leading zero. |
+
+Text is never normalised. Two texts are equal when their bytes are equal. Every length limit in
+this document counts UTF-8 bytes.
+
+Terms:
+
+- **Actor**: the entry of the keys file whose `id` is the event's `actor_key_id`.
+- **Writer**: an actor with principal `agent` (and, once section 10 is built, `staff`) whose key
+  holds `record:write`.
+- **Watcher**: an actor with principal `service` whose key holds `record:watch` (section 8).
+- **Now**: the hub's clock cut to whole seconds, as in KEY-PROTOCOL.md section 2.
+
+## 3. Scopes and visibility
+
+### New scopes
+
+The scope table of KEY-PROTOCOL.md section 3 gains two rows. The pull request that implements
+this document adds them to that table and to the loader in the same diff.
+
+| Scope | Allows | May be held by |
+|---|---|---|
+| `record:security` | Read, and with `record:write` or `record:watch` write, tasks of kind `security` and their comments | `staff`, `agent`, `service` |
+| `record:watch` | Write status events as a watcher through `POST /api/key/record/watch` (section 8) | `service` |
+
+Loader rules added to KEY-PROTOCOL.md section 3; a file that breaks one does not start the hub:
+
+- An entry that holds `record:write`, `record:watch` or `record:security` also holds
+  `record:read`.
+- An entry that holds `record:watch` holds `subjects` (every `service` entry already does).
+
+The existing scopes keep their meaning: `record:read` reads the record, `record:write` writes
+events through `POST /api/key/record/events`.
+
+### Which key sees which object
+
+A key **sees** a task when all of these hold:
+
+1. the key holds `record:read`
+2. the key's `team` equals the task's `team`
+3. the task's `kind` is `work`, or the key holds `record:security`
+4. the key's principal is not `service`, or at least one repository of the task (the repository
+   of each pull-request reference in `links`, and `repository` for kind `security`) is in the
+   key's `subjects`
+
+A key sees a comment when it sees the comment's task. A key sees an event when it sees the
+object of the event; for an event of a comment, that is the comment's task. Visibility is always
+computed from the current state of the object and the current keys file.
+
+A key never learns anything about an object it does not see: such an object is answered exactly
+like an object that does not exist (`object_not_found`), it is missing from every list, and its
+events are withheld (section 7.4). A key with `record:read` of one team never sees anything of
+another team. There is no view without a registered key (DESIGN.md §24.7).
+
+A key that is revoked or expired reads and writes nothing, because the request checks of
+KEY-PROTOCOL.md section 5 refuse it. The events it signed earlier stay in the record and stay
+attributed to it.
+
+## 4. The event
+
+### 4.1 Fields
+
+Each event has these fields. All of them except `received_at` are part of the signed text.
+
+| Field | Type and form | Meaning |
+|---|---|---|
+| `event_id` | UUID | Chosen by the writer. Unique in the record. |
+| `object_type` | `task` or `comment` | The type of the object (section 5). No other value exists in this step. |
+| `object_id` | UUID | The object. An event for an `object_id` that does not exist yet creates the object. |
+| `actor_key_id` | The `id` rule of KEY-PROTOCOL.md section 3 | The key that signed. In this step a key of the keys file of kind `ed25519`. |
+| `signed_at` | Time | The writer's clock when it signed. |
+| `prev_hash` | 64 lowercase hex characters, or `-` | The event hash (section 4.4) of the previous event of the same key that the hub accepted; `-` for the first event of a key. |
+| `key_certificate` | `-` | The certificate of a session key (section 10). In this step always `-`. |
+| `changes` | 1 to 15 changes | Each change names one field with its old and its new value. |
+| `signature` | 64 bytes, base64url | Ed25519 signature of the actor's key over the event text (section 4.2). |
+| `received_at` | Time | The hub's clock when it appended the event (section 4.6). Not signed. |
+
+A change has three parts:
+
+| Part | Form |
+|---|---|
+| `field` | A field name of section 5. Each field at most once per event. |
+| `old` | A value token: the value the writer saw before the event. `-` when the field had no value, which is always the case when the event creates the object. |
+| `new` | A value token: the value after the event. `-` removes the value. |
+
+A **value token** is either `-` (no value) or `=` followed by the base64url encoding of the
+value's UTF-8 bytes. A value is never empty, so `=` alone is invalid. Every value is text; a
+number such as `urgency` is written as its decimal text, and a list such as `links` as its
+canonical text (section 5.2).
+
+### 4.2 The event text
+
+The signed bytes are the **event text**: `9 + 3 × n` lines for `n` changes.
+
+```text
+agent-event-v1
+<event_id>
+<object_type>
+<object_id>
+<actor_key_id>
+<signed_at>
+<prev_hash>
+<key_certificate>
+<n>
+<field 1>
+<old 1>
+<new 1>
+...
+<field n>
+<old n>
+<new n>
+```
+
+Rules; an event text that breaks one is refused with `event_invalid`:
+
+- The first line is exactly `agent-event-v1`. A later version gets a new label; a hub refuses a
+  label it does not know.
+- Lines are joined by one `\n`. There is no `\r`, no trailing line feed, and no empty line.
+  Every line consists of visible ASCII characters (0x21 to 0x7E) only.
+- `n` is decimal 1 to 15 without leading zero, and the number of lines is exactly `9 + 3 × n`.
+- The fields of the changes are in strictly ascending byte order, which makes each field appear
+  at most once.
+- `old` and `new` of one change differ. A change that changes nothing is invalid.
+- Every value token is `-` or `=` with canonical base64url (KEY-PROTOCOL.md section 2) whose
+  decoded bytes are not empty.
+- The whole event text is at most 65536 bytes.
+
+A value whose decoded form breaks the form of its field (section 5) is refused with
+`value_invalid`. A field name that the object type or the task kind does not have is refused with
+`field_not_allowed` (section 6).
+
+Example: a writer creates a task of kind `work` with the title `Fix login` for the team
+`example`. The values are `work`, `example` and `Fix login`.
+
+```text
+agent-event-v1
+0b6f3c1e-8d2a-4c1b-9f3e-2a7d5c9e1f40
+task
+5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+example-staff-laptop-1
+2026-11-17T10:00:00Z
+-
+-
+3
+kind
+-
+=d29yaw
+team
+-
+=ZXhhbXBsZQ
+title
+-
+=Rml4IGxvZ2lu
+```
+
+The next event of the same key assigns `example-staff` and starts the work:
+
+```text
+agent-event-v1
+6a0e9d4c-2b7f-4e1a-8c3d-5f2b1a0e9d8c
+task
+5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+example-staff-laptop-1
+2026-11-17T10:05:00Z
+<event hash of the first event>
+-
+2
+assignee
+-
+=ZXhhbXBsZS1zdGFmZg
+status
+=b3Blbg
+=aW5fcHJvZ3Jlc3M
+```
+
+### 4.3 The signature
+
+`signature` is the plain Ed25519 signature of the actor's key over the event text bytes. The hub
+verifies it with the `public_key` of the actor's entry in the keys file. The request that carries
+the event is signed separately (KEY-PROTOCOL.md section 5); that request signature is not stored
+and does not replace the event signature.
+
+### 4.4 The event hash
+
+The **event hash** is the SHA-256 of the event text bytes, as 64 lowercase hex characters. It
+identifies the event in the chain of its key and in the record hash.
+
+### 4.5 The chain of a key
+
+Every key has its own chain (DESIGN.md §24.3):
+
+- The first event the hub accepts from a key has `prev_hash` `-`.
+- Every later event of that key has as `prev_hash` the event hash of the last event of that key
+  that the hub accepted.
+- `signed_at` of an event is not earlier than `signed_at` of the previous accepted event of the
+  same key.
+
+A writer can sign while the hub is unreachable: it chains each new event to its own previous
+event. When the hub refuses an event, that event stays in the writer's local log together with
+the refusal; the writer signs its later events again, each against the last event of that key
+that the hub accepted (DESIGN.md §24.3). `GET /api/key/record/head` tells a writer that last
+event (section 7.8).
+
+### 4.6 Positions, `received_at` and the record hash
+
+The hub keeps one record. It appends accepted events in the order it accepts them:
+
+- **Position**: the first event has position 1; every further event has the position of the
+  previous one plus 1. There is no gap.
+- **`received_at`**: the later of now and the `received_at` of the event at the previous
+  position. It therefore never decreases along the positions, so the state at a past moment is
+  the fold of a prefix of the record (DESIGN.md §24.6).
+- **Record hash**: the SHA-256 of this text, as 64 lowercase hex characters:
+
+```text
+agent-record-v1
+<position, decimal>
+<received_at>
+<event hash>
+<record hash of the previous position, or - at position 1>
+```
+
+Position, `received_at` and record hash are computed values. Anyone who holds the events can
+compute them again; they are not events and the hub states nothing with them. The only statement
+the hub signs about the record is the checkpoint (section 12.2).
+
+The **head** of the record is the position and record hash of its last event; an empty record
+has position 0 and no record hash.
+
+## 5. Objects
+
+### 5.1 Object types
+
+| `object_type` | What it is |
+|---|---|
+| `task` | A unit of work. Kind `work` is an ordinary task; kind `security` is a security issue (DESIGN.md §24.4). |
+| `comment` | A text attached to one task. A comment is written once and never changed; a correction is a new comment. |
+
+Discussions, messages, orders and questions are later build steps. An event with any other
+`object_type` is refused with `event_invalid`.
+
+### 5.2 Fields of a task
+
+"Create" means the event that creates the task. "Required" means the field has a value after
+every event; "allowed" means it may have one.
+
+| Field | Form | Kind `work` | Kind `security` | Changeable after create |
+|---|---|---|---|---|
+| `kind` | `work` or `security` | required | required | no |
+| `team` | Single-line text, 1 to 100 bytes. At create equal to the actor's `team`. | required | required | no |
+| `title` | Single-line text, 1 to 200 bytes | required | required | yes |
+| `description` | Multi-line text, 1 to 16384 bytes | allowed | allowed | yes |
+| `assignee` | Handle | allowed | allowed | yes |
+| `status` | `open`, `in_progress`, `ready_for_review`, `merged`, `done`, `dropped` | required | required | yes, only by the transitions of section 6.4 |
+| `completion` | `merged` or `verified` (DESIGN.md §24.11) | required | required | yes |
+| `links` | 1 to 20 pull-request references, joined by one space, in strictly ascending byte order | allowed | allowed | yes, not in `merged` or `done` |
+| `repository` | Repository | refused | required | yes |
+| `short_name` | 1 to 30 characters of `a-z`, `0-9` and `-`, starting and ending with a letter or digit, without `--`. Unique among the tasks of kind `security` of the same team. | refused | required | yes |
+| `severity` | `low`, `medium`, `high`, `critical` | refused | required | yes |
+| `urgency` | Decimal 1 to 10 without leading zero | refused | required | yes |
+| `source` | 1 to 200 visible ASCII characters (0x21 to 0x7E): an external reference to where the issue was found | refused | allowed | yes |
+| `fix` | Pull-request reference or commit reference | refused | allowed; required in `done` | yes |
+| `verification` | Single-line text, 1 to 2000 bytes: what a staff member checked in production | allowed | allowed | only in the event that confirms it (section 6.4, row 11) |
+
+Defaults at create: when the create event has no `status`, the status is `open`; when it has no
+`completion`, the completion is `merged` for kind `work` and `verified` for kind `security`
+(DESIGN.md §24.11). The default is part of the computed state; it is not written into the event.
+
+Status names on the wire use `_` instead of the spaces of DESIGN.md: `in_progress` is "in
+progress", `ready_for_review` is "ready for review". `completion` `verified` is the rule
+"verified in production".
+
+The reducer also keeps, per task, the derived value **`completed_links`**: the value of `links`
+at the moment the task last left `merged` or `done`; none before that. It is not a field and is
+never written by an event.
+
+### 5.3 Fields of a comment
+
+| Field | Form | Rule |
+|---|---|---|
+| `task` | UUID | Required at create. A task the actor sees. |
+| `body` | Multi-line text, 1 to 16384 bytes | Required at create. |
+
+A comment has no other field. Every event for an existing comment is refused with
+`field_immutable`.
+
+### 5.4 What never enters the record
+
+Nothing is ever deleted from the record (DESIGN.md §24.3). Personal data, secrets, credentials
+and customer data therefore never enter any field. `source` and `fix` are references that reveal
+nothing by themselves; a description names what is wrong, not whose data was affected. The hub
+cannot check this; a review treats a field or a client form that invites such data as a defect.
+The only names of people in the record are handles, which are already public in the keys file.
+
+## 6. The reducer
+
+The state of the record is the fold of its events in position order. The reducer applies one
+event to the state. It is deterministic: it reads only the state before the event and the event,
+and for the actor rules (section 6.5) the keys file and `received_at`.
+
+### 6.1 Two kinds of rule
+
+- **State rules** (sections 6.2 to 6.4 and 6.6) depend only on the state and the event. The hub
+  checks them at write time, and every fold checks them again: at start, in
+  `GET /api/key/record/verify`, and in offline verification.
+- **Actor rules** (section 6.5) depend on the actor's entry in the keys file, on the endpoint
+  that received the event, and on `received_at`. The hub checks them only at write time. A later
+  change of the keys file, such as a revocation or a changed scope, never makes an accepted
+  event invalid (DESIGN.md §24.2: events a key already signed stay valid).
+
+An event that breaks a rule is refused with the error value of that rule. It is never stored and
+changes nothing.
+
+### 6.2 Create and update
+
+- An event whose `object_id` does not exist creates the object. Every `old` of the event is `-`.
+- An event whose `object_id` exists updates it. Every `old` equals the current value of its
+  field, `-` for a field without value.
+- `object_type` of an update equals the type of the existing object.
+
+A mismatch of an `old` value is refused with `state_mismatch`; this makes concurrent edits
+explicit instead of losing one (DESIGN.md §24.3). A mismatch of `object_type` is refused with
+`state_mismatch` too.
+
+### 6.3 Fields
+
+- A field that the object type does not have, or that the kind does not have (the column
+  "refused" of section 5.2), is refused with `field_not_allowed`. The kind is the `new` value of
+  `kind` for a create and the current kind for an update.
+- `kind` and `team` of an existing task, and any field of an existing comment, are refused with
+  `field_immutable`.
+- A value outside the form of its field is refused with `value_invalid`.
+
+### 6.4 Status transitions
+
+A status change is valid when one row of this table matches. "Before" is the state before the
+event; "after" is the state after it. The column "Who" is an actor rule (section 6.5); every
+other column is a state rule.
+
+| # | From | To | Who | Further condition |
+|---|---|---|---|---|
+| 1 | (create) | `open` | writer | none |
+| 2 | (create) or `open` | `in_progress` | writer; for kind `security` only the writer whose `handle` is the `assignee` after the event | `assignee` has a value after the event |
+| 3 | `in_progress` | `ready_for_review` | writer | none |
+| 4 | `ready_for_review` | `in_progress` | writer | none |
+| 5 | `in_progress`, `ready_for_review` | `open` | writer | none |
+| 6 | `open`, `in_progress`, `ready_for_review` | `dropped` | writer | none |
+| 7 | `dropped` | `open` | writer | none |
+| 8 | `open`, `in_progress`, `ready_for_review` | `done` | watcher | `completion` is `merged` before and after; `links` has a value |
+| 9 | `open`, `in_progress`, `ready_for_review` | `merged` | watcher | `completion` is `verified` before and after; `links` has a value |
+| 10 | `in_progress`, `ready_for_review` | `done` under `completion` `merged`, or `merged` under `completion` `verified` | assignee | `completion` unchanged by the event; `links` has no value, or equals `completed_links` |
+| 11 | `merged` | `done` | staff | `completion` is `verified` before and after; the event sets `verification` |
+| 12 | `merged` | `done` | assignee | `completion` is `merged` before and after; `links` has no value |
+| 13 | `merged` | `done` | writer | The same event changes `completion` from `verified` to `merged`; `links` has a value |
+| 14 | `merged`, `done` | `in_progress` | writer | `assignee` has a value after the event. The reducer sets `completed_links` to the value of `links`. |
+
+- "Writer", "watcher" and "staff" are the actors of section 2. "Assignee" is an actor with
+  principal `agent` (or `staff`, section 10) whose `handle` equals the task's `assignee`, where
+  the event does not change `assignee`.
+- Row 13 is DESIGN.md §24.11 "changing the rule of a task in status `merged` to `merged` sets
+  the task to `done` in the same event". The condition of the rule `merged` held when the task
+  reached `merged`, and `links` cannot change in `merged` (section 6.6), so it still holds. An
+  event that changes `completion` from `verified` to `merged` on a task in `merged` with `links`
+  and does not set `done` is refused with `transition_invalid`. A task in `merged` without
+  `links` keeps its status; its assignee then sets `done` by row 12.
+- An event that changes `completion` of a task in `done` without changing `status` is valid and
+  leaves the status `done`.
+- Row 10 is DESIGN.md §24.11 for a task without a linked pull request, and for a task that was
+  set back while the condition of its rule already held: the hub cannot ask the code host, so
+  "already true and no further pull request linked" is decided by `links` being unchanged since
+  the task left `merged` or `done`.
+- A change of `status` that matches no row by its state conditions is refused with
+  `transition_invalid`. A change that matches a row by its state conditions, but no such row
+  allows the actor, is refused with `change_not_allowed`.
+- An event that sets `verification` without matching row 11 is refused with
+  `transition_invalid`.
+
+### 6.5 Actor rules
+
+Checked at write time only, in this order:
+
+| # | Rule | Status | `error` |
+|---|---|---|---|
+| 1 | At create of a task, `team` equals the actor's `team`. | 403 | `change_not_allowed` |
+| 2 | The actor is allowed the status change by the column "Who" of section 6.4. | 403 | `change_not_allowed` |
+| 3 | Through `POST /api/key/record/events`, the actor is a writer. Through `POST /api/key/record/watch`, the event is a watcher event (section 8). | 403 | `change_not_allowed` |
+| 4 | For kind `security`, a change of `assignee`: when `assignee` had no value, its new value is the actor's `handle` (whoever starts takes it themselves). When `assignee` had a value, the actor's `handle` equals that value: nobody takes over an assigned security issue; the assignee hands it over or gives it up (DESIGN.md §24.4). | 403 | `change_not_allowed` |
+| 5 | A new value of `assignee` is the `handle` of at least one entry of the keys file with principal `staff` or `agent`, whose `team` equals the task's `team`, and that is neither revoked nor expired at `received_at`. | 409 | `assignee_invalid` |
+| 6 | Through `POST /api/key/record/watch`, the repository of every reference in the task's `links` is in the watcher's `subjects`. | 403 | `subject_not_allowed` |
+
+### 6.6 Invariants after the event
+
+State rules on the state after the event:
+
+| Rule | Status | `error` |
+|---|---|---|
+| Every required field of section 5.2 or 5.3 has a value. | 409 | `field_required` |
+| In `in_progress` and `ready_for_review`, `assignee` has a value. | 409 | `field_required` |
+| A task of kind `security` in `done` has a value in `fix`. | 409 | `field_required` |
+| `short_name` is unique among the tasks of kind `security` of the same team. | 409 | `short_name_taken` |
+| An event that changes `links` has neither before nor after it the status `merged` or `done`. | 409 | `links_frozen` |
+| `task` of a comment names a task. | 404 | `object_not_found` |
+
+### 6.7 Order of the checks of one event
+
+For an event that arrives at `POST /api/key/record/events` or `POST /api/key/record/watch`, after
+checks 1 to 9 of KEY-PROTOCOL.md section 5, the hub checks in this order and stops at the first
+failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transaction (section
+11.5).
+
+| # | Check | Status | `error` |
+|---|---|---|---|
+| 1 | The query is empty. | 400 | `query_invalid` |
+| 2 | The body is one JSON object with exactly the members `event` and `signature`, each a string, no member twice. `event` is canonical base64url of 1 to 65536 bytes; `signature` is canonical base64url of 64 bytes. | 400 | `body_invalid` |
+| 3 | The event text has the form of section 4.2. | 400 | `event_invalid` |
+| 4 | `actor_key_id` equals the request's `Agent-Key`. | 403 | `actor_mismatch` |
+| 5 | `key_certificate` is `-`. | 400 | `certificate_not_supported` |
+| 6 | The signature verifies with the actor's public key over the event text. | 400 | `event_signature_invalid` |
+| 7 | No stored event has this event hash. | 409 | `event_duplicate` |
+| 8 | No stored event has this `event_id`. | 409 | `event_id_taken` |
+| 9 | `prev_hash` is the event hash of the last accepted event of this key, or `-` when there is none. | 409 | `chain_broken` |
+| 10 | `signed_at` is at most 120 seconds after now and not earlier than `signed_at` of the last accepted event of this key. | 400 | `event_time_invalid` |
+| 11 | The actor's key is neither revoked nor expired at `received_at`. | 403 | `key_revoked` or `key_expired` |
+| 12 | The object: an update of an object the actor does not see; a comment whose `task` the actor does not see or that does not exist; any event through the watch endpoint for an object that does not exist or is not a task. | 404 | `object_not_found` |
+| 13 | A create of a task of kind `security` by an actor without `record:security`. | 403 | `scope_missing` |
+| 14 | Every value of a field that the object type has is in the form of that field (section 5). | 400 | `value_invalid` |
+| 15 | Section 6.2. | 409 | `state_mismatch` |
+| 16 | Section 6.3. | 400 / 409 | `field_not_allowed` / `field_immutable` |
+| 17 | Section 6.4 (state conditions) and section 6.6, in the order of their tables. | 404 / 409 | as given there |
+| 18 | Section 6.5, in the order of its table. | 403 / 409 | as given there |
+
+Check 11 can fail only when `received_at` is later than now (section 4.6); otherwise checks 3 and
+4 of KEY-PROTOCOL.md section 5 have already refused the request. An event that a key signed
+before its revocation and that reaches the hub only afterwards is therefore always refused
+(DESIGN.md §24.3); it stays in the writer's local log.
+
+A refusal changes nothing: no row is written, the chain of the key does not advance, and the
+state is unchanged.
+
+## 7. Endpoints
+
+### 7.1 Common rules
+
+Every endpoint of this section:
+
+- needs a signed request (KEY-PROTOCOL.md section 5) and has its answer signed (section 6
+  there), whatever the status
+- names no subject, so check 10 of KEY-PROTOCOL.md section 5 does not apply; the subjects of a
+  `service` key act through visibility (section 3) and actor rule 6 (section 6.5)
+- answers a refusal with exactly `{"error":"<value>"}`, without whitespace and without any data
+  of the record
+- answers JSON written without whitespace, with the members in the order shown in this document
+- reads the stored events that are newer than its own state before it answers (section 11.6)
+- answers `503` with `{"error":"record_unverified"}` while the hub has found the stored record
+  broken (section 12.1); this applies to `GET /api/key/release` too
+- answers `500` with `{"error":"internal"}` when the database fails, signed, as KEY-PROTOCOL.md
+  section 5 requires for a failure after check 8
+
+**Query.** An endpoint takes the query parameters named for it and nothing else. The query is
+read from the raw request target that the signature covers, like the release query
+(KEY-PROTOCOL.md section 8): pairs `name=value` joined by `&`, each name at most once, no unknown
+name, no empty value, no parameter without `=`, no empty pair, no `+`, and no `%` except `%2F` or
+`%2f` for the `/` in a `repository` value. An endpoint without parameters takes only the empty
+query. An invalid query gets `400` with `{"error":"query_invalid"}` after check 9 (the scope)
+and before anything else. A `GET` endpoint ignores a request body.
+
+**Paging.** A list is read in pages. `limit` is decimal without leading zero, within the range
+given for the endpoint; without `limit`, the default given there applies. A page holds at most
+`limit` items; the cursor of the next page is in the answer, or `null` when there is no further
+item.
+
+| Endpoint | Method and path | Scope |
+|---|---|---|
+| 7.2 | `POST /api/key/record/events` | `record:write` |
+| 7.3 | `POST /api/key/record/watch` | `record:watch` |
+| 7.4 | `GET /api/key/record/events` | `record:read` |
+| 7.5 | `GET /api/key/record/object` | `record:read` |
+| 7.6 | `GET /api/key/record/tasks` | `record:read` |
+| 7.7 | `GET /api/key/record/comments` | `record:read` |
+| 7.8 | `GET /api/key/record/head` | `record:read` |
+| 7.9 | `GET /api/key/record/verify` | `record:read` |
+| 7.10 | `GET /api/key/record/checkpoints` | `record:read` |
+
+Any other method or path under `/api/key/record/`, a trailing slash and `HEAD` get the signed
+`404` `not_found` of KEY-PROTOCOL.md section 5.
+
+### 7.2 `POST /api/key/record/events`
+
+Appends one event of a writer. Body:
+
+```json
+{"event":"<base64url of the event text>","signature":"<base64url of 64 bytes>"}
+```
+
+The checks are those of section 6.7. A request may be sent with `Content-Encoding: gzip`
+(KEY-PROTOCOL.md section 5). Answer `201`:
+
+```json
+{"position":17,"event_hash":"<64 hex>","record_hash":"<64 hex>","received_at":"2026-11-17T10:05:01Z","hub_key":"hub-1"}
+```
+
+The answer is the hub's signed acknowledgement that the event is stored at that position. A
+writer that receives no answer reads `GET /api/key/record/head` before it sends anything else; a
+second send of the same event is refused with `event_duplicate`.
+
+### 7.3 `POST /api/key/record/watch`
+
+Appends one event of a watcher (section 8). Body, checks and answer as in section 7.2.
+
+### 7.4 `GET /api/key/record/events`
+
+Reads the record in position order, for replication and audit.
+
+| Parameter | Form | Default |
+|---|---|---|
+| `after` | `0` or a position | `0` |
+| `limit` | 1 to 100 | 100 |
+| `object` | UUID | none |
+
+Without `object`, the answer holds every event with a position greater than `after`, in
+ascending position, at most `limit`. An event the key sees is given in full; an event it does not
+see is **withheld**: its position, `received_at`, event hash and record hash are given, its text
+and signature are `null`. A withheld entry does not say whether the event belongs to another
+team, to a security issue or to a task outside a `service` key's subjects. The record hash chain
+can be checked over all entries, withheld or not.
+
+With `object`, the answer holds only the events of that object, in ascending position, after
+`after`; for a task this does not include the events of its comments. When the key does not see
+the object, or it does not exist, the answer is `404` `object_not_found`.
+
+```json
+{"events":[{"position":17,"received_at":"2026-11-17T10:05:01Z","event_hash":"<64 hex>","record_hash":"<64 hex>","event":"<base64url>","signature":"<base64url>"},{"position":18,"received_at":"2026-11-17T10:06:00Z","event_hash":"<64 hex>","record_hash":"<64 hex>","event":null,"signature":null}],"next_after":null,"head":18,"hub_key":"hub-1"}
+```
+
+- `next_after` is the position of the last entry of this page when a further entry exists for
+  the same request, otherwise `null`.
+- `head` is the position of the record head when the page was read, `0` for an empty record.
+
+### 7.5 `GET /api/key/record/object`
+
+Reads the current state of one object. One parameter, `id`, a UUID, required. When the key does
+not see the object, or it does not exist, the answer is `404` `object_not_found`. Answer `200`:
+
+```json
+{"object":{...},"hub_key":"hub-1"}
+```
+
+A task has exactly these members in this order. A field without value is `null`; `links` and
+`completed_links` are arrays, empty when there is no value; `urgency` is a JSON number.
+
+```json
+{"type":"task","id":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","team":"example","kind":"security","title":"Fix login","description":null,"assignee":"example-staff","status":"in_progress","completion":"verified","links":["example-org/example-repo#42"],"completed_links":[],"repository":"example-org/example-repo","short_name":"login-bypass","severity":"high","urgency":8,"source":"report-2026-17","fix":null,"verification":null,"comments":2,"created":{"position":17,"received_at":"2026-11-17T10:05:01Z","key":"example-staff-laptop-1","handle":"example-staff"},"changed":{"position":21,"received_at":"2026-11-17T11:00:00Z","key":"example-staff-laptop-1","handle":"example-staff"}}
+```
+
+- `comments` is the number of comments of the task.
+- `created` names the event that created the object, `changed` the last event of the object;
+  `key` is its `actor_key_id` and `handle` the `handle` of that key's entry.
+
+A comment:
+
+```json
+{"type":"comment","id":"<uuid>","task":"<uuid>","body":"Reproduced on the example build.","created":{"position":19,"received_at":"2026-11-17T10:30:00Z","key":"example-staff-laptop-1","handle":"example-staff"}}
+```
+
+### 7.6 `GET /api/key/record/tasks`
+
+Lists the tasks the key sees, newest first: by the position of `changed` descending. Each task
+has its own `changed` position, so the order is total.
+
+| Parameter | Form | Default | Selects |
+|---|---|---|---|
+| `kind` | `work` or `security` | none | tasks of that kind |
+| `status` | a status of section 5.2 | none | tasks in that status |
+| `assignee` | a handle, or `-` | none | tasks with that assignee; `-` selects tasks without assignee |
+| `repository` | repository | none | tasks with a link into that repository, or kind `security` with that `repository` |
+| `before` | position | none | tasks whose `changed` position is lower |
+| `limit` | 1 to 200 | 50 | |
+
+All given filters must hold. A key without `record:security` that asks for `kind=security` gets
+an empty list.
+
+```json
+{"tasks":[{...}],"next_before":null,"hub_key":"hub-1"}
+```
+
+Each item has the form of section 7.5. `next_before` is the `changed` position of the last task
+of this page when a further task matches, otherwise `null`. Pages are not a snapshot: a task that
+changes between two pages moves to the front and can be missed or appear twice. A reader that
+needs a consistent set reads the events (section 7.4).
+
+### 7.7 `GET /api/key/record/comments`
+
+Lists the comments of one task, newest first by position.
+
+| Parameter | Form | Default |
+|---|---|---|
+| `task` | UUID, required | |
+| `before` | position | none |
+| `limit` | 1 to 200 | 50 |
+
+When the key does not see the task, or it does not exist, the answer is `404`
+`object_not_found`.
+
+```json
+{"comments":[{...}],"next_before":null,"hub_key":"hub-1"}
+```
+
+Each item has the comment form of section 7.5; `next_before` is the position of the last comment
+of this page when a further comment exists, otherwise `null`.
+
+### 7.8 `GET /api/key/record/head`
+
+No parameters. Answers the head of the record and of the caller's own chain:
+
+```json
+{"position":21,"record_hash":"<64 hex>","key":"example-staff-laptop-1","key_position":21,"key_event_hash":"<64 hex>","key_signed_at":"2026-11-17T11:00:00Z","hub_key":"hub-1"}
+```
+
+- `position` and `record_hash` are the record head; `0` and `null` for an empty record.
+- `key_position`, `key_event_hash` and `key_signed_at` describe the last accepted event of the
+  calling key; all three are `null` when the key has none. A writer uses `key_event_hash` as its
+  next `prev_hash`.
+
+The answer names no other key's chain.
+
+### 7.9 `GET /api/key/record/verify`
+
+No parameters. The hub reads every stored event and checkpoint from the database, not from its
+state in memory, and verifies them as in section 12.1. At most one verification runs at a time;
+a second request waits for the first to end and then runs its own.
+
+```json
+{"verified":true,"position":21,"record_hash":"<64 hex>","failure":null,"hub_key":"hub-1"}
+```
+
+When verification fails, `verified` is `false`, `position` is the first position that fails,
+`record_hash` is `null` and `failure` is one value of section 12.1. The status is `200` in both
+cases. After a failure the hub answers `503` `record_unverified` to every record endpoint and to
+the release query until it is restarted; a restart verifies again (section 11.4).
+
+### 7.10 `GET /api/key/record/checkpoints`
+
+Lists the checkpoints (section 12.2), newest first by position.
+
+| Parameter | Form | Default |
+|---|---|---|
+| `before` | position | none |
+| `limit` | 1 to 200 | 50 |
+
+```json
+{"checkpoints":[{"position":21,"record_hash":"<64 hex>","published_at":"2026-11-17T12:00:00Z","signed_by":"hub-1","signature":"<base64url>"}],"next_before":null,"hub_key":"hub-1"}
+```
+
+`next_before` is the position of the last checkpoint of this page when a further one exists,
+otherwise `null`. A checkpoint reveals only a position and a hash, so every key with
+`record:read` reads all of them.
+
+## 8. The watcher
+
+The watcher is an external program with its own `service` key (DESIGN.md §24.11). It observes
+merges and closes of linked pull requests and changes of links on the code host, and writes the
+status change when the condition of a task's rule becomes true. The hub authors nothing; it
+checks the watcher's event like any other.
+
+Its keys file entry is an ordinary `service` entry (KEY-PROTOCOL.md section 3) with the scopes
+`record:read` and `record:watch`, `record:security` when it serves security issues, and the
+repositories it observes as `subjects`. Example:
+
+```yaml
+  - id: example-watcher-1
+    kind: ed25519
+    principal: service
+    handle: example-watcher
+    team: example
+    device: runner-1
+    public_key: "<base64url, 32 bytes>"
+    scopes: [record:read, record:watch, record:security]
+    subjects: [example-org/example-repo]
+    expires: "2027-06-30T00:00:00Z"
+```
+
+A watcher event is sent to `POST /api/key/record/watch` and is valid only when:
+
+- its object is an existing task the watcher sees (otherwise `object_not_found`)
+- it changes `status` by row 8 or row 9 of section 6.4 (otherwise `transition_invalid` or
+  `change_not_allowed`)
+- it changes no other field, except `fix` of a task of kind `security`, whose new value is one of
+  the task's `links` (otherwise `change_not_allowed`)
+- every repository of the task's `links` is in the watcher's `subjects` (otherwise
+  `subject_not_allowed`)
+
+The watcher writes a task's next status only after a change of its linked pull requests or its
+links (DESIGN.md §24.11); the hub cannot observe the code host and does not check this. A watcher
+key has one team; a watcher that serves several teams has one key per team. A watcher never
+writes through `POST /api/key/record/events`: a `service` key cannot hold `record:write`.
+
+## 9. The release rule
+
+`release_answer(repository, pull_request)` of `GET /api/key/release` (KEY-PROTOCOL.md section 8)
+is replaced by this rule over the current state. The query, the order of checks and the wire
+format of the answer stay as specified there; the only addition is the `503` of section 7.1.
+
+The **linked tasks** of a pull request are the tasks of every team and of both kinds whose
+`links` contain the reference `<repository>#<pull_request>` and whose status is not `dropped`.
+The conditions are checked in this order:
+
+| `failed` | Condition | After this step |
+|---|---|---|
+| `task_missing` | The pull request has at least one linked task. | checked |
+| `task_not_ready` | Every linked task has an `assignee` and the status `in_progress` or `ready_for_review`. | checked |
+| `question_unanswered` | No question of an order for a linked task is unanswered. | always met: orders and questions are not built (DESIGN.md §24.11) |
+
+When all hold, the answer is `"released":true,"failed":null`; otherwise `"released":false` and
+`failed` names the first that failed. The visibility of section 3 does not limit what the rule
+reads: the answer is a yes or no and names no task. A security issue counts as a linked task
+(DESIGN.md §24.11).
+
+From this step on, a pull request that no task links gets `task_missing`. That is the intended
+effect of DESIGN.md §24.11; the answer stays one input for a guard and replaces no review rule.
+
+## 10. Events of staff members (not built)
+
+A staff member's passkey never signs a request or an event directly. A later build step adds the
+session key of DESIGN.md §25.6, which a passkey certifies and which signs every write from the
+website. This section fixes how its events are accepted, so that the record format of this step
+stays valid; nothing here is built now.
+
+- The event text keeps the form of section 4.2 and the label `agent-event-v1`. `actor_key_id` is
+  the id of the session key; the later step defines its form and keeps it disjoint from every
+  `id` of the keys file. `key_certificate` is `=` followed by the base64url of the certificate
+  bytes that DESIGN.md §25.6 defines; until that step, any value other than `-` is refused with
+  `certificate_not_supported`.
+- The hub then accepts such an event only when the certificate verifies against a `webauthn`
+  entry of the keys file that is neither revoked nor expired at `received_at`, the certificate
+  binds the session key's public key and that key verifies the event signature, the
+  certificate's expiry has not passed at `received_at`, and that expiry lies no further than the
+  longest session-key lifetime of DESIGN.md §25.6 after the time at which the hub issued the
+  fresh value named in the certificate (DESIGN.md §24.3). These checks take the place of check 6
+  of section 6.7, with error values the later step adds.
+- A session key has its own chain (section 4.5), starting with `-`.
+- For every rule of this document, the actor of such an event is the passkey's entry: principal
+  `staff`, its `handle`, `team` and scopes. Only then can row 11 of section 6.4 and the
+  confirmation of DESIGN.md §24.11 be written.
+- Fold and offline verification verify the certificate against the passkey's public key, but
+  check neither revocation nor expiry, as for every other key (section 6.1).
+
+Until that step, a task with `completion` `verified` reaches `merged` but not `done`, because
+row 11 needs a staff member.
+
+## 11. Storage in PostgreSQL
+
+### 11.1 Database and version
+
+The record is stored in one PostgreSQL database of its own, version 16 or later, separate from
+the SQLite store of the session bus (DESIGN.md §24.8). The hub accesses it with the `psycopg`
+package (version 3) and plain SQL.
+
+### 11.2 Roles
+
+| Role | Used for | Rights |
+|---|---|---|
+| Owner | Only the migration step at start (section 11.4) | Owns the schema `record` and its tables, functions and triggers. Not a superuser. |
+| Writer | Everything after the migration step | `CONNECT` on the database, `USAGE` on the schema `record`, `SELECT` and `INSERT` on `record.event` and `record.checkpoint`. Nothing else. Not a superuser, no `BYPASSRLS`, `CREATEROLE` or `CREATEDB`, not a member of the owner role. |
+
+The deployment creates the database and both roles; their passwords are created by the
+deployment's secret tooling, never by a person (section 15). The no-delete rule is enforced by
+the database twice: the writer role has no `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` or
+`TRIGGER` right on either table, and a trigger refuses `UPDATE`, `DELETE` and `TRUNCATE` on both
+tables for every role. The owner and a database superuser can still disable that trigger or drop
+a table. That is why the record is verified at every start, checkpoints are signed, and backups
+are kept off-site (section 12).
+
+### 11.3 Schema
+
+Schema version 1. `<owner>` and `<writer>` are the role names of the two connection strings.
+
+```sql
+CREATE SCHEMA record AUTHORIZATION <owner>;
+REVOKE ALL ON SCHEMA record FROM PUBLIC;
+GRANT USAGE ON SCHEMA record TO <writer>;
+
+CREATE TABLE record.schema_version (
+  version    integer     PRIMARY KEY,
+  applied_at timestamptz NOT NULL
+);
+
+CREATE TABLE record.event (
+  position     bigint      PRIMARY KEY CHECK (position >= 1),
+  event_id     uuid        NOT NULL UNIQUE,
+  actor_key_id text        NOT NULL,
+  prev_hash    text        NOT NULL CHECK (prev_hash = '-' OR prev_hash ~ '^[0-9a-f]{64}$'),
+  event_hash   text        NOT NULL UNIQUE CHECK (event_hash ~ '^[0-9a-f]{64}$'),
+  received_at  timestamptz NOT NULL,
+  event_text   bytea       NOT NULL CHECK (octet_length(event_text) BETWEEN 1 AND 65536),
+  signature    bytea       NOT NULL CHECK (octet_length(signature) = 64),
+  record_hash  text        NOT NULL UNIQUE CHECK (record_hash ~ '^[0-9a-f]{64}$'),
+  UNIQUE (actor_key_id, prev_hash)
+);
+
+CREATE TABLE record.checkpoint (
+  hub_key_id   text        NOT NULL,
+  position     bigint      NOT NULL CHECK (position >= 1),
+  record_hash  text        NOT NULL CHECK (record_hash ~ '^[0-9a-f]{64}$'),
+  published_at timestamptz NOT NULL,
+  signature    bytea       NOT NULL CHECK (octet_length(signature) = 64),
+  PRIMARY KEY (hub_key_id, position)
+);
+
+CREATE FUNCTION record.refuse_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'record rows are never changed or removed' USING ERRCODE = 'P0001';
+END
+$$;
+
+CREATE TRIGGER event_no_change BEFORE UPDATE OR DELETE ON record.event
+  FOR EACH ROW EXECUTE FUNCTION record.refuse_change();
+CREATE TRIGGER event_no_truncate BEFORE TRUNCATE ON record.event
+  FOR EACH STATEMENT EXECUTE FUNCTION record.refuse_change();
+CREATE TRIGGER checkpoint_no_change BEFORE UPDATE OR DELETE ON record.checkpoint
+  FOR EACH ROW EXECUTE FUNCTION record.refuse_change();
+CREATE TRIGGER checkpoint_no_truncate BEFORE TRUNCATE ON record.checkpoint
+  FOR EACH STATEMENT EXECUTE FUNCTION record.refuse_change();
+
+GRANT SELECT, INSERT ON record.event, record.checkpoint TO <writer>;
+INSERT INTO record.schema_version (version, applied_at) VALUES (1, now());
+```
+
+- `event_text` and `signature` are the authoritative data. `event_id`, `actor_key_id`,
+  `prev_hash` and `event_hash` are copies taken from the event text for the unique constraints;
+  verification checks that they agree (section 12.1).
+- `UNIQUE (actor_key_id, prev_hash)` makes a fork of a key's chain impossible in the database,
+  also for a second first event (`prev_hash` `-`).
+- `received_at` is stored in whole seconds.
+- There is no table of materialised state: the state is computed in the hub's memory (section
+  11.6), so nothing in the database is ever updated.
+
+### 11.4 Start
+
+The hub does not start, and logs one line `record start failed <step>` without any value from the
+configuration, when a step of this sequence fails:
+
+1. `config`: both connection strings are present and have the form of section 15.
+2. `migrate`: the hub connects with the owner role. It refuses an owner role that is a
+   superuser. In one transaction, it applies the schema of section 11.3 when `record.schema_version`
+   does not exist, does nothing when it holds exactly the versions the code knows, and fails when
+   it holds a version the code does not know. Then it closes the owner connection; it opens no
+   further owner connection while it runs.
+3. `writer`: the hub connects with the writer role and checks that `current_user` is the writer
+   role; the role is not a superuser and has none of `BYPASSRLS`, `CREATEROLE`, `CREATEDB`; it
+   is not a member of the owner role; on `record.event` and `record.checkpoint` it has `SELECT`
+   and `INSERT` and none of `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`; it does not
+   own either table and has no `CREATE` on the schema `record`; and the four triggers of section
+   11.3 exist and are enabled (`tgenabled` is `O`).
+4. `verify`: the hub reads the whole record and verifies it as in section 12.1. On success it
+   logs `record verified <position> <record hash>` (`0 -` for an empty record).
+
+### 11.5 The append transaction
+
+One event is appended in one transaction of the writer role:
+
+1. `SELECT pg_advisory_xact_lock(742180001)`; the number is fixed and serialises every append and
+   every checkpoint, also across several hub processes on one database.
+2. The hub reads the stored events with a position greater than its state and folds them
+   (section 11.6).
+3. Checks 7 to 18 of section 6.7.
+4. `INSERT` of the row with the next position, `received_at` and record hash.
+5. `COMMIT`. Only after the commit succeeded does the hub apply the event to its state and
+   answer `201`.
+
+A failure of the database in any step answers `500` `internal` and leaves the state in memory
+unchanged. When the outcome of the commit is unknown, the next append or read finds the row in step
+2 and folds it.
+
+### 11.6 State in memory
+
+The hub keeps the state in memory: every object, the head of every key's chain, the index of
+`short_name` per team, the index from pull-request references to tasks, and the record head.
+At start it is built by the fold of section 11.4. Before every read, every append and every
+release answer, the hub reads the stored events with a position greater than its state and folds
+them, checking the event hash, the record hash, the signature, the chain and the state rules; a
+failure there has the effect of a failed verification (section 7.9).
+
+## 12. Integrity, checkpoints and backup
+
+### 12.1 Verification
+
+Verification of a sequence of stored events and checkpoints, in position order, against the keys
+file:
+
+| `failure` | Fails when |
+|---|---|
+| `position_gap` | The positions are not 1, 2, 3, … without gap. |
+| `event_invalid` | An event text breaks section 4.2, or a value breaks the form of its field. |
+| `row_mismatch` | A stored `event_id`, `actor_key_id`, `prev_hash` or `event_hash` differs from the value taken from the event text. |
+| `key_unknown` | `actor_key_id` is not an `ed25519` entry of the keys file. |
+| `event_signature_invalid` | The signature does not verify. |
+| `chain_broken` | `prev_hash` is not the event hash of the previous event of the same key in position order, or `-` for its first. |
+| `event_time_invalid` | `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. |
+| `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6. |
+| `event_refused` | The state rules of section 6 refuse the event. |
+| `checkpoint_invalid` | A checkpoint signed with the hub's current key id has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the hub's public key. |
+
+Revocation, expiry, scopes and the other actor rules are not checked (section 6.1). Checkpoints of
+another hub key id are skipped by the hub; offline verification checks them when it is given that
+key.
+
+### 12.2 Checkpoints
+
+The hub publishes the record hash at a fixed interval, signed with its own key (DESIGN.md
+§24.8). At every full hour of its clock (now divisible by 3600) the hub writes a checkpoint when
+the record is not empty and its head position differs from the last checkpoint of its own key id.
+The checkpoint text is:
+
+```text
+agent-record-head-v1
+<hub key id>
+<position>
+<record hash>
+<published_at>
+```
+
+`signature` is the hub's Ed25519 signature over that text. The row is inserted under the lock of
+section 11.5 with `ON CONFLICT DO NOTHING`, so that two hub processes write it once. The hub logs
+`record checkpoint <position> <record hash>`. A later rewrite of history is detectable from any
+checkpoint stored outside the hub, in a reader's copy, a log store or a backup. A checkpoint is a
+statement of the hub, not an event: the hub still authors no event.
+
+### 12.3 Export, offline verification and restore
+
+The hub package provides three commands. None of them needs the hub to run.
+
+| Command | Does |
+|---|---|
+| `python -m agent_core.record export --out FILE` | Connects with `AGENT_CORE_RECORD_DATABASE` and writes the whole record to `FILE` with mode `0600`. Refuses an existing `FILE`. |
+| `python -m agent_core.record verify --keys KEYS --in FILE [--hub-key ID=PUBLIC_KEY]...` | Verifies `FILE` as in section 12.1 against the keys file `KEYS`, offline, and checks every checkpoint whose hub key id is given. Prints `verified <position> <record hash>` and exits 0, or `failed <position> <failure>` and exits 1. |
+| `python -m agent_core.record restore --in FILE` | Verifies `FILE` against `AGENT_CORE_KEYS` and refuses it on any failure; then, with `AGENT_CORE_RECORD_DATABASE`, refuses a database whose `record.event` is not empty, and inserts every event and checkpoint in one transaction, with their stored positions, times and hashes. |
+
+The export file is JSON Lines, UTF-8, one JSON object per line, written without whitespace:
+
+1. A header: `{"format":"agent-record-export-v1","position":21,"record_hash":"<64 hex>","exported_at":"2026-11-18T02:00:00Z"}`
+2. One line per event in position order:
+   `{"type":"event","position":1,"received_at":"…","event_hash":"…","record_hash":"…","event":"<base64url>","signature":"<base64url>"}`
+3. One line per checkpoint, ordered by hub key id and position:
+   `{"type":"checkpoint","position":21,"record_hash":"…","published_at":"…","signed_by":"hub-1","signature":"<base64url>"}`
+
+A file whose header does not match its last event is refused. The export is the full event list
+and is verifiable offline with the public keys file alone (DESIGN.md §24.8).
+
+### 12.4 Backup
+
+The record's data class is unique (DESIGN.md §24.8). The deployment of every environment:
+
+- runs the export at least once every 24 hours
+- keeps three copies of the latest export, at least one of them off-site
+- encrypts every copy at rest and limits access to it, because an export contains security
+  issues; an export never enters a repository, an issue, a pull request or a log
+- at least once every 30 days restores the latest export into an empty database with
+  `restore`, which verifies the whole record before it inserts anything, and starts a hub
+  against it, which verifies again before it serves (section 11.4)
+
+## 13. Logs
+
+Record data never appears in a log line or an error message (DESIGN.md §24.10). A log line of the
+record part of the hub contains only: key ids, the hub key id, the method, the raw path without
+the query, a status code, an error value of this document, positions, record hashes, numbers of
+events, and the step and SQLSTATE of a database failure. It never contains an event text, a
+value, a field name, an object id, an event id, a handle, a connection string, a password, or the
+message, detail or hint of a database error.
+
+The record part writes these lines and no others:
+
+| Line | When |
+|---|---|
+| `record verified <position> <record hash or ->` | after the verification at start |
+| `record start failed <step>` | a start step of section 11.4 failed |
+| `record append <key id> <status> <position or error value>` | every request to the two append endpoints that passed check 8 |
+| `record checkpoint <position> <record hash>` | a checkpoint was written |
+| `record verify failed <position> <failure>` | a verification failed, at start, on request or in the fold before an answer |
+| `record database error <step> <SQLSTATE or ->` | a database operation failed; `<step>` is one of `connect`, `migrate`, `read`, `append`, `checkpoint` |
+
+The line of KEY-PROTOCOL.md section 5 for every request of a `service` key is written unchanged.
+A failure in a record endpoint is never logged with its exception message or a traceback, because
+a database exception can carry stored values.
+
+## 14. Tests this step must carry
+
+Every test that touches the record runs against a real PostgreSQL 16, never a replacement of it.
+The tests read the administrator connection string of a test server from
+`AGENT_CORE_TEST_POSTGRES`. Each test session creates a fresh database with a random name and the
+owner and writer roles with random passwords, and drops them at the end. In CI, the workflow runs
+a `postgres:16` service container and sets the variable; locally, the developer runs a local
+PostgreSQL 16. When the variable is missing, the record tests fail with a message that names it;
+they are never skipped. Every endpoint case asserts the exact status, the exact body bytes and the
+hub signature, with a fixed clock.
+
+The database and the start:
+
+- the writer role gets SQLSTATE `42501` for `UPDATE`, `DELETE` and `TRUNCATE` on `record.event`
+  and on `record.checkpoint`
+- the owner role gets SQLSTATE `P0001` from the trigger for `UPDATE`, `DELETE` and `TRUNCATE` on
+  both tables
+- an `INSERT` of a second row with the same `actor_key_id` and `prev_hash` is refused by the
+  unique constraint, also for `prev_hash` `-`
+- each start failure of section 11.4: a variable missing or empty, each malformed connection
+  string of section 15, the same role in both, different hosts or databases, an owner that is a
+  superuser, a writer with `UPDATE` granted, a writer that is a member of the owner role, a
+  disabled trigger, an unknown schema version, and a stored record that fails verification
+- the migration on an empty database creates exactly the schema of section 11.3; a second start
+  changes nothing
+- the start log line, and no password or connection string in any log line
+
+The event:
+
+- an event text that is accepted, and its event hash and record hash compared with fixed vectors
+  that the test file carries and with an independent recomputation in the test
+- `event_invalid` for: another label, a `\r`, a trailing line feed, an empty line, a byte outside
+  0x21 to 0x7E, `n` of 0, 16 and with a leading zero, a wrong number of lines, fields out of
+  order, a field twice, `old` equal to `new`, `=` without value, padded and non-canonical
+  base64url, an unknown `object_type`, a malformed UUID, the nil UUID, a malformed time and
+  `prev_hash`
+- an event text of 65536 bytes (accepted) and 65537 bytes (`body_invalid`)
+- `value_invalid` for every field form of section 5 at each of its limits, including a title of
+  200 and 201 bytes, an invalid UTF-8 sequence, a control character, a `links` value of 20 and 21
+  references, out of order or repeated, `urgency` 0, 11 and `07`, and a `short_name` of 31
+  characters
+- `body_invalid` for a body that is not JSON, has an extra or missing member, a member twice, or
+  a signature of 63 bytes
+- `actor_mismatch`, `certificate_not_supported`, and `event_signature_invalid` for a signature by
+  another key and over another text
+
+The chain:
+
+- a wrong `prev_hash`, a second first event of a key, and a fork (two events with the same
+  `prev_hash`; the second is refused with `chain_broken`, also when both are sent in parallel)
+- the same event sent twice (`event_duplicate`), and another event with a used `event_id`
+  (`event_id_taken`)
+- `signed_at` 120 seconds after now (accepted), 121 seconds (refused), and earlier than the
+  previous event of the key (refused)
+- an event of a revoked key and of an expired `service` key (refused at the request checks,
+  unsigned); an event signed before the key's `revoked` time and sent after it (refused, and not
+  in the record); check 11 of section 6.7 with `received_at` later than now
+- after a refusal, the next event chained to the last accepted event is accepted
+- two parallel appends of two keys get consecutive positions and both are accepted
+- two hub instances on one database: each folds the other's events before it answers
+
+The reducer, every rule through the endpoint and the fold directly:
+
+- each row of section 6.4 accepted, and for each status every other target refused with
+  `transition_invalid`; each row's "Who" refused for every other actor with
+  `change_not_allowed`
+- the defaults of `status` and `completion` per kind; a create with `status` `merged`
+- a security issue started by an event that sets the actor as assignee (accepted), that sets
+  another handle (refused), and taken over by another handle (refused); handed over by its
+  assignee (accepted)
+- row 13 with `done` in the same event (accepted) and without it (refused); row 12 on a task
+  without links; a rule change on a `done` task keeps `done`
+- row 14 sets `completed_links`; row 10 with links equal to `completed_links` (accepted) and
+  after a change of links (refused)
+- `links_frozen` in `merged` and `done`; `field_required` for each required field, for
+  `in_progress` without assignee, and for a security issue set to `done` without `fix`
+- `field_not_allowed` for each security field on kind `work`; `field_immutable` for `kind`,
+  `team` and every comment field; `state_mismatch` for a stale `old` value and for a create with
+  an `old` value
+- `short_name_taken` in the same team, and the same short name accepted in another team
+- `assignee_invalid` for an unknown handle, a handle of another team, a handle whose keys are all
+  revoked, and a `service` handle
+- `verification` written by an `agent` key (refused with `change_not_allowed`), and row 11
+  applied by the fold directly, which checks no actor (section 6.1)
+- a comment on a task the actor does not see (`object_not_found`) and an event on an existing
+  comment (`field_immutable`)
+- the fold of an exported record gives the same state as the hub
+
+Visibility:
+
+- a key of another team gets `object_not_found` for a task, a comment and the events of an
+  object; the task is missing from every list; its events are withheld
+- a key without `record:security` the same for a security issue, and an empty list for
+  `kind=security`; a create of a security issue gets `scope_missing`
+- a `service` key sees a task only with a link or repository in its `subjects`; a link change
+  that makes it visible shows all events of the task
+- a withheld entry has exactly the members of section 7.4 and `null` text and signature
+- the loader refuses `record:write`, `record:watch` and `record:security` without `record:read`,
+  `record:watch` on an `agent` or `staff` entry, and `record:write` on a `service` entry
+
+The watcher:
+
+- rows 8 and 9 accepted; `fix` set to one of the links (accepted) and to another reference
+  (refused); any other field (refused)
+- a link outside its `subjects` (`subject_not_allowed`); a task that does not exist
+  (`object_not_found`)
+- a writer key on `/watch` and a watcher key on `/events` get `scope_missing`
+
+Paging and queries:
+
+- for each list: `limit` 1, the maximum, the maximum plus one and 0 (`query_invalid`); a page
+  with exactly `limit` remaining items has a `null` cursor, one more item gives a cursor; the
+  cursor at the head gives an empty page; the order is as specified
+- `after` with a leading zero, negative and above the maximum; an unknown, repeated and empty
+  parameter; a query on an endpoint without parameters (all `query_invalid`)
+
+The release rule, through `GET /api/key/release`:
+
+- no linked task (`task_missing`); a linked task in `open`, `merged`, `done`, and without
+  assignee (`task_not_ready`); in `in_progress` or `ready_for_review` with assignee (released)
+- two linked tasks, one ready and one not (`task_not_ready`); a `dropped` task alone
+  (`task_missing`); a security issue as the linked task; a task of another team as the linked
+  task; a link removed again (`task_missing`)
+- `503` `record_unverified` after a failed verification
+
+Integrity and backup:
+
+- `GET /api/key/record/verify` on a sound record; then each failure of section 12.1 produced by
+  changing a row as database superuser with the triggers bypassed, each giving its `failure` and
+  afterwards `503` on every record endpoint; a restart refuses to start
+- a checkpoint at a full hour, none for an empty record, none when the head did not move, written
+  once by two instances, and its signature verified with the hub public key
+- export, offline `verify`, `restore` into an empty database, and a start against it; `restore`
+  refused into a non-empty database and for a changed file; `export` refused for an existing file
+
+Logs:
+
+- after a run that uses every endpoint with marker strings in every text value, no log line
+  contains a marker, an object id, an event id, a handle or a connection string
+- a database failure in an endpoint logs only the line of section 13 and answers `500` `internal`
+
+## 15. Dependencies and configuration
+
+- New dependency: `psycopg` version 3 with its binary package (`psycopg[binary]>=3.2`).
+- New required environment variables of the hub:
+
+| Variable | Form |
+|---|---|
+| `AGENT_CORE_RECORD_DATABASE` | Connection string of the writer role |
+| `AGENT_CORE_RECORD_OWNER_DATABASE` | Connection string of the owner role |
+
+A connection string is
+`postgresql://<role>:<password>@<host>[:<port>]/<database>[?sslmode=<mode>]`:
+
+- `role` and `database`: 1 to 63 characters of `a-z`, `0-9` and `_`, starting with a letter or `_`
+- `password`: 64 lowercase hex characters, created by the deployment's secret tooling; no person
+  creates, sees or copies it
+- `host`: a lowercase host name in ASCII form, an IPv4 address, or an IPv6 address in brackets
+- `port`: decimal 1 to 65535 without leading zero; without it, 5432
+- `mode`: `disable`, `require` or `verify-full`; no other query parameter is allowed
+
+The two strings name different roles and the same host, port, database and `sslmode`. Like every
+`AGENT_CORE_*` variable, a missing or empty value stops the process; so does any value outside
+this form. Both values are secrets: they never appear in a log, an error message or an answer.
+
+The same change updates: the list of required variables in the README, the compose file (a
+`postgres:16` service with a persistent volume and an initialisation step that creates the owner
+and writer roles from passwords given as secrets), the configuration test, `pyproject.toml`, and
+the test workflow (a `postgres:16` service container and `AGENT_CORE_TEST_POSTGRES`). The README
+names PostgreSQL 16 as a requirement for running the tests.
+
+## 16. Rollout order
+
+The hub does not start without its new variables and a reachable database, and a hub is deployed
+automatically after a merge. The order is therefore fixed, for every environment:
+
+1. The deployment of that environment provides a PostgreSQL 16 database with persistent storage,
+   creates the owner and writer roles with passwords from its secret tooling, and sets
+   `AGENT_CORE_RECORD_DATABASE` and `AGENT_CORE_RECORD_OWNER_DATABASE`. A variable the running
+   version does not know is harmless, so this step is rolled out first and on its own.
+2. Only then the change that implements this document is merged to the branch that environment
+   deploys from.
+3. An operator reads the start line `record verified 0 -`. Any `record start failed` line means
+   step 1 is incomplete.
+4. The deployment enables the daily export and its three copies (section 12.4) and runs the first
+   restore test.
+5. Keys file pull requests give writers `record:read` and `record:write`, and a watcher its key
+   (section 8). Until then nobody writes, and the release query answers `task_missing` for every
+   pull request it is asked about.
+
+The pull request of step 2 is merged only after step 1 is rolled out for every environment that
+deploys from its target branch, and its body states this. The same holds for every later merge
+that brings the change to another deploying branch: a release pull request to the production
+branch is merged only after step 1 is rolled out for production, and its body states this. A
+guard that asks the release query starts to receive `task_missing` for pull requests without a
+linked task as soon as step 2 reaches its environment; the team links tasks before it relies on
+that guard.
+
+## 17. Decisions taken in this document
+
+Each line is a decision where DESIGN.md §24 or the task left a detail open. The human owner
+confirms or changes each one.
+
+1. Tasks are built in this step together with security issues, and a security issue is a task of
+   kind `security`, not its own object type (§1, §5.1).
+2. Task kinds are exactly `work` and `security` (§5.2).
+3. Status values are `open`, `in_progress`, `ready_for_review`, `merged`, `done`, `dropped`;
+   `open` and `dropped` are added to the statuses DESIGN.md names, and spaces become `_` (§5.2).
+4. Comments are their own object type, written once and never changed (§5.1, §5.3).
+5. Every event value is text in a base64url value token; lists and numbers are canonical text
+   (§4.1, §5.2).
+6. The event hash covers the event text only, not the signature (§4.4).
+7. The record hash covers position, `received_at`, event hash and the previous record hash, not
+   the signature (§4.6).
+8. `received_at` is the later of now and the previous `received_at`, so it never decreases (§4.6).
+9. `signed_at` is at most 120 seconds in the future and never earlier than the key's previous
+   event; there is no lower bound otherwise, so writers can sign offline (§4.5, §6.7).
+10. The task's `team` is an explicit, immutable field of the create event and equals the actor's
+    team, so the fold does not depend on later edits of the keys file (§5.2).
+11. Actor rules are checked only at write time; the fold rechecks only state rules (§6.1).
+12. New scope `record:security` restricts reading and writing security issues; a key sees only
+    the objects of its own team; a `service` key sees only tasks touching its `subjects` (§3).
+13. New scope `record:watch` for the watcher, because a `service` key cannot hold `record:write`;
+    watchers write through their own endpoint `POST /api/key/record/watch` (§3, §7.3, §8).
+14. `record:write`, `record:watch` and `record:security` require `record:read` in the keys file
+    (§3).
+15. A security issue's assignee is set only to the actor's own handle, and changed only by its
+    current assignee (§6.5).
+16. Assignees are handles of non-revoked `staff` or `agent` entries of the task's team (§6.5).
+17. Links are frozen while a task is `merged` or `done`, so that the hub can apply DESIGN.md
+    §24.11's rule change to `merged` without asking the code host (§6.4, §6.6).
+18. "The condition is already true and no further pull request is linked" is decided by `links`
+    being equal to `completed_links` (§6.4, row 10).
+19. The confirmation that sets `done` under `verified` needs principal `staff`; an agent key is
+    not a staff member's confirmation. Until session keys exist, such tasks stop at `merged`
+    (§6.4, row 11; §10).
+20. A security issue in `done` needs `fix`; the watcher may set `fix` to one of the links (§6.6,
+    §8).
+21. `short_name` is unique per team, not across teams, and has the form of a handle of at most 30
+    characters (§5.2).
+22. `dropped` tasks do not count as linked tasks in the release rule (§9).
+23. The state is kept in memory and rebuilt at start; no materialised table exists, so nothing in
+    the database is ever updated (§11.3, §11.6).
+24. Appends are serialised by the advisory lock 742180001 (§11.5).
+25. Checkpoints are written at every full hour when the head moved, stored in their own
+    insert-only table and listed by an endpoint (§12.2).
+26. A failed verification puts the hub into `503 record_unverified` for the record and the release
+    query until restart (§7.9, §9).
+27. New endpoints refuse any query parameter they do not define, instead of ignoring the query
+    (§7.1).
+28. Page sizes: events 1 to 100 (default 100); tasks, comments and checkpoints 1 to 200 (default
+    50) (§7).
+29. Text limits: title 200, description and comment body 16384, verification 2000, source 200,
+    team 100 bytes; event text 65536 bytes; at most 20 links (§4.2, §5).
+30. PostgreSQL 16 or later and `psycopg` 3; passwords are 64 lowercase hex characters; `sslmode`
+    is one of `disable`, `require`, `verify-full` (§11.1, §15).
+31. Backup cadence: export every 24 hours, restore test every 30 days (§12.4).
+32. The record tests fail, and are not skipped, when no test PostgreSQL is configured (§14).
+33. Session-key ids are disjoint from keys file ids, and a session key has its own chain (§10).
