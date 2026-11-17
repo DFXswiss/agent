@@ -6237,6 +6237,80 @@ def cmd_pr_guard(args: list[str]) -> None:
     raise SystemExit(guard_main(args))
 
 
+KEY_USAGE = (
+    "Usage: agent key create --id ID | list | "
+    "pin-hub --id HUB_ID --public-key VALUE [--replace] | whoami --id ID"
+)
+
+
+def _key_args(args: list[str], valued: tuple[str, ...], switches: tuple[str, ...]) -> None:
+    """Refuse anything but the named flags, each given at most once."""
+    seen: set[str] = set()
+    idx = 0
+    while idx < len(args):
+        name = args[idx]
+        if name in seen:
+            die(f"{name} is given twice")
+        if name in valued:
+            if idx + 1 >= len(args):
+                die(f"{name} needs a value")
+            seen.add(name)
+            idx += 2
+            continue
+        if name in switches:
+            seen.add(name)
+            idx += 1
+            continue
+        die(KEY_USAGE)
+
+
+def cmd_key(args: list[str]) -> None:
+    """Key identity: create a key, pin the hub key, ask the hub which key signed a request."""
+    import httpx
+
+    from . import keys
+
+    if not args:
+        die(KEY_USAGE)
+    sub, rest = args[0], args[1:]
+    try:
+        if sub == "create":
+            _key_args(rest, ("--id",), ())
+            print(keys.create_key(home(), require_flag(rest, "--id")))
+            return
+        if sub == "list":
+            _key_args(rest, (), ())
+            for key_id, public_key in keys.list_keys(home()):
+                print(f"{key_id}  {public_key}")
+            return
+        if sub == "pin-hub":
+            _key_args(rest, ("--id", "--public-key"), ("--replace",))
+            hub_id = require_flag(rest, "--id")
+            keys.pin_hub_key(
+                home(), hub_id, require_flag(rest, "--public-key"), "--replace" in rest
+            )
+            print(f"pinned hub key {hub_id}")
+            return
+        if sub == "whoami":
+            _key_args(rest, ("--id",), ())
+            key_id = require_flag(rest, "--id")
+            pin = keys.load_hub_pin(home())
+            store = open_store()
+            try:
+                hub_url = store.meta("hub_url")
+            finally:
+                store.close()
+            if not hub_url:
+                die("hub URL is not configured; run agent pair --hub URL")
+            with httpx.Client(timeout=30.0, follow_redirects=False) as client:
+                answer = keys.whoami(home(), key_id, pin, hub_url, client, utcnow)
+            print(json.dumps(answer, indent=2))
+            return
+    except keys.KeyProtocolError as exc:
+        die(str(exc))
+    die(f"unknown key command: {sub}")
+
+
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
@@ -6258,6 +6332,7 @@ COMMANDS = {
     "close-step": cmd_close_step,
     "run": cmd_run,
     "pair": cmd_pair,
+    "key": cmd_key,
     "sync": cmd_sync,
     "restore": cmd_restore,
     "ping": cmd_ping,
@@ -6289,7 +6364,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|small-change|local-ci|a38|pr-guard|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|account-login|"
+            "allow|next|close-step|run|pair|key|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|account-login|"
             "github|query|assign|subscribe|mail|supervise|coordinate|conflicts|order|runner> …"
         )
     cmd = args[0]

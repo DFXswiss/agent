@@ -442,6 +442,10 @@ agent query --match-file PATH                  # hub POST /sync/query; prints {"
 agent subscribe list|set --file PATH|clear     # hub GET/PUT /sync/subscriptions
 agent mail pending|ingest                      # mail.reply / mail.seen via himalaya; envelope ingest
 agent pair --hub URL [--name HOST] [--timeout SEC]
+agent key create --id ID                       # Ed25519 key in $AGENT_HOME/keys/ID.key (0600); prints only the public key
+agent key list                                 # ids and public keys under $AGENT_HOME/keys
+agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # $AGENT_HOME/hub-key.json (0600); no silent replacement
+agent key whoami --id ID                       # signed GET /api/key/whoami to the configured hub; prints only a verified answer
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
