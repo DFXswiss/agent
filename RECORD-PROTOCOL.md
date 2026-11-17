@@ -1245,18 +1245,32 @@ superuser, through a function that runs with the rights of its owner (`SECURITY 
 its reads and inserts could be changed or cut short by row-level security, by a rule or by a
 further trigger on a record table; in
 PostgreSQL 15 and later the owner of the database, here the owner role, also owns the schema
-`public` (through `pg_database_owner`) and can create such a function there. Step `writer` of
-the start (section 11.4) therefore refuses a writer that can execute any `SECURITY DEFINER`
-function outside the schemas `pg_catalog` and `information_schema`, and refuses row-level
-security, a policy, a rule or a trigger other than the four of section 11.3 on the three record
-tables. That check sees the catalog only at start and in `restore`: such an object that the
-owner role or a superuser creates while the hub runs is found at the next start, and its effect
-on stored rows by verification. The check also reads `pg_proc` of this database only:
-`SECURITY DEFINER` functions of other databases of the server, which the writer may reach through
-a `CONNECT` it holds there through `PUBLIC`, are not checked; that limit is accepted, because such
-a function can reach the record tables only through an extension such as `dblink` or
-`postgres_fdw`, which a superuser installs. That is why the record is verified at every start and
-every 10 minutes, checkpoints are signed, and backups are kept off-site (section 12).
+`public` (through `pg_database_owner`) and can create such a function there.
+
+Which functions the writer can call follows from PostgreSQL's documented behaviour: a connection
+is bound to the one database named when it is opened, and a role can call only functions of the
+database it is connected to. The writer holds `CONNECT` on this database (the record database) by
+the grant of the migration, which also revokes `CONNECT` from `PUBLIC` there. A right granted to
+the writer by name in another database of the server, `CONNECT` on that database or `EXECUTE` on
+one of its functions, leaves a row in the shared catalog `pg_shdepend` and fails step `writer` of
+the start (section 11.4). The deployment rules of this section do not keep other databases off
+the server of the record, and the start does not read the rights of `PUBLIC` on other databases;
+PostgreSQL grants `CONNECT` on every new database to `PUBLIC`, so the writer can connect to every
+other database of the server on which `PUBLIC` still holds `CONNECT`, and there call every
+function that `PUBLIC` can execute. Step `writer` of the start (section 11.4) therefore refuses a
+writer that can execute any `SECURITY DEFINER` function of this database outside the schemas
+`pg_catalog` and `information_schema`, and refuses row-level security, a policy, a rule or a
+trigger other than the four of section 11.3 on the three record tables. That check sees the
+catalog only at start and in `restore`: such an object that the owner role or a superuser
+creates while the hub runs is found at the next start, and its effect on stored rows by
+verification. The check also reads `pg_proc` of this database only, because `pg_proc` is not a
+shared catalog: a `SECURITY DEFINER` function of another database of the server that the writer
+can execute through `PUBLIC`, after connecting to that database through `PUBLIC`, is not checked.
+That limit is accepted, because such a function runs in a session of that other database and can
+reach the record tables only through a capability that only a superuser can install or grant: an
+extension such as `dblink` or `postgres_fdw`, an untrusted procedural language, or
+`COPY ... PROGRAM` (`pg_execute_server_program`). That is why the record is verified at every
+start and every 10 minutes, checkpoints are signed, and backups are kept off-site (section 12).
 
 ### 11.3 Schema
 
@@ -1413,8 +1427,9 @@ failed verification.
    schema, a missing version or an unknown version fails this step. The hub never creates or
    changes the schema.
 3. `writer`: the role has exactly the writer rights of section 11.2 and nothing else, and no
-   function, row-level security, policy, rule or further trigger of section 11.2 can widen them
-   or cut its reads short. The hub reads the catalog of the server and fails this step unless all
+   function of this database, row-level security, policy, rule or further trigger of section
+   11.2 can widen them or cut its reads short; functions of other databases of the server are
+   not checked (section 11.2). The hub reads the catalog of the server and fails this step unless all
    of these hold:
    - `current_user` is the role of the connection string (the hub passes that name to the
      comparison as a parameter of the statement, and composes every role or database name that
@@ -2036,8 +2051,8 @@ The database and the start:
   one at a time (`writer`): `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on either
   table, `INSERT` on `record.schema_version`, a right on one column of `record.event`, a right of
   section 11.2 held with grant option, `SELECT` on a table and `USAGE` on a sequence in the schema
-  `public`, a default privilege that names the writer, `CONNECT` on another database of the
-  server, `CREATE` or `TEMPORARY` on the database (also through `PUBLIC`), `CREATE` on the schema
+  `public`, a default privilege that names the writer, `CONNECT` granted to the writer by name on
+  another database of the server, `CREATE` or `TEMPORARY` on the database (also through `PUBLIC`), `CREATE` on the schema
   `record` or on the schema `public`, `EXECUTE` on `record.refuse_change()` (also through
   `PUBLIC`), ownership of a table, ownership of a table in another database of the server,
   membership in the owner role, membership in each of the predefined roles
@@ -2048,10 +2063,10 @@ The database and the start:
   record tables, granted to `PUBLIC` after `migrate`, and a right on one column of
   `record.event` granted to `PUBLIC`; each trigger disabled (`D`), enabled for the origin role
   only (`O`) and enabled for replicas only (`R`); a fifth trigger on `record.event`; a
-  `SECURITY DEFINER` function in the schema `public` owned by the owner role and executable
-  through `PUBLIC`, and one in the schema `record` executable only by the writer (each
-  refused), while a `SECURITY DEFINER` function whose `EXECUTE` is revoked from `PUBLIC` and not
-  granted to the writer is accepted; row-level security enabled on each of the three record
+  `SECURITY DEFINER` function of the record database in the schema `public` owned by the owner
+  role and executable through `PUBLIC`, and one of the record database in the schema `record`
+  executable only by the writer (each refused), while a `SECURITY DEFINER` function of the record
+  database whose `EXECUTE` is revoked from `PUBLIC` and not granted to the writer is accepted; row-level security enabled on each of the three record
   tables, row-level security forced on each, a policy on `record.event` while row-level
   security is disabled, and a rule on `record.event` (`writer`); a stored record that fails
   verification (`verify`), which logs `record verify failed <position> <failure>` and then
@@ -2448,8 +2463,8 @@ Integrity and backup:
   section 12.3, each asserting the printed line, exit 1, and that `record.event` and
   `record.checkpoint` stay empty and no schema is created: a database on which `migrate` never
   ran (the `schema_missing` line); a schema with an unknown version (`refused schema_version`); a
-  writer with a right beyond section 11.2, and a `SECURITY DEFINER` function executable through
-  `PUBLIC` (each `refused writer_rights`); a non-empty database
+  writer with a right beyond section 11.2, and a `SECURITY DEFINER` function of the target
+  database executable through `PUBLIC` (each `refused writer_rights`); a non-empty database
   (`refused not_empty`, and its rows stay unchanged); an unreachable database (`refused
   database`); a changed file (`failed <position> <failure>`); a checkpoint whose hub key id is not
   given (`refused hub_key_missing`), also when the file fails the rest of the verification, which
@@ -2791,7 +2806,8 @@ confirms or changes each one.
     checked in `pg_auth_members`, not through `has_table_privilege`; rights of `PUBLIC` are read
     from the access lists with `aclexplode` and `pg_attribute.attacl`, because a grant to
     `PUBLIC` leaves no row in `pg_shdepend`. The start also refuses a writer that can execute a
-    `SECURITY DEFINER` function outside `pg_catalog` and `information_schema`, and row-level
+    `SECURITY DEFINER` function of this database outside `pg_catalog` and `information_schema`
+    (functions of other databases of the server are not checked, decision 94), and row-level
     security, a policy, a rule or a fifth trigger on the record tables (decision 94) (§11.2,
     §11.4, §15, §16).
 36. The database is owned by the owner role, so that it can create the schema; the migration
@@ -3064,16 +3080,19 @@ confirms or changes each one.
     before), the new step value is taken, because the line alone then names the cause and the
     hub never reports a sound record as broken (§11.4, §12.1, §13, §16).
 94. Step `writer` of the start, and so `restore`, refuses a writer that can execute any
-    `SECURITY DEFINER` function of the database outside `pg_catalog` and `information_schema`,
+    `SECURITY DEFINER` function of this database outside `pg_catalog` and `information_schema`,
     whoever owns it, and refuses row-level security (enabled or forced), any policy, any rule
     and any trigger other than the four of §11.3 on the three record tables. Of the two
     possibilities of the review hint (only definer functions owned by the owner role, or every
     definer function the writer can execute), the stricter is taken. The limit is accepted that
     the check sees the catalog only at start and in `restore`: such an object created while the
     hub runs is found at the next start, and its effect on stored rows by verification. The
-    limit is also accepted that `SECURITY DEFINER` functions of other databases of the server are
-    not checked; they can reach the record tables only through an extension such as `dblink` or
-    `postgres_fdw`, which a superuser installs (§11.2, §11.4, §14).
+    limit is also accepted that `SECURITY DEFINER` functions of other databases of the server,
+    which the writer can execute through `PUBLIC` after connecting there through `PUBLIC`, are
+    not checked: a connection is bound to one database and calls only its functions, so such a
+    function can reach the record tables only through a capability that only a superuser can
+    install or grant: an extension such as `dblink` or `postgres_fdw`, an untrusted procedural
+    language, or `COPY ... PROGRAM` (`pg_execute_server_program`) (§11.2, §11.4, §14).
 95. Hub key ids are compared and sorted in byte order everywhere; every statement that sorts or
     compares them in the database uses `COLLATE "C"`, so that `export` writes checkpoint lines in
     the order that `verify` and `restore` require, whatever the collation of the database
