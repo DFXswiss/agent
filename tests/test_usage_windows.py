@@ -331,6 +331,12 @@ def test_tier_adds_the_max_multiplier(
     assert load_login_credentials(SPEC, str(config_dir), read_keychain=no_keychain)[1] == expected
 
 
+def test_upper_case_tier_value_gives_lower_case_multiplier(tmp_path: Path) -> None:
+    config_dir = tmp_path / "seat"
+    write_login(config_dir, creds=credentials(subscription="max", tier="default_MAX_20X"))
+    assert load_login_credentials(SPEC, str(config_dir), read_keychain=no_keychain)[1] == "max_20x"
+
+
 def test_account_email_location_for_default_and_named_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
