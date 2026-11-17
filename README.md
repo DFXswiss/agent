@@ -77,7 +77,7 @@ Sign-in with passkeys, invites and the certified session key are specified, not 
 
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
 
-The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified, not yet built, in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
+The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md). Its first change is built: the record library, the schema and `python -m agent_core.record migrate`. The hub does not use the record yet.
 
 ## Control
 
@@ -109,9 +109,10 @@ Node.js is required for the dashboard and session page tests.
 
 PostgreSQL 16 (or later) is required for the team record tests. They read the connection string of
 a superuser on a throwaway local test server from `AGENT_CORE_TEST_POSTGRES`; each test creates its
-own database and roles with random names and drops them at the end. Without the variable the record
-tests fail; they are never skipped. The server must accept password logins over TCP on a loopback
-address or `localhost`.
+own database and roles with random names and drops them at the end. Without the variable every record
+test that uses the database fails; none is skipped. The tests of the event text and of the connection
+string need no database. The server must accept password logins over TCP on a loopback address or
+`localhost`.
 
 Use a throwaway PostgreSQL 16 instance for this and nothing else: it holds no data, the tests
 create and drop databases and roles on it, and its superuser password `postgres` is a test

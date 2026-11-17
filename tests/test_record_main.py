@@ -17,17 +17,10 @@ import sys
 import pytest
 
 from agent_core.record.__main__ import USAGE, main
-from tests.conftest import RecordDatabase
+from tests.conftest import RecordDatabase, schema_exists
 
 PACKAGE = "agent_core.record"
 RECORD_VARIABLES = ("AGENT_CORE_RECORD_DATABASE", "AGENT_CORE_RECORD_OWNER_DATABASE")
-
-
-def schema_exists(db: RecordDatabase) -> bool:
-    with db.admin() as admin:
-        row = admin.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'record'").fetchone()
-    assert row is not None
-    return row[0] == 1
 
 
 def run_as_main(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> object:

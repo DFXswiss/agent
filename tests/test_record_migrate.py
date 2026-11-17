@@ -25,7 +25,7 @@ from agent_core.record import connection, migrate
 from agent_core.record.__main__ import USAGE
 from agent_core.record.connection import ConnectionStringError, parse_connection_string
 from agent_core.record.migrate import MIGRATE_LOCK, run_migrate, schema_statements
-from tests.conftest import RecordDatabase
+from tests.conftest import RecordDatabase, schema_exists
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 TABLES = ("record.schema_version", "record.event", "record.checkpoint")
@@ -148,13 +148,6 @@ def insert_checkpoint(
 
 def grants(admin: psycopg.Connection[Any], name: str) -> set[tuple[str, str, bool]]:
     return {(row[0], row[1], row[2]) for row in admin.execute(ACL_QUERIES[name]).fetchall()}
-
-
-def schema_exists(db: RecordDatabase) -> bool:
-    with db.admin() as admin:
-        row = admin.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'record'").fetchone()
-    assert row is not None
-    return row[0] == 1
 
 
 def catalog(db: RecordDatabase) -> dict[str, Any]:
@@ -307,25 +300,32 @@ def test_two_runs_at_once_create_the_schema_once(record_db: RecordDatabase) -> N
     env = record_db.migrate_env()
     runs = [threading.Thread(target=lambda: results.append(run_migrate(env))) for _ in range(2)]
     # Hold the migration lock until both runs wait for it, so that they really run at once.
-    with record_db.admin(autocommit=False) as holder, record_db.admin() as watcher:
-        holder.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
+    try:
+        with record_db.admin(autocommit=False) as holder, record_db.admin() as watcher:
+            holder.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
+            for run in runs:
+                run.start()
+            deadline = time.monotonic() + 60
+            waiting = 0
+            while waiting < 2 and time.monotonic() < deadline:
+                row = watcher.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid::bigint = %s"
+                    " AND NOT granted"
+                    " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+                    (MIGRATE_LOCK,),
+                ).fetchone()
+                assert row is not None
+                waiting = row[0]
+                time.sleep(0.05)
+            assert waiting == 2
+            holder.commit()
+    finally:
+        # Leaving the block closes the holder and so releases the lock even after a failed
+        # assertion; join every started run before the fixture drops the database.
         for run in runs:
-            run.start()
-        deadline = time.monotonic() + 60
-        waiting = 0
-        while waiting < 2 and time.monotonic() < deadline:
-            row = watcher.execute(
-                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid::bigint = %s"
-                " AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-                (MIGRATE_LOCK,),
-            ).fetchone()
-            assert row is not None
-            waiting = row[0]
-            time.sleep(0.05)
-        assert waiting == 2
-        holder.commit()
-    for run in runs:
-        run.join(timeout=60)
+            if run.ident is not None:
+                run.join(timeout=60)
+    assert not any(run.is_alive() for run in runs)
     assert sorted(results) == [("migrated 1", 0), ("unchanged 1", 0)]
     with record_db.admin() as admin:
         assert admin.execute("SELECT version FROM record.schema_version").fetchall() == [(1,)]

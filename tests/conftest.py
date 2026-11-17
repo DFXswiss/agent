@@ -145,6 +145,14 @@ def record_db() -> Iterator[RecordDatabase]:
                 admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
+def schema_exists(db: RecordDatabase) -> bool:
+    """Whether the schema `record` exists in the test database, as the administrator sees it."""
+    with db.admin() as admin:
+        row = admin.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'record'").fetchone()
+    assert row is not None
+    return row[0] == 1
+
+
 def write_teams(path: Path, teams: dict) -> Path:
     path.write_text(yaml.safe_dump({"teams": teams}), encoding="utf-8")
     return path
