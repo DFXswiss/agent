@@ -8,7 +8,7 @@ This device is the write owner of its own rows. The local store is PostgreSQL on
 
 The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code. The detached job runner is documented in [docs/runner.md](docs/runner.md).
 
-The planned team record (tasks, security issues and discussions with signed history and key-pair identity) is explained for the whole team in [docs/team-record.md](docs/team-record.md); the binding rules are DESIGN.md §24. How the team works through the hub (devices, handing work over, watching sessions, one overview) is explained in [docs/central-operation.md](docs/central-operation.md); the binding rules are DESIGN.md §25.
+The planned team record (tasks, security issues and discussions with signed history and key-pair identity) is explained for the whole team in [docs/team-record.md](docs/team-record.md); the binding rules are DESIGN.md §24. How the team works through the hub (devices, handing work over, watching sessions, one overview) is explained in [docs/central-operation.md](docs/central-operation.md); the binding rules are DESIGN.md §25. The technical specification of device keys, levels, the allow list and grants is [docs/device-protocol.md](docs/device-protocol.md).
 
 The required GitHub issue-to-PR workflow is defined in
 [DESIGN.md §19.7](DESIGN.md#197-issue-assignment-to-human-merge), together with the

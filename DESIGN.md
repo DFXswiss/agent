@@ -1560,7 +1560,7 @@ A withdrawn question (§25.7, §25.15), and a question of a device whose key is 
 
 ## 25. Central operation (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§1–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.17 in the same diff. An explanation for the whole team is in [docs/central-operation.md](docs/central-operation.md); this section stays the binding rule.
+Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§1–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.17 in the same diff. An explanation for the whole team is in [docs/central-operation.md](docs/central-operation.md); this section stays the binding rule. The technical specification of the first two build steps (§25.20) is [docs/device-protocol.md](docs/device-protocol.md); where it and this section disagree, this section wins.
 
 ### 25.1 Goal and non-goals
 
