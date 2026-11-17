@@ -12,3 +12,4 @@ htmlcov/
 *.sqlite3
 .env
 .DS_Store
+.coverage.*

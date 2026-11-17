@@ -44,7 +44,7 @@ CI measures line and branch coverage of `src/agent_cli` with `coverage` on every
 Tests marked `timing` assert wall-clock bounds. Coverage tracing slows the measured code, so CI runs them in a separate step without it. Run the same measurement locally with:
 
 ```sh
-coverage run -m pytest -m "not timing" && coverage combine && coverage report
+coverage erase && coverage run -m pytest -m "not timing" && coverage combine && coverage report
 pytest -m timing
 ```
 
