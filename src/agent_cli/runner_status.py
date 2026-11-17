@@ -1,11 +1,12 @@
 """Announce a job and report how it ended, through the activity store.
 
-The person who mentioned the bot sees one status comment per job. The first
-status activity creates it; every later one edits the same comment in place. A
-failure overwrites the announcement with the failure text, and a retry's
-announcement overwrites the previous outcome. A successful job has no outcome
-text, because its posted review is the output, so its comment keeps the
-announcement.
+The person who mentioned the bot sees one status comment per job generation.
+The first status activity of a generation creates it; every later one edits the
+same comment in place. A failure overwrites the announcement with the failure
+text, and a retry's announcement overwrites the previous outcome. A retry edits
+that comment; a new generation, started by a new mention after the head moved,
+posts its own. A successful job has no outcome text, because its posted review
+is the output, so its comment keeps the announcement.
 
 Every status activity is an ordinary `comment.post` row. They are inserted with
 a deterministic id, executed through the script-owned GitHub executor, and

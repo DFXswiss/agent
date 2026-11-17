@@ -37,7 +37,7 @@ from typing import Any
 from .jobs import Verdict, admits, job_id
 from .queue import retry_payload
 from .runtime import Completed
-from .store import Store, utcnow
+from .store import Store, StoreConnectionError, utcnow
 
 # A mention inside a markdown quote is a citation, not an address. Someone
 # quoting an earlier request must not trigger a second run of it.
@@ -366,8 +366,9 @@ def _consume_mention(
     only the driver's `_` keys are dropped. The trigger is written first: a
     mention handled without a new job still has to be recorded, or a later
     failure or head change that makes the thread unread again selects the
-    same comment and queues it a second time. A failed write leaves the thread
-    unread and reports us as skipped, so the next pass tries again.
+    same comment and queues it a second time. A retryable write failure leaves
+    the thread unread and reports us as skipped, so the next pass tries again;
+    a `StoreError` raised for a data problem is not retryable and propagates.
 
     Every caller has already established that the mention's trigger differs
     from the stored one, so the write is unconditional.
@@ -380,7 +381,10 @@ def _consume_mention(
     updated["updated_at"] = utcnow()
     try:
         store.write("job", "update", row_id, updated)
-    except (Exception, SystemExit):
+    except (Exception, StoreConnectionError):
+        # A lost connection is retryable and an ordinary exception is a failed
+        # pass. Any other StoreError is a genuine data problem and must fail
+        # loud rather than be reported as a skip.
         return False
     _mark_thread_read(item, runner)
     return True
@@ -566,6 +570,9 @@ def scan_mentions(
         if skill is None:
             skipped += 1
             continue
+        # `done_kind` looks the job type up case-sensitively, so the row must
+        # carry the catalogue id the same way `job_id` already compares it.
+        job_type = skill.id.strip().lower()
 
         private = bool(_repo_is_private(repo, runner))
         verdict: Verdict = admits(
@@ -579,7 +586,7 @@ def scan_mentions(
             skipped += 1
             continue
 
-        row_id = job_id(repo, ref, skill.id)
+        row_id = job_id(repo, ref, job_type)
         existing = store.row("job", row_id)
 
         if existing is not None:
@@ -643,7 +650,7 @@ def scan_mentions(
                 session_id=session_id,
                 repo=repo,
                 ref=ref,
-                job_type=skill.id,
+                job_type=job_type,
                 actor=actor,
                 queue_type=skill.queue_type,
                 trigger=trigger,
@@ -661,6 +668,7 @@ def scan_mentions(
             payload = retry_payload(existing)
             payload["trigger"] = trigger
             payload["actor"] = actor
+            payload["job_type"] = job_type
             payload["queue_type"] = skill.queue_type
         else:
             # The state guard above admits only `failed` and `done` here.
@@ -710,6 +718,7 @@ def scan_mentions(
                     "head_sha": head_sha,
                     "trigger": trigger,
                     "actor": actor,
+                    "job_type": job_type,
                     "queue_type": skill.queue_type,
                     "session_id": session_id,
                 }
