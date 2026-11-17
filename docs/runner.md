@@ -137,6 +137,14 @@ land after the baseline and count as the job's output. Either undelivered case
 is reported as `announce failed <job-id>` on standard error. The comment is a
 `comment.post` activity, never a direct `gh` call.
 
+All status activities of one job generation share an `edit_marker`. The
+announcement creates the comment the first time it runs; every later status
+activity (a retry's announcement or a failure outcome) edits that same comment
+in place, so the issue or pull request keeps one status comment per job. The
+announcement still has to precede the output baseline: the first announcement
+is what creates the comment, and an edit never creates a new comment id, so a
+later edit can never count as new output.
+
 The row records `pull_request` (whether the probe answered that the number is a
 pull request) and `announced` once the announcement ended `done`. Writing
 `announced` at once means a later baseline failure, which leaves the job
@@ -230,8 +238,9 @@ budgets; a row whose session has disappeared is recorded as crashed.
 A job that ends as failed gets one outcome comment describing how it ended:
 `agent_failed`, `timeout`, `stalled`, `crashed` or `workspace_failed`. A
 successful job gets none: its posted review is the output. The comment is a
-`comment.post` activity, never a direct `gh` call, and the timeout/stall
-sentence uses the same budget the watchdog applied. A row carries `reported`
+`comment.post` activity that edits the job's existing status comment in place,
+keeping the job to one status comment, and the timeout/stall sentence uses the
+same budget the watchdog applied. A row carries `reported`
 (`False` when the outcome comment is still owed, `True` after it is delivered)
 and `report_attempts`. A failed comment increments `report_attempts` and is
 retried on the next pass, up to five passes; after that the row is left alone.

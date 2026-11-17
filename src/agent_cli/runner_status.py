@@ -1,21 +1,26 @@
 """Announce a job and report how it ended, through the activity store.
 
-The person who mentioned the bot sees two comments: one when dispatch starts
-the job, and one when a job ends as failed. A successful job gets no outcome
-comment, because its posted review is the output.
+The person who mentioned the bot sees one status comment per job. The first
+status activity creates it; every later one edits the same comment in place. A
+failure overwrites the announcement with the failure text, and a retry's
+announcement overwrites the previous outcome. A successful job has no outcome
+text, because its posted review is the output, so its comment keeps the
+announcement.
 
-Both comments are ordinary `comment.post` activities. They are inserted with a
-deterministic id, executed through the script-owned GitHub executor, and never
-posted by a direct `gh` call from the runner. The executor's marker makes a
-re-run of the same attempt adopt its own comment instead of posting a second
-one, so the id alone is enough to keep one comment per attempt.
+Every status activity is an ordinary `comment.post` row. They are inserted with
+a deterministic id, executed through the script-owned GitHub executor, and
+never posted by a direct `gh` call from the runner. All activities of one job
+generation carry the same `edit_marker`: the first one posts the comment and
+the executor edits the newest own comment that carries it. The activity id
+still distinguishes the attempt, so re-running one attempt adopts its own row.
 
-The announcement belongs before the output baseline in dispatch, so the
-baseline already holds it. An announcement that appears after the baseline
-would count as the job's new output and make the silent-failure check pass
-every job. This module only
-posts; the ordering is enforced by `dispatch.dispatch_queued` and documented
-there.
+The announcement belongs before the output baseline in dispatch. The ordering
+still matters even though later activities edit: the first announcement of a
+job is what creates the comment, and an edit never creates a new comment id, so
+a later status edit can never count as new output. An announcement that
+appears after the baseline would be a new comment and make the silent-failure
+check pass every job. This module only posts; the ordering is enforced by
+`dispatch.dispatch_queued` and documented there.
 """
 
 from __future__ import annotations
@@ -71,7 +76,30 @@ def _attempt_suffix(attempts: Any, english: bool) -> str:
     return ""
 
 
-def announce_body(job_id: str, attempts: int) -> str:
+def status_marker(job_id: str, created_at: str) -> str:
+    """The HTML marker that ties one job generation's status comment together.
+
+    Every status activity of a generation carries this marker as the
+    `comment.post` payload's `edit_marker`. The first activity creates the
+    comment; a later one edits the newest own comment that carries it, so the
+    job keeps one status comment instead of one per activity.
+
+    Both parts are interpolated into an HTML comment, so a value that could
+    close it or break the line is refused rather than producing a marker the
+    executor would reject later.
+    """
+    for value in (job_id, created_at):
+        if not isinstance(value, str) or not value:
+            raise ValueError("job id and generation (created_at) must be non-empty strings")
+        if "--" in value or ">" in value or "\n" in value or "\r" in value:
+            raise ValueError(
+                "job id and generation (created_at) must not contain '--', '>' "
+                "or a line break"
+            )
+    return f"<!-- agent-runner-job:{job_id}:{created_at} -->"
+
+
+def announce_body(job_id: str, attempts: int, *, marker: str) -> str:
     """The comment posted when dispatch starts a job."""
     english = (
         f"Working on this now: job `{job_id}`"
@@ -81,7 +109,7 @@ def announce_body(job_id: str, attempts: int) -> str:
         f"Ich arbeite jetzt daran: Auftrag `{job_id}`"
         f"{_attempt_suffix(attempts, False)}."
     )
-    return _comment(english, german)
+    return f"{_comment(english, german)}\n{marker}"
 
 
 def outcome_body(
@@ -90,6 +118,7 @@ def outcome_body(
     *,
     exit_code: int | None,
     minutes: int | None,
+    marker: str,
 ) -> str | None:
     """The comment describing how a failed job ended, or None.
 
@@ -141,7 +170,7 @@ def outcome_body(
         german = f"Auftrag `{job_id}`: Die Arbeitskopie konnte nicht hergestellt werden."
     else:
         return None
-    return _comment(english, german)
+    return f"{_comment(english, german)}\n{marker}"
 
 
 def status_activity_id(
@@ -404,6 +433,7 @@ def _post_status(
             return False
         try:
             activity_id = status_activity_id(kind, job_id, created_at, attempts)
+            marker = status_marker(job_id, created_at)
         except ValueError:
             return False
         payload = {
@@ -411,6 +441,7 @@ def _post_status(
             "number": number,
             "body": body,
             "target": "pr" if pull_request else "issue",
+            "edit_marker": marker,
         }
         try:
             needs_execution = queue_activity(
@@ -603,6 +634,21 @@ def report_outcomes(
             continue
 
         try:
+            marker = status_marker(job_id, row.get("created_at"))
+        except ValueError:
+            # Without a marker this generation has no comment to edit, so
+            # `post_status` would refuse it too. Count it as a failed report,
+            # like the other unusable inputs, so the attempt bound still stops
+            # a row that can never carry a marker.
+            updated = _strip(row)
+            updated["report_attempts"] = attempts + 1
+            try:
+                jobs.write("job", "update", job_id, updated)
+            except (Exception, SystemExit):
+                pass
+            failed.append(job_id)
+            continue
+        try:
             exit_code: int | None = None
             raw_exit = row.get("exit_code")
             if isinstance(raw_exit, int) and not isinstance(raw_exit, bool):
@@ -612,7 +658,11 @@ def report_outcomes(
             if isinstance(raw_minutes, int) and not isinstance(raw_minutes, bool):
                 minutes = raw_minutes
             body = outcome_body(
-                job_id, outcome, exit_code=exit_code, minutes=minutes
+                job_id,
+                outcome,
+                exit_code=exit_code,
+                minutes=minutes,
+                marker=marker,
             )
             if body is None:
                 continue

@@ -496,13 +496,25 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
             own = OwnJobs(store, work_root=paths.work)
 
             def announce(row: dict[str, Any]) -> bool | None:
+                try:
+                    marker = runner_status.status_marker(
+                        row.get("id"), row.get("created_at")
+                    )
+                    body = runner_status.announce_body(
+                        row["id"], row["attempts"], marker=marker
+                    )
+                except (KeyError, TypeError, ValueError):
+                    # Without a usable generation no activity of this job can
+                    # exist, so there is nothing to post and nothing to retire.
+                    announce_failed.append(str(row.get("id")))
+                    return False
                 # The real store, not `own`: the executor needs its lock,
                 # its home and its activity rows, which the job view lacks.
                 done = runner_status.announce_status(
                     store,
                     run_argv,
                     row=row,
-                    body=runner_status.announce_body(row["id"], row["attempts"]),
+                    body=body,
                     home=_agent_home(),
                     expected_login=login,
                     execute_activity=github_act.execute_activity,

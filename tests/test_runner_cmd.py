@@ -653,7 +653,10 @@ def test_dispatch_posts_and_prints_one_announcement(
     assert f"job.started {row['id']}" in captured.out
     assert "announce failed" not in captured.err
     assert len(seen) == 1
+    marker = runner_status.status_marker(row["id"], row["created_at"])
     assert seen[0]["payload"]["body"].startswith("Working on this now: job")
+    assert seen[0]["payload"]["body"].endswith(marker)
+    assert seen[0]["payload"]["edit_marker"] == marker
     assert seen[0]["payload"]["target"] == "issue"
     store = Store(home)
     try:
@@ -2118,6 +2121,9 @@ def test_supervise_reports_a_failed_job_and_prints_it(
     assert "report failed" not in captured.err
     assert len(seen) == 1
     assert "exit code 1" in seen[0]["payload"]["body"]
+    marker = runner_status.status_marker(row["id"], row["created_at"])
+    assert seen[0]["payload"]["body"].endswith(marker)
+    assert seen[0]["payload"]["edit_marker"] == marker
     store = Store(home)
     try:
         saved = store.row("job", row["id"])

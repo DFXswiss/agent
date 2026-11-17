@@ -133,22 +133,26 @@ def _announce(
 
 
 def test_announce_body_names_the_job_in_both_languages() -> None:
-    body = runner_status.announce_body("job-1", 0)
+    marker = runner_status.status_marker("job-1", _CREATED_AT)
+    body = runner_status.announce_body("job-1", 0, marker=marker)
 
     assert body.startswith("Working on this now: job `job-1`.\n\n")
     assert "<details><summary>DE</summary>" in body
     assert "Ich arbeite jetzt daran: Auftrag `job-1`." in body
     assert "attempt" not in body
+    assert body.endswith(f"</details>\n{marker}")
 
 
 @pytest.mark.parametrize("attempts", [1, 4])
 def test_announce_body_numbers_a_retry_in_both_languages(attempts: int) -> None:
     # `attempts` counts the finished attempts, so the comment names the one
     # that is starting now.
-    body = runner_status.announce_body("job-1", attempts)
+    marker = runner_status.status_marker("job-1", _CREATED_AT)
+    body = runner_status.announce_body("job-1", attempts, marker=marker)
 
     assert f"job `job-1` (attempt {attempts + 1})." in body
     assert f"Auftrag `job-1` (Versuch {attempts + 1})." in body
+    assert body.endswith(marker)
 
 
 @pytest.mark.parametrize(
@@ -226,26 +230,67 @@ def test_outcome_body_describes_each_failure_in_both_languages(
     english: str,
     german: str,
 ) -> None:
+    marker = runner_status.status_marker("job-1", _CREATED_AT)
     body = runner_status.outcome_body(
-        "job-1", outcome, exit_code=exit_code, minutes=minutes
+        "job-1", outcome, exit_code=exit_code, minutes=minutes, marker=marker
     )
 
     assert body is not None
     assert english in body
     assert german in body
     assert "<details><summary>DE</summary>" in body
+    assert body.endswith(marker)
 
 
 @pytest.mark.parametrize("outcome", ["success", "mystery"])
 def test_outcome_body_is_none_when_no_comment_is_owed(outcome: str) -> None:
     # A successful job's posted review is its output; an unknown outcome has
     # no wording that would be true.
+    marker = runner_status.status_marker("job-1", _CREATED_AT)
     assert (
         runner_status.outcome_body(
-            "job-1", outcome, exit_code=0, minutes=30
+            "job-1", outcome, exit_code=0, minutes=30, marker=marker
         )
         is None
     )
+
+
+# -------------------------------------------------------------------- marker
+
+
+def test_status_marker_names_the_job_and_its_generation() -> None:
+    assert (
+        runner_status.status_marker("job-1", _CREATED_AT)
+        == f"<!-- agent-runner-job:job-1:{_CREATED_AT} -->"
+    )
+
+
+def test_status_marker_differs_by_generation() -> None:
+    assert runner_status.status_marker(
+        "job-1", "2020-01-01T00:00:00Z"
+    ) != runner_status.status_marker("job-1", _CREATED_AT)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "created_at"),
+    [
+        (None, _CREATED_AT),
+        ("", _CREATED_AT),
+        (7, _CREATED_AT),
+        ("job-1", None),
+        ("job-1", ""),
+        ("job-1", 7),
+        ("job--1", _CREATED_AT),
+        ("job>1", _CREATED_AT),
+        ("job\n1", _CREATED_AT),
+        ("job-1", f"{_CREATED_AT}\n"),
+    ],
+)
+def test_status_marker_rejects_an_unusable_part(
+    job_id: Any, created_at: Any
+) -> None:
+    with pytest.raises(ValueError):
+        runner_status.status_marker(job_id, created_at)
 
 
 # ------------------------------------------------------------- activity ids
@@ -454,6 +499,87 @@ def test_post_status_posts_against_the_recorded_target(
     assert seen[0]["payload"]["number"] == 7
 
 
+def test_post_status_payloads_share_one_marker_per_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    row = _row()
+    marker = runner_status.status_marker(row["id"], row["created_at"])
+    seen: list[dict[str, Any]] = []
+    try:
+        assert (
+            _post(
+                store,
+                row,
+                home=tmp_path,
+                kind="announce",
+                body=runner_status.announce_body(
+                    row["id"], row["attempts"], marker=marker
+                ),
+                execute=_done_executor(seen),
+            )
+            is True
+        )
+        outcome = runner_status.outcome_body(
+            row["id"],
+            "agent_failed",
+            exit_code=1,
+            minutes=None,
+            marker=marker,
+        )
+        assert outcome is not None
+        assert (
+            _post(
+                store,
+                row,
+                home=tmp_path,
+                kind="outcome",
+                body=outcome,
+                execute=_done_executor(seen),
+            )
+            is True
+        )
+    finally:
+        store.close()
+
+    assert [entry["payload"]["edit_marker"] for entry in seen] == [marker, marker]
+    assert all(entry["payload"]["body"].endswith(marker) for entry in seen)
+
+
+def test_post_status_uses_another_marker_for_another_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    older = _row()
+    newer = _row(created_at="2027-01-01T00:00:00Z")
+    seen: list[dict[str, Any]] = []
+    try:
+        for row in (older, newer):
+            marker = runner_status.status_marker(row["id"], row["created_at"])
+            assert (
+                _post(
+                    store,
+                    row,
+                    home=tmp_path,
+                    body=runner_status.announce_body(
+                        row["id"], row["attempts"], marker=marker
+                    ),
+                    execute=_done_executor(seen),
+                )
+                is True
+            )
+    finally:
+        store.close()
+
+    older_marker = seen[0]["payload"]["edit_marker"]
+    newer_marker = seen[1]["payload"]["edit_marker"]
+    assert older_marker == runner_status.status_marker(older["id"], older["created_at"])
+    assert newer_marker == runner_status.status_marker(newer["id"], newer["created_at"])
+    assert older_marker != newer_marker
+
+
 @pytest.mark.parametrize(
     "row",
     [
@@ -474,6 +600,7 @@ def test_post_status_posts_against_the_recorded_target(
         _row(id=7),
         _row(created_at=None),
         _row(created_at=""),
+        _row(created_at="2026-01-01T00:00:00Z-->"),
     ],
 )
 def test_post_status_fails_closed_for_an_unusable_row(
@@ -1130,6 +1257,35 @@ def test_report_outcomes_posts_the_comment_and_marks_the_row_reported(
     assert "report_attempts" not in saved
     assert seen[0]["payload"]["target"] == "issue"
     assert "exit code 1" in seen[0]["payload"]["body"]
+    marker = runner_status.status_marker(row["id"], row["created_at"])
+    assert seen[0]["payload"]["edit_marker"] == marker
+    assert seen[0]["payload"]["body"].endswith(marker)
+
+
+def test_report_outcomes_counts_a_row_without_a_usable_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No marker means this generation has no comment to edit, so nothing is
+    # posted. It counts as a failed report, like the other unusable inputs,
+    # and the attempt bound applies.
+    _install_account(monkeypatch)
+    store = Store(tmp_path)
+    row = _failed_row("7", created_at="2026-01-01T00:00:00Z-->")
+    try:
+        store.write("job", "insert", row["id"], row)
+
+        reported, failed = _report(store, home=tmp_path)
+        saved = store.row("job", row["id"])
+        activities = store.rows("activity")
+    finally:
+        store.close()
+
+    assert reported == []
+    assert failed == [row["id"]]
+    assert activities == []
+    assert saved is not None
+    assert saved["reported"] is False
+    assert saved["report_attempts"] == 1
 
 
 def test_report_outcomes_does_not_adopt_an_earlier_generations_outcome(

@@ -1489,6 +1489,359 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     assert row["result"]["created_at"] == "2026-11-05T09:59:00Z"
 
 
+_EDIT_MARKER = "<!-- agent-runner-job:job-1:2026-01-01T00:00:00Z -->"
+
+
+def _edit_body(marker: str = _EDIT_MARKER) -> str:
+    return f"Working on this now.\n{marker}"
+
+
+def test_comment_post_edit_marker_edits_the_newest_own_comment(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-edit"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": _edit_body(),
+            "target": "issue",
+            "edit_marker": _EDIT_MARKER,
+        },
+    )
+    calls: list[list[str]] = []
+    patch_argv = [
+        "gh",
+        "api",
+        "-X",
+        "PATCH",
+        "repos/dfxswiss/agent/issues/comments/6",
+        "-f",
+        f"body={_edit_body()}\n{ACTIVITY_MARKER.format(id=act_id)}",
+    ]
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            # Older than 6 but with a larger id.
+                            "id": 9,
+                            "body": f"older, larger id\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T09:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-9",
+                        },
+                        {
+                            "id": 6,
+                            "body": f"newer\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T10:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-6",
+                        },
+                        {
+                            # Own comment whose timestamp does not parse: a
+                            # timestamp must win even though this id is larger.
+                            "id": 20,
+                            "body": f"no timestamp\n{_EDIT_MARKER}",
+                            "created_at": "not-a-timestamp",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-20",
+                        },
+                        {
+                            # Same timestamp as 6 but a smaller id: 6 wins the tie.
+                            "id": 4,
+                            "body": f"tie, smaller id\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T10:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-4",
+                        },
+                        {
+                            # Newer, but not the posting account's comment.
+                            "id": 7,
+                            "body": f"someone else\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T11:00:00Z",
+                            "user": {"login": "someone-else"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-7",
+                        },
+                    ]
+                ),
+                "",
+            )
+        if argv == patch_argv:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 6,
+                        "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-6",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(f"comment must be edited in place: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"comment.post {act_id} done"]
+    patches = [c for c in calls if c[:4] == ["gh", "api", "-X", "PATCH"]]
+    assert patches == [patch_argv]
+    assert not any(c[:3] == ["gh", "issue", "comment"] for c in calls)
+    assert not any(c[:3] == ["gh", "pr", "comment"] for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"] == {
+        "repo": "dfxswiss/agent",
+        "number": 3,
+        "url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-6",
+        "id": 6,
+        "edited": True,
+    }
+
+
+def test_comment_post_edit_marker_ignores_another_login_and_posts_new(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-edit-other-author"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": _edit_body(),
+            "target": "issue",
+            "edit_marker": _EDIT_MARKER,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 8,
+                            "body": f"not ours\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T10:00:00Z",
+                            "user": {"login": "someone-else"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-8",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:3] == ["gh", "issue", "comment"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 9,
+                        "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-9",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(f"a foreign comment must not be edited: {argv}")
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    assert sum(c[:3] == ["gh", "issue", "comment"] for c in calls) == 1
+    assert not any(c[:4] == ["gh", "api", "-X", "PATCH"] for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert "edited" not in row["result"]
+
+
+def test_comment_post_edit_marker_posts_new_when_no_comment_carries_it(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-edit-none"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": _edit_body(),
+            "target": "issue",
+            "edit_marker": _EDIT_MARKER,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 10,
+                            "body": "plain text",
+                            "created_at": "2026-11-05T10:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-10",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:3] == ["gh", "issue", "comment"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 11,
+                        "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-11",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    assert sum(c[:3] == ["gh", "issue", "comment"] for c in calls) == 1
+    assert not any(c[:4] == ["gh", "api", "-X", "PATCH"] for c in calls)
+
+
+def test_comment_post_edit_marker_adopts_this_activitys_comment_without_patch(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-edit-adopt"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": _edit_body(),
+            "target": "issue",
+            "edit_marker": _EDIT_MARKER,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            # Newer own comment with the edit marker only: the
+                            # activity's own comment must still be adopted.
+                            "id": 13,
+                            "body": f"a later status edit\n{_EDIT_MARKER}",
+                            "created_at": "2026-11-05T11:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-13",
+                        },
+                        {
+                            "id": 12,
+                            "body": f"already posted\n{marker}",
+                            "created_at": "2026-11-05T10:00:00Z",
+                            "user": {"login": "theo-vane"},
+                            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-12",
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"the comment is already this activity's: {argv}")
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    assert not any(c[:4] == ["gh", "api", "-X", "PATCH"] for c in calls)
+    assert not any(c[:3] == ["gh", "issue", "comment"] for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["id"] == 12
+    assert row["result"]["url"] == "https://github.com/dfxswiss/agent/issues/3#issuecomment-12"
+    assert "edited" not in row["result"]
+
+
+@pytest.mark.parametrize(
+    ("body", "payload_extra"),
+    [
+        ("plain text", {"edit_marker": "<!-- not in the body -->"}),
+        (
+            "text\n<!-- broken\nmarker -->",
+            {"edit_marker": "<!-- broken\nmarker -->"},
+        ),
+        ("text edit-me", {"edit_marker": "edit-me"}),
+        (
+            _edit_body(),
+            {"edit_marker": _EDIT_MARKER, "exact_body": True},
+        ),
+        (_edit_body(), {"edit_marker": None}),
+        (_edit_body(), {"edit_marker": 5}),
+        ("text", {"edit_marker": ""}),
+        (
+            "text\n<!-- broken\r-->",
+            {"edit_marker": "<!-- broken\r-->"},
+        ),
+        (
+            "text\nmissing open -->",
+            {"edit_marker": "missing open -->"},
+        ),
+        (
+            "text\n<!-- missing close",
+            {"edit_marker": "<!-- missing close"},
+        ),
+        ("text\n<!---->", {"edit_marker": "<!---->"}),
+    ],
+)
+def test_comment_post_rejects_an_invalid_edit_marker(
+    tmp_path: Path, body: str, payload_extra: dict[str, Any]
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-edit-bad"
+    payload = {
+        "repo": "dfxswiss/agent",
+        "number": 3,
+        "body": body,
+        "target": "issue",
+    }
+    payload.update(payload_extra)
+    _pending(store, act_id, "comment.post", payload)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} error"]
+    assert calls == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "edit_marker must" in row["execution_error"]
+
+
 def test_comment_post_slurp_non_dict_errors(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
