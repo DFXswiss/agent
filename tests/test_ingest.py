@@ -588,9 +588,10 @@ def test_an_admitted_mention_becomes_a_queued_job(tmp_path: Path) -> None:
         store.close()
 
 
-def test_a_catalogue_id_is_stored_in_lower_case(tmp_path: Path) -> None:
-    # `done_kind` looks the stored job type up case-sensitively, so a
-    # catalogue id spelled `PR-Review` must land on the row as `pr-review`.
+def test_a_non_canonical_catalogue_id_names_no_skill(tmp_path: Path) -> None:
+    # Only a lower-case id is used as the job type and as the `runner.json`
+    # key, so an upper-case one would never find its own settings. It names no
+    # skill, and the policy default cannot select it either.
     catalog = {
         "skills": [
             {
@@ -600,6 +601,8 @@ def test_a_catalogue_id_is_stored_in_lower_case(tmp_path: Path) -> None:
             }
         ]
     }
+    assert resolve_skill("@theo-vane please review", catalog) is None
+    assert default_skill(POLICY, catalog) is None
     store = Store(tmp_path)
     try:
         created, requeued, skipped = _scan(
@@ -610,15 +613,31 @@ def test_a_catalogue_id_is_stored_in_lower_case(tmp_path: Path) -> None:
             ),
             catalog=catalog,
         )
-        assert len(created) == 1
-        assert requeued == []
-        assert skipped == 0
-        assert _jobs(store)[0]["job_type"] == "pr-review"
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
     finally:
         store.close()
 
 
-def test_a_requeue_stores_the_catalogue_id_in_lower_case(tmp_path: Path) -> None:
+def test_a_padded_catalogue_id_is_ignored() -> None:
+    # Surrounding spaces change the spelling too, so the entry names nothing.
+    catalog = {
+        "skills": [
+            {
+                "id": " pr-review ",
+                "queue_type": "pr-ready",
+                "body_patterns": ["please review"],
+            }
+        ]
+    }
+    assert resolve_skill("@theo-vane please review", catalog) is None
+    assert default_skill(POLICY, catalog) is None
+    assert allowed_skills(POLICY, catalog) == ([], ["pr-ready"])
+
+
+def test_a_requeue_stores_the_canonical_catalogue_id(tmp_path: Path) -> None:
+    # A row written under an older, non-canonical spelling is re-queued under
+    # the id the catalogue names.
     store = Store(tmp_path)
     try:
         row = _insert(store, state="failed", job_type="PR-Review")

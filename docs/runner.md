@@ -78,7 +78,10 @@ skill to one:
 ```
 
 The skill id is what names a job and selects its worker and its `runner.json`
-settings. The queue type is what admission compares with `job_types_allow`. A
+settings. A catalogue skill id must be lower-case and carry no surrounding
+spaces: the id is used as written as the row's job type and as the
+`runner.json` key, so `doctor` reports any other id and `ingest` ignores it.
+The queue type is what admission compares with `job_types_allow`. A
 mention is resolved to a skill by a command prefix on its first word or a body
 phrase; a match whose queue type is not allowed is denied rather than replaced
 by the default, so a request for a skill this instance does not run stays
@@ -155,12 +158,18 @@ trigger — the job is queued or running, or a finished job's head did not move 
 the handled comment is first recorded as the row's `trigger`, so a later
 failure or head change that makes
 the thread unread cannot select the same mention again. A path that leaves the
-thread unread leaves the trigger unchanged.
+thread unread leaves the trigger unchanged, with one exception: after a
+successful trigger write — in `_consume_mention`, or after a re-queue — marking
+the thread read can fail, or be skipped because the notification carries no
+usable thread id. The trigger is then recorded while the thread stays unread,
+and the next pass only marks it read, because the recorded high-water mark
+already covers the comment.
 
 The row carries `job_type` (the skill id), `queue_type`, `trigger` and
 `head_sha` alongside the fields dispatch records later. `head_sha` is written
-by ingest and overwritten by dispatch with the commit it checked out, so a
-later mention compares the reviewed commit rather than the one ingest saw.
+by ingest; for a pull-request job dispatch overwrites it with the commit it
+checked out, so a later mention compares the reviewed commit rather than the
+one ingest saw. An issue job keeps the value ingest stored.
 De-duplication uses the whole store, including rows written by other devices,
 so the same request is one job. A notification that led to a job is marked
 read, so a pruned job does
@@ -385,7 +394,8 @@ and reports every problem it can find rather than stopping at the first. It
 runs the three health checks and verifies `max_concurrent`. It requires the
 worker's model selection and `lane_execution` declaration and reports an
 allowed queue type that no catalogue skill carries, a catalogue skill with no
-worker, a `default_skill_on_mention` that names no catalogue skill, and a
+worker, a catalogue skill id that is not lower-case, a
+`default_skill_on_mention` that names no catalogue skill, and a
 missing `prompts/pr-review.md` when an allowed queue type resolves to
 `pr-review`. It requires the binaries `gh`, `git`,
 `tmux` and `ps` on `PATH`. It checks that the runner directory and each existing
