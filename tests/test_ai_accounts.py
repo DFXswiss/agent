@@ -246,6 +246,11 @@ def test_delegate_lane_execution_is_accepted(tmp_path: Path) -> None:
         {"mode": "delegate", "argv": ["/opt/operator/run-lane", 3]},
         {"mode": "delegate", "argv": ["/opt/operator/run-lane", "two\nlines"]},
         {"mode": "delegate", "argv": ["/opt/operator/run-lane", ""]},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane", "a\x00b"]},
+        {"mode": "delegate", "argv": ["/opt/operator/run-lane", "a\rb"]},
+        {"mode": "delegate", "argv": "/opt/operator/run-lane"},
+        {"mode": "delegate", "argv": {"run": "/opt/operator/run-lane"}},
+        {"mode": "delegate", "argv": None},
     ],
 )
 def test_invalid_delegate_lane_execution_fails_closed(

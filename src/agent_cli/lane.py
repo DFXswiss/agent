@@ -837,6 +837,10 @@ def launch(
                 ),
                 write_backs=write_backs,
             )
+            # The operator process must not inherit the ambient GitHub
+            # variables either. The provider part after "--" keeps the
+            # clearing it already has.
+            argv = _github_cleared_argv(argv, profile_dir)
         if tmux:
             unique = "" if dry_run else uuid.uuid4().hex[:8]
             tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)

@@ -3114,11 +3114,19 @@ def test_launch_delegate_prefixes_argv_and_skips_tmux(tmp_path: Path) -> None:
 
     assert len(seen) == 1
     argv = seen[0]
-    assert argv[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    separator = argv.index("--")
+    operator = argv[len(prefix) + 1 : separator]
+    assert operator[:3] == ["/opt/operator/run-lane", "--profile", "work"]
+    assert operator[3:5] == ["--workdir", str(tmp_path.resolve())]
     assert argv[argv.index("--workdir") + 1] == str(tmp_path.resolve())
     assert argv[argv.index("--read") + 1] == str(spec.resolve())
     assert argv.count("--workdir") == 1
-    assert argv.index("--") < argv.index("env")
+    assert argv[separator + 1 : separator + 1 + len(prefix)] == prefix
     assert "tmux" not in argv
     assert result.tmux_session is None
     assert result.status == "complete"
@@ -3229,10 +3237,112 @@ def test_launch_delegate_hardens_the_provider_argv(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     argv = seen[0]
-    assert argv[:2] == ["/opt/operator/run-lane", "--no-shell"]
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+    assert argv[: len(prefix)] == prefix
+    assert argv[len(prefix)].startswith("GH_CONFIG_DIR=")
+    operator = argv[len(prefix) + 1 : argv.index("--")]
+    assert operator[:2] == ["/opt/operator/run-lane", "--no-shell"]
     provider = argv[argv.index("--") + 1 :]
     assert "--no-shell" in provider
     assert provider[-2:] == ["--deny", "Shell"]
+
+
+def test_launch_delegate_clears_github_for_the_default_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={
+            "mode": "delegate",
+            "argv": ["/opt/operator/run-lane"],
+        },
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+    prefix = ["env"]
+    for key in LANE_GITHUB_TOKEN_ENV:
+        prefix.extend(["-u", key])
+
+    def fake_default(
+        argv: list[str], _stdin_text: str | None, _cwd: str | None
+    ) -> object:
+        seen.append(list(argv))
+        assert argv[: len(prefix)] == prefix
+        assignment = argv[len(prefix)]
+        assert assignment.startswith("GH_CONFIG_DIR=")
+        profile = Path(assignment.split("=", 1)[1])
+        assert profile.is_dir()
+        assert list(profile.iterdir()) == []
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    separator = argv.index("--")
+    operator = argv[len(prefix) + 1 : separator]
+    assert operator[:3] == [
+        "/opt/operator/run-lane",
+        "--workdir",
+        str(tmp_path.resolve()),
+    ]
+    provider = argv[separator + 1 :]
+    assert provider[: len(prefix)] == prefix
+    assert provider[len(prefix)].startswith("GH_CONFIG_DIR=")
+    assert "tool-a" in provider
+    assert sum(item.startswith("GH_CONFIG_DIR=") for item in argv) == 2
+
+
+def test_launch_local_mode_keeps_the_github_clearing_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake_default(
+        argv: list[str], _stdin_text: str | None, _cwd: str | None
+    ) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=event_stream_output("STATUS: complete\nRESULT: done"),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode == 0
+    argv = seen[0]
+    assert argv[0] == "env"
+    assert "--" not in argv
+    assert "tool-a" in argv
+    assert sum(item.startswith("GH_CONFIG_DIR=") for item in argv) == 1
 
 
 def test_launch_local_mode_keeps_the_provider_argv_unhardened(
