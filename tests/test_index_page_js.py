@@ -810,6 +810,7 @@ def test_kick_usage_throttles_reuses_inflight_and_aborts() -> None:
 let stateInflight = null;
 let prsInflight = null;
 let usageInflight = null;
+let securityInflight = null;
 let usageGen = 0;
 let usageLastStartedAt = 0;
 let now = 20000;
