@@ -84,7 +84,7 @@ In words:
 2. The hub checks that signature against the public keys the team has registered. Nobody else
    is asked.
 3. A change is stored as an **event** at the end of a chain. Each event points to the one
-   before it, so the history cannot be rewritten without it showing.
+   its writer signed before it, so the history cannot be rewritten without it showing.
 4. What you see on the dashboard is computed from that chain, for today or for any day in the
    past.
 5. The hub signs its answers too, so a program that asks the hub something can check that the
@@ -95,7 +95,7 @@ In words:
 | Object | What it holds |
 |---|---|
 | **Task** | Title, description, assignee, status, links |
-| **Security issue** | Repository, short name (at most 30 characters, unique), severity, urgency 1–10, assignee, status (`open`, `in progress`, `done`), where it was found, how it was fixed |
+| **Security issue** | Repository, short name (at most 30 characters, unique), severity, urgency 1–10, assignee, status, where it was found, how it was fixed |
 | **Discussion** | Topic, audience (people, agents, or mixed), status (`open`, `settled`), outcome |
 | **Message** | The discussion it belongs to, and its text |
 
@@ -252,7 +252,7 @@ issue could look like (values made up):
   "object_id": "SEC-042",
   "changes": {
     "assignee": { "old": null, "new": "example-staff" },
-    "status":   { "old": "open", "new": "in progress" }
+    "status":   { "old": "to do", "new": "in progress" }
   },
   "actor_key_id": "example-staff-laptop",
   "signed_at": "2026-12-01T09:14:03Z",
@@ -270,17 +270,22 @@ issue could look like (values made up):
 | `actor_key_id` | The registered key that signed |
 | `signed_at` | The writer's clock, part of what is signed |
 | `received_at` | The hub's clock when it stored the event |
-| `prev_hash` | Fingerprint of the event before this one |
+| `prev_hash` | Fingerprint of the previous event signed by the same key |
 | `signature` | The writer's signature over everything above except `received_at` |
 
 The hub refuses an event when:
 
 - the signature does not check out, or the key is unknown, revoked or lacks the scope
-- `prev_hash` is not the current end of the chain
+- `prev_hash` is not the last event the hub accepted from the same key
 - the old values in `changes` do not match what the record says right now
 
-The last two rules handle two people editing at once: the second one gets a clear refusal and
-retries against the new state, instead of silently overwriting the first.
+Every key has its own chain: each of its events points to the one before. A writer can
+therefore sign without knowing what others wrote, even while the hub is unreachable. The hub
+appends accepted events in the order they arrive and keeps a running fingerprint over all of
+them, which anyone can recompute.
+
+The last rule handles two people editing at once: the second one gets a clear refusal and
+signs a new event against the new state, instead of silently overwriting the first.
 
 The hub **never writes events itself.** It checks, orders and stores what people, agents and
 programs sign. Nobody, not even an administrator, can make the hub claim that someone changed
@@ -307,7 +312,7 @@ Every question about history can be answered from the chain alone:
 | What exactly? | `changes`: each field with old and new value |
 | When? | `signed_at` (writer) and `received_at` (hub) |
 | Is it genuine? | The signature, checked against the registered public key |
-| Was anything removed or reordered? | Each event's `prev_hash` points to the one before; any gap or change breaks the chain |
+| Was anything removed or reordered? | Each event's `prev_hash` points to the previous event of the same key, and the hub's running fingerprint covers all events in order; any gap or change breaks one of them |
 
 Unlike an ordinary audit log, nobody has to trust that the log was kept honestly. Anyone with
 the public keys can check it.
@@ -335,23 +340,27 @@ of one pull request.
 2. **Claim it:** write an event that sets you as assignee and the status to `in progress`.
    Everyone sees immediately that you are on it.
 3. **Fix it** in the affected repository, through the normal pull-request process.
-4. **Report it done:** write an event that sets the status to `done` and adds the fix reference
-   (for example the merged pull request).
+4. **Link the pull request** to the issue. When it is merged, the issue is set to `merged`
+   automatically.
+5. **Confirm it:** once the change is rolled out to production and you have checked it there,
+   confirm that. The issue is then `done`, with the pull request as its fix reference
+   ([DESIGN.md §24.11](../DESIGN.md#2411-done-and-released)).
 
 If two people try to claim the same issue at the same moment, the second claim is refused
 (section 6) and that person sees who got there first.
 
 ## 11. Keeping the record safe
 
-- The chain is the authoritative record and exists nowhere else, so its data class is
+- The signed events are the authoritative record and exist nowhere else, so its data class is
   **unique** (DESIGN.md §13).
 - The record is stored in **PostgreSQL**. The hub connects with a database role that may only
   add and read events, never change or delete them, so the no-delete rule holds even if the
   hub's code had a bug. The agent-session data keeps its own, separate database.
 - There are three copies, one of them off-site. A restore is tested regularly, and a restored
-  chain is checked completely (every signature and every `prev_hash`) before the hub serves it.
-- At a fixed interval the hub publishes the fingerprint of the current end of the chain, signed
-  with its own key. Anyone who kept an earlier published fingerprint can later prove that the
+  record is checked completely (every signature, every `prev_hash` and the running
+  fingerprint) before the hub serves it.
+- At a fixed interval the hub publishes its current running fingerprint, signed with its own
+  key. Anyone who kept an earlier published fingerprint can later prove that the
   history up to that point was not rewritten.
 - The code is public. The data of the record never appears in any repository, issue, pull
   request, log or error message.

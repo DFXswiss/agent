@@ -154,6 +154,9 @@ sequenceDiagram
 which key, which device, what exactly, for which repositories, until when. Their device checks
 it and writes it into its allow list. A grant always expires and can be removed earlier.
 
+**Taking a key away.** A revoked key is refused by the hub at once, and the hub tells every
+device to stop obeying it. On the hub's word a device may obey less, never more.
+
 **What this protects against.** Someone who takes over the hub can delay, drop or read
 commands. They cannot create a command that any device accepts.
 
@@ -257,7 +260,8 @@ question or an order ends, and you answer with a tap.
 
 Notifications use standard Web Push. The phone maker's push service transports them; they are
 encrypted for your browser, so the push service cannot read them. When you answer on one
-device, the notification disappears on your others.
+device, the notification disappears on your others, where the phone allows it. Notifications
+keep arriving after your sign-in has expired; to answer, you sign in.
 
 ## 14. Joining, leaving and loss
 
@@ -265,9 +269,9 @@ device, the notification disappears on your others.
 |---|---|
 | You join | Your passkeys are added by pull request. You connect your devices and confirm each with a passkey. |
 | You add a device | A new key is created on it and added by pull request. You confirm on the device. |
-| You leave | Your keys are revoked by pull request. What you signed stays valid and attributed to you. |
+| You leave | Your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
 | A device is lost | Its key is revoked and its broker key disabled. Its history stays in the hub. |
-| A passkey is lost | Another passkey of yours removes it from your devices; a pull request revokes it. |
+| A passkey is lost | A pull request revokes it, and your devices stop obeying it. You sign in with another passkey and remove it from your devices. |
 
 ## 15. What stays refused
 
