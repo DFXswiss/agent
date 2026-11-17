@@ -27,7 +27,7 @@ Not built in this step:
 
 No existing endpoint changes its behaviour: GitHub sign-in, device pairing and device tokens
 work as before. The hub additionally requires two new environment variables at start
-(section 10).
+(section 10); section 11 gives the order in which they are rolled out.
 
 ## 2. Encodings
 
@@ -52,7 +52,7 @@ this document means the hub's clock cut to whole seconds.
 ## 3. The keys file
 
 The hub reads the keys file from the path in the required environment variable
-`AGENT_CORE_KEYS`; by convention it lies next to `teams.yaml`. It changes only by pull request.
+`AGENT_CORE_KEYS`; by convention it is `keys.yaml` next to `teams.yaml`. It changes only by pull request.
 It holds public keys and never a secret.
 
 ```yaml
@@ -170,7 +170,7 @@ The loader fails closed. The process does not start when:
 - an `id`, a `public_key` or a `credential_id` appears twice, or a public key is not a valid point
 - a `team` is not in `teams.yaml`, or a `staff` or `agent` handle breaks the handle rule
 - a scope is unknown or not allowed for the principal, an `agent` entry does not hold exactly
-  one device scope, or `keys:invite` is held by more than one handle
+  one device scope, or among the entries that are not revoked at start more than one handle holds `keys:invite`
 - the pair of `device` and `program` is not unique as required
 - `hub` is empty
 
@@ -183,7 +183,8 @@ variable `AGENT_CORE_SIGNING_KEY` (base64url). The process does not start unless
 of that seed equals the `public_key` of a `hub` entry that is not retired. That entry's `id` is
 the hub key id.
 
-The seed is a secret. It never appears in a log, an error message or an answer.
+The seed is a secret. It never appears in a log, an error message or an answer. Every
+environment has its own seed and its own `hub` entry; a seed is never used by two hubs.
 
 ## 5. A signed request
 
@@ -210,10 +211,11 @@ agent-request-v1
 ```
 
 - **Method** is the method as received. A method that is not uppercase fails check 1.
+  The client builds every line from its configured hub URL and its own request by the same rules.
 - **Host** is the host of the hub's public URL (`AGENT_CORE_PUBLIC_URL`), lowercase, followed by
   `:` and the port only when the port is not the default of the URL's scheme. An IPv6 address is
   written in brackets, an international name in its ASCII form. The public URL has no path, query
-  or fragment; otherwise the process does not start.
+  or fragment; otherwise the process does not start. A single trailing `/` is not a path.
 - **Request target** is the path and query as the hub receives them: the raw path with its
   percent-encoding unchanged, followed by `?` and the raw query only when the query is not
   empty. A client never sends `?` with an empty query. Whatever stands in front of the hub
@@ -221,18 +223,25 @@ agent-request-v1
 - **Body hash** is the SHA-256 of the body bytes after removing any `Content-Encoding`; of the
   empty string when there is no body.
 
-Checks 1 to 10 run for every request whose raw path starts with `/api/key/`, before routing, and
-only for those. Every other path is handled exactly as today and never carries the hub's
-signature headers, also when the request carries `Agent-*` headers. A request under `/api/key/`
-that names no endpoint passes checks 1 to 8 and then gets a signed `404` with the body
-`{"error": "not_found"}`.
+The checks run for every request whose raw path starts with `/api/key/`, and for every request
+whose percent-decoded path, as the router sees it, starts with `/api/key/`; they run for no
+other request. Checks 1 to 8 run before routing, checks 9 and 10 once the endpoint is known. The
+signed request target stays the raw form. Every other path is handled exactly as today and
+never carries the hub's signature headers, also when the request carries `Agent-*` headers.
+
+- An endpoint under `/api/key/` runs only with the key entry that checks 1 to 8 established.
+- A request under `/api/key/` for which no endpoint exists with this exact path and method, also
+  with an added or missing trailing slash and also `HEAD`, passes checks 1 to 8 and then gets a
+  signed `404` with the body `{"error": "not_found"}`. The hub never answers there with `405` or
+  a redirect.
+- A `500` under `/api/key/` has the body `{"error": "internal"}`.
 
 The hub builds the text from what it received and checks in this order, stopping at the first
 failure:
 
 | # | Check | Status | `error` |
 |---|---|---|---|
-| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request has no `Content-Encoding` the hub cannot remove. | 401 | `signature_missing` |
+| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII. The request has no `Content-Encoding` other than `gzip`, and its body is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
 | 2 | `Agent-Key` names an entry in `keys` | 401 | `key_unknown` |
 | 3 | The entry is not revoked | 401 | `key_revoked` |
 | 4 | The entry is not expired | 401 | `key_expired` |
@@ -245,8 +254,9 @@ failure:
 
 - A `webauthn` key never signs a request directly (check 5). A staff member's requests are
   signed by a session key in a later build step.
-- Check 8 is one atomic insert of key id and nonce under a unique constraint; the request whose
-  insert fails is refused. A nonce is stored only after check 7 passed and is kept for 10
+- Check 8 is one atomic insert of key id and nonce under a unique constraint. Only a violation
+  of that constraint gives `nonce_replayed`; any other failure of the insert gives an unsigned
+  `500`. A nonce is stored only after check 7 passed and is kept for 10
   minutes, so a request that fails an earlier check cannot fill the store.
 - Check 10 applies only to an endpoint that names a subject, and then only to `service` keys.
   `GET /api/key/whoami` names none.
@@ -254,7 +264,7 @@ failure:
   hub. The keys file is public, so the values of checks 2 to 5 tell a caller nothing it could
   not read there.
 - Every request of a `service` key that passed check 8 writes exactly one log line with the key
-  id, method, path and final status, also when the status is 403, 404 or 500.
+  id, method, raw path without the query and final status, also when the status is 403, 404 or 500.
 
 ## 6. A signed answer
 
@@ -341,7 +351,14 @@ The hub:
 
 - each refusal of section 5 in its order. Checks 9 and 10 are tested through a route that
   exists only in the test suite.
-- two headers of the same name, a padded value, a value that is not canonical, a wrong length
+- two headers of the same name, a padded value, a value that is not canonical, a wrong length,
+  a method in lowercase, an `Agent-Key` outside the `id` rule, a `Content-Encoding` other than
+  `gzip`, a body over the size limit before and after decoding (all refused at check 1), and a
+  `gzip`-encoded body whose signature covers the decoded bytes (accepted)
+- a request to `/api/%6Bey/whoami` and to `/api/key%2Fwhoami` without `Agent-*` headers is
+  refused with `signature_missing`
+- a known endpoint called with another method, with a trailing slash and with `HEAD` gets a
+  signed `404`, never a `405` or a redirect
 - a time exactly 120 seconds off (accepted) and 121 seconds off (refused)
 - a replayed request, two parallel copies of one request (exactly one accepted), and the same
   nonce under two different keys (both accepted)
@@ -350,7 +367,7 @@ The hub:
 - a revoked key, an expired key, a key whose `revoked` or `expires` time equals now (refused),
   and a key whose `revoked` time is in the future (accepted)
 - a `webauthn` key used directly
-- the signed answer for 200, for a refusal at check 9, and for an unknown route under
+- the signed answer for 200, for a refusal at checks 9 and 10, and for an unknown route under
   `/api/key/`; no hub signature on a refusal at checks 1 to 8; an existing endpoint called with
   `Agent-*` headers behaves as before
 - every loader failure of section 3, including a small-order Ed25519 public key in `keys` and in
@@ -382,5 +399,24 @@ The client:
   Like every `AGENT_CORE_*` variable, a missing or empty value stops the process. The list of
   required variables in the README, the compose file and the configuration test is updated in
   the same change, and the image contains the keys file next to `teams.yaml`.
+- Whatever stands in front of the hub must forward path and query unchanged, without
+  normalising them. This is a requirement on the deployment.
 - One new table, the nonce store: key id, nonce, time seen, with a unique constraint on key id
   and nonce. Rows older than 10 minutes are deleted.
+
+## 11. Rollout order
+
+The hub does not start without its two new variables, and a hub is deployed automatically after
+a merge. The order is therefore fixed, for every environment:
+
+1. Create the signing seed where the environment keeps its secrets, and store it there. It is
+   created on a machine of that environment and never travels through chat, mail or a
+   repository. Print only its public key.
+2. Add the public key as a `hub` entry to `keys.yaml` in this repository by pull request, one
+   entry per environment.
+3. Set `AGENT_CORE_KEYS` and `AGENT_CORE_SIGNING_KEY` in the deployment of that environment.
+   A variable the running version does not know is harmless.
+4. Only then merge the change that implements this document.
+
+Before step 4 is merged, its pull request states that steps 1 to 3 are done for every
+environment that deploys from the target branch.
