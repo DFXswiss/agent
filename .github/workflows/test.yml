@@ -30,6 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[test]"
+      - run: coverage erase
       - run: coverage run -m pytest -m "not timing"
       - run: coverage combine
       - run: coverage report

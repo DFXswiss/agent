@@ -39,6 +39,12 @@
               "python3",
               "-m",
               "coverage",
+              "erase"
+            ],
+            [
+              "python3",
+              "-m",
+              "coverage",
               "run",
               "-m",
               "pytest",
