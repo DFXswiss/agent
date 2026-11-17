@@ -1,13 +1,34 @@
 # Contributing
 
 - Branch from `develop`. Never push to `develop` or `main`.
-- Open a draft pull request. A human merges.
+- Open a draft pull request. For a pull request into `develop` the A38 guard sets Ready (see below). A human merges.
 - Sign commits with the GitHub identity that owns the commits.
 - Public repository: English for commits, pull requests, and comments.
 - Do not name private repositories, internal hostnames, or internal infrastructure.
 - Team membership changes belong in `teams.yaml` and go through a pull request.
 - Add or update tests in the same change.
 - Run `pytest` before you push.
+
+## Local CI report (A38)
+
+Pull requests into `develop` follow the A38 process defined in
+[docs/a38.md](https://github.com/DFXswiss/agent/blob/3528240c62d72e8f50f8ec5ddda0c4d213f0f04a/docs/a38.md)
+and the guard guide
+[docs/a38-guard.md](https://github.com/DFXswiss/agent/blob/3528240c62d72e8f50f8ec5ddda0c4d213f0f04a/docs/a38-guard.md)
+of DFXswiss/agent: the author posts a complete local CI report for the current
+head and a review record as separate comments. The configuration is
+[`.github/a38.json`](.github/a38.json) and
+[`.github/pr-guard.json`](.github/pr-guard.json).
+
+A pull request needs two reviews. One review is enough only when the opener is
+listed in `one_review_authors` of the trusted `.github/pr-guard.json` on the
+default branch. The guard workflow, not the author, sets Ready. Bootstrap of
+this policy follows the approval path in the standard.
+
+The release pull request from `develop` to `main` is outside this scope: `main`
+is excluded in `.github/pr-guard.json`, and no local CI report is posted for it.
+Measure the local report in a virtual environment with Python 3.12, the version
+CI uses.
 
 ## Dashboard lists (newest first)
 
