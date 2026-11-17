@@ -217,7 +217,8 @@ agent-request-v1
   The client builds every line from its configured hub URL and its own request by the same rules.
 - **Host** is the host of the hub's public URL (`AGENT_CORE_PUBLIC_URL`), lowercase, followed by
   `:` and the port only when the port is not the default of the URL's scheme. An IPv6 address is
-  written in brackets, an international name in its ASCII form. The public URL has no user
+  written in brackets. An international name is configured in its ASCII form on both sides; the
+  hub and the client do not convert it in the same way. The public URL has no user
   information, path, query or fragment; otherwise the process does not start. A single trailing `/` is not a path.
 - **Request target** is the path and query as the hub receives them: the raw path with its
   percent-encoding unchanged, followed by `?` and the raw query only when the query is not
@@ -239,7 +240,8 @@ never carries the hub's signature headers, also when the request carries `Agent-
   a redirect. "Exact path" means the percent-decoded path the router sees. The answer to `HEAD`
   has no body, and its body hash is that of the empty string.
 - A `500` under `/api/key/` has the body `{"error":"internal"}`.
-- A WebSocket under `/api/key/` is closed with code 1008; this protocol defines no WebSocket.
+- A WebSocket under `/api/key/` is refused before it is accepted (close code 1008; a server may
+  report that as a rejected handshake). This protocol defines no WebSocket.
 - A server in front of the application may already reduce a request in absolute form to its
   path; the rule for the origin form then applies to what the application receives.
 
@@ -248,7 +250,7 @@ failure:
 
 | # | Check | Status | `error` |
 |---|---|---|---|
-| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII and in origin form (it starts with `/`). The request has no `Content-Encoding` other than the single token `gzip`, compared without regard to case (`identity` and a list are refused), its body decodes, and it is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
+| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII and in origin form (it starts with `/`). The request has no `Content-Encoding` other than the single token `gzip`, compared without regard to case (`identity` and a list are refused), its body decodes as exactly one gzip member, and it is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
 | 2 | `Agent-Key` names an entry in `keys` | 401 | `key_unknown` |
 | 3 | The entry is not revoked | 401 | `key_revoked` |
 | 4 | The entry is not expired | 401 | `key_expired` |

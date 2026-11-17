@@ -2,7 +2,7 @@
 
 This document is the contract between the `agent` client and this hub.
 
-The planned key identity (signed requests, the keys file, hub-signed answers) is specified in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). It is not implemented; everything below stays in force.
+Key identity (signed requests under `/api/key/`, the keys file, hub-signed answers, `GET /api/key/whoami`) is specified in [KEY-PROTOCOL.md](KEY-PROTOCOL.md); the hub side of its first build step is implemented. Everything below stays in force.
 
 ## Identity
 
