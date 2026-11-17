@@ -684,6 +684,64 @@ def refresh_draft_body(
     return [f"posted reused and added list on {target}#{number}"]
 
 
+def _stored_summaries(task: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Both stored sentences, or neither. One language is not a visible summary."""
+    summary_en = task.get("change_summary_en")
+    summary_de = task.get("change_summary_de")
+    if (
+        isinstance(summary_en, str)
+        and summary_en.strip()
+        and "\n" not in summary_en
+        and isinstance(summary_de, str)
+        and summary_de.strip()
+        and "\n" not in summary_de
+    ):
+        return summary_en, summary_de
+    return None, None
+
+
+def replace_existing_order_draft_body(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Replace the body of an order draft that is already open.
+
+    A push keeps the previous visible text until this runs. An order draft
+    opened before stored summaries existed can still show the English title
+    under DE:. Refresh replaces that text when a reused list is present.
+    Without that list the visible sentences are posted alone.
+    """
+    c = coord(task)
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    if source.get("kind") != ORDER_KIND:
+        return []
+    reused = task.get("reused_lines")
+    added = task.get("added_lines")
+    if isinstance(reused, list) and reused and isinstance(added, list) and added:
+        return refresh_draft_body(store, worker, task, runner)
+    summary_en, summary_de = _stored_summaries(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    target = target_repo(task)
+    if number is None or target == "":
+        return []
+    body = draft_pr_body(source, None, None, summary_en, summary_de)
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
+    queue_activity(
+        store,
+        activity_id=activity_id,
+        session_id=worker.session_id,
+        typ="pr.body",
+        payload={"repo": target, "number": number, "body": body},
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        raise CoordinatorError("pr.body did not update the draft")
+    return [f"replaced order draft body on {target}#{number}"]
+
+
 def ensure_draft(
     store: Store,
     worker: WorkerConfig,
@@ -726,7 +784,8 @@ def ensure_draft(
         c['published_head'] = sha
         c.pop('pending_published_head', None)
         save_task(store, task)
-        return [f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}"]
+        posted = replace_existing_order_draft_body(store, worker, task, runner)
+        return [f"pushed head {sha[:7]} to existing PR {target}#{existing_pr}", *posted]
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)

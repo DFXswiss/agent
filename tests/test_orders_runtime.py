@@ -433,11 +433,16 @@ def test_refresh_draft_body_updates_an_order_draft(
     task["reused_lines"] = ["`src/pay.ts:40` existing gift invoice"]
     task["added_lines"] = ["`src/habit.ts:12` member habit route"]
     save_task(store, task)
+    fake.pr["body"] = (
+        "EN:\nDraft for order 11111111: Add a widget.\n\n"
+        "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
+    )
     assert refresh_draft_body(store, worker, task, fake) == [
         "posted reused and added list on example/project#42"
     ]
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "DE:" not in fake.pr["body"]
+    assert "Entwurf für Auftrag" not in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
     task["change_summary_en"] = "Moves order events onto their own page."
