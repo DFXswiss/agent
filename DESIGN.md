@@ -1368,15 +1368,23 @@ This revision records the proposed concept for a team record with key identity (
 
 This revision records the decision of 2026-11-17 to build the team record in agent-core and to use no outside tracker, and lists the questions still open in §24.
 
+This revision records the decision of 2026-11-17 to store the team record in PostgreSQL, with a database role that may only insert and read events (§24.8).
+
+This revision records the decisions of 2026-11-17 that passkeys may be synced, that reading at the network edge is accepted, and what done and released mean (§24.11). It also gives every key its own chain of events, so that a writer can sign while the hub is unreachable (§24.3).
+
+This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; §25.19 lists no open decision. It also makes an invite link of the one administrator the only way to create a passkey (§24.2), replaces the three statuses of a security issue with the task statuses of §25.8, adds the `key_certificate` field for events signed by a session key (§24.3), and names the certified session key in the build order (§24.10).
+
 ## 24. Team record and key identity (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule.
 
-Still open, each decided by a human before the part it affects is built:
+Decided on 2026-11-17, after the first version of this section:
 
-- Whether staff passkeys may be synced by the platform or must be bound to one device (§24.2, sign-in without GitHub).
-- What "released" means in the answer to a release query (§24.10, step 2).
-- Whether content readable by the network edge in transit is acceptable, or which objects need end-to-end protection (§24.2).
+- Staff passkeys may be synced by the platform between a person's own devices (§24.2).
+- It is accepted that the network edge can read content in transit; no object needs end-to-end protection for that reason (§24.2).
+- What "released" means in the answer to a release query, and when a task counts as done: §24.11.
+
+No question of this section is open.
 
 ### 24.1 Purpose
 
@@ -1394,22 +1402,22 @@ The session store (§§8–11) is unchanged. Sessions, activities, session mail 
 
 ### 24.2 No third-party identity
 
-Identity is a key pair. The private key never leaves the person's authenticator or the program's device. The hub stores only public keys and verifies every signature itself; no outside service is asked at sign-in or on a write.
+Identity is a key pair. A private key is never shown to the hub, to a website or to another person. A program's key never leaves its device; a passkey stays in the person's authenticator or in the passkey sync of their own platform. The hub stores only public keys and verifies every signature itself; no outside service is asked at sign-in or on a write.
 
 There are three kinds of principal:
 
 | Principal | Key | How it proves itself |
 |---|---|---|
-| Staff member (browser) | Passkey (WebAuthn credential) | Signs a hub challenge on sign-in; every write from the website is signed by that credential |
+| Staff member (browser) | Passkey (WebAuthn credential) | Signs a hub challenge on sign-in and certifies a session key that signs every write from the website (§25.6) |
 | Agent (CLI, scripts, model sessions) | Ed25519 key generated where it runs, stored under `$AGENT_HOME` with mode `0600` | Signs every request and every team-record event, like an SSH key |
 | External program (for example a pull-request guard on a CI runner) | Scoped Ed25519 service key | Signs every request with its service key and verifies the hub's signature on every answer |
 
 Rules for all principals:
 
 - No GitHub OAuth, no password, no mailbox code and no outside identity provider decides who someone is. GitHub stays the home of code and pull requests (§24.5); it is not an identity source for the record.
-- **Every request is authenticated.** The hub has no anonymous endpoint: website, API, sync, pairing, health and release queries all require a valid signature by a registered key (or a signed-in passkey session). A request without one gets no data, not even a count or a status.
+- **Every request is authenticated.** The hub has no anonymous endpoint, with the one exception of opening an invite link (below): website, API, sync, pairing, health and release queries all require a valid signature by a registered key (or a signed-in passkey session). A request without one gets no data, not even a count or a status.
 - **No access gate in front of the hub.** The network edge provides the tunnel, TLS, protection against overload and rate limits, and filters that do not identify anyone (address or country rules). It runs no login of its own: no edge access policy, no mailbox code, no edge service token. The hub's own check is the only authentication.
-- The edge terminates TLS and can read content in transit. It cannot forge a request or an answer, because both are signed (§24.2), and it cannot replay one, because both carry a nonce and a time.
+- The edge terminates TLS and can read content in transit. That is accepted (decided on 2026-11-17). It cannot forge a request or an answer, because both are signed (§24.2), and it cannot replay one, because both carry a nonce and a time.
 - The edge access gate is removed only together with the release that enforces the hub's own authentication on every request, never before.
 - **Answers are signed too.** The hub signs every answer to an agent or external program with its own Ed25519 key, bound to the request (subject, nonce, time). The caller verifies it against the hub public key pinned in its own repository or configuration. Both sides prove themselves on every exchange.
 - Public keys are registered in a keys file next to `teams.yaml`, changed only by pull request. Each entry has a key id, kind (`webauthn` or `ed25519`), the principal kind, the handle of the person, agent or program it belongs to (a handle, never a legal name or mail address, because the file is public), the device and program label for agent and service keys, the team, and its scopes. Adding, rotating and revoking a key is a pull request.
@@ -1419,13 +1427,18 @@ Rules for all principals:
 Staff members:
 
 - A staff member may register several passkeys (for example laptop and phone).
-- The private key of a passkey never leaves the authenticator. If the platform syncs passkeys between a person's own devices, that sync is the platform's business; sign-in and every write are still verified by the hub alone.
+- **A passkey is created only through an invite link** (decided on 2026-11-17). There is exactly one administrator: the one staff member whose keys have the scope `keys:invite`. The administrator creates an invite link for one handle, for a person's first passkey and for every further one. The link works once and expires after a short time that the administrator sets. Whoever opens it creates a passkey in their browser; the hub receives only the public key and shows it to the administrator with its fingerprint.
+  - The invite registers nothing by itself. The passkey counts only after a pull request has added that public key to the keys file. Before merging, the administrator compares the fingerprint with the invited person over a channel other than the link, so that an intercepted link cannot register a stranger's key.
+  - Creating an invite is an event in the team record, signed by the administrator. The hub authors no event for the key it receives (§24.3); the key enters the history through its pull request. An unused or expired invite leaves no key behind.
+  - The request that opens an invite link is the one request without a registered key: the single-use value in the link authenticates it, and it can do nothing but hand in one public key.
+  - The administrator's own passkeys enter the keys file by a pull request made by hand, because nobody else can invite. The same path replaces the administrator's keys if all of them are lost, and it is how the role passes to another person.
+- A passkey is never exported to the hub or to a website. The platform may sync a passkey between a person's own devices (decided on 2026-11-17); the team accepts that the platform's sync then protects that passkey. Sign-in and every write are still verified by the hub alone.
 
 Agents:
 
 - **At least one key per device.** A key is never copied to a second device.
 - **One key per program where it matters.** Programs on the same device that need different rights or must be told apart in the audit trail (for example a coordinator, a lane starter and a monitoring script) each get their own key with their own scopes.
-- An agent key is never registered under a person. Agent events name the agent key and, where one exists, the person who runs it.
+- An agent key is never registered as a person. It names the staff member who owns its device (§25.3). Agent events name the agent key and that staff member.
 
 External programs:
 
@@ -1437,7 +1450,7 @@ External programs:
 
 ### 24.3 Events, not rows
 
-The record is an append-only chain of signed events. The current state is computed from the chain.
+The record is an append-only sequence of signed events. The current state is computed from it.
 
 Each event carries:
 
@@ -1446,29 +1459,33 @@ Each event carries:
 | `event_id` | UUID chosen by the writer |
 | `object_type`, `object_id` | What changed (§24.4) |
 | `changes` | Each changed field with its old and new value; a create has no old values |
-| `actor_key_id` | The registered key that signed |
+| `actor_key_id` | The key that signed: a registered key, or a session key (§25.6) |
+| `key_certificate` | Only for an event signed by a session key: the certificate of §25.6, which names the registered passkey |
 | `signed_at` | Writer clock, part of the signed bytes |
 | `received_at` | Hub clock, set on append |
-| `prev_hash` | Hash of the previous event in the chain |
+| `prev_hash` | Hash of the previous event signed by the same key; empty for the first event of a key |
 | `signature` | Signature over the canonical bytes of all fields above except `received_at` |
 
 Rules:
 
-- **Nothing is deleted and nothing is rewritten.** A correction is a new event. There is no redaction event and no administrative delete, not in the hub, not in the database, not in a backup.
+- **Nothing is deleted and nothing is rewritten.** A correction is a new event. There is no event that redacts another event (masking a session log, §25.9, is not one) and no administrative delete, not in the hub, not in the database, not in a backup.
 - Because nothing can be removed, **personal data, secrets, credentials and customer data must never be written into the record.** Objects refer to them by an external reference that does not reveal them. A review treats a field that invites such data as a defect.
-- The hub rejects an event whose signature does not verify, whose key is unknown or revoked, whose `prev_hash` is not the current chain head, or whose old values do not match the current state (the writer retries against the new head). This makes concurrent edits explicit instead of losing one.
+- **Every key has its own chain.** Each event names the previous event of the same key. A writer can therefore sign without knowing what others wrote, also while the hub is unreachable (§25.7), and a missing or replaced event of any key is detectable.
+- **The hub keeps one record.** It appends accepted events in the order they arrive. For each one it stores its position and a record hash computed from the previous record hash and this event. Both are computed values that anyone can recompute from the events; they are not events and carry no statement of the hub.
+- The hub rejects an event whose signature does not verify, whose key is unknown or revoked, whose session key has no certificate that verifies against a registered passkey that is not revoked, whose session key's certificate states an expiry that has passed at `received_at` or that lies further than the longest session-key lifetime after the hub issued the fresh value in the certificate, whose `prev_hash` is not the hash of the last event it accepted from that key, or whose old values do not match the current state (the writer signs a new event against the current state). This makes concurrent edits explicit instead of losing one.
+- An event that a key signed before it was revoked and that reaches the hub only afterwards is refused; it stays in the writer's local log.
 - The hub never authors an event. It only verifies, orders and stores.
 
 ### 24.4 Objects
 
 | Object | Fields (minimum) |
 |---|---|
-| Task | title, description, assignee, status, links |
-| Security issue | repository, short name (at most 30 characters, unique), severity, urgency 1–10, assignee, status (`open`, `in progress`, `done`), source reference, fix reference |
+| Task | title, description, assignee, status, links; extended by §25.8 |
+| Security issue | repository, short name (at most 30 characters, unique), severity, urgency 1–10, assignee, status (§25.8), source reference, fix reference |
 | Discussion | topic, audience (people, agents, mixed), status (`open`, `settled`), outcome |
 | Message | discussion id, body |
 
-Security issue workflow: whoever starts work on a security issue first writes an event that sets themselves as assignee and the status to `in progress`. Nobody takes over an issue that already has an assignee without that person's agreement. Completion is an event that sets `done` and the fix reference.
+Security issue workflow: whoever starts work on a security issue first writes an event that sets themselves as assignee and the status to `in progress`. Nobody takes over an issue that already has an assignee without that person's agreement. Completion follows §24.11 and records the fix reference.
 
 ### 24.5 Pull requests are read, not owned
 
@@ -1484,9 +1501,11 @@ Only registered keys read the record. Team scope follows §6. There is no public
 
 ### 24.8 Integrity and backup
 
-- The chain is the authoritative team record. Its data class is **unique** (§13); losing it loses history that exists nowhere else.
-- Three copies, one of them off-site, with a restore that is tested and verifies the whole chain (signatures and hashes) before the hub serves it.
-- The hub publishes the current chain head hash at a fixed interval, signed with its own key, so that a later rewrite of history is detectable from any earlier published head.
+- The signed events are the authoritative team record. Its data class is **unique** (§13); losing it loses history that exists nowhere else.
+- The team record is stored in **PostgreSQL** (decided on 2026-11-17). The session store (§§8–11) keeps its own database; this decision does not move it.
+- The database role the hub uses may only insert and read events; it has no right to update or delete them. The no-delete rule (§24.3) is enforced by the database, not only by the hub's code.
+- Three copies, one of them off-site, with a restore that is tested and verifies the whole record (every signature, every `prev_hash` and every record hash) before the hub serves it.
+- The hub publishes the current record hash at a fixed interval, signed with its own key, so that a later rewrite of history is detectable from any earlier published hash.
 
 ### 24.9 What this changes in the locked decisions
 
@@ -1506,4 +1525,326 @@ When the matching part ships, its pull request changes these rows in the same di
 - Code is public; record data never enters any repository, issue, pull request, log or error message.
 - No private repository, internal hostname or internal infrastructure is named here or in code (CONTRIBUTING.md).
 - Every implementation pull request carries tests for its signature checks, chain checks and refusal paths, not only the success path.
-- Build order: keys file with scopes and signature verification first, then the authenticated release query with a hub-signed answer for external programs, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
+- Build order: keys file with scopes and signature verification first, then the authenticated release query with a hub-signed answer for external programs, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub with the certified session key (§25.6), then removal of GitHub login.
+
+### 24.11 Done and released
+
+**When a task is done.** Each task has a completion rule:
+
+| Rule | The task is done when | Default for |
+|---|---|---|
+| `merged` | At least one pull request is linked to the task, every linked pull request is merged or closed, and at least one of them is merged into the default branch of its repository | Every task kind except security issues |
+| `verified in production` | The above, and a staff member has confirmed that the change is rolled out to production and was checked there | Security issues |
+
+- The rule can be changed per task by whoever may edit the task; the change is an event like any other. Changing the rule of a task in status `merged` to `merged` sets the task to `done` in the same event. Changing the rule of a `done` task does not change its status.
+- A watcher program with its own registered key (§24.2) observes merges and closes of linked pull requests and changes of the links on the code host, and writes the status change whenever the condition of the task's rule becomes true. Nobody marks a merge by hand, and the hub itself authors nothing (§24.3).
+- Under `merged`, the watcher sets the task to `done`. Under `verified in production`, it sets the task to `merged`; the confirmation of a staff member then sets `done` and names what was checked.
+- For a task without a linked pull request, the first condition of the table does not apply. Under the rule `merged` its assignee sets it to `done`. Under the rule `verified in production` its assignee sets it to `merged`, and the confirmation of a staff member then sets `done`.
+- A task in `merged` or `done` can be set back to `in progress` by an event of whoever may edit it, for example after a failed check in production. It then follows its rule again.
+
+**What "released" means in a release query.** An external program asks whether one pull request may leave draft. The hub answers yes only when all of these hold:
+
+- The pull request is linked to at least one task in the record.
+- Every linked task has an assignee and the status `in progress` or `ready for review`.
+- No question of an order for a linked task is unanswered.
+
+A withdrawn question (§25.15) does not count as unanswered, and a condition about a part that is not built yet counts as met. Until tasks are built, the release query therefore answers yes for every pull request; this is intended, and the guard's own review rules apply unchanged. Otherwise the answer is no and names the first condition that failed. The answer is one input for the guard and replaces no review rule (§24.2).
+
+## 25. Central operation (decided, not implemented)
+
+Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§1–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.17 in the same diff. An explanation for the whole team is in [docs/central-operation.md](docs/central-operation.md); this section stays the binding rule.
+
+### 25.1 Goal and non-goals
+
+Goal:
+
+- A staff member connects a device to the hub once and can then leave it alone. From the hub they hand work to it, answer its questions and watch every running session in full detail.
+- Every piece of work the team wants done is a task in one place, with one overview of tasks, pull requests, devices, sessions, AI usage and the key figures of the team's servers.
+- Nothing that was commanded can later be impossible to reconstruct.
+- Everything can be done by a person in the website and by an AI through the API, without exception.
+
+Non-goals:
+
+- The hub does not decide who works on what and does not move work between devices (§25.18).
+- The hub is the normal route, not the only one. Direct access to a device, for example a remote shell, stays allowed as an override; on an executor it is recorded (§25.9).
+- Handing work over is the default and stays voluntary. The client never forces a session on a controller device to hand work to another device; that session may do the work itself.
+
+### 25.2 Terms
+
+| Term | Meaning |
+|---|---|
+| Staff member | A person on the team. Signs in with a passkey (§24.2). |
+| Device | One machine with the client installed and its own key pair. Assigned to exactly one staff member, its owner. |
+| Executor | A device that runs work it was given. |
+| Controller | A device that may also give work to executors. |
+| Task | What has to be done. Lives in the team record. It is not the session task of the spine skill (§15, §19.5), which stays a row on its device and keeps its own states. |
+| Order | One attempt to do a task on one executor. |
+| Question | A decision a running session needs, with its allowed answers. |
+| Command | Any signed instruction that reaches a device through the hub: an order, an answer, input typed into a session, start, stop. |
+| Allow list | The local file on a device that lists every public key the device obeys. |
+| Grant | A signed permission by a device's owner for someone else's key. |
+| Session log | The complete recording of one session. |
+
+### 25.3 The device is the principal
+
+The hub's technical counterpart is a **device**, not a code-host account and not an AI model.
+
+- A device proves itself with its own key pair (§24.2). The key is created on the device and never leaves it. Connecting a device is the login.
+- Every device is assigned to exactly one staff member. The assignment is an entry in the keys file (§24.2) and changes by pull request.
+- A device reports an **inventory**: the AI accounts and subscriptions configured on it, the code-host accounts it can act as, and the runtimes it offers (for example containers or virtual machines). The inventory holds names and states, never a credential.
+- AI accounts are assigned to devices. Which account a device may use is device configuration ([docs/ai-accounts.md](docs/ai-accounts.md)); the hub shows it and does not choose it.
+- Devices connect outbound to the hub. No device opens a port, and nobody reaches a device's local store from outside (§3).
+
+### 25.4 Two device levels
+
+| Level | May do |
+|---|---|
+| `executor` | Runs work it was given. Cannot give work to any device. |
+| `controller` | Everything an executor may do, and may give work to executors of the same staff member. It may give work to an executor of another staff member only with a grant from that staff member (§25.6). |
+
+The level is a scope on the device key in the keys file. A staff member signed in with a passkey has controller rights over all of their own devices.
+
+### 25.5 Rights
+
+- A staff member may **write** to all of their own devices without restriction: submit orders, answer questions, type into a session, start and stop sessions.
+- A staff member may **read** everything of every other team member: tasks, sessions in full detail, logs and usage. Team scope follows §6.
+- Nobody writes to a device of another staff member without a grant from that staff member (§25.6).
+- A device operated by an autonomous agent is, like every device, assigned to exactly one staff member in the keys file (§25.3). That staff member has the owner rights of this section; other staff members act on it only with a grant (§25.6).
+
+### 25.6 Proof that reaches the device
+
+Consent and access rights are proven with keys, like an SSH key, not by a statement of the hub.
+
+**Principle.** A device obeys a command only when it has verified the proof itself. The hub also verifies, but the device does not rely on that. A hub that was taken over can delay, drop or read a command. It cannot create a command signed by a device key, and it cannot change whom a device obeys. One limit remains: the hub delivers the website, so while a staff member signs in or is signed in there, a hub that was taken over can get commands signed in that person's name (§25.16). A device cannot verify when a certificate was signed. Such a hub can therefore obtain a certificate whose validity begins later, usable for at most one session-key lifetime at a time the attacker chooses, until the passkey is revoked. After a hub takeover, every passkey that was used for a sign-in during it is revoked.
+
+**Two lists, and both must agree.**
+
+| List | Where | Decides | Changed by |
+|---|---|---|---|
+| Keys file (§24.2) | The hub's repository | Which keys exist for the team, whom they belong to, and what the hub lets them do | Pull request |
+| Allow list | A local file on each device | Which keys this device obeys, and for what | A statement signed by a controller device key of the owner that is already in the file, or by hand on the device |
+
+A command reaches a device only when the hub accepts the sender's key, and it runs only when the device finds that key in its allow list.
+
+**The allow list.** It is the device's counterpart of an SSH `authorized_keys` file. Each entry names the public key, whom it belongs to, what it may do, for which repositories where that applies, and until when. A key that is not in the file can do nothing on this device, whatever the hub says.
+
+- **The first entries are set by hand on the device.** When a device is connected, the owner confirms on the device itself the fingerprint of each passkey and each controller device key to be listed, with what it may do. Keys delivered by the hub are only proposals and become entries only after that local confirmation.
+- **A later change is never signed by a session key** (decided on 2026-11-17). An entry is added, changed or removed only by a statement signed with a controller device key of the owner that is already in the file, after the owner confirmed it in the client on that controller device, or by hand on the device. The website and the API offer the change as a request; it takes effect only with that signature. A website that a taken-over hub delivers can therefore not change whom a device obeys.
+- The hub and the keys file alone cannot add an entry.
+- **Sessions cannot reach the file.** The allow list and the device key belong to an operating-system account that differs from the account running sessions, orders and direct logins, and neither is readable or writable from that account. "By hand on the device" means a local administrator action outside the account that runs sessions. The device writes a signed event with the time of every such change to the allow list or the device key (§25.9). No grant, order or typed input can reach the allow list or the device key. A program key that may send commands, such as the key of the owner's own AI, is held by that same separate account. A session obtains a signature only through a local signing service of that account, which signs only for the owner's own AI session and never for an order or for a session started under another key. The owner's confirmation of an allow-list change happens in that account, never in a session.
+- An executor key is never listed as a sender of commands.
+- If every key of the owner is lost, the device is connected again by hand on the device itself.
+
+**Signing in.** A staff member signs in with their passkey, confirmed with biometrics or a PIN. That is the only time the passkey is asked. At sign-in the browser creates a session key that cannot be exported from the browser. The passkey signs a challenge that is the hash of a statement holding a fresh value from the hub, the session key's public part and its expiry. That signed statement is the session key's certificate. The session key lives at most one working day and signs every command after that; no further confirmation is needed while signed in.
+
+**What the device checks on every command:**
+
+| Sender | Check |
+|---|---|
+| A signed-in staff member | The passkey is in the allow list. The certificate (authenticator data, client data, signature and the statement) is a valid passkey sign-in signature with user verification, made for the hub's own website address, whose challenge is the hash of the statement. The expiry in the statement has not passed and is not later than the device's own current time plus the longest session-key lifetime in the device's configuration, which is at most one working day. The session key's signature over this command is valid |
+| A controller device, including a staff member's own AI | The signing key (the device key, or a program key of that controller device such as the key of the staff member's own AI, §25.14) is in the allow list and its signature over this command is valid |
+
+- The command must be within what the allow-list entry permits.
+- Every command names its target device and carries a time and a sequence number per signing key. A device refuses a command it has seen, one whose number is not higher than the last one it accepted from that key, and one outside the time window set in its configuration. A sender sends a command again with a new number only after a refusal signed by the device; a statement of the hub alone is no reason to send again.
+- A command that carries content (typed text, the body of an order, a free-text answer) is signed over the hash of that content together with a random value, not over the content. Content and random value travel beside the signed command. Masking (§25.9) therefore never invalidates a signature.
+- The device writes the command and its proofs into its local log before it runs it. The decision can be checked later without the hub.
+
+**Grant.** To let a colleague's key act on their device, the owner signs a grant with a controller device key, as for every change of the allow list: which key, on which device, what it may do (for example submit orders and nothing else), for which repositories, and until when. The device verifies the grant against the owner's key and writes it into its allow list. A grant always expires. The owner removes it earlier in the same way or by hand on the device. Grants and their removal are also events in the team record. This is the same idea as an SSH certificate: the owner is the authority for their own devices.
+
+**Taking a key away.** A pull request revokes a key in the keys file, and the hub refuses it from then on. The hub also tells every device that a key was revoked, in a notice signed with the hub's own key, and a device stops obeying a key it is told about. On the hub's word a device may obey less, never more: the hub can take a key away from a device, and it can never add one. The entry itself stays in the allow list, marked as revoked, until the owner removes it. The device keeps the signer of every allow-list entry and grant. When it is told that a controller device key was revoked, it also suspends every entry and grant that key signed, until the owner confirms them again by hand or with another controller device key.
+
+**Keys in hardware.** A passkey must require user verification. A device key is kept in the machine's secure hardware where the machine has one; for that case the keys file and the allow list also accept the key type that this hardware offers.
+
+**Relation to the wallet in the team's app.** The app derives a wallet seed from a passkey and keeps every key on the user's device, so that the server can never sign. The same principle applies here. The hub needs no recoverable seed, so it uses a certified, expiring session key instead of a key derived from the passkey; that works on every platform with passkeys and leaves no long-lived key in the browser.
+
+### 25.7 Work goes through the hub
+
+- A **task** says what has to be done (§25.8). An **order** is one attempt to do it on one executor and links to its task.
+- Submitting an order is a signed command addressed to one executor. The hub verifies, stores and delivers it. The device verifies it (§25.6), accepts or refuses it, and queues accepted orders one after another, exactly as local orders work today (§19.10). Order state stays derived on the device and is synced.
+- The hub never authors work, never picks a device, grants no lease and moves no work when a device disappears. A person or a controller device chooses the executor.
+- When a session needs a decision, the device records a **question** with its allowed answers. The owner answers in the website, in the phone app or through their own AI; the answer is a signed command. The device decides: it accepts the first valid answer it receives, writes an event that names the accepted answer, and refuses every later one. That event, not the order of arrival at the hub, settles the question in the team record.
+- During a hub outage an executor keeps working on accepted orders and keeps recording locally. Its owner may still submit orders on the device itself in a direct login. Sync catches up afterwards without a gap.
+
+### 25.8 Tasks and the team log replace outside trackers
+
+Every piece of work the team wants done is a task in the team record. Issues on a code host, an outside planning tool and hand-kept lists in repositories are no longer where tasks live.
+
+| Object | Fields (minimum) |
+|---|---|
+| Task | title, description, kind, repository reference, assignee, urgency 1–10, status, links to orders and pull requests |
+| Log entry | text, author, repository reference, optional link to a task |
+| Repository reference | organisation and repository; both may be empty when the work has no clear home |
+
+- This extends the task of §24.4. The security issue of §24.4 is a task kind with its extra fields; its claim workflow stays.
+- Task status is `to do`, `in progress`, `ready for review`, `merged`, `done`, `closed`. `merged` is used only under the completion rule `verified in production`, and when a task is done follows §24.11. The same statuses apply to every task kind. "Unassigned" and "no activity for 60 minutes" are derived views, not statuses.
+- A **log entry** is something everyone on the team should know. It is written once and never edited; a correction is a new entry. A discussion (§24.4) is for a topic that needs an exchange and an outcome.
+- **Repository registry.** One file in the hub's repository lists each organisation and where it is hosted: a public code host or a git server the team runs itself. Every repository reference resolves through it. Moving an organisation to another host is one change in that file.
+- Existing issues and lists are imported once, as events signed by the staff member who runs the import, each naming its source. After the import the old place gets a pointer and is no longer edited.
+
+### 25.9 Everything is recorded
+
+Three stores with three different rules:
+
+| Store | Holds | Rule |
+|---|---|---|
+| Team record (§24) | Tasks, log entries, discussions, orders, questions, answers, grants, every command | Signed by the actor, chained, never deleted, no secrets and no personal data |
+| Session log | Everything a session shows and receives: output, input, prompts, tool calls, decisions | Recorded on the device first, synced completely and without gaps, append-only; the only later change is masking |
+| Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
+
+Commands:
+
+- Every command is written with the key that signed it to the device's local log before it runs (§25.6). A command that cannot be written there is not executed. Its event is appended to the team record at once, or as soon as the hub is reachable again (§24.3).
+- Text typed into a session is a command. Its content belongs to the session log; the team record holds who typed, into which session and when, and a hash of the content together with a random value that is kept only in the session log.
+- The body of an order, the text of a question and a free-text answer are treated the same way, because a session can copy screen content into them: the content is kept with the session log, and the team record holds the ids, the labels of the allowed answers, sender, target, time and the hash.
+
+Session logs:
+
+- This replaces the rule of §17 that live terminal bytes are never stored. They become part of the session log.
+- A session log can contain a secret or personal data that appeared on a screen. That is why it is a separate store and not part of the chain. The device redacts known secret patterns before anything leaves it.
+- The device hashes a session log in segments, each together with a random value that is kept only in the session log, and writes each segment hash into the team record with its key, so that a later change of a recording is detectable.
+- Session logs are kept and never deleted. A password, a name or similar data that was recorded by mistake may be **masked** afterwards: the value is replaced by a marker on the hub, on the device and in every copy. The masking is itself a signed event in the team record that names who masked which place, when, and for which of a fixed list of reasons, and never the value. The masking also removes the random value of every segment and typed text it covers, so that the hashes in the team record no longer allow guessing the value, and it records the new hash of the masked segment. Masking covers only such a value, also inside typed text; it never removes or changes who sent a command, an answer or a decision, to which target, when, or what was decided.
+
+What is recorded on which device:
+
+- **Executors hide nothing.** On an executor every AI session runs inside this system and is recorded in full. An AI session outside it is not allowed there; the device daemon reports one it finds, as far as it can detect it.
+- An executor also records every direct login to the account that runs sessions and what was typed and shown in it, as a session of kind `direct`. A local administrator login is not recorded in that way: the device writes a signed event with the time of every administrator change to the allow list, the device key or the recording software, and a recording is tamper-evident from the moment its segment hash reached the team record. The device signs that recording with its own key; what is typed there is not a command (§25.2). Direct access stays allowed (§25.1); it does not stay invisible.
+- The session log and the access log have the data class **unique** (§13).
+- **Controller devices may work outside.** A staff member may start an AI session on a controller device that does not use this system. It is not recorded and not visible. A session that does use the system is recorded like any other.
+
+### 25.10 Watching and steering a session
+
+In the hub a viewer picks a staff member, then a device, then a session, and sees it in the same detail as at the terminal of that device: the full history from the session log and the live stream.
+
+The owner, and a key with a grant for it, may type into the session and answer questions that pop up. Every input is a command (§25.9). Everyone else on the team watches only.
+
+### 25.11 Overview
+
+The start page shows the whole team at once:
+
+- Tasks: done, closed, merged and waiting for the check in production, in progress, in progress without activity for 60 minutes, ready for review, to do and not started, to do and unassigned.
+- Pull requests: draft, ready for review, merged, closed. They are read from the code host and never owned (§24.5).
+- Devices: connected, working, idle. Sessions: working, waiting for an answer, idle.
+- AI usage: tokens and cost per device, per account and per day.
+- Device health and server key figures (§25.12).
+
+Every figure can be opened down to the single task, session or event. Figures that come from the team record can be viewed for any past date (§24.6).
+
+### 25.12 Monitoring sources
+
+The hub shows data it does not own through read-only adapters:
+
+- **Device health** (processor, memory, disk) from the team's metrics system, per device.
+- **Server key figures**, for example the number of error log lines in the last 60 minutes, from the team's infrastructure monitoring.
+
+An adapter only reads, holds a read-only credential in the hub's configuration and shows each value with its fetch time. Such a value is a cache, never a second truth. Which sources exist is deployment configuration; this public repository names none.
+
+### 25.13 AI usage and the central broker account
+
+Usage per device and per day comes from the usage snapshots devices already record.
+
+The team also holds one account at a model broker. The hub holds only a management key of that account, which can create and limit keys but cannot call a model.
+
+- The hub creates one key per device with a spending limit and can lower the limit or disable the key at any time.
+- The hub sees a device's key once, when it creates it. It sends the key to the device encrypted for a key that the device created for this purpose and does not keep it. The key is stored only on the device and is never written to the team record, a log or the website.
+- Model traffic goes from the device straight to the broker. The hub neither carries nor sees it, so a hub outage stops no running session.
+- The hub reads the usage of each key from the broker and shows it per device and per day.
+- Creating, limiting and disabling a key are signed events of a staff member in the team record.
+- Subscriptions that are bound to one device stay device configuration as today.
+
+Passing all model traffic through the hub is rejected: the hub would become a single point of failure for every session.
+
+### 25.14 One interface for people and for AI
+
+- Every function is an operation of one documented API. The website and the phone app are clients of that API and of nothing else.
+- Nothing exists only in the website and nothing only in the API. A test fails the build when a website function has no API operation or the reverse.
+- A staff member's own AI uses the same API with its own key on one of their controller devices (§24.2, one key per program). It has the rights of that key, and every action is recorded under it.
+- The website can be installed on a phone as an app. The hub sends it a push notification when a session has a question or an order ends.
+- Push is standard Web Push with a key pair of the hub that is used only for push and is separate from its signing key, and with no vendor kit in the app. The push services of the phone makers transport the notification; it is encrypted for the receiving browser, so they cannot read it and they decide no identity.
+- A notification holds a kind, a short title, the link to open and a tag. When a question is answered, the notification is withdrawn on the person's other devices and the app icon shows the number of waiting items, where the phone's platform allows both.
+- A push subscription belongs to one installed app of a staff member. It stays after the session key expires, so that a notification still arrives the next day, and ends when the staff member removes it or their keys are revoked. Acting on a notification needs a sign-in.
+
+### 25.15 Joining, leaving and loss
+
+| Event | What happens |
+|---|---|
+| A staff member joins | The administrator sends them an invite link; they create their passkey with it, and a pull request adds its public key to the keys file (§24.2). They connect their devices (next row). |
+| A new device | A new key is created on it. A pull request adds it to the keys file with its owner and level. The owner confirms the first entries of its allow list by hand on the device (§25.6). |
+| A staff member leaves | A pull request revokes their keys; the hub refuses them from then on and tells every device to stop obeying them (§25.6). Their devices are retired or connected again by hand for a new owner. Events they signed stay valid and attributed (§24.2). |
+| A device is lost or retired | A device that is retired syncs completely first. A pull request revokes its key. The owner disables its broker key (§25.13). The owner ends its open orders and withdraws their unanswered questions with a signed event; a withdrawn question blocks no release query (§24.11). Its history stays in the hub. |
+| A device changes owner | It is connected again by hand as a new device with a new key. The old key is revoked. |
+| A passkey is lost | A pull request revokes it in the keys file, and the devices stop obeying it (§25.6). The person removes the entry from the allow lists of their devices from a controller device (§25.6). |
+
+### 25.16 Threats and what answers them
+
+| Threat | Answer |
+|---|---|
+| The hub is taken over | It cannot create a command signed by a device key and cannot change an allow list (§25.6). It can delay, drop and read, withhold a revocation, and create broker keys up to the limit of the central account (§25.13). For commands in a staff member's name see the row on the website below. |
+| A stolen device key | The pull request that revokes it stops it at the hub, and devices stop obeying it when the hub tells them (§25.6). Until then an executor key can send no command at all, and a controller key works within its scopes and its allow-list entries, and on other staff members' devices only within an unexpired grant. A stolen controller key can also change the allow lists of all devices of its owner until it is revoked; on revocation the devices suspend everything it signed (§25.6). |
+| A stolen key while the hub is taken over | The key keeps working on the devices that list it until their owners remove it by hand or its grant expires. |
+| A session key is misused in the browser | It cannot be exported, no device and not the hub accept it for longer than one working day (§25.6, §24.3), and it can never change an allow list. Code running in the hub's website can still use it during that time. |
+| A command is replayed or redirected | Target device, time and sequence number are part of the signed bytes (§25.6). |
+| History is rewritten | The chain of every key, the published record hash and the insert-only database role (§24.3, §24.8). The newest events of a key could be withheld unnoticed only until the next published record hash. |
+| A secret ends up in a recording | Redaction on the device before upload; masking afterwards (§25.9). |
+| The website shows one command and signs another, or certifies a key of the attacker at sign-in | Possible while the hub is taken over and a staff member signs in or is signed in. A certificate obtained that way is usable for at most one working day, at a time the attacker chooses, until the passkey is revoked; it never reaches an allow list. After a takeover every passkey used during it is revoked. The website is built from the public repository and the hub serves it with a published hash that a controller device can check. A command can always be issued from a controller device instead, whose code the hub does not deliver. This risk is reduced, not removed. |
+| A session or an order tries to widen its own rights | The allow list, the device key and every program key that may send commands are out of reach of the account that runs sessions; the signing service signs only for the owner's own AI session (§25.6). |
+| A local administrator changes a device unseen | An administrator login is not recorded as a session. Every administrator change to the allow list, the device key or the recording software leaves a signed event, and recordings are tamper-evident once their segment hash reached the team record (§25.9). |
+| The network edge reads content in transit | Accepted (§24.2). It cannot forge or replay a request or an answer, because both are signed. |
+
+### 25.17 What this changes in the locked decisions
+
+| Place | Today | With §25 |
+|---|---|---|
+| §2 Hub role | Full replica, fan-out and website | Also delivers signed commands, writes the access log, reads monitoring sources and manages the keys of the central broker account (§25.7, §25.9, §25.12, §25.13) |
+| §2 Write owner | The device that created a row | Unchanged. A device still writes its own rows; commands to it are signed by its owner or under a grant |
+| §2 Identity, §5 | Code-host login, device token | Device key assigned to a staff member; the level is a scope |
+| §3 Task as the product center | Rejected | Tasks become the center of the team record; the session store stays the center of a device |
+| §3 Plane (or any issue tracker) as the store | Rejected | Still rejected; tasks live in the team record and outside trackers are retired |
+| §2 website-origin exception, §17 `agent assign` | The hub creates an issue on the code host | Replaced by tasks and orders once they ship |
+| §17 Control | Only the owner's device executes control frames | The device executes a command whose proof it verified against its allow list |
+| §17 Live terminal bytes | Ephemeral, never stored | Stored in the session log |
+| §20 Website as an operations console | Refused | Accepted for watching, answering and handing over work |
+| §1, §2 AI vs scripts, §16, §19.1 | The AI talks only to the local database; scripts perform hub HTTP | A staff member's own AI on a controller device calls the hub API with its own program key (§25.14); model lanes and AI sessions on executors keep the rule |
+| §8 Session kinds | `human`, `runner`, `other` | Adds `direct` for a recorded direct login on an executor (§25.9) |
+| §19.4 Audit | Terminal bytes ephemeral; audit is operational rows | The session log records output, input, prompts, tool calls and decisions (§25.9) |
+| §19.7, §14 Outside facts (issue assigned) | Work starts from an issue assignment on the code host | Replaced by tasks and orders once they ship (§25.8) |
+| §19.10 Order submission and mandate | Submitted on the execution device; the mandate is the local submission by the paired login | Also a signed command through the hub, verified against the allow list (§25.6, §25.7) |
+| §20 Task as the durable center | Refused | As §3: tasks become the center of the team record; the session store stays the center of a device |
+| §20 Hub task machine | Refused | The task statuses of §25.8 live in the team record and are written by signed events, never by the hub |
+| §20 Token cost and stuck tasks on the website | Refused | Accepted as read-only views (§25.11) |
+| §24.2 Key kinds and agent key storage | `webauthn` or `ed25519`; agent key under `$AGENT_HOME` with mode `0600` | Also the key type of the machine's secure hardware, where the device key is kept there; the key is out of reach of the account that runs sessions (§25.6) |
+| §13 Data class | Local store, hub event log, connection state | Adds the session log and the access log, both unique (§25.9) |
+| §24.2 Agent keys and persons | An agent key is never registered under a person; the person is named where one exists | A device key names exactly one owning staff member (§25.3) |
+| Hub team file, owners of an agent | An agent login may have several owners | One owner per device; other staff members act through grants (§25.5) |
+
+### 25.18 What stays refused
+
+- The hub authoring work, choosing a device, granting leases or moving work between devices.
+- A capability scheduler.
+- Autonomous merge. A human merges.
+- Opening a port on a device or exposing a local store.
+- A function that exists in only one front end.
+- Model traffic passing through the hub.
+
+### 25.19 Open decisions
+
+None at the moment, here or in §24. A new one is added here and decided by a human before the part it affects is built.
+
+### 25.20 Build order
+
+After the steps of §24.10, each step as its own pull request with the API parity test from the first one on:
+
+1. Device keys with levels and inventory; the allow list and its checks on the device.
+2. Verification of the session key's certificate on the device; grants.
+3. The extended task (§25.8), log entries and the repository registry, with the one-time import.
+4. Orders and questions through the hub.
+5. The session log, recording of direct logins on executors, masking, and the full session view.
+6. The overview.
+7. Monitoring adapters.
+8. The central broker account.
+9. The phone app with push.
+
+### 25.21 Project rules
+
+- This section changes only by pull request. A change to the rights (§25.5), to the proofs (§25.6) or to what is recorded (§25.9) needs an explicit human decision recorded in that pull request.
+- The rules of §24.10 apply: record data and session logs never enter a repository, an issue, a pull request, a log or an error message, and no private repository, internal hostname or internal infrastructure is named here or in code.
+- Every implementation pull request carries tests for its refusal paths: an unknown key, a key outside the allow list, an expired session key, an expired or removed grant, an entry signed by a revoked controller key, a signature request from an order to the signing service, a replayed command, a command outside its permission, a change of an allow list signed by a session key, a session-key expiry beyond the device's limit, and a team-record event signed by an expired session key.
