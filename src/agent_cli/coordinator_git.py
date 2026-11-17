@@ -606,8 +606,14 @@ def draft_pr_body(
     source: dict[str, Any],
     reused: list[str] | None = None,
     added: list[str] | None = None,
+    summary_de: str | None = None,
 ) -> str:
-    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list.
+
+    An order's DE block is German. With a change summary, that sentence follows
+    the order label. Without one, the block names the order and leaves the
+    English title in the EN block.
+    """
     details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
@@ -616,9 +622,22 @@ def draft_pr_body(
     if source.get("kind") == ORDER_KIND:
         short = str(source.get("order_id") or "")[:8]
         title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
+        if summary_de is None:
+            de_line = f"Entwurf für Auftrag {short}."
+        else:
+            if (
+                not isinstance(summary_de, str)
+                or "\n" in summary_de
+                or not summary_de.strip()
+            ):
+                raise CoordinatorError("task DE summary is missing")
+            german = redact(summary_de.strip(), limit=800).rstrip(". ")
+            if not german:
+                raise CoordinatorError("task DE summary is missing")
+            de_line = f"Entwurf für Auftrag {short}: {german}."
         visible = (
             f"EN:\nDraft for order {short}: {title}.\n\n"
-            f"DE:\nEntwurf für Auftrag {short}: {title}.\n\n"
+            f"DE:\n{de_line}\n\n"
         )
     else:
         visible = (
@@ -640,7 +659,10 @@ def refresh_draft_body(
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Post the implementer's reused and added list. The script calls GitHub, not the model."""
+    """Post the implementer's reused and added list. The script calls GitHub, not the model.
+
+    An order with a German change summary puts that sentence in the DE block.
+    """
     c = coord(task)
     reused = task.get("reused_lines")
     added = task.get("added_lines")
@@ -655,7 +677,17 @@ def refresh_draft_body(
     target = target_repo(task)
     if number is None or target == "":
         raise CoordinatorError("reused and added list has no draft to update")
-    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    summary_de = None
+    if task.get("change_summary_de") is not None:
+        from .coordinator_a38 import _summary
+
+        summary_de = _summary(task, "de")
+    body = draft_pr_body(
+        source,
+        [str(line) for line in reused],
+        [str(line) for line in added],
+        summary_de,
+    )
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
     queue_activity(
         store,

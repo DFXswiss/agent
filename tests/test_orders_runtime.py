@@ -390,13 +390,30 @@ def test_order_source_is_never_verified_against_an_issue(
 @pytest.mark.no_pg
 def test_draft_body_for_an_order() -> None:
     assert "Draft for order 11111111: Add a widget." in draft_pr_body(order_source(OID))
-    assert "Entwurf für Auftrag 11111111: Add a widget." in draft_pr_body(order_source(OID))
+    assert "Entwurf für Auftrag 11111111." in draft_pr_body(order_source(OID))
+    assert "Add a widget" not in draft_pr_body(order_source(OID)).split("DE:\n", 1)[1]
     assert "Draft for order 11111111: Add a widget." in draft_pr_body(
         order_source(OID, title="Add a widget.")
     )
+    german = (
+        "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
+        "statt dies als Authentifizierungsfehler zu melden."
+    )
+    body = draft_pr_body(order_source(OID), summary_de=german)
+    assert "Draft for order 11111111: Add a widget." in body
+    assert (
+        "DE:\nEntwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden.\n"
+    ) in body
+    assert "Add a widget" not in body.split("DE:\n", 1)[1]
     assert "Draft for example/project#7." in draft_pr_body(
         {"repo": "example/project", "number": 7}
     )
+    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
+        draft_pr_body(order_source(OID), summary_de="  ")
+    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
+        draft_pr_body(order_source(OID), summary_de="Zeile\nZwei.")
 
 
 def test_refresh_draft_body_updates_an_order_draft(
@@ -413,6 +430,21 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
+    task["change_summary_de"] = (
+        "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
+        "statt dies als Authentifizierungsfehler zu melden."
+    )
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    german = fake.pr["body"].split("DE:\n", 1)[1].split("\n\n", 1)[0]
+    assert german == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert "Add a widget" not in german
 
 
 def test_review_context_uses_the_order_text(
