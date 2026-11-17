@@ -357,6 +357,16 @@ def test_unreadable_login_file_is_skipped_with_its_own_reason(tmp_path: Path) ->
             },
             id="resets-at-without-zone",
         ),
+        pytest.param({}, id="windows-empty"),
+        pytest.param({"weekly": None}, id="five-hour-missing"),
+        pytest.param(
+            {"five_hour": {"used_percent": 10.0, "resets_at": LATER}},
+            id="weekly-missing",
+        ),
+        pytest.param(
+            {"five_hour": {"used_percent": 10**400, "resets_at": LATER}, "weekly": None},
+            id="used-percent-too-large-for-a-float",
+        ),
     ],
 )
 def test_unreadable_usage_snapshot_is_skipped_with_its_own_reason(

@@ -20,7 +20,6 @@ members with equally many running lanes the least-loaded one wins.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
@@ -29,6 +28,7 @@ from .ai_accounts import AccountError, AIAccount, AIAccountPool, AIAccounts, AIR
 from .store import Store, StoreError
 from .usage import (
     AuthStale,
+    _finite,
     last_usage_snapshot,
     load_login_account,
     window_snapshot_match,
@@ -200,7 +200,9 @@ def _snapshot_load(snapshot: dict[str, Any], now: datetime) -> float:
     """Maximum ``used_percent`` of the load windows at ``now``.
 
     A ``null`` window counts 0, and so does a window whose ``resets_at`` is at
-    or before ``now``: it has reset since the snapshot. The snapshot's
+    or before ``now``: it has reset since the snapshot. A missing load window
+    is a broken snapshot: the writer always stores both, ``null`` when the
+    provider reports no value. The snapshot's
     ``fetched_at`` is not checked. A snapshot is stored only when a value
     changed, so an old one is current only while polling of that account
     succeeds. A member whose poll fails (expired credentials, rate limit,
@@ -211,18 +213,17 @@ def _snapshot_load(snapshot: dict[str, Any], now: datetime) -> float:
         raise _InvalidSnapshot
     load = 0.0
     for key in LOAD_WINDOWS:
-        window = windows.get(key)
+        if key not in windows:
+            raise _InvalidSnapshot
+        window = windows[key]
         if window is None:
             continue
         if not isinstance(window, dict):
             raise _InvalidSnapshot
-        used = window.get("used_percent")
-        if (
-            isinstance(used, bool)
-            or not isinstance(used, (int, float))
-            or not math.isfinite(used)
-        ):
-            raise _InvalidSnapshot
+        try:
+            used = _finite("used_percent", window.get("used_percent"))
+        except StoreError:
+            raise _InvalidSnapshot from None
         resets_at = window.get("resets_at")
         if resets_at is not None and _reset_time(resets_at) <= now:
             continue
