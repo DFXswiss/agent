@@ -165,8 +165,8 @@ its owner.
 - **One key per program where it matters.** If two programs on the same device need different
   rights, or must be told apart in the history (for example a coordinator, a lane starter and a
   monitoring script), each gets its own key.
-- An agent key is never registered as a person; it names the staff member who owns its device. Events written by an agent name the agent key
-  and, where there is one, the person who runs it.
+- An agent key is never registered as a person; it names the staff member who owns its
+  device. Events written by an agent name the agent key and that staff member.
 
 ### External programs: a service key with the fewest rights
 
