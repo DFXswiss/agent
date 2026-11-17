@@ -243,6 +243,46 @@ def test_visible_transition_sentences_draft_names_the_stale_record_head():
     ) in de
 
 
+def test_visible_transition_sentences_draft_names_the_wrong_record_head():
+    record_head = "b" * 12
+    current_head = "a" * 12
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            "review head does not match the pull request "
+            f"(review head {record_head}, current head {current_head})"
+        ],
+    })
+    assert (
+        f"The review record names `{record_head}`, which is not a commit of this "
+        f"pull request at the current head `{current_head}`; post a new review "
+        "for the current head."
+    ) in en
+    assert (
+        f"Der Review-Nachweis nennt `{record_head}`, das ist kein Commit dieses "
+        f"Pull Requests am aktuellen Head `{current_head}`; für den aktuellen "
+        "Head einen neuen Review posten."
+    ) in de
+
+
+def test_visible_transition_sentences_names_one_sentence_per_wrong_record_head():
+    record_head = "b" * 12
+    first_reason = (
+        "review head does not match the pull request "
+        f"(review head {record_head}, current head {'a' * 12})"
+    )
+    second_reason = (
+        "review head does not match the pull request "
+        f"(review head {record_head}, current head {'c' * 12})"
+    )
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [first_reason, second_reason],
+    })
+    assert en.count(f"The review record names `{record_head}`") == 1
+    assert de.count(f"Der Review-Nachweis nennt `{record_head}`") == 1
+
+
 def test_visible_transition_sentences_ready_names_a_markdown_only_ancestor():
     ancestor = "b" * 40
     current = "a" * 40

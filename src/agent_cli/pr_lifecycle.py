@@ -17,7 +17,9 @@ from .a38_review import (
     SECOND_REVIEW_MISSING,
     _utc,
     is_stale_review_reason,
+    is_wrong_head_reason,
     stale_review_heads,
+    wrong_review_heads,
 )
 from .readme_only import pull_is_guard_docs_only
 from .workflow_approval import (
@@ -319,14 +321,18 @@ def _note_review(reasons: list[str], assessment: Any) -> None:
     A write hold must not keep Ready through these reasons. Blocking defects
     do not also claim that the completion comment is missing. When the only
     review cause is ``second review comment missing``, that string is kept
-    and is not rewritten as ``Review completion missing``.
+    and is not rewritten as ``Review completion missing``. A stale or
+    wrong-head reason is kept as text so the lifecycle comment can name both
+    heads.
     """
     if assessment.mode != "enforce" or assessment.review_ok:
         return
     review_reasons = getattr(assessment, "review_reasons", None)
     listed = list(review_reasons) if isinstance(review_reasons, list) else []
     for reason in listed:
-        if is_stale_review_reason(reason) and reason not in reasons:
+        if (
+            is_stale_review_reason(reason) or is_wrong_head_reason(reason)
+        ) and reason not in reasons:
             reasons.insert(0, reason)
     if SECOND_REVIEW_MISSING in listed and SECOND_REVIEW_MISSING not in reasons:
         reasons.insert(0, SECOND_REVIEW_MISSING)
@@ -370,10 +376,12 @@ def _with_one_review_exception(en: str, de: str) -> tuple[str, str]:
 
 
 def _review_head_sentences(record: Mapping) -> tuple[list[str], list[str]]:
-    """Name both heads for a stale record and for a markdown-only ancestor.
+    """Name both heads for a stale record, a wrong-head record, and a
+    markdown-only ancestor.
 
-    Stale reasons carry both short heads already, so one sentence per such
-    record head is enough. The markdown-only sentence is only for a Ready
+    Stale and wrong-head reasons carry both short heads already, so one
+    sentence per such record head is enough. The wrong-head sentence is also
+    for a draft record. The markdown-only sentence is only for a Ready
     record, where the relaxed rule is the reason the record still counts.
     """
     en: list[str] = []
@@ -383,19 +391,36 @@ def _review_head_sentences(record: Mapping) -> tuple[list[str], list[str]]:
     seen: set[str] = set()
     for reason in reasons:
         heads = stale_review_heads(reason)
-        if heads is None:
+        if heads is not None:
+            record_head, current_head = heads
+            if record_head in seen:
+                continue
+            seen.add(record_head)
+            en.append(
+                f"The review record names `{record_head}`, but the current head "
+                f"`{current_head}` changes more than markdown files after it."
+            )
+            de.append(
+                f"Der Review-Nachweis nennt `{record_head}`, aber der aktuelle Head "
+                f"`{current_head}` ändert danach mehr als Markdown-Dateien."
+            )
             continue
-        record_head, current_head = heads
+        wrong = wrong_review_heads(reason)
+        if wrong is None:
+            continue
+        record_head, current_head = wrong
         if record_head in seen:
             continue
         seen.add(record_head)
         en.append(
-            f"The review record names `{record_head}`, but the current head "
-            f"`{current_head}` changes more than markdown files after it."
+            f"The review record names `{record_head}`, which is not a commit of this "
+            f"pull request at the current head `{current_head}`; post a new review "
+            "for the current head."
         )
         de.append(
-            f"Der Review-Nachweis nennt `{record_head}`, aber der aktuelle Head "
-            f"`{current_head}` ändert danach mehr als Markdown-Dateien."
+            f"Der Review-Nachweis nennt `{record_head}`, das ist kein Commit dieses "
+            f"Pull Requests am aktuellen Head `{current_head}`; für den aktuellen "
+            "Head einen neuen Review posten."
         )
     if record.get("state") != "ready":
         return en, de
@@ -490,6 +515,7 @@ def visible_transition_sentences(
         }
         and not is_draft_hold_reason(r)
         and not is_stale_review_reason(r)
+        and not is_wrong_head_reason(r)
     ]
 
     missing = any(

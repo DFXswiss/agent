@@ -65,6 +65,11 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 _STALE_REVIEW_REASON = re.compile(
     r"^review head ([0-9a-f]{12}) is not the current head ([0-9a-f]{12})$"
 )
+WRONG_HEAD_REASON = "review head does not match the pull request"
+_WRONG_HEAD_REASON = re.compile(
+    r"^review head does not match the pull request "
+    r"\(review head ([0-9a-f]{12}), current head ([0-9a-f]{12})\)$"
+)
 _NA_EVIDENCE = re.compile(
     r"^markdown-only rebase, previously approved at ([0-9a-f]{40})$"
 )
@@ -98,6 +103,29 @@ def stale_review_heads(reason: object) -> tuple[str, str] | None:
     if not isinstance(reason, str):
         return None
     match = _STALE_REVIEW_REASON.fullmatch(reason)
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
+
+
+def wrong_head_reason(declared: str, head: str) -> str:
+    """The reason for a declared head that is not this pull request, naming both short heads."""
+    return f"{WRONG_HEAD_REASON} (review head {declared[:12]}, current head {head[:12]})"
+
+
+def is_wrong_head_reason(reason: object) -> bool:
+    """True for the wrong-head reason, with or without the two heads."""
+    return isinstance(reason, str) and (
+        reason == WRONG_HEAD_REASON
+        or _WRONG_HEAD_REASON.fullmatch(reason) is not None
+    )
+
+
+def wrong_review_heads(reason: object) -> tuple[str, str] | None:
+    """The record head and current head named by a wrong-head reason, else None."""
+    if not isinstance(reason, str):
+        return None
+    match = _WRONG_HEAD_REASON.fullmatch(reason)
     if match is None:
         return None
     return match.group(1), match.group(2)
@@ -632,7 +660,10 @@ def validate_declaration(
         # ``head`` stays the pull request head. ``covered_heads`` lists that
         # head and ancestors the caller has already proved. A caller that
         # passes nothing still requires an exact match.
-        _add(reasons, "review head does not match the pull request")
+        if _SHA.fullmatch(head):
+            _add(reasons, wrong_head_reason(declared, head))
+        else:
+            _add(reasons, WRONG_HEAD_REASON)
     passes = payload.get("passes")
     if not _is_int(passes) or passes < 1:
         _add(reasons, "review passes must be an integer >= 1")
@@ -1475,7 +1506,11 @@ def _review_candidates(
             elif declared is not None:
                 # Not the head and not an ancestor after the base. Say so
                 # even when the comment is older than the current head.
-                forced = "review head does not match the pull request"
+                forced = (
+                    wrong_head_reason(declared, head)
+                    if _SHA.fullmatch(head)
+                    else WRONG_HEAD_REASON
+                )
                 boundary = None
         if boundary is not None and stamp <= boundary:
             continue
@@ -1547,7 +1582,7 @@ def _second_run_selection(
             continue
         # A wrong head is not this pull request. Keep looking. Unreadable
         # ancestry is remembered and must not hide an older well-formed run.
-        if forced == "review head does not match the pull request":
+        if is_wrong_head_reason(forced):
             continue
         if forced:
             if is_stale_review_reason(forced):
@@ -1706,8 +1741,9 @@ def select_review_comment(
     SHA the caller has proved is ``head`` or an ancestor of it, and the value
     is that SHA's committer time. The comment must be created after the commit
     it names, not after every later commit. A declared SHA that is not one of
-    those keys is ``review head does not match the pull request``, including
-    when the comment is older than the current head. ``ancestry_unavailable``
+    those keys gives ``review head does not match the pull request`` with both
+    short heads, including when the comment is older than the current head.
+    ``ancestry_unavailable``
     lists SHAs whose ancestry could not be read; those declarations fail closed.
     ``stale_heads`` lists ancestor SHAs with a non-markdown change after them;
     those declarations fail with the stale reason naming both heads.

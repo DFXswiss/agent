@@ -16,6 +16,7 @@ from agent_cli.a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
     ReviewError,
+    is_wrong_head_reason,
     parse_review_block,
     render_review_record,
     review_rules_bound,
@@ -26,6 +27,8 @@ from agent_cli.a38_review import (
     validate_declaration,
     validate_review_record,
     validate_visible,
+    wrong_head_reason,
+    wrong_review_heads,
 )
 
 pytestmark = pytest.mark.no_pg
@@ -601,13 +604,34 @@ def test_duplicate_key_rejected() -> None:
 
 def test_wrong_head_and_defects() -> None:
     wrong = _pass_payload(head=OTHER, lanes=_run("a"))
-    assert "review head does not match the pull request" in validate_declaration(
-        wrong, head=HEAD, markdown_only=False
-    )
+    assert (
+        "review head does not match the pull request "
+        f"(review head {OTHER[:12]}, current head {HEAD[:12]})"
+    ) in validate_declaration(wrong, head=HEAD, markdown_only=False)
     defects = _pass_payload(defects=1, lanes=_run("a"))
     assert "review defects must be 0" in validate_declaration(
         defects, head=HEAD, markdown_only=False
     )
+
+
+def test_wrong_head_reason_helpers() -> None:
+    declared = OTHER
+    head = HEAD
+    full = wrong_head_reason(declared, head)
+    assert full == (
+        "review head does not match the pull request "
+        f"(review head {declared[:12]}, current head {head[:12]})"
+    )
+    assert is_wrong_head_reason(full)
+    assert is_wrong_head_reason("review head does not match the pull request")
+    assert wrong_review_heads(full) == (declared[:12], head[:12])
+    assert wrong_review_heads("review head does not match the pull request") is None
+    stale = f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"
+    assert not is_wrong_head_reason(stale)
+    assert wrong_review_heads(stale) is None
+    assert not is_wrong_head_reason(None)
+    assert not is_wrong_head_reason(1)
+    assert wrong_review_heads(None) is None
 
 
 def test_one_full_run_is_enough() -> None:
@@ -1680,9 +1704,10 @@ def _covered(ancestor: str = OTHER) -> dict[str, str]:
 
 def test_covered_ancestor_matches_and_a_stranger_does_not() -> None:
     ancestor = _pass_payload(head=OTHER, lanes=_run("a"))
-    assert "review head does not match the pull request" in validate_declaration(
-        ancestor, head=HEAD, markdown_only=False
-    )
+    assert (
+        "review head does not match the pull request "
+        f"(review head {OTHER[:12]}, current head {HEAD[:12]})"
+    ) in validate_declaration(ancestor, head=HEAD, markdown_only=False)
     assert (
         validate_declaration(
             ancestor,
@@ -1693,7 +1718,10 @@ def test_covered_ancestor_matches_and_a_stranger_does_not() -> None:
         == []
     )
     stranger = _pass_payload(head="d" * 40, lanes=_run("a"))
-    assert "review head does not match the pull request" in validate_declaration(
+    assert (
+        "review head does not match the pull request "
+        f"(review head {'d' * 12}, current head {HEAD[:12]})"
+    ) in validate_declaration(
         stranger,
         head=HEAD,
         markdown_only=False,
@@ -1750,8 +1778,12 @@ def test_unrelated_review_head_is_still_rejected() -> None:
         committed_at="2026-09-01T00:00:00Z",
         covered_at={HEAD: "2026-09-01T00:00:00Z"},
     )
+    expected = (
+        "review head does not match the pull request "
+        f"(review head {'d' * 12}, current head {HEAD[:12]})"
+    )
     assert chosen is None
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [expected]
     before_head = _comment(
         _body(payload), cid=2, user=10, created="2026-08-02T00:00:00Z"
     )
@@ -1761,7 +1793,7 @@ def test_unrelated_review_head_is_still_rejected() -> None:
         covered_at={HEAD: "2026-09-01T00:00:00Z"},
     )
     assert chosen is None
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [expected]
 
 
 def test_newer_unrelated_review_does_not_hide_an_ancestor() -> None:
@@ -2045,6 +2077,26 @@ def test_wrong_head_second_run_does_not_block() -> None:
     assert "review ancestry unavailable" not in excused_reasons
 
 
+def test_wrong_head_second_run_is_skipped_with_the_new_reason() -> None:
+    from agent_cli.a38_review import _second_run_selection
+
+    payload = _v2_second(blocks_merge=True, defects=1)
+    payload["head"] = OTHER
+    comment = _second_run_comment(payload, cid=2, created="2026-09-03T00:00:00Z")
+    status, chosen = _second_run_selection(
+        [comment],
+        author_id=10,
+        guard_user_id=99,
+        committed_at="2026-09-01T00:00:00Z",
+        head=HEAD,
+        markdown_only=False,
+        rules_bound=True,
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert status == "absent"
+    assert chosen is None
+
+
 def _ancestry_down_api() -> _GateApi:
     to_head = f"/repos/o/r/compare/{OTHER}...{HEAD}"
     return _GateApi(
@@ -2292,6 +2344,10 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
         user=10,
         created="2026-09-02T00:00:00Z",
     )
+    later_expected = (
+        "review head does not match the pull request "
+        f"(review head {OTHER[:12]}, current head {HEAD[:12]})"
+    )
     known = {BASE: "2026-07-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"}
     for relation in ("diverged", "behind"):
         rejected = _GateApi(
@@ -2300,13 +2356,13 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
         )
         ok, reasons = _gate(rejected, [later])
         assert ok is False
-        assert reasons == ["review head does not match the pull request"]
+        assert reasons == [later_expected]
         assert rejected.compare_calls == [to_head]
 
     missing = _GateApi(known)
     ok, reasons = _gate(missing, [later])
     assert ok is False
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [later_expected]
 
     for broken in (
         (500, {}, {}),
@@ -2343,7 +2399,10 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
     )
     ok, reasons = _gate(on_base, [base_review])
     assert ok is False
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [
+        "review head does not match the pull request "
+        f"(review head {BASE[:12]}, current head {HEAD[:12]})"
+    ]
     assert on_base.compare_calls == [f"/repos/o/r/compare/{BASE}...{HEAD}"]
 
     early_base = _comment(
@@ -2358,7 +2417,10 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
     )
     ok, reasons = _gate(early, [early_base])
     assert ok is False
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [
+        "review head does not match the pull request "
+        f"(review head {BASE[:12]}, current head {HEAD[:12]})"
+    ]
 
     ancient_path = f"/repos/o/r/compare/{ANCIENT}...{HEAD}"
     ancient_base = f"/repos/o/r/compare/{BASE}...{ANCIENT}"
@@ -2377,7 +2439,10 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
     )
     ok, reasons = _gate(before_base, [ancient])
     assert ok is False
-    assert reasons == ["review head does not match the pull request"]
+    assert reasons == [
+        "review head does not match the pull request "
+        f"(review head {ANCIENT[:12]}, current head {HEAD[:12]})"
+    ]
     assert before_base.compare_calls == [ancient_path, ancient_base]
 
 
