@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TextIO
+from typing import Any, Callable, Mapping, NoReturn, Sequence, TextIO
 
 PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 LOCK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -1003,10 +1003,23 @@ class JobRuntime:
             check=True,
         ).stdout.strip()
 
-    def _use_node_major_bin(self, major: int, bin_dir: Path) -> tuple[str, str]:
+    def _raise_node_major_unavailable(
+        self, major: int, path_major: str | None, bin_dir: Path
+    ) -> NoReturn:
+        if path_major is None:
+            raise JobError(
+                f"Node major must be {major}; node not found on PATH; expected {bin_dir}"
+            )
+        raise JobError(
+            f"Node major must be {major}; got {path_major} on PATH; expected {bin_dir}"
+        )
+
+    def _use_node_major_bin(
+        self, major: int, bin_dir: Path, path_major: str | None
+    ) -> tuple[str, str]:
         selected_node = shutil.which("node", path=str(bin_dir))
         if not selected_node:
-            raise JobError(f"Node major must be {major}; node not found in {bin_dir}")
+            self._raise_node_major_unavailable(major, path_major, bin_dir)
         reported = self._reported_node_major(selected_node)
         if reported != str(major):
             raise JobError(f"Node major must be {major}; got {reported} from {bin_dir}")
@@ -1020,24 +1033,17 @@ class JobRuntime:
     def _resolve_job_node(self, major: int) -> tuple[str, str]:
         path_node = shutil.which("node", path=self.env.get("PATH"))
         path_npm = shutil.which("npm", path=self.env.get("PATH"))
+        path_major: str | None = None
         if path_node:
-            reported = self._reported_node_major(path_node)
-            if reported == str(major):
+            path_major = self._reported_node_major(path_node)
+            if path_major == str(major):
                 if not path_npm:
                     raise JobError("required command not found: node/npm")
                 return path_node, path_npm
-        else:
-            reported = None
         bin_dir = self._agent_node_major_bin(major)
         if not bin_dir.is_dir():
-            if reported is None:
-                raise JobError(
-                    f"Node major must be {major}; node not found on PATH; expected {bin_dir}"
-                )
-            raise JobError(
-                f"Node major must be {major}; got {reported} on PATH; expected {bin_dir}"
-            )
-        return self._use_node_major_bin(major, bin_dir)
+            self._raise_node_major_unavailable(major, path_major, bin_dir)
+        return self._use_node_major_bin(major, bin_dir, path_major)
 
     def ensure_node_modules(self) -> None:
         if self.common.npm is None:

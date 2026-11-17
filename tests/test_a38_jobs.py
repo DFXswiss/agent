@@ -1417,6 +1417,71 @@ def test_npm_rejects_directory_node_with_wrong_major(
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+def test_npm_rejects_node_major_directory_without_executable_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _prepare_npm_repo(repo)
+    agent_home = tmp_path / "agent-home"
+    monkeypatch.setenv("AGENT_HOME", str(agent_home))
+    wrong_bin = tmp_path / "wrong-bin"
+    wrong_bin.mkdir()
+    _node_program(wrong_bin / "node", "26", "v26.0.0")
+    wrong_log = tmp_path / "wrong-npm.log"
+    _npm_program(wrong_bin / "npm", wrong_log)
+    node_bin = agent_home / "a38-node" / "24" / "bin"
+    node_bin.mkdir(parents=True)
+    (node_bin / "node").write_text("not executable\n", encoding="utf-8")
+    job_path = f"{wrong_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    runtime = JobRuntime(
+        adapter="commands",
+        common=parse_common_config(
+            {"npm": {"node_major": 24, "canaries": ["example-package/package.json"]}}
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, PATH=job_path),
+    )
+    artifacts = runtime.artifacts
+    try:
+        with pytest.raises(JobError) as raised:
+            runtime.ensure_node_modules()
+        assert str(raised.value) == (
+            f"Node major must be 24; got 26 on PATH; expected {node_bin}"
+        )
+        assert runtime.env["PATH"] == job_path
+        assert not (repo / "node_modules").exists()
+        assert not wrong_log.exists()
+    finally:
+        runtime.cleanup(0)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    empty_path = str(empty_bin)
+    runtime_without_path_node = JobRuntime(
+        adapter="commands",
+        common=parse_common_config(
+            {"npm": {"node_major": 24, "canaries": ["example-package/package.json"]}}
+        ),
+        cwd=repo,
+        lock_root=tmp_path / "locks-without-path-node",
+        environ=_env(base, head, PATH=empty_path),
+    )
+    artifacts_without_path_node = runtime_without_path_node.artifacts
+    try:
+        with pytest.raises(JobError) as raised_without_path_node:
+            runtime_without_path_node.ensure_node_modules()
+        assert str(raised_without_path_node.value) == (
+            f"Node major must be 24; node not found on PATH; expected {node_bin}"
+        )
+        assert runtime_without_path_node.env["PATH"] == empty_path
+        assert not (repo / "node_modules").exists()
+    finally:
+        runtime_without_path_node.cleanup(0)
+        shutil.rmtree(artifacts_without_path_node, ignore_errors=True)
+
+
 def test_npm_rejects_missing_node_major_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
