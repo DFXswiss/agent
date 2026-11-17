@@ -1369,20 +1369,40 @@ The session store (§§8–11) is unchanged. Sessions, activities, session mail 
 
 ### 24.2 No third-party identity
 
-Identity is a key pair. The private key never leaves the person's authenticator or the agent's device. The hub stores only public keys.
+Identity is a key pair. The private key never leaves the person's authenticator or the program's device. The hub stores only public keys and verifies every signature itself; no outside service is asked at sign-in or on a write.
 
-| Who | Key | How it proves itself |
+There are three kinds of principal:
+
+| Principal | Key | How it proves itself |
 |---|---|---|
-| Person (browser) | WebAuthn credential on a hardware authenticator that does not sync to an outside account | Signs a hub challenge on sign-in; every write from the website is signed by that credential |
-| Agent or device (CLI, scripts) | Ed25519 key generated on the device, stored under `$AGENT_HOME` with mode `0600` | Signs every team-record event; the hub verifies the signature against the registered public key |
+| Staff member (browser) | Passkey (WebAuthn credential) | Signs a hub challenge on sign-in; every write from the website is signed by that credential |
+| Agent (CLI, scripts, model sessions) | Ed25519 key generated where it runs, stored under `$AGENT_HOME` with mode `0600` | Signs every request and every team-record event, like an SSH key |
+| External program (for example a pull-request guard on a CI runner) | Either no key, reading signed answers (below), or a scoped Ed25519 service key | Verifies the hub's signature, or signs its request with its service key |
 
-Rules:
+Rules for all principals:
 
 - No GitHub OAuth, no password, no mailbox code and no outside identity provider decides who someone is. GitHub stays the home of code and pull requests (§24.5); it is not an identity source for the record.
-- The network edge in front of the hub (reverse proxy, tunnel, access gate) is infrastructure. It may filter traffic, but it is never the identity: the hub accepts a write only on a valid signature by a registered key.
-- Public keys are registered in a keys file next to `teams.yaml`, changed only by pull request: key id, kind (`webauthn` or `ed25519`), the handle of the person or agent it belongs to (a handle, never a legal name or mail address, because the file is public), and the team. Adding, rotating and revoking a key is a pull request.
-- A person may hold several keys (one per authenticator); an agent has one key per device. A revoked key can no longer write. Events it already signed stay valid and stay attributed to it.
-- An agent key is never registered under a person. Agent events name the agent and, where one exists, the person who runs it.
+- The network edge in front of the hub (reverse proxy, tunnel, access gate) is infrastructure. It may filter traffic, but it is never the identity: the hub accepts a request only on a valid signature by a registered key, or answers with a signed public statement.
+- Public keys are registered in a keys file next to `teams.yaml`, changed only by pull request. Each entry has a key id, kind (`webauthn` or `ed25519`), the principal kind, the handle of the person, agent or program it belongs to (a handle, never a legal name or mail address, because the file is public), the device and program label for agent and service keys, the team, and its scopes. Adding, rotating and revoking a key is a pull request.
+- A revoked key can no longer read or write. Events it already signed stay valid and stay attributed to it.
+- Every key has **scopes** (for example `record:read`, `record:write`, `release:query`). A key does only what its scopes allow. Staff passkeys get the team scopes; agent and service keys get the least they need.
+
+Staff members:
+
+- A staff member may register several passkeys (for example laptop and phone).
+- The private key of a passkey never leaves the authenticator. If the platform syncs passkeys between a person's own devices, that sync is the platform's business; sign-in and every write are still verified by the hub alone.
+
+Agents:
+
+- **At least one key per device.** A key is never copied to a second device.
+- **One key per program where it matters.** Programs on the same device that need different rights or must be told apart in the audit trail (for example a coordinator, a lane starter and a monitoring script) each get their own key with their own scopes.
+- An agent key is never registered under a person. Agent events name the agent key and, where one exists, the person who runs it.
+
+External programs:
+
+- **Signed answers first.** A program that only needs a verdict the hub may state openly (for example "may pull request N at head H leave draft") asks without a secret. The hub answers with a statement signed by the hub's own key, naming the question, the subject (repository, pull request, head) and the time. The program verifies that signature against the hub public key pinned in its own repository, so the answer cannot be forged on the way. The statement reveals nothing beyond the verdict.
+- **Service key when a secret is unavoidable.** A program that must read non-public data or write gets its own Ed25519 service key with the narrowest scopes, an expiry, and, where the hub can check it, a bound repository or pull-request subject. The private key lives in the program's own secret store. Each use is recorded with that key id.
+- A pull-request guard may use the release query to decide whether to leave draft. The query is an input to the guard, not a replacement for the review rules in CONTRIBUTING.md.
 
 ### 24.3 Events, not rows
 
@@ -1444,7 +1464,7 @@ When the matching part ships, its pull request changes these rows in the same di
 | Place | Today | With §24 |
 |---|---|---|
 | §2 Hub role | Not a shared write database | Still true for the session store; the hub is the verifier and keeper of the team-record chain |
-| §2 Login, §2 Identity, §5, §7 Sign-in, §12 | GitHub login | Registered key pair (§24.2) |
+| §2 Login, §2 Identity, §5, §7 Sign-in, §12 | GitHub login | Registered key pair: passkey for staff, Ed25519 for agents, signed answers or scoped service keys for external programs (§24.2) |
 | §3 One shared database everyone writes to | Rejected | Still rejected for the session store; the team record is a signed append-only chain, not a shared mutable database |
 | §3 Plane (or any issue tracker) as the store | Rejected | Still rejected; the team record replaces an outside tracker instead of mirroring one |
 | §3 Hub-owned task lifecycle and leases | Rejected | Still rejected for session tasks (spine); record tasks are written by signed events of people and agents, never by the hub |
@@ -1455,4 +1475,4 @@ When the matching part ships, its pull request changes these rows in the same di
 - Code is public; record data never enters any repository, issue, pull request, log or error message.
 - No private repository, internal hostname or internal infrastructure is named here or in code (CONTRIBUTING.md).
 - Every implementation pull request carries tests for its signature checks, chain checks and refusal paths, not only the success path.
-- Build order: keys file and signature verification first, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
+- Build order: keys file with scopes and signature verification first, then the signed release answer for external programs, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
