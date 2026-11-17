@@ -1251,8 +1251,12 @@ function outside the schemas `pg_catalog` and `information_schema`, and refuses 
 security, a policy, a rule or a trigger other than the four of section 11.3 on the three record
 tables. That check sees the catalog only at start and in `restore`: such an object that the
 owner role or a superuser creates while the hub runs is found at the next start, and its effect
-on stored rows by verification. That is why the record is verified at every start and every 10
-minutes, checkpoints are signed, and backups are kept off-site (section 12).
+on stored rows by verification. The check also reads `pg_proc` of this database only:
+`SECURITY DEFINER` functions of other databases of the server, which the writer may reach through
+a `CONNECT` it holds there through `PUBLIC`, are not checked; that limit is accepted, because such
+a function can reach the record tables only through an extension such as `dblink` or
+`postgres_fdw`, which a superuser installs. That is why the record is verified at every start and
+every 10 minutes, checkpoints are signed, and backups are kept off-site (section 12).
 
 ### 11.3 Schema
 
@@ -2146,7 +2150,8 @@ The chain:
   test hooks: a `GET` holds the state lock in its fold, one append holds the advisory lock and
   waits for the state lock, a second append waits for the advisory lock, and a second `GET`
   finds the pool exhausted and waits without holding the state lock; the first `GET` answers,
-  both appends are accepted, and the second `GET` is answered after them
+  both appends are accepted, the second `GET` is answered without a deadlock, and its answer is
+  a state at or after the head the first `GET` saw
 - the state lock (section 11.6), through test hooks in one hub instance: a `GET` whose
   incremental fold runs between the commit and step 5 of an append folds the new event, and step
   5 then changes nothing; two appends of one instance whose steps 5 and folds interleave; in each
@@ -3065,8 +3070,10 @@ confirms or changes each one.
     possibilities of the review hint (only definer functions owned by the owner role, or every
     definer function the writer can execute), the stricter is taken. The limit is accepted that
     the check sees the catalog only at start and in `restore`: such an object created while the
-    hub runs is found at the next start, and its effect on stored rows by verification (§11.2,
-    §11.4, §14).
+    hub runs is found at the next start, and its effect on stored rows by verification. The
+    limit is also accepted that `SECURITY DEFINER` functions of other databases of the server are
+    not checked; they can reach the record tables only through an extension such as `dblink` or
+    `postgres_fdw`, which a superuser installs (§11.2, §11.4, §14).
 95. Hub key ids are compared and sorted in byte order everywhere; every statement that sorts or
     compares them in the database uses `COLLATE "C"`, so that `export` writes checkpoint lines in
     the order that `verify` and `restore` require, whatever the collation of the database
