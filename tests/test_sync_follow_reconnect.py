@@ -14,6 +14,7 @@ from agent_cli.main import cmd_sync, open_store
 from agent_cli.hub import Hub, HubError
 from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store, StoreConnectionError, StoreError
+from driver_fixtures import write_drivers
 
 
 class _StopTest(Exception):
@@ -868,7 +869,7 @@ def test_publish_terminals_redacts_tokens_with_interior_or_boundary_csi(
         store.close()
 
 
-def test_publish_terminals_grok_preflight_propagates_store_connection_error(
+def test_publish_terminals_interactive_preflight_propagates_store_connection_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -878,12 +879,12 @@ def test_publish_terminals_grok_preflight_propagates_store_connection_error(
         store.write(
             "session",
             "insert",
-            "grok",
+            "session-a",
             {
-                "id": "grok",
+                "id": "session-a",
                 "runtime": {
                     "control": "attached",
-                    "provider": "grok",
+                    "provider": "driver-a",
                 },
             },
         )
@@ -910,7 +911,7 @@ def test_publish_terminals_grok_preflight_propagates_store_connection_error(
         ("lane_execution", "lane_execution is not configured"),
     ],
 )
-def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
+def test_publish_terminals_preflights_interactive_without_blocking_raw_terminal(
     tmp_path: Path,
     missing: str,
     error: str,
@@ -918,21 +919,22 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
 ) -> None:
     _init_paired_store(tmp_path)
     config = {
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "lane_execution": {"mode": "this-device-is-lane-host"},
         "accounts": {
-            "grok-a": {"provider": "grok", "config_dir": "/test/grok-a"},
+            "account-a": {"provider": "driver-a", "config_dir": "/test/account-a"},
         },
         "roles": {
             "interactive": {
-                "account": "grok-a",
+                "account": "account-a",
                 "model": "operator-model",
                 "access": "workspace-write",
             },
         },
-        "sessions": {"grok": {"interactive": "interactive"}},
+        "sessions": {"session-a": {"interactive": "interactive"}},
     }
     config.pop(missing)
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
         json.dumps(config), encoding="utf-8"
     )
@@ -941,12 +943,12 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
         store.write(
             "session",
             "insert",
-            "grok",
+            "session-a",
             {
-                "id": "grok",
+                "id": "session-a",
                 "runtime": {
                     "control": "attached",
-                    "provider": "grok",
+                    "provider": "driver-a",
                 },
             },
         )
@@ -982,7 +984,7 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
         assert runtime.captured == ["raw"]
         assert [frame["session_id"] for frame in ws.sent] == ["raw"]
         assert (
-            f"terminal grok configuration error: {error}"
+            f"terminal session-a configuration error: {error}"
             in capsys.readouterr().err
         )
     finally:
@@ -993,23 +995,24 @@ def test_publish_terminals_redacts_configured_profile_outside_home_roots(
     tmp_path: Path,
 ) -> None:
     _init_paired_store(tmp_path)
-    config_dir = "/opt/profiles/grok-live"
+    config_dir = "/opt/profiles/live-profile"
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
         json.dumps(
             {
-                "models": {"first": "grok", "second": "codex"},
+                "models": {"first": "driver-a", "second": "driver-b"},
                 "lane_execution": {"mode": "this-device-is-lane-host"},
                 "accounts": {
-                    "grok-a": {"provider": "grok", "config_dir": config_dir},
+                    "account-a": {"provider": "driver-a", "config_dir": config_dir},
                 },
                 "roles": {
                     "interactive": {
-                        "account": "grok-a",
+                        "account": "account-a",
                         "model": "operator-model",
                         "access": "workspace-write",
                     },
                 },
-                "sessions": {"grok": {"interactive": "interactive"}},
+                "sessions": {"session-a": {"interactive": "interactive"}},
             }
         ),
         encoding="utf-8",
@@ -1019,16 +1022,16 @@ def test_publish_terminals_redacts_configured_profile_outside_home_roots(
         store.write(
             "session",
             "insert",
-            "grok",
+            "session-a",
             {
-                "id": "grok",
+                "id": "session-a",
                 "runtime": {
                     "control": "attached",
-                    "provider": "grok",
+                    "provider": "driver-a",
                     "ai_binding": {
                         "role": "interactive",
-                        "account": "grok-a",
-                        "provider": "grok",
+                        "account": "account-a",
+                        "provider": "driver-a",
                         "model": "operator-model",
                         "access": "workspace-write",
                         "configuration": hashlib.sha256(

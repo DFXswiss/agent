@@ -151,51 +151,51 @@ def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
     store.write(
         "activity",
         "insert",
-        "grok-snapshot",
+        "driver-a-snapshot",
         {
-            "id": "grok-snapshot",
+            "id": "driver-a-snapshot",
             "type": "usage.snapshot",
-            "payload": {"vendor": "grok"},
+            "payload": {"vendor": "driver-a"},
         },
     )
     store.write(
         "activity",
         "insert",
-        "openrouter-snapshot",
+        "driver-d-snapshot",
         {
-            "id": "openrouter-snapshot",
+            "id": "driver-d-snapshot",
             "type": "usage.snapshot",
-            "payload": {"vendor": "openrouter"},
+            "payload": {"vendor": "driver-d"},
         },
     )
     store.write(
         "activity",
         "insert",
-        "newer-grok-snapshot",
+        "newer-driver-a-snapshot",
         {
-            "id": "newer-grok-snapshot",
+            "id": "newer-driver-a-snapshot",
             "type": "usage.snapshot",
-            "payload": {"vendor": "grok"},
+            "payload": {"vendor": "driver-a"},
         },
     )
     store.write(
         "activity",
         "insert",
-        "newest-openrouter-snapshot",
+        "newest-driver-d-snapshot",
         {
-            "id": "newest-openrouter-snapshot",
+            "id": "newest-driver-d-snapshot",
             "type": "usage.snapshot",
-            "payload": {"vendor": "openrouter"},
+            "payload": {"vendor": "driver-d"},
         },
     )
 
     event = store.last_own_activity_insert(
         "usage.snapshot",
-        predicate=lambda row: row.get("payload", {}).get("vendor") == "grok",
+        predicate=lambda row: row.get("payload", {}).get("vendor") == "driver-a",
     )
 
     assert event is not None
-    assert event["id"] == "newer-grok-snapshot"
+    assert event["id"] == "newer-driver-a-snapshot"
     assert (
         store.last_own_activity_insert(
             "usage.snapshot",
