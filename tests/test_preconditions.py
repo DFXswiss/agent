@@ -20,6 +20,7 @@ from agent_cli.preconditions import (
     WHEN_NAMES,
     action_requiring,
 )
+from driver_fixtures import install_recorded_slots
 
 pytestmark = pytest.mark.no_pg
 
@@ -28,8 +29,11 @@ def test_registry_keys_do_not_collide_with_workflow_keys() -> None:
     workflow_keys = {
         key for keys in allow.CHECKLIST_KEYS.values() for key in keys
     }
-    legacy_keys = set(model_slots.LEGACY_KEY_ALIASES)
-    legacy_keys.update(model_slots.LEGACY_KEY_ALIASES.values())
+    install_recorded_slots()
+    recorded = model_slots.recorded_names()
+    assert recorded is not None
+    legacy_keys = set(recorded.key_slots())
+    legacy_keys.update(model_slots.canonical_key(key) for key in recorded.key_slots())
 
     assert REGISTRY_KEYS.isdisjoint(workflow_keys)
     assert REGISTRY_KEYS.isdisjoint(legacy_keys)

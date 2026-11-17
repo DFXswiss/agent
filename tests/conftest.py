@@ -46,6 +46,14 @@ def nested_terminal_string_control(request: pytest.FixtureRequest) -> str:
     return f"{introducer}outer {nested} payload{terminator}"
 
 
+@pytest.fixture(autouse=True)
+def _a38_attribution_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure placeholder guard attribution patterns, as an adopter's variable does."""
+    from a38_attribution_support import ATTRIBUTION_PATTERNS_JSON
+
+    monkeypatch.setenv("A38_ATTRIBUTION_PATTERNS", ATTRIBUTION_PATTERNS_JSON)
+
+
 @pytest.fixture(scope="session")
 def pg_admin_dsn(tmp_path_factory: pytest.TempPathFactory) -> str:
     env = os.environ.get("AGENT_TEST_PG")
@@ -64,6 +72,20 @@ def pg_dsn(pg_admin_dsn: str) -> str:
     dsn = create_database(pg_admin_dsn, name)
     yield dsn
     drop_database(pg_admin_dsn, name)
+
+
+@pytest.fixture(autouse=True)
+def _recorded_names_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without a recorded-names registry.
+
+    ``open_store`` installs the registry process-wide from drivers.json, and
+    tests run many commands in one process. Each test starts with none
+    installed, and the previous registry is restored afterwards.
+    """
+    from agent_cli import model_slots
+
+    monkeypatch.setattr(model_slots, "_recorded", model_slots._recorded)
+    model_slots.install_recorded_names(None)
 
 
 @pytest.fixture(autouse=True)

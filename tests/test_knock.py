@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from agent_cli import main as main_mod
 from agent_cli.knock import deliver, drain, knock_text, listen_once
 from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store
+from driver_fixtures import PANE_WORKING, driver_document, write_drivers
 
 
 def _runtime(log: list[list[str]], *, exists: bool = True, busy: bool = False) -> Runtime:
@@ -112,7 +116,7 @@ def test_deliver_usage_snapshot_is_missing_without_send_keys(tmp_path: Path) -> 
             "id": "usage-1",
             "session_id": "s1",
             "type": "usage.snapshot",
-            "payload": {"vendor": "grok", "used_percent": 11.0},
+            "payload": {"vendor": "driver-a", "used_percent": 11.0},
             "execution_status": "done",
         },
     )
@@ -367,3 +371,66 @@ def test_deliver_assigned_acked_does_not_send(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     assert deliver(store, _runtime(calls), "asg-1") == "sent"
     assert calls == []
+
+
+def _attached_mail(store: Store) -> None:
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "human",
+            "status": "active",
+            "runtime": {"control": "attached", "tmux_session": "agent-s1"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "mail-1",
+        {
+            "id": "mail-1",
+            "session_id": "sender",
+            "type": "message",
+            "payload": {"to_session": "s1", "body": "x"},
+            "execution_status": "pending",
+        },
+    )
+
+
+def _pane_runtime(calls: list[list[str]]) -> Runtime:
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "capture-pane"]:
+            return Completed(0, PANE_WORKING, "")
+        return Completed(0, "", "")
+
+    return Runtime(runner=runner)
+
+
+def test_deliver_classifies_a_raw_pane_with_the_pane_driver(tmp_path: Path) -> None:
+    write_drivers(tmp_path)
+    store = Store(tmp_path)
+    _attached_mail(store)
+    calls: list[list[str]] = []
+    runtime = main_mod._preflight_runtime(store, _pane_runtime(calls))
+    assert deliver(store, runtime, "mail-1") == "queued"
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in calls)
+    assert store.pending_wakes() == [{"activity_id": "mail-1", "session_id": "s1"}]
+
+
+def test_deliver_keeps_the_wake_queued_when_the_pane_cannot_be_classified(
+    tmp_path: Path,
+) -> None:
+    document = driver_document()
+    document.pop("pane_driver")
+    write_drivers(tmp_path, document)
+    store = Store(tmp_path)
+    _attached_mail(store)
+    calls: list[list[str]] = []
+    runtime = main_mod._preflight_runtime(store, _pane_runtime(calls))
+    with pytest.raises(SystemExit, match="session s1 has no interactive driver"):
+        deliver(store, runtime, "mail-1")
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in calls)
+    assert store.pending_wakes() == [{"activity_id": "mail-1", "session_id": "s1"}]

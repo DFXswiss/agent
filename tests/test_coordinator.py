@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from agent_cli.ai_accounts import load_ai_accounts
 from agent_cli.coordinator import tick
 from agent_cli.coordinator_common import LaneFailedError
 from agent_cli.coordinator_git import verify_signed_clean_head
@@ -25,23 +26,31 @@ from agent_cli.coordinator_github import (
 )
 from agent_cli.coordinator_runtime import (
     CoordinatorError,
-    harden_grok_write_argv,
+    harden_write_argv,
     parse_model_result,
     preflight_worker,
     review_is_approved,
 )
+from agent_cli.drivers import LaneIO
 from agent_cli.model_slots import MODELS_NOT_CONFIGURED
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
+from driver_fixtures import driver_specs, install_recorded_slots, write_drivers
 from test_coordinator_support import (
     FakeGh,
-    grok_messages_stream,
+    event_stream_output,
     lane_runner,
     make_session,
     make_worker,
     order_source,
     write_accounts,
 )
+
+
+@pytest.fixture(autouse=True)
+def _recorded_slots() -> None:
+    """``write_accounts`` writes the placeholder drivers.json; read it as a store would."""
+    install_recorded_slots()
 
 
 def seed_task(store, worker, tid, data):
@@ -225,12 +234,10 @@ def _write_coordinator_a38_report(
     )
 
 
-def test_harden_grok_write_adds_denies() -> None:
-    argv = ["env", "-u", "X", "grok", "--permission-mode", "acceptEdits", "--allow", "Write"]
-    out = harden_grok_write_argv(argv)
-    assert "--deny" in out and "Bash" in out
-    assert "--no-subagents" in out
-    assert "--disable-web-search" in out
+def test_harden_write_adds_denies() -> None:
+    argv = ["env", "-u", "X", "tool-a", "--edit", "--cwd", "/work"]
+    out = harden_write_argv(argv, driver_specs()["driver-a"])
+    assert out == [*argv, "--no-shell", "--deny", "Shell"]
 
 
 def test_invalid_review_never_approved() -> None:
@@ -276,7 +283,7 @@ def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
             "session_id": "worker-session",
             "workflow": "implement",
             "state": "pr-review",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {"coordinator": {}},
         },
     )
@@ -284,7 +291,7 @@ def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
         "task_id": task_id,
         "stage": "review-1",
         "dimension": "quality",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "head_sha": "a" * 40,
         "recorded_at": "2026-01-01T00:00:00Z",
     }
@@ -357,7 +364,7 @@ def test_legacy_gate_order_normalizes_mixed_utc_timestamp_formats() -> None:
         "task_id": "task-1",
         "stage": "review-1",
         "dimension": "quality",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "head_sha": "a" * 40,
     }
     chronological = ordered_gate_rows(
@@ -410,7 +417,7 @@ def test_legacy_gate_order_fails_closed_for_unordered_invalid_timestamp(
         "task_id": "task-1",
         "stage": "review-1",
         "dimension": "quality",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "head_sha": "a" * 40,
     }
     ordered = ordered_gate_rows(
@@ -712,10 +719,10 @@ def test_human_merge_only_completion(tmp_path: Path, monkeypatch: pytest.MonkeyP
             },
         )
     for stage, dim, vendor in (
-        ("review-1", "quality", "grok"),
-        ("review-1", "logic", "grok"),
-        ("review-2", "quality", "codex"),
-        ("review-2", "logic", "codex"),
+        ("review-1", "quality", "driver-a"),
+        ("review-1", "logic", "driver-a"),
+        ("review-2", "quality", "driver-b"),
+        ("review-2", "logic", "driver-b"),
     ):
         gid = f"g-{stage}-{dim}"
         store.write(
@@ -864,13 +871,13 @@ def _seed_one_review_merge(
         store.write(
             "review_gate",
             "insert",
-            f"{tid}-grok-{dim}",
+            f"{tid}-driver-a-{dim}",
             {
-                "id": f"{tid}-grok-{dim}",
+                "id": f"{tid}-driver-a-{dim}",
                 "task_id": tid,
                 "stage": "review-1",
                 "dimension": dim,
-                "vendor": "grok",
+                "vendor": "driver-a",
                 "verdict": "approved",
                 "evidence": None,
                 "head_sha": fake.head,
@@ -3946,14 +3953,14 @@ def _seed_ready_side_task(
     *,
     tid: str,
     phase: str,
-    checklist_codex: dict[str, str],
-    grok_gates: tuple[str, ...] = ("quality", "logic"),
-    codex_gates: tuple[str, ...] = (),
+    checklist_second: dict[str, str],
+    first_gates: tuple[str, ...] = ("quality", "logic"),
+    second_gates: tuple[str, ...] = (),
     seed_formal_review: bool = False,
     extra_evidence: dict[str, Any] | None = None,
     models: dict[str, str | None] | None = None,
-    first_vendor: str = "grok",
-    second_vendor: str = "codex",
+    first_vendor: str = "driver-a",
+    second_vendor: str = "driver-b",
 ) -> dict[str, Any]:
     from agent_cli.allow import CHECKLIST_KEYS
 
@@ -4008,9 +4015,9 @@ def _seed_ready_side_task(
         },
     )
     for key in CHECKLIST_KEYS["implement"]:
-        if key in ("review_2_quality", "review_2_logic") and key not in checklist_codex:
+        if key in ("review_2_quality", "review_2_logic") and key not in checklist_second:
             continue
-        status = checklist_codex.get(
+        status = checklist_second.get(
             key,
             "n_a" if key in ("deviation_declared", "deviation_granted") else "ja",
         )
@@ -4037,9 +4044,9 @@ def _seed_ready_side_task(
             },
         )
     gates: list[tuple[str, str, str]] = []
-    for dim in grok_gates:
+    for dim in first_gates:
         gates.append(("review-1", dim, first_vendor))
-    for dim in codex_gates:
+    for dim in second_gates:
         gates.append(("review-2", dim, second_vendor))
     for stage, dim, vendor in gates:
         gid = f"{tid}-g-{stage}-{dim}"
@@ -4113,7 +4120,7 @@ def test_readiness_skips_review_2_when_opener_is_listed(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     lines = phase_readiness(store, worker, task, fake)
     assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
@@ -4131,8 +4138,8 @@ def test_readiness_uses_insert_order_when_later_gate_uuid_sorts_smaller(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
-        codex_gates=("quality", "logic"),
+        checklist_second={"review_2_quality": "ja", "review_2_logic": "ja"},
+        second_gates=("quality", "logic"),
     )
     store.write(
         "review_gate",
@@ -4143,7 +4150,7 @@ def test_readiness_uses_insert_order_when_later_gate_uuid_sorts_smaller(
             "task_id": tid,
             "stage": "review-1",
             "dimension": "quality",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "verdict": "rejected",
             "evidence": "later durable rejection",
             "head_sha": fake.head,
@@ -4173,13 +4180,13 @@ def test_readiness_requires_review_2_when_file_is_missing(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
 
 
-def test_readiness_still_requires_review_1_when_codex_checklist_na(
+def test_readiness_still_requires_review_1_when_second_checklist_na(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -4190,8 +4197,8 @@ def test_readiness_still_requires_review_1_when_codex_checklist_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
-        grok_gates=("logic",),
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        first_gates=("logic",),
     )
     with pytest.raises(CoordinatorError, match="missing approved gate review-1/"):
         phase_readiness(store, worker, task, fake)
@@ -4219,14 +4226,14 @@ def test_readiness_requires_review_2_when_only_one_key_na(
             {"review_2_logic": "n_a"},
         ),
     )
-    for tid, checklist_codex in cases:
+    for tid, checklist_second in cases:
         task = _seed_ready_side_task(
             store,
             worker,
             fake,
             tid=tid,
             phase="readiness",
-            checklist_codex=checklist_codex,
+            checklist_second=checklist_second,
         )
         with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
             phase_readiness(store, worker, task, fake)
@@ -4243,7 +4250,7 @@ def test_readiness_requires_review_2_when_both_keys_ja_and_gates_missing(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
+        checklist_second={"review_2_quality": "ja", "review_2_logic": "ja"},
     )
     with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
@@ -4260,7 +4267,7 @@ def test_readiness_requires_review_2_when_unavailable_with_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "unavailable", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "unavailable", "review_2_logic": "n_a"},
     )
     with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
@@ -4278,7 +4285,7 @@ def test_formal_approve_skips_review_2_when_opener_is_listed(
         fake,
         tid=tid,
         phase="formal_approve",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         extra_evidence={"readiness_head": fake.head},
     )
     lines = phase_formal_approve(store, worker, task, fake)
@@ -4320,7 +4327,7 @@ def test_leave_draft_skips_review_2_when_opener_is_listed(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4354,7 +4361,7 @@ def test_leave_draft_retries_an_unreadable_pull_request_head(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4408,7 +4415,7 @@ def test_leave_draft_retries_an_unreadable_verification_head_after_ready(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4452,7 +4459,7 @@ def test_leave_draft_moves_a_merged_pull_request_with_a_missing_head_to_await_me
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4497,7 +4504,7 @@ def test_leave_draft_moves_a_closed_pull_request_with_a_non_hex_head_to_await_me
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4551,7 +4558,7 @@ def test_leave_draft_moves_a_terminal_pull_request_to_await_merge_when_every_vie
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4596,7 +4603,7 @@ def test_leave_draft_moves_a_merged_verification_with_a_missing_head_to_await_me
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4638,7 +4645,7 @@ def test_already_ready_pull_request_sets_ready_head_for_an_order(
         fake,
         tid=order_tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4669,7 +4676,7 @@ def test_already_ready_pull_request_sets_ready_head_for_an_order(
         fake,
         tid=issue_tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4722,7 +4729,7 @@ def test_leave_draft_does_not_ready_when_the_exception_is_revoked_after_the_comm
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4780,7 +4787,7 @@ def test_leave_draft_posts_the_revoked_comment_on_a_later_tick(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        checklist_second={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -4827,8 +4834,8 @@ def test_readiness_accepts_approved_review_2_when_checklist_not_both_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
-        codex_gates=("quality", "logic"),
+        checklist_second={"review_2_quality": "ja", "review_2_logic": "ja"},
+        second_gates=("quality", "logic"),
     )
     lines = phase_readiness(store, worker, task, fake)
     assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
@@ -4837,8 +4844,8 @@ def test_readiness_accepts_approved_review_2_when_checklist_not_both_na(
 _POSTED_HEAD = "c" * 40
 
 
-def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, ...], codex_status: dict[str, str]) -> dict:
-    """Review task whose Codex checklist is n_a unless a test overrides it."""
+def _seed_posted_second_task(store, worker, tid: str, *, second_dims: tuple[str, ...], second_status: dict[str, str]) -> dict:
+    """Review task whose second-slot checklist is n_a unless a test overrides it."""
     from agent_cli.allow import CHECKLIST_KEYS
 
     seed_task(
@@ -4854,7 +4861,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             "ref": None,
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_codex",
+                    "phase": "pr_gates_second",
                     "worktree": str(worker.workspace_root / tid),
                     "base_sha": "b" * 40,
                     "head_sha": _POSTED_HEAD,
@@ -4870,7 +4877,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             },
             "state": "pr-review",
             "current_round": 1,
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
             "change_summary_en": "Reviewed.",
@@ -4884,8 +4891,8 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
         "review_1_logic",
     }
     for key in CHECKLIST_KEYS["review"]:
-        if key in codex_status:
-            status, evidence = codex_status[key], "second review not posted"
+        if key in second_status:
+            status, evidence = second_status[key], "second review not posted"
         elif key in before:
             status, evidence = "ja", "seed"
         else:
@@ -4909,8 +4916,8 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             },
         )
     for stage, dim, vendor in (
-        ("review-1", "quality", "grok"),
-        ("review-1", "logic", "grok"),
+        ("review-1", "quality", "driver-a"),
+        ("review-1", "logic", "driver-a"),
     ):
         gid = f"{tid}-{stage}-{dim}"
         store.write(
@@ -4930,7 +4937,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
                 "recorded_at": "2026-01-01T00:00:00Z",
             },
         )
-    for dim in codex_dims:
+    for dim in second_dims:
         gid = f"{tid}-review-2-{dim}"
         store.write(
             "review_gate",
@@ -4941,11 +4948,11 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": dim,
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": "approved",
                 "evidence": None,
                 "head_sha": _POSTED_HEAD,
-                "agent_id": f"{tid}-codex-{dim}",
+                "agent_id": f"{tid}-driver-b-{dim}",
                 "recorded_at": "2026-01-01T00:00:01Z",
             },
         )
@@ -4986,15 +4993,15 @@ def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
 
 
-def _codex_completed(
+def _last_message_completed(
     argv: list[str],
     text: str,
     *,
     returncode: int = 0,
     stderr: str = "",
 ) -> Completed:
-    """Make a Codex test double satisfy the provider output-file contract."""
-    output = Path(argv[argv.index("--output-last-message") + 1])
+    """Make a ``driver-b`` test double satisfy the output-file contract."""
+    output = Path(argv[argv.index("--last-message") + 1])
     output.write_text(text, encoding="utf-8")
     return Completed(returncode, "", stderr)
 
@@ -5008,21 +5015,21 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
 
     store = Store(tmp_path)
     write_accounts(store.home)
-    raw_model = "api_key=model-secret /test/codex/credentials \x1b[31m" + "m" * 240
+    raw_model = "api_key=model-secret /test/driver-b/credentials \x1b[31m" + "m" * 240
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
-    accounts["roles"]["codex-rev"]["model"] = raw_model
+    accounts["roles"]["driver-b-rev"]["model"] = raw_model
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-00000000006a"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={
+        second_dims=(),
+        second_status={
             "review_2_quality": "pending",
             "review_2_logic": "pending",
         },
@@ -5054,7 +5061,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
             if role.endswith("quality")
             else "STATUS: complete\nRESULT: approved\n"
         )
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(result, encoding="utf-8")
         return Completed(0, "", "")
 
@@ -5083,7 +5090,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
             task,
             lambda argv: Completed(0, "", ""),
             review,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -5098,7 +5105,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     assert launched_models == [raw_model, raw_model]
     assert all(len(str(item["model"])) <= 200 for item in checkpoint["outcomes"])
     assert "model-secret" not in str(checkpoint)
-    assert "/test/codex" not in str(checkpoint)
+    assert "/test/driver-b" not in str(checkpoint)
     assert "\x1b" not in str(checkpoint)
     agents = [
         row
@@ -5110,7 +5117,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     assert all(row["status"] == "done" for row in agents)
     assert all(len(str(row["model"])) <= 200 for row in agents)
     assert "model-secret" not in str(agents)
-    assert "/test/codex" not in str(agents)
+    assert "/test/driver-b" not in str(agents)
     assert "\x1b" not in str(agents)
     audits = [
         row
@@ -5137,7 +5144,7 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
         saved,
         lambda argv: Completed(0, "", ""),
         lambda *args, **kwargs: pytest.fail("recovery relaunched PR reviewer"),
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -5170,12 +5177,12 @@ def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000001c2"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     task["ref"] = "42"
     store.write(
@@ -5195,7 +5202,7 @@ def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
         launches += 1
         material = " ".join(argv) + "\n" + (_stdin or "")
         role = "quality" if "pr-reviewer-quality" in material else "logic"
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output_paths[role] = output
         output.write_text(
             "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
@@ -5221,7 +5228,7 @@ def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
         task,
         lambda _argv: Completed(0, "", ""),
         review,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -5250,7 +5257,7 @@ def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
         saved,
         lambda _argv: Completed(0, "", ""),
         lambda *_args: pytest.fail("parallel reviewer was relaunched"),
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -5267,7 +5274,7 @@ def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
     assert {row["dimension"] for row in gates} == {"quality", "logic"}
 
 
-def _codex_prelaunch_fixture(
+def _second_prelaunch_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tid: str
 ) -> tuple[Store, Any, dict[str, Any]]:
     store = Store(tmp_path)
@@ -5275,12 +5282,12 @@ def _codex_prelaunch_fixture(
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        second_dims=(),
+        second_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     return store, worker, task
@@ -5314,28 +5321,28 @@ def _record_blocker_publications(
     return published
 
 
-def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
+def test_second_preparation_oserror_closes_prepared_agents_before_one_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
     from agent_cli.coordinator_runtime import advance_one
 
     tid = "aa000001-0000-4000-8000-000000000062"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
-    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
-        "codex-rev"
+    accounts["sessions"]["worker-session"]["lanes"]["driver-b:reviewer"] = (
+        "driver-b-rev"
     )
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     published = _record_blocker_publications(monkeypatch)
-    real_provider_argv = coordinator_lanes.provider_argv
+    real_provider_argv = coordinator_lanes.lane_argv
     provider_calls = 0
     output_paths: list[Path] = []
     private_worktree = task["payload"]["coordinator"]["worktree"]
-    private_config = "/test/codex"
+    private_config = "/test/driver-b"
     raw_failure = (
         f"cannot prepare {private_worktree}/review-spec.md via "
         f"{private_config}/settings.json"
@@ -5349,7 +5356,7 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
             raise OSError(raw_failure)
         return real_provider_argv(*args, **kwargs)
 
-    monkeypatch.setattr(coordinator_lanes, "provider_argv", fail_second_provider)
+    monkeypatch.setattr(coordinator_lanes, "lane_argv", fail_second_provider)
     lines = advance_one(
         store,
         worker,
@@ -5378,7 +5385,7 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     assert saved is not None
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["resume_phase"] == "pr_gates_second"
     assert checkpoint["question_activity_id"] == comments[0]["id"]
     exposed = "\n".join(
         (
@@ -5403,14 +5410,14 @@ def test_preparation_failure_leaves_no_deterministic_reviewer_output(
     from agent_cli import coordinator_lanes
 
     tid = "aa000001-0000-4000-8000-000000000064"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     output_paths: list[Path] = []
 
     def fail_provider(*_args: Any, **kwargs: Any) -> list[str]:
         output_paths.append(Path(kwargs["output_file"]))
         raise RuntimeError("provider argv failed")
 
-    monkeypatch.setattr(coordinator_lanes, "provider_argv", fail_provider)
+    monkeypatch.setattr(coordinator_lanes, "lane_argv", fail_provider)
 
     with pytest.raises(RuntimeError, match="provider argv failed"):
         coordinator_lanes._prepare_pr_review_agent(
@@ -5418,7 +5425,7 @@ def test_preparation_failure_leaves_no_deterministic_reviewer_output(
             worker,
             task,
             role="pr-reviewer-quality",
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
             head=_POSTED_HEAD,
             spec_body="Review.",
@@ -5445,11 +5452,12 @@ def test_run_prepared_returns_unavailable_and_leaves_output_for_checkpoint(
     prepared = {
         "agent_id": "agent-1",
         "role": "pr-reviewer-quality",
-        "vendor": "codex",
-        "argv": ["codex"],
+        "vendor": "driver-b",
+        "io": LaneIO("last-message-file", output_file=True, stdin=True, audit_stderr_when_empty=False),
+        "argv": ["tool-b"],
         "stdin_text": None,
         "output_file": str(output) if failure == "decode" else str(tmp_path / "gone.txt"),
-        "model": "codex-model",
+        "model": "driver-b-model",
         "worktree": str(tmp_path),
     }
 
@@ -5478,7 +5486,7 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     from agent_cli.coordinator_runtime import advance_one
 
     tid = "aa000001-0000-4000-8000-000000000063"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     published = _record_blocker_publications(monkeypatch)
@@ -5533,7 +5541,7 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     assert saved is not None
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["resume_phase"] == "pr_gates_second"
     assert checkpoint["question_activity_id"] == comments[0]["id"]
     assert lines == [
         "blocked: PR review lane preparation failed",
@@ -5547,10 +5555,10 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     tid = "aa000001-0000-4000-8000-000000000067"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     patch_execute_github(monkeypatch)
     private_worktree = task["payload"]["coordinator"]["worktree"]
-    private_config = "/test/codex"
+    private_config = "/test/driver-b"
     raw_failure = (
         f"provider failed in {private_worktree} while reading "
         f"{private_config}/settings.json"
@@ -5568,7 +5576,7 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
             task,
             lambda argv: Completed(0, "", ""),
             fail_lane,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -5591,7 +5599,7 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
     assert private_worktree not in exposed
     assert private_config not in exposed
     assert checkpoint.get("uncertain_lane") is not True
-    assert checkpoint["phase"] == "pr_gates_codex"
+    assert checkpoint["phase"] == "pr_gates_second"
     assert comments == []
 
 
@@ -5601,7 +5609,7 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     tid = "aa000001-0000-4000-8000-000000000065"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     task["payload"]["coordinator"]["resume_phase"] = "implement"
     store.write(
         "task", "update", tid,
@@ -5617,7 +5625,7 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
             "task_id": tid,
             "round": None,
             "role": "pr-reviewer-quality",
-            "vendor": "codex",
+            "vendor": "driver-b",
             "status": "working",
             "started_at": "2026-01-01T00:00:00Z",
             "finished_at": None,
@@ -5638,12 +5646,12 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
             store.row("task", tid),
             fake,
             None,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
     checkpoint = store.row("task", tid)["payload"]["coordinator"]
-    assert checkpoint["phase"] == "pr_gates_codex"
+    assert checkpoint["phase"] == "pr_gates_second"
     assert checkpoint["resume_phase"] == "implement"
     assert "uncertain_lane" not in checkpoint
     agent = store.row("agent", "aa000001-0000-4000-8000-000000000066")
@@ -5653,7 +5661,7 @@ def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
     ]
 
 
-def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
+def test_approved_second_stage_reconciles_pending_checklist_on_a_later_tick(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cached gates repair pending keys when close_allowed permits both closes."""
@@ -5665,12 +5673,12 @@ def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-000000000054"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=("quality", "logic"),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=("quality", "logic"),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -5680,7 +5688,7 @@ def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     lines = phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="driver-b", stage="review-2"
     )
     assert launched == []
     assert any("already complete" in line for line in lines)
@@ -5706,12 +5714,12 @@ def test_approved_gate_transition_rollback_keeps_gate_phase_unmodified(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000001b6"
-    _seed_posted_codex_task(
+    _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=("quality", "logic") if gate_source == "cached" else (),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=("quality", "logic") if gate_source == "cached" else (),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     patch_execute_github(monkeypatch)
@@ -5737,7 +5745,7 @@ def test_approved_gate_transition_rollback_keeps_gate_phase_unmodified(
     def review_runner(_argv: list[str], _stdin: str | None = None) -> Completed:
         if gate_source == "cached":
             pytest.fail("cached reviewers were relaunched")
-        return _codex_completed(
+        return _last_message_completed(
             _argv, "STATUS: complete\nRESULT: approved\n"
         )
 
@@ -5748,7 +5756,7 @@ def test_approved_gate_transition_rollback_keeps_gate_phase_unmodified(
             live_task,
             lambda _argv: Completed(0, "", ""),
             review_runner,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -5776,12 +5784,12 @@ def test_parallel_gate_checklist_denial_has_no_split_task_save(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000001b7"
-    _seed_posted_codex_task(
+    _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     patch_execute_github(monkeypatch)
@@ -5814,7 +5822,7 @@ def test_parallel_gate_checklist_denial_has_no_split_task_save(
     monkeypatch.setattr(coordinator_lanes, "save_task", count_gate_save)
 
     def approved(argv: list[str], _stdin: str | None = None) -> Completed:
-        return _codex_completed(
+        return _last_message_completed(
             argv, "STATUS: complete\nRESULT: approved\n"
         )
 
@@ -5824,7 +5832,7 @@ def test_parallel_gate_checklist_denial_has_no_split_task_save(
         store.row("task", tid),
         lambda _argv: Completed(0, "", ""),
         approved,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -5834,7 +5842,7 @@ def test_parallel_gate_checklist_denial_has_no_split_task_save(
         for line in lines
     )
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_codex"
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_second"
     status = _checklist_status(store, tid)
     assert status["review_2_quality"] == "pending"
     assert status["review_2_logic"] == "ja"
@@ -5842,7 +5850,7 @@ def test_parallel_gate_checklist_denial_has_no_split_task_save(
 
 @pytest.mark.parametrize(
     ("stored_stage", "stage", "vendor"),
-    [("grok-pr", "review-1", "grok"), ("codex-pr", "review-2", "codex")],
+    [("driver-a-pr", "review-1", "driver-a"), ("driver-b-pr", "review-2", "driver-b")],
 )
 def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     tmp_path: Path,
@@ -5860,12 +5868,12 @@ def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000f9"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     task["payload"]["coordinator"]["pr_number"] = 42
     store.write(
@@ -5964,12 +5972,12 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000d8"
     gate_id = "aa000001-0000-4000-8000-0000000000d7"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     checkpoint = task["payload"]["coordinator"]
     checkpoint["pr_number"] = 42
@@ -5989,7 +5997,7 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
             "task_id": tid,
             "stage": "review-2",
             "dimension": "logic",
-            "vendor": "codex",
+            "vendor": "driver-b",
             "verdict": "rejected",
             "evidence": (
                 "STATUS: complete\nRESULT: rejected\n"
@@ -6008,12 +6016,12 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
         launched.append("lane")
         text = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
         if "pr-reviewer-logic" in text or "Logic:" in text:
-            return _codex_completed(
+            return _last_message_completed(
                 argv,
                 "STATUS: complete\nRESULT: rejected\n"
                 "Already handled without a head change.\n",
             )
-        return _codex_completed(
+        return _last_message_completed(
             argv, "STATUS: complete\nRESULT: approved\n"
         )
 
@@ -6023,7 +6031,7 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
         store.row("task", tid),
         lambda argv: Completed(0, "", ""),
         repeat_rejection,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -6036,7 +6044,7 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
     # Represent the legitimate no-change implementer result and approved inner
     # review returning this unchanged head to the same PR-gate phase.
     cycled["state"] = "pr-review"
-    cycled["payload"]["coordinator"]["phase"] = "pr_gates_codex"
+    cycled["payload"]["coordinator"]["phase"] = "pr_gates_second"
     store.write(
         "task",
         "update",
@@ -6050,7 +6058,7 @@ def test_handled_rejected_gate_publishes_identical_fresh_same_head_attempt(
         store.row("task", tid),
         lambda argv: Completed(0, "", ""),
         repeat_rejection,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -6085,12 +6093,12 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     tid = "aa000001-0000-4000-8000-0000000000e8"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     task["payload"]["coordinator"]["pr_number"] = 42
     store.write(
@@ -6109,7 +6117,7 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
             "task_id": tid,
             "stage": "review-2",
             "dimension": "logic",
-            "vendor": "codex",
+            "vendor": "driver-b",
             "verdict": "rejected",
             "evidence": "Retry this rejection publication.",
             "head_sha": head,
@@ -6149,7 +6157,7 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
         fake,
         lambda argv, stdin=None: launched.append("reviewer")
         or Completed(0, "STATUS: complete\nRESULT: approved\n", ""),
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -6378,7 +6386,7 @@ def test_await_merge_rejection_reconciliation_failure_is_reply_recoverable(
             "task_id": tid,
             "stage": "review-2",
             "dimension": "logic",
-            "vendor": "codex",
+            "vendor": "driver-b",
             "verdict": "rejected",
             "head_sha": "a" * 40,
         },
@@ -6472,7 +6480,7 @@ def test_rejection_checkpoint_validates_entire_batch_before_requeue(
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality" if index == 1 else "logic",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": "rejected",
                 "head_sha": "a" * 40,
             },
@@ -6631,12 +6639,12 @@ def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000f8"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     task["payload"]["coordinator"]["pr_number"] = 42
     store.write(
@@ -6656,7 +6664,7 @@ def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": dimension,
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": "rejected",
                 "evidence": f"{dimension} defect",
                 "head_sha": _POSTED_HEAD,
@@ -6701,7 +6709,7 @@ def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
     assert lines == ["phase blocker recorded"]
     saved = store.row("task", tid)["payload"]["coordinator"]
     assert saved["phase"] == "blocked"
-    assert saved["resume_phase"] == "pr_gates_codex"
+    assert saved["resume_phase"] == "pr_gates_second"
     assert "rejection_review_activity_ids" not in saved
     assert "handled_rejected_gate_ids" not in saved
     assert "findings" not in saved
@@ -6710,7 +6718,7 @@ def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
     ]
 
 
-def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
+def test_cached_second_dimension_replaces_n_a_while_the_other_lane_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An approved dimension cached on retry still moves n_a to ja. The other lane starts."""
@@ -6722,12 +6730,12 @@ def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-000000000055"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=("quality",),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        second_dims=("quality",),
+        second_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -6738,12 +6746,12 @@ def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
             if name in text:
                 launched.append(name)
                 break
-        return _codex_completed(
+        return _last_message_completed(
             argv, "STATUS: complete\nRESULT: approved\n"
         )
 
     lines = phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="driver-b", stage="review-2"
     )
     assert launched == ["pr-reviewer-logic"]
     assert any("cached" in line for line in lines)
@@ -6755,10 +6763,10 @@ def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
     assert saved["payload"]["coordinator"]["phase"] == "ci"
 
 
-def test_codex_lanes_still_start_when_the_checklist_is_n_a(
+def test_second_lanes_still_start_when_the_checklist_is_n_a(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The one-review checklist does not skip the Codex lane."""
+    """The one-review checklist does not skip the second-slot lane."""
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     store = Store(tmp_path)
@@ -6767,12 +6775,12 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-000000000056"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        second_dims=(),
+        second_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -6783,12 +6791,12 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
             if name in text:
                 launched.append(name)
                 break
-        return _codex_completed(
+        return _last_message_completed(
             argv, "STATUS: complete\nRESULT: approved\n"
         )
 
     phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="driver-b", stage="review-2"
     )
     assert set(launched) == {"pr-reviewer-quality", "pr-reviewer-logic"}
     status = _checklist_status(store, tid)
@@ -6803,7 +6811,7 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
     }
 
 
-def test_parallel_openrouter_lanes_record_usage_and_tools(
+def test_parallel_key_file_lanes_record_usage_and_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_lanes import phase_pr_gates
@@ -6813,15 +6821,15 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     config_path = store.home / "ai-accounts.json"
     data = json.loads(config_path.read_text())
     data["accounts"]["router"] = {
-        "provider": "openrouter", "config_dir": "/test/openrouter"
+        "provider": "driver-d", "config_dir": "/test/driver-d"
     }
     data["roles"]["router-reader"] = {
         "account": "router", "model": "vendor/model", "access": "read-only"
     }
     data["sessions"]["worker-session"]["lanes"].update(
         {
-            "openrouter:pr-reviewer-quality": "router-reader",
-            "openrouter:pr-reviewer-logic": "router-reader",
+            "driver-d:pr-reviewer-quality": "router-reader",
+            "driver-d:pr-reviewer-logic": "router-reader",
         }
     )
     config_path.write_text(json.dumps(data))
@@ -6829,14 +6837,14 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000e2"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        second_dims=(),
+        second_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
-    task["models"] = {"first": "grok", "second": "openrouter"}
+    task["models"] = {"first": "driver-a", "second": "driver-d"}
     store.write(
         "task", "update", tid, {key: value for key, value in task.items() if not key.startswith("_")}
     )
@@ -6846,7 +6854,7 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     attached_dirs: dict[str, str] = {}
 
     def run(argv, stdin=None):  # noqa: ANN001
-        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        wrapper_index = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
         output_file = Path(argv[wrapper_index + 2])
         role = "pr-reviewer-quality" if "pr-reviewer-quality" in (stdin or "") else "pr-reviewer-logic"
         launched_prompts[role] = stdin or ""
@@ -6870,7 +6878,7 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
         task,
         lambda argv: Completed(0, "", ""),
         run,
-        vendor="openrouter",
+        vendor="driver-d",
         stage="review-2",
     )
     rows = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
@@ -6880,7 +6888,7 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     agents = [
         row
         for row in store.rows("agent")
-        if row.get("task_id") == tid and row.get("vendor") == "openrouter"
+        if row.get("task_id") == tid and row.get("vendor") == "driver-d"
     ]
     assert len(agents) == 2
     for agent in agents:
@@ -6892,7 +6900,7 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
         assert len(launched) <= 20_000
 
 
-def test_parallel_openrouter_missing_key_records_reason(
+def test_parallel_key_file_missing_key_records_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_lanes import phase_pr_gates
@@ -6902,8 +6910,8 @@ def test_parallel_openrouter_missing_key_records_reason(
     config_path = store.home / "ai-accounts.json"
     data = json.loads(config_path.read_text())
     data["accounts"]["router"] = {
-        "provider": "openrouter",
-        "config_dir": "/test/openrouter",
+        "provider": "driver-d",
+        "config_dir": "/test/driver-d",
     }
     data["roles"]["router-reader"] = {
         "account": "router",
@@ -6912,8 +6920,8 @@ def test_parallel_openrouter_missing_key_records_reason(
     }
     data["sessions"]["worker-session"]["lanes"].update(
         {
-            "openrouter:pr-reviewer-quality": "router-reader",
-            "openrouter:pr-reviewer-logic": "router-reader",
+            "driver-d:pr-reviewer-quality": "router-reader",
+            "driver-d:pr-reviewer-logic": "router-reader",
         }
     )
     config_path.write_text(json.dumps(data))
@@ -6921,14 +6929,14 @@ def test_parallel_openrouter_missing_key_records_reason(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000e3"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        second_dims=(),
+        second_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
-    task["models"] = {"first": "grok", "second": "openrouter"}
+    task["models"] = {"first": "driver-a", "second": "driver-d"}
     store.write(
         "task",
         "update",
@@ -6940,14 +6948,14 @@ def test_parallel_openrouter_missing_key_records_reason(
     patch_execute_github(monkeypatch)
     reason = (
         "STATUS: unavailable\n"
-        "openrouter key missing at <config_dir>/openrouter-api-key\n"
+        "driver-d key missing at <config_dir>/tool-d-key\n"
         "lane output file is unavailable"
     )
 
     def missing_key(argv, stdin=None):  # noqa: ANN001
-        assert any("openrouter-api-key" in str(value) for value in argv)
+        assert any("tool-d-key" in str(value) for value in argv)
         return Completed(
-            2, "", "STATUS: unavailable\nopenrouter key missing at /test/openrouter/openrouter-api-key\n"
+            2, "", "STATUS: unavailable\ndriver-d key missing at /test/driver-d/tool-d-key\n"
         )
 
     lines = phase_pr_gates(
@@ -6956,14 +6964,14 @@ def test_parallel_openrouter_missing_key_records_reason(
         task,
         lambda argv: Completed(0, "", ""),
         missing_key,
-        vendor="openrouter",
+        vendor="driver-d",
         stage="review-2",
     )
     assert any("unavailable; blocked" in line for line in lines)
     agents = [
         row
         for row in store.rows("agent")
-        if row.get("task_id") == tid and row.get("vendor") == "openrouter"
+        if row.get("task_id") == tid and row.get("vendor") == "driver-d"
     ]
     assert len(agents) == 2
     assert all(row["note"] == reason for row in agents)
@@ -6974,10 +6982,10 @@ def test_parallel_openrouter_missing_key_records_reason(
     ]
     assert len(lane_runs) == 2
     assert all(row["payload"]["final_text"] == reason for row in lane_runs)
-    assert not any("/test/openrouter" in row["note"] for row in agents)
+    assert not any("/test/driver-d" in row["note"] for row in agents)
 
 
-def test_approved_retry_does_not_advance_when_pending_codex_key_cannot_close(
+def test_approved_retry_does_not_advance_when_pending_second_key_cannot_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A cached approval stays recoverable when an earlier checklist hole denies close."""
@@ -6989,12 +6997,12 @@ def test_approved_retry_does_not_advance_when_pending_codex_key_cannot_close(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-000000000057"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=("quality", "logic"),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "n_a"},
+        second_dims=("quality", "logic"),
+        second_status={"review_2_quality": "pending", "review_2_logic": "n_a"},
     )
     review_1_quality = store.row("checklist_item", f"{tid}-review_1_quality")
     assert review_1_quality is not None
@@ -7017,7 +7025,7 @@ def test_approved_retry_does_not_advance_when_pending_codex_key_cannot_close(
         task,
         lambda argv: Completed(0, "", ""),
         None,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
     assert any(
@@ -7028,7 +7036,7 @@ def test_approved_retry_does_not_advance_when_pending_codex_key_cannot_close(
     assert status["review_2_quality"] == "pending"
     assert status["review_2_logic"] == "ja"
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_codex"
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_second"
 
 
 def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issue_is_not_a_defect() -> None:
@@ -7064,12 +7072,12 @@ def test_execution_binding_includes_explicit_models_block(tmp_path: Path) -> Non
     from agent_cli.github_accounts import load_accounts
 
     configured_slots = (
-        "grok:implementer",
-        "grok:reviewer",
-        "grok:pr-reviewer-quality",
-        "grok:pr-reviewer-logic",
-        "codex:pr-reviewer-quality",
-        "codex:pr-reviewer-logic",
+        "driver-a:implementer",
+        "driver-a:reviewer",
+        "driver-a:pr-reviewer-quality",
+        "driver-a:pr-reviewer-logic",
+        "driver-b:pr-reviewer-quality",
+        "driver-b:pr-reviewer-logic",
     )
     ai = load_ai_accounts(store.home)
     github = load_accounts(store.home)
@@ -7078,7 +7086,7 @@ def test_execution_binding_includes_explicit_models_block(tmp_path: Path) -> Non
         "worker_session": worker.session_id, "review_session": worker.review_session,
         "reply_logins": worker.reply_logins,
         "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "lane_execution": {"mode": "this-device-is-lane-host"},
         "lanes": [asdict(ai.for_lane(worker.session_id, s.split(":", 1)[1], s.split(":", 1)[0])) for s in configured_slots],
     }
@@ -7087,10 +7095,10 @@ def test_execution_binding_includes_explicit_models_block(tmp_path: Path) -> Non
     ).hexdigest()
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": "claude"}
-    data["accounts"]["claude-w"] = {"provider": "claude", "config_dir": "/test/claude"}
-    data["roles"]["claude-reader"] = {"account": "claude-w", "model": "m", "access": "read-only"}
-    data["lanes"] = {"claude:pr-reviewer-quality": "claude-reader", "claude:pr-reviewer-logic": "claude-reader"}
+    data["models"] = {"first": "driver-a", "second": "driver-c"}
+    data["accounts"]["driver-c-w"] = {"provider": "driver-c", "config_dir": "/test/driver-c"}
+    data["roles"]["driver-c-reader"] = {"account": "driver-c-w", "model": "m", "access": "read-only"}
+    data["lanes"] = {"driver-c:pr-reviewer-quality": "driver-c-reader", "driver-c:pr-reviewer-logic": "driver-c-reader"}
     path.write_text(json.dumps(data))
     assert execution_binding(store, worker, repo) != before
     data.pop("models")
@@ -7119,30 +7127,30 @@ def test_accepted_legacy_execution_binding_is_repinned_once(
     path = store.home / "ai-accounts.json"
     configuration = json.loads(path.read_text())
     if nondefault_models:
-        configuration["models"] = {"first": "claude", "second": "codex"}
-        configuration["accounts"]["claude-w"] = {
-            "provider": "claude",
-            "config_dir": "/test/claude",
+        configuration["models"] = {"first": "driver-c", "second": "driver-b"}
+        configuration["accounts"]["driver-c-w"] = {
+            "provider": "driver-c",
+            "config_dir": "/test/driver-c",
         }
-        configuration["roles"]["claude-impl"] = {
-            "account": "claude-w",
-            "model": "claude-model",
+        configuration["roles"]["driver-c-impl"] = {
+            "account": "driver-c-w",
+            "model": "driver-c-model",
             "access": "workspace-write",
         }
-        configuration["roles"]["claude-rev"] = {
-            "account": "claude-w",
-            "model": "claude-model",
+        configuration["roles"]["driver-c-rev"] = {
+            "account": "driver-c-w",
+            "model": "driver-c-model",
             "access": "read-only",
         }
         lanes = configuration["sessions"]["worker-session"]["lanes"]
         configuration["sessions"]["worker-session"]["lanes"] = {
-            key.replace("grok:", "claude:"): (
-                "claude-impl" if value == "impl" else "claude-rev"
+            key.replace("driver-a:", "driver-c:"): (
+                "driver-c-impl" if value == "impl" else "driver-c-rev"
             )
             for key, value in lanes.items()
-            if key.startswith("grok:")
+            if key.startswith("driver-a:")
         } | {
-            key: value for key, value in lanes.items() if key.startswith("codex:")
+            key: value for key, value in lanes.items() if key.startswith("driver-b:")
         }
         path.write_text(json.dumps(configuration))
 
@@ -7180,26 +7188,26 @@ def test_accepted_legacy_execution_binding_is_repinned_once(
     )
 
     configuration = json.loads(path.read_text())
-    selected_implementer = "claude-impl" if nondefault_models else "impl"
+    selected_implementer = "driver-c-impl" if nondefault_models else "impl"
     configuration["roles"][selected_implementer]["model"] = "changed-model"
     path.write_text(json.dumps(configuration))
     with pytest.raises(CoordinatorError, match="task execution configuration changed"):
         refresh_execution_binding(store, worker, migrated)
 
 
-def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preflight_refuses_command_driver_as_first_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "codex", "second": "grok"}
+    data["models"] = {"first": "driver-b", "second": "driver-a"}
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
-    with pytest.raises(CoordinatorError, match="models.first = codex"):
+    with pytest.raises(CoordinatorError, match="models.first = driver-b"):
         preflight_worker(store, worker, fake)
 
 
@@ -7249,7 +7257,7 @@ def test_preflight_refuses_a_separate_implementer(
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["implementer"] = "deepseek"
+    data["implementer"] = "driver-e"
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
@@ -7267,7 +7275,7 @@ def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) ->
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["implementer"] = "deepseek"
+    data["implementer"] = "driver-e"
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
@@ -7295,7 +7303,7 @@ def test_create_implement_task_refuses_external_second_for_non_a38_worker(
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": None}
+    data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
@@ -7323,7 +7331,7 @@ def test_create_implement_task_accepts_null_second_for_a38_worker(tmp_path: Path
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": None}
+    data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = replace(
@@ -7344,7 +7352,7 @@ def test_create_implement_task_accepts_null_second_for_a38_worker(tmp_path: Path
         body="Please fix",
     )
     assert task is not None
-    assert task["models"] == {"first": "grok", "second": None}
+    assert task["models"] == {"first": "driver-a", "second": None}
     assert task["payload"]["coordinator"]["a38"] == {"enabled": True}
     assert len(store.rows("task")) == 1
 
@@ -7356,7 +7364,7 @@ def test_preflight_refuses_external_second_for_non_a38_worker(
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": None}
+    data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
@@ -7388,7 +7396,7 @@ def test_a38_preflight_requires_null_second_and_excludes_worker_login(
 
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": None}
+    data["models"] = {"first": "driver-a", "second": None}
     path.write_text(json.dumps(data))
     preflight_worker(store, worker, fake)
 
@@ -7431,7 +7439,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     write_accounts(store.home)
     manifest = store.home / "ai-accounts.json"
     ai = json.loads(manifest.read_text())
-    ai["models"] = {"first": "grok", "second": None}
+    ai["models"] = {"first": "driver-a", "second": None}
     manifest.write_text(json.dumps(ai))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     store.set_meta("github_login", "worker-bot")
@@ -7464,12 +7472,12 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         "title": "A38 review retry",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "change_summary_en": "The unavailable launch is excluded from the pass count.",
         "change_summary_de": "Der nicht verfügbare Start zählt nicht als Review-Durchlauf.",
         "payload": {
             "coordinator": {
-                "phase": "pr_gates_grok",
+                "phase": "pr_gates_first",
                 "worktree": str(worktree),
                 "base_sha": "b" * 40,
                 "head_sha": _POSTED_HEAD,
@@ -7505,7 +7513,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         store.row("task", tid),
         fake,
         lane_runner(fake),
-        vendor="grok",
+        vendor="driver-a",
         stage="review-1",
     )
     blocked = store.row("task", tid)
@@ -7520,8 +7528,8 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     ]
     resume_lines = phase_blocked(store, worker, blocked, fake)
     resumed = store.row("task", tid)
-    assert any("resuming pr_gates_grok" in line for line in resume_lines)
-    assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    assert any("resuming pr_gates_first" in line for line in resume_lines)
+    assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_first"
 
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
     quality_gate_ids_before_crash = {
@@ -7558,10 +7566,10 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
             fake,
             lambda argv, stdin=None: Completed(
                 0,
-                grok_messages_stream("STATUS: complete\nRESULT: approved\n"),
+                event_stream_output("STATUS: complete\nRESULT: approved\n"),
                 "",
             ),
-            vendor="grok",
+            vendor="driver-a",
             stage="review-1",
         )
     monkeypatch.setattr(
@@ -7574,7 +7582,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     assert approved["payload"]["coordinator"]["a38"][
         "first_review_pass_pending"
     ] == {"head": _POSTED_HEAD, "stage": "review-1"}
-    assert approved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    assert approved["payload"]["coordinator"]["phase"] == "pr_gates_first"
     approved_gates = [
         gate
         for gate in store.rows("review_gate")
@@ -7615,7 +7623,7 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         approved,
         fake,
         recovery_lane,
-        vendor="grok",
+        vendor="driver-a",
         stage="review-1",
     )
     assert recovery_invocations == []
@@ -7673,7 +7681,7 @@ def test_a38_ci_and_readiness_route_to_guard_ready_wait(
     store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
     manifest = store.home / "ai-accounts.json"
     ai = json.loads(manifest.read_text())
-    ai["models"] = {"first": "grok", "second": None}
+    ai["models"] = {"first": "driver-a", "second": None}
     manifest.write_text(json.dumps(ai))
     worker = replace(
         ordinary_worker,
@@ -7688,8 +7696,8 @@ def test_a38_ci_and_readiness_route_to_guard_ready_wait(
         fake,
         tid=tid,
         phase="ci",
-        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
-        models={"first": "grok", "second": None},  # type: ignore[dict-item]
+        checklist_second={"review_2_quality": "ja", "review_2_logic": "ja"},
+        models={"first": "driver-a", "second": None},  # type: ignore[dict-item]
     )
     evidence = f"external second review by outside-reviewer at {fake.head}: https://x/comment"
     for row in store.rows("checklist_item"):
@@ -7746,7 +7754,7 @@ def _a38_second_review_payload(
         "lanes": [
             {
                 "id": lane_id,
-                "provider": "OpenAI",
+                "provider": "Vendor B",
                 "model": "Reviewer Model 2",
                 "model_number": "reviewer-model-2",
                 "prompt": COMPLIANCE_PROMPT,
@@ -7796,7 +7804,7 @@ def _a38_external_review_env(
     store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
     manifest = store.home / "ai-accounts.json"
     ai = json.loads(manifest.read_text())
-    ai["models"] = {"first": "grok", "second": None}
+    ai["models"] = {"first": "driver-a", "second": None}
     manifest.write_text(json.dumps(ai))
     worker = replace(
         ordinary_worker,
@@ -7810,8 +7818,8 @@ def _a38_external_review_env(
         fake,
         tid=task_id,
         phase="await_second_review",
-        checklist_codex={"review_2_quality": "pending", "review_2_logic": "pending"},
-        models={"first": "grok", "second": None},
+        checklist_second={"review_2_quality": "pending", "review_2_logic": "pending"},
+        models={"first": "driver-a", "second": None},
     )
     checkpoint = task["payload"]["coordinator"]
     checkpoint["a38"].update(
@@ -8012,8 +8020,8 @@ def test_a38_new_head_second_review_updates_legacy_checklist_evidence(
         f"external second review by reviewer-one at {old_head}: https://x/old"
     )
     legacy_keys = {
-        "review_2_quality": "codex_pr_quality",
-        "review_2_logic": "codex_pr_logic",
+        "review_2_quality": "driver-b_pr_quality",
+        "review_2_logic": "driver-b_pr_logic",
     }
     for row in store.rows("checklist_item"):
         legacy = legacy_keys.get(str(row.get("key")))
@@ -8632,7 +8640,7 @@ def test_a38_implement_after_a_block_checks_for_a_merge_first(
 
 
 @pytest.mark.parametrize(
-    "phase", ["inner_review", "tests", "publish_draft", "pr_gates_grok", "a38_first_comment"]
+    "phase", ["inner_review", "tests", "publish_draft", "pr_gates_first", "a38_first_comment"]
 )
 @pytest.mark.parametrize(("pr_state", "expected"), [("MERGED", "await_merge"), (None, None)])
 def test_a38_published_rerun_phases_check_for_a_merge_first(
@@ -10032,7 +10040,7 @@ def _a38_first_comment_env(
     write_accounts(store.home)
     manifest = store.home / "ai-accounts.json"
     ai = json.loads(manifest.read_text())
-    ai["models"] = {"first": "grok", "second": None}
+    ai["models"] = {"first": "driver-a", "second": None}
     manifest.write_text(json.dumps(ai))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     store.set_meta("github_login", "worker-bot")
@@ -10056,7 +10064,7 @@ def _a38_first_comment_env(
         "title": "A38 task",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "change_summary_en": "The coordinator supports an external second review.",
         "change_summary_de": "Der Koordinator unterstützt einen externen zweiten Review.",
         "payload": {
@@ -10099,8 +10107,8 @@ def _a38_first_comment_env(
     }
     store.write("task", "insert", tid, task)
     for dimension in ("quality", "logic"):
-        gid = f"grok-{dimension}"
-        aid = f"grok-{dimension}-agent"
+        gid = f"driver-a-{dimension}"
+        aid = f"driver-a-{dimension}-agent"
         store.write(
             "agent",
             "insert",
@@ -10110,9 +10118,9 @@ def _a38_first_comment_env(
                 "session_id": worker.session_id,
                 "task_id": tid,
                 "role": f"pr-reviewer-{dimension}",
-                "vendor": "grok",
-                "provider": "grok",
-                "model": "grok-model",
+                "vendor": "driver-a",
+                "provider": "driver-a",
+                "model": "driver-a-model",
                 "prompt": COMPLIANCE_PROMPT + f" Check {dimension}.",
                 "head_sha": fake.head,
                 "dimension": dimension,
@@ -10128,7 +10136,7 @@ def _a38_first_comment_env(
                 "task_id": tid,
                 "stage": "review-1",
                 "dimension": dimension,
-                "vendor": "grok",
+                "vendor": "driver-a",
                 "verdict": "approved",
                 "head_sha": fake.head,
                 "agent_id": aid,
@@ -10183,11 +10191,11 @@ def test_a38_first_comment_uses_insert_order_when_later_gate_uuid_sorts_smaller(
             "task_id": task_id,
             "stage": "review-1",
             "dimension": "quality",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "verdict": "rejected",
             "evidence": "later durable rejection",
             "head_sha": fake.head,
-            "agent_id": "grok-quality-agent",
+            "agent_id": "driver-a-quality-agent",
             "recorded_at": "2026-01-01T00:00:00Z",
         },
     )
@@ -10923,8 +10931,8 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         "kind": "a38.second-review/v1", "task_id": tid, "head": fake.head,
         "defects": 0, "blocks_merge": False, "findings": "",
         "lanes": [
-            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
-            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+            {"id": "conformity-b", "provider": "Vendor B", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "Vendor B", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
         ],
     }
 
@@ -11601,7 +11609,7 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
 
     remeasured = store.row("task", task_id)["payload"]["coordinator"]
     assert rerun == [f"A38 report waived on {fake.head[:7]} (markdown-only change set)"]
-    assert remeasured["phase"] == "pr_gates_grok"
+    assert remeasured["phase"] == "pr_gates_first"
     assert remeasured["base_sha"] == checkout_base
     assert remeasured["a38"]["base_sha"] == moved_base
     assert "pending_base_sha" not in remeasured["a38"]
@@ -12185,7 +12193,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
         "state": "pr-review",
         "title": "A38 prompt provenance",
         "repo": "example/project",
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {
             "coordinator": {
                 "phase": "a38_first_comment",
@@ -12219,9 +12227,9 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
                 "session_id": worker.session_id,
                 "task_id": tid,
                 "role": f"pr-reviewer-{dimension}",
-                "vendor": "grok",
-                "provider": "grok",
-                "model": "grok-model",
+                "vendor": "driver-a",
+                "provider": "driver-a",
+                "model": "driver-a-model",
                 "head_sha": _POSTED_HEAD,
                 "dimension": dimension,
                 "status": "done",
@@ -12235,7 +12243,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
             "task_id": tid,
             "stage": "review-1",
             "dimension": dimension,
-            "vendor": "grok",
+            "vendor": "driver-a",
             "verdict": "approved",
             "head_sha": _POSTED_HEAD,
             "recorded_at": "2026-01-01T00:00:00Z",
@@ -12256,7 +12264,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
     )
     assert lines == ["first review quality prompt evidence missing; re-running gate"]
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_first"
 
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -12268,7 +12276,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
         elif "pr-reviewer-logic" in text or "Logic:" in text:
             launched.append("logic")
         return Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         )
 
     phase_pr_gates(
@@ -12277,7 +12285,7 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
         saved,
         lambda argv: Completed(0, "", ""),
         run,
-        vendor="grok",
+        vendor="driver-a",
         stage="review-1",
     )
     assert launched == ["quality"]
@@ -12310,7 +12318,7 @@ def test_a38_moved_base_precheck_uses_observed_base_before_promotion(
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True, "base_sha": promoted_base, "policy_revision": promoted_base}}},
     }
     store.write("task", "insert", tid, task)
@@ -12419,7 +12427,7 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
@@ -13632,7 +13640,7 @@ def test_a38_inventory_waiver_finalization_uses_live_context(
         "title": "A38 waiver",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {
             "coordinator": {
                 "phase": "tests",
@@ -13771,7 +13779,7 @@ def test_a38_inventory_waiver_finalization_uses_live_context(
         assert checklist_status["pushed"] == "ja"
         return
     assert lines == [f"A38 report waived on {head[:7]} ({reason})"]
-    assert checkpoint["phase"] == "pr_gates_grok"
+    assert checkpoint["phase"] == "pr_gates_first"
     assert checkpoint["a38"]["report_waiver"] == {
         "head": head,
         "base_sha": base,
@@ -13831,7 +13839,7 @@ def test_a38_policy_change_fails_before_old_base_evidence_is_run(
         "state": "local-check",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7, "base": "develop"}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
@@ -14241,7 +14249,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
@@ -14411,7 +14419,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     assert intent["body_sha256"] != ""
     assert saved["payload"]["coordinator"]["evidence"]["tests_pass"] is True
     assert saved["payload"]["coordinator"]["evidence"]["tests_head"] == head
-    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_first"
     local_check = next(
         row
         for row in store.rows("checklist_item")
@@ -14449,7 +14457,7 @@ def test_a38_tests_validates_an_executor_job_report_and_checkpoints_it(
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 executor report", "repo": "example/project", "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
@@ -14687,26 +14695,26 @@ def test_a38_legacy_report_intent_recovery_uses_stable_live_context(
             assert saved["a38"]["pending_base_sha"] == live_base
 
 
-def _claude_first_manifest(home: Path) -> None:
+def _driver_c_first_manifest(home: Path) -> None:
     path = home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "claude", "second": "codex"}
-    data["accounts"]["claude-w"] = {"provider": "claude", "config_dir": "/test/claude"}
-    data["roles"]["claude-builder"] = {"account": "claude-w", "model": "claude-model", "access": "workspace-write"}
-    data["roles"]["claude-reader"] = {"account": "claude-w", "model": "claude-model", "access": "read-only"}
+    data["models"] = {"first": "driver-c", "second": "driver-b"}
+    data["accounts"]["driver-c-w"] = {"provider": "driver-c", "config_dir": "/test/driver-c"}
+    data["roles"]["driver-c-builder"] = {"account": "driver-c-w", "model": "driver-c-model", "access": "workspace-write"}
+    data["roles"]["driver-c-reader"] = {"account": "driver-c-w", "model": "driver-c-model", "access": "read-only"}
     data["lanes"] = {
-        "claude:implementer": "claude-builder",
-        "claude:reviewer": "claude-reader",
-        "claude:pr-reviewer-quality": "claude-reader",
-        "claude:pr-reviewer-logic": "claude-reader",
+        "driver-c:implementer": "driver-c-builder",
+        "driver-c:reviewer": "driver-c-reader",
+        "driver-c:pr-reviewer-quality": "driver-c-reader",
+        "driver-c:pr-reviewer-logic": "driver-c-reader",
     }
     path.write_text(json.dumps(data))
 
 
-def test_preflight_accepts_claude_first_with_device_lanes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preflight_accepts_driver_c_first_with_device_lanes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
@@ -14715,16 +14723,16 @@ def test_preflight_accepts_claude_first_with_device_lanes(tmp_path: Path, monkey
     preflight_worker(store, worker, fake)
 
 
-def test_preflight_accepts_openrouter_first_with_device_lanes(
+def test_preflight_accepts_driver_d_first_with_device_lanes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "openrouter", "second": "codex"}
+    data["models"] = {"first": "driver-d", "second": "driver-b"}
     data["accounts"]["router-w"] = {
-        "provider": "openrouter", "config_dir": "/test/openrouter"
+        "provider": "driver-d", "config_dir": "/test/driver-d"
     }
     data["roles"]["router-builder"] = {
         "account": "router-w", "model": "vendor/model", "access": "workspace-write"
@@ -14733,10 +14741,10 @@ def test_preflight_accepts_openrouter_first_with_device_lanes(
         "account": "router-w", "model": "vendor/model", "access": "read-only"
     }
     data["sessions"]["worker-session"]["lanes"].update({
-        "openrouter:implementer": "router-builder",
-        "openrouter:reviewer": "router-reader",
-        "openrouter:pr-reviewer-quality": "router-reader",
-        "openrouter:pr-reviewer-logic": "router-reader",
+        "driver-d:implementer": "router-builder",
+        "driver-d:reviewer": "router-reader",
+        "driver-d:pr-reviewer-quality": "router-reader",
+        "driver-d:pr-reviewer-logic": "router-reader",
     })
     path.write_text(json.dumps(data))
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -14747,7 +14755,7 @@ def test_preflight_accepts_openrouter_first_with_device_lanes(
     preflight_worker(store, worker, fake)
 
 
-def test_coordinator_refuses_openrouter_config_overlapping_worktree(
+def test_coordinator_refuses_key_file_config_overlapping_worktree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_lanes import launch_lane
@@ -14761,19 +14769,19 @@ def test_coordinator_refuses_openrouter_config_overlapping_worktree(
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
     data["accounts"]["router"] = {
-        "provider": "openrouter", "config_dir": str(worktree / "config")
+        "provider": "driver-d", "config_dir": str(worktree / "config")
     }
     data["roles"]["router-builder"] = {
         "account": "router", "model": "vendor/model", "access": "workspace-write"
     }
-    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    data["sessions"]["worker-session"]["lanes"]["driver-d:implementer"] = "router-builder"
     path.write_text(json.dumps(data))
     task = {
         "id": "aa000001-0000-4000-8000-0000000000e0",
         "session_id": "worker-session",
         "workflow": "implement",
         "state": "implementing",
-        "models": {"first": "openrouter", "second": "codex"},
+        "models": {"first": "driver-d", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
     store.write("task", "insert", task["id"], task)
@@ -14787,7 +14795,7 @@ def test_coordinator_refuses_openrouter_config_overlapping_worktree(
             worker,
             task,
             role="implementer",
-            vendor="openrouter",
+            vendor="driver-d",
             round_num=1,
             spec_body="Implement.",
             runner=lambda argv: Completed(0, "", ""),
@@ -14796,7 +14804,7 @@ def test_coordinator_refuses_openrouter_config_overlapping_worktree(
     assert not [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
 
 
-def test_sequential_openrouter_lane_hides_its_config_dir(
+def test_sequential_key_file_lane_hides_its_config_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_lanes import launch_lane
@@ -14809,18 +14817,18 @@ def test_sequential_openrouter_lane_hides_its_config_dir(
     worktree.mkdir()
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["accounts"]["router"] = {"provider": "openrouter", "config_dir": "/opt/profiles/router"}
+    data["accounts"]["router"] = {"provider": "driver-d", "config_dir": "/opt/profiles/router"}
     data["roles"]["router-builder"] = {
         "account": "router", "model": "vendor/model", "access": "workspace-write"
     }
-    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    data["sessions"]["worker-session"]["lanes"]["driver-d:implementer"] = "router-builder"
     path.write_text(json.dumps(data))
     task = {
         "id": "aa000001-0000-4000-8000-0000000000e7",
         "session_id": "worker-session",
         "workflow": "implement",
         "state": "implementing",
-        "models": {"first": "openrouter", "second": "codex"},
+        "models": {"first": "driver-d", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
     store.write("task", "insert", task["id"], task)
@@ -14834,28 +14842,28 @@ def test_sequential_openrouter_lane_hides_its_config_dir(
         worker,
         task,
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=lambda argv, stdin: Completed(
-            2, "", "cannot read /opt/profi\x1b[31mles/router/openrouter-api-key"
+            2, "", "cannot read /opt/profi\x1b[31mles/router/tool-d-key"
         ),
     )
 
     assert "/opt/profiles/router" not in result.stderr
     assert "\x1b" not in result.stderr
-    assert "<config_dir>/openrouter-api-key" in result.stderr
+    assert "<config_dir>/tool-d-key" in result.stderr
     runs = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
     assert runs and "/opt/profiles/router" not in runs[0]["payload"]["final_text"]
     assert runs[0]["payload"]["final_text"] == (
-        "cannot read <config_dir>/openrouter-api-key"
+        "cannot read <config_dir>/tool-d-key"
     )
-    assert agent["note"] == "cannot read <config_dir>/openrouter-api-key"
+    assert agent["note"] == "cannot read <config_dir>/tool-d-key"
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])
-def test_sequential_openrouter_output_failure_ends_agent_and_lane(
+def test_sequential_key_file_output_failure_ends_agent_and_lane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     from agent_cli.coordinator_lanes import launch_lane
@@ -14869,11 +14877,11 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     worktree.mkdir()
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["accounts"]["router"] = {"provider": "openrouter", "config_dir": "/opt/profiles/router"}
+    data["accounts"]["router"] = {"provider": "driver-d", "config_dir": "/opt/profiles/router"}
     data["roles"]["router-builder"] = {
         "account": "router", "model": "vendor/model", "access": "workspace-write"
     }
-    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    data["sessions"]["worker-session"]["lanes"]["driver-d:implementer"] = "router-builder"
     path.write_text(json.dumps(data))
     task = {
         "id": "aa000001-0000-4000-8000-0000000000e8",
@@ -14881,7 +14889,7 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "openrouter", "second": "codex"},
+        "models": {"first": "driver-d", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -14894,9 +14902,9 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     store.write(
         "task_round",
         "insert",
-        "openrouter-output-round",
+        "driver-d-output-round",
         {
-            "id": "openrouter-output-round",
+            "id": "driver-d-output-round",
             "task_id": task["id"],
             "round": 1,
             "implementer_verdict": None,
@@ -14915,7 +14923,7 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     def decode_failure(argv: list[str], _stdin: str | None) -> Completed:
         launches["count"] += 1
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         output = Path(argv[wrapper_index + 2])
         output_paths.append(output)
@@ -14930,7 +14938,7 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
         worker,
         task,
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
@@ -14993,7 +15001,7 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     def valid_output(argv: list[str], _stdin: str | None) -> Completed:
         launches["count"] += 1
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         stream = json.dumps(
             {"type": "result", "result": "STATUS: complete\nRESULT: done", "usage": {}}
@@ -15006,7 +15014,7 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
         worker,
         store.row("task", task["id"]),
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
@@ -15035,7 +15043,7 @@ def test_sequential_lane_failure_rollback_keeps_agent_working(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {"phase": "implement", "worktree": str(worktree)}
         },
@@ -15065,7 +15073,7 @@ def test_sequential_lane_failure_rollback_keeps_agent_working(
             worker,
             task,
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             round_num=1,
             spec_body="Implement.",
             runner=lambda _argv: Completed(0, "", ""),
@@ -15104,7 +15112,7 @@ def test_sequential_inner_reviewer_output_failure_is_retryable(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -15132,14 +15140,14 @@ def test_sequential_inner_reviewer_output_failure_is_retryable(
     )
     data = json.loads((store.home / "ai-accounts.json").read_text())
     data["accounts"]["router"] = {
-        "provider": "openrouter", "config_dir": "/test/openrouter"
+        "provider": "driver-d", "config_dir": "/test/driver-d"
     }
     data["roles"]["router-reader"] = {
         "account": "router", "model": "vendor/model", "access": "read-only"
     }
-    data["sessions"]["worker-session"]["lanes"]["openrouter:reviewer"] = "router-reader"
+    data["sessions"]["worker-session"]["lanes"]["driver-d:reviewer"] = "router-reader"
     (store.home / "ai-accounts.json").write_text(json.dumps(data))
-    task["models"] = {"first": "openrouter", "second": "codex"}
+    task["models"] = {"first": "driver-d", "second": "driver-b"}
     store.write("task", "update", tid, {k: v for k, v in task.items() if not k.startswith("_")})
     monkeypatch.setattr(
         "agent_cli.coordinator_lanes.verify_checkout_identity",
@@ -15147,7 +15155,7 @@ def test_sequential_inner_reviewer_output_failure_is_retryable(
     )
 
     def broken(argv, stdin=None):  # noqa: ANN001
-        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        wrapper_index = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
         Path(argv[wrapper_index + 2]).write_bytes(b"\xff")
         return Completed(0, "", "")
 
@@ -15194,7 +15202,7 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -15246,7 +15254,7 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
             lambda argv: Completed(0, "", ""),
             lambda argv, stdin=None: Completed(
                 0,
-                grok_messages_stream(
+                event_stream_output(
                     "STATUS: complete\nRESULT: rejected\npassword=hunter2 defect"
                 ),
                 "",
@@ -15300,7 +15308,7 @@ def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
     raw_model = "api_key=model-secret /opt/private/profile"
-    accounts["accounts"]["grok-w"]["config_dir"] = "/opt/private/profile"
+    accounts["accounts"]["driver-a-w"]["config_dir"] = "/opt/private/profile"
     accounts["roles"]["impl"]["model"] = raw_model
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -15314,7 +15322,7 @@ def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {"coordinator": {"phase": "implement", "worktree": str(worktree)}},
     }
     store.write("task", "insert", tid, task)
@@ -15327,7 +15335,7 @@ def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
         launched.append(argv)
         return Completed(
             0,
-            grok_messages_stream(
+            event_stream_output(
                 "STATUS: complete\nRESULT: done\n"
                 "SUMMARY_EN: Apply the requested fix.\n"
                 "SUMMARY_DE: Setze die angeforderte Korrektur um.\n"
@@ -15342,7 +15350,7 @@ def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
         worker,
         task,
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Implement.",
         runner=lambda _argv: Completed(0, "", ""),
@@ -15376,7 +15384,7 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -15416,12 +15424,12 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
         worker,
         task,
         role="reviewer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
         lane_runner=lambda _argv, _stdin: Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         ),
     )
     assert agent["status"] == "working"
@@ -15461,7 +15469,7 @@ def test_reviewer_audit_failure_retries_checkpoint_without_relaunch(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -15492,12 +15500,12 @@ def test_reviewer_audit_failure_retries_checkpoint_without_relaunch(
         worker,
         task,
         role="reviewer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
         lane_runner=lambda _argv, _stdin: Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: approved\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: approved\n"), ""
         ),
     )
     assert first_agent["status"] == "working"
@@ -15523,7 +15531,7 @@ def test_reviewer_audit_failure_retries_checkpoint_without_relaunch(
         worker,
         recovered_task,
         role="reviewer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
@@ -15560,7 +15568,7 @@ def test_implementer_checkpoint_rollback_keeps_running_state(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -15604,12 +15612,12 @@ def test_implementer_checkpoint_rollback_keeps_running_state(
             worker,
             task,
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             round_num=1,
             spec_body="Implement.",
             runner=lambda _argv: Completed(0, "", ""),
             lane_runner=lambda _argv, _stdin: Completed(
-                0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+                0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
             ),
         )
 
@@ -15653,7 +15661,7 @@ def test_implementer_checkpoint_rejects_non_relative_surface_paths(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {"coordinator": {"phase": "implement", "worktree": str(worktree)}},
     }
     store.write("task", "insert", tid, task)
@@ -15674,12 +15682,12 @@ def test_implementer_checkpoint_rejects_non_relative_surface_paths(
             worker,
             task,
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             round_num=1,
             spec_body="Implement.",
             runner=lambda argv: Completed(0, "", ""),
             lane_runner=lambda _argv, _stdin: Completed(
-                0, grok_messages_stream(output), ""
+                0, event_stream_output(output), ""
             ),
         )
 
@@ -15813,7 +15821,7 @@ def test_implementer_done_replay_rollback_keeps_checkpoint_round_and_checklist(
                 "phase": "implement",
                 "lane_outcome": {
                     "role": "implementer",
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "round": 1,
                     "agent_id": agent_id,
                     "status": "complete",
@@ -15848,9 +15856,9 @@ def test_implementer_done_replay_rollback_keeps_checkpoint_round_and_checklist(
             "task_id": tid,
             "round": 1,
             "role": "implementer",
-            "vendor": "grok",
-            "provider": "grok",
-            "model": "grok-model",
+            "vendor": "driver-a",
+            "provider": "driver-a",
+            "model": "driver-a-model",
             "prompt": "Implement.",
             "status": "done",
             "started_at": "2026-01-01T00:00:00Z",
@@ -16123,7 +16131,7 @@ def test_inner_reviewer_replay_rollback_keeps_live_task_and_round_unmodified(
     aid = "aa000001-0000-4000-8000-0000000000ee"
     outcome = {
         "role": "reviewer",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "model": "model",
         "round": 1,
         "head": "a" * 40,
@@ -16142,7 +16150,7 @@ def test_inner_reviewer_replay_rollback_keeps_live_task_and_round_unmodified(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -16213,12 +16221,12 @@ def test_parallel_pr_review_uses_checkpointed_result_after_diagnostic_truncation
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000ef"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     task["ref"] = "42"
     store.write(
@@ -16238,7 +16246,7 @@ def test_parallel_pr_review_uses_checkpointed_result_after_diagnostic_truncation
             if "pr-reviewer-quality" in material
             else "STATUS: complete\nRESULT: approved\n"
         )
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(("diagnostic line\n" * 400) + protocol, encoding="utf-8")
         return Completed(0, "", "")
 
@@ -16248,7 +16256,7 @@ def test_parallel_pr_review_uses_checkpointed_result_after_diagnostic_truncation
         task,
         lambda _argv: Completed(0, "", ""),
         review,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -16287,12 +16295,12 @@ def test_hidden_duplicate_protocol_records_cannot_approve_pr_gates(
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     tid = "aa000001-0000-4000-8000-0000000001a1"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     patch_execute_github(monkeypatch)
 
     def review(argv, _stdin=None):  # noqa: ANN001
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(
             "STATUS: complete\nRESULT: approved\n" + hidden_records,
             encoding="utf-8",
@@ -16305,7 +16313,7 @@ def test_hidden_duplicate_protocol_records_cannot_approve_pr_gates(
         task,
         lambda argv: Completed(0, "", ""),
         review,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -16354,7 +16362,7 @@ def test_hidden_duplicate_protocol_records_cannot_finish_implementer(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -16396,7 +16404,7 @@ def test_hidden_duplicate_protocol_records_cannot_finish_implementer(
         worker,
         task,
         lambda argv: Completed(0, "", ""),
-        lambda _argv, _stdin: Completed(0, grok_messages_stream(output), ""),
+        lambda _argv, _stdin: Completed(0, event_stream_output(output), ""),
     )
 
     saved = store.row("task", tid)
@@ -16424,19 +16432,19 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-0000000000f1"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
     patch_execute_github(monkeypatch)
 
     def run(argv, stdin=None):  # noqa: ANN001
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         if failure == "decode":
             output.write_bytes(b"\xff")
         return Completed(0, "", "")
@@ -16447,7 +16455,7 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
         task,
         lambda argv: Completed(0, "", ""),
         run,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -16457,10 +16465,10 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
     assert checkpoint.get("uncertain_lane") is not True
-    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["resume_phase"] == "pr_gates_second"
     agents = [
         row for row in store.rows("agent")
-        if row.get("task_id") == tid and row.get("vendor") == "codex"
+        if row.get("task_id") == tid and row.get("vendor") == "driver-b"
     ]
     expected = (
         "not valid UTF-8" if failure == "decode" else "lane output file is unavailable"
@@ -16489,34 +16497,34 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
     # The safe read-only review is retryable: no working agent blocks a new stage.
     from agent_cli.coordinator_lanes import vendor_stage_has_working_agents
 
-    assert vendor_stage_has_working_agents(store, tid, vendor="codex") is None
+    assert vendor_stage_has_working_agents(store, tid, vendor="driver-b") is None
 
 
-def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
+def test_pr_review_agent_for_stdin_driver_feeds_spec_on_stdin(tmp_path: Path) -> None:
     from agent_cli.coordinator_lanes import _prepare_pr_review_agent
 
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
     worktree = tmp_path / "wt"
     worktree.mkdir()
     task = {
-        "id": "t-claude",
+        "id": "t-driver-c",
         "session_id": "worker-session",
-        "models": {"first": "claude", "second": "codex"},
+        "models": {"first": "driver-c", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
     prep = _prepare_pr_review_agent(
-        store, worker, task, role="pr-reviewer-quality", vendor="claude",
+        store, worker, task, role="pr-reviewer-quality", vendor="driver-c",
         stage="review-1", head="a" * 40,
         spec_body="Review this.",
     )
     argv = prep["argv"]
-    assert "claude" in argv and "--print" in argv
-    assert "--restricted" in argv and "--setting-sources" not in argv
-    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "tool-c" in argv and "--print" in argv
+    assert argv[argv.index("--tools") + 1] == "Read"
+    assert argv[argv.index("--mode") + 1] == "default"
     assert "--add-dir" in argv
     assert "Review this." in (prep.get("stdin_text") or "")
     agent = store.row("agent", prep["agent_id"])
@@ -16531,15 +16539,15 @@ def test_pr_review_agent_rejects_prompt_over_limit(tmp_path: Path) -> None:
 
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
     worktree = tmp_path / "wt-long-prompt"
     worktree.mkdir()
     task = {
-        "id": "t-claude-long-prompt",
+        "id": "t-driver-c-long-prompt",
         "session_id": "worker-session",
-        "models": {"first": "claude", "second": "codex"},
+        "models": {"first": "driver-c", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
 
@@ -16549,7 +16557,7 @@ def test_pr_review_agent_rejects_prompt_over_limit(tmp_path: Path) -> None:
             worker,
             task,
             role="pr-reviewer-quality",
-            vendor="claude",
+            vendor="driver-c",
             stage="review-1",
             head="a" * 40,
             spec_body="x" * 20_000,
@@ -16568,15 +16576,15 @@ def test_a38_pr_review_prompt_is_bounded_so_the_first_comment_fits(
 
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = replace(make_worker(tmp_path), a38=a38)
     worktree = tmp_path / "wt-a38-prompt"
     worktree.mkdir()
     task = {
-        "id": "t-claude-a38-prompt",
+        "id": "t-driver-c-a38-prompt",
         "session_id": "worker-session",
-        "models": {"first": "claude", "second": "codex"},
+        "models": {"first": "driver-c", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
 
@@ -16586,7 +16594,7 @@ def test_a38_pr_review_prompt_is_bounded_so_the_first_comment_fits(
             worker,
             task,
             role="pr-reviewer-quality",
-            vendor="claude",
+            vendor="driver-c",
             stage="review-1",
             head="a" * 40,
             spec_body="x" * 15_000,
@@ -16601,24 +16609,24 @@ def test_a38_pr_review_prompt_is_bounded_so_the_first_comment_fits(
         assert store.rows("agent")
 
 
-def test_sequential_claude_lane_records_usage_and_tools(
+def test_sequential_stdin_driver_lane_records_usage_and_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli.coordinator_lanes import launch_lane
 
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
-    worktree = worker.workspace_root / "seq-claude"
+    worktree = worker.workspace_root / "seq-driver-c"
     worktree.mkdir()
     task = {
         "id": "aa000001-0000-4000-8000-0000000000e1",
         "session_id": "worker-session",
         "workflow": "implement",
         "state": "implementing",
-        "models": {"first": "claude", "second": "codex"},
+        "models": {"first": "driver-c", "second": "driver-b"},
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
     store.write("task", "insert", task["id"], task)
@@ -16632,7 +16640,7 @@ def test_sequential_claude_lane_records_usage_and_tools(
         ]}},
         {"type": "result", "result": "STATUS: complete\nRESULT: done",
          "usage": {"input_tokens": 12, "output_tokens": 5},
-         "modelUsage": {"claude-model": {}}, "num_turns": 2, "duration_ms": 30},
+         "modelUsage": {"driver-c-model": {}}, "num_turns": 2, "duration_ms": 30},
     ]
     stream = "\n".join(json.dumps(event) for event in events) + "\n"
     _agent, result = launch_lane(
@@ -16640,7 +16648,7 @@ def test_sequential_claude_lane_records_usage_and_tools(
         worker,
         task,
         role="implementer",
-        vendor="claude",
+        vendor="driver-c",
         round_num=1,
         spec_body="Implement.",
         runner=lambda argv: Completed(0, "", ""),
@@ -16658,7 +16666,7 @@ def test_sequential_claude_lane_records_usage_and_tools(
 def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
-    _claude_first_manifest(store.home)
+    _driver_c_first_manifest(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
@@ -16668,7 +16676,7 @@ def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkey
     patch_run_bounded(monkeypatch, fake)
     tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
     tasks = store.rows("task")
-    assert tasks and all(t.get("models") == {"first": "claude", "second": "codex"} for t in tasks)
+    assert tasks and all(t.get("models") == {"first": "driver-c", "second": "driver-b"} for t in tasks)
 
     # A later device change does not move what the accepted task runs on.
     from agent_cli import coordinator_lanes
@@ -16676,19 +16684,19 @@ def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkey
 
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": "codex"}
+    data["models"] = {"first": "driver-a", "second": "driver-b"}
     path.write_text(json.dumps(data))
     task = dict(tasks[0])
-    assert _first_slot_vendor(task) == "claude"
+    assert _first_slot_vendor(task, load_ai_accounts(store.home)) == "driver-c"
     seen: list[tuple[str, str]] = []
     monkeypatch.setattr(
         coordinator_lanes,
         "phase_pr_gates",
         lambda *a, vendor, stage, **k: seen.append((vendor, stage)) or [],
     )
-    coordinator_lanes.phase_pr_gates_grok(store, worker, task, fake, None)
-    coordinator_lanes.phase_pr_gates_codex(store, worker, task, fake, None)
-    assert seen == [("claude", "review-1"), ("codex", "review-2")]
+    coordinator_lanes.phase_pr_gates_first(store, worker, task, fake, None)
+    coordinator_lanes.phase_pr_gates_second(store, worker, task, fake, None)
+    assert seen == [("driver-c", "review-1"), ("driver-b", "review-2")]
 
 
 
@@ -16697,17 +16705,17 @@ def test_readiness_uses_the_providers_pinned_on_the_task(
 ) -> None:
     """phase_readiness compares gate vendors with the task pin, not the device or fixed names."""
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
-    pinned = {"first": "claude", "second": "codex"}
+    pinned = {"first": "driver-c", "second": "driver-b"}
     task = _seed_ready_side_task(
         store, worker, fake, tid="aa000001-0000-4000-8000-0000000000c1", phase="readiness",
-        checklist_codex={}, codex_gates=("quality", "logic"), models=pinned, first_vendor="claude",
+        checklist_second={}, second_gates=("quality", "logic"), models=pinned, first_vendor="driver-c",
     )
     lines = phase_readiness(store, worker, task, fake)
     assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
 
     task = _seed_ready_side_task(
         store, worker, fake, tid="aa000001-0000-4000-8000-0000000000c2", phase="readiness",
-        checklist_codex={}, codex_gates=("quality", "logic"), models=pinned, first_vendor="grok",
+        checklist_second={}, second_gates=("quality", "logic"), models=pinned, first_vendor="driver-a",
     )
     with pytest.raises(CoordinatorError, match="missing approved gate review-1/"):
         phase_readiness(store, worker, task, fake)
@@ -16715,20 +16723,52 @@ def test_readiness_uses_the_providers_pinned_on_the_task(
 
 
 
-def test_first_slot_vendor_refuses_a_codex_pin() -> None:
-    from agent_cli.coordinator_runtime import _first_slot_vendor
+@pytest.mark.no_pg
+def test_first_slot_refuses_a_driver_that_may_run_commands(tmp_path: Path) -> None:
+    from agent_cli.coordinator_runtime import (
+        COMMAND_DRIVER_FIRST_REFUSED,
+        SEPARATE_IMPLEMENTER_REFUSED,
+        _first_slot_vendor,
+        _refuse_command_driver_first,
+    )
 
-    with pytest.raises(CoordinatorError, match="models.first = codex"):
-        _first_slot_vendor({"models": {"first": "codex", "second": "grok"}})
+    write_drivers(tmp_path)
+    ai = load_ai_accounts(tmp_path, defer_model_configuration=True)
+    assert _first_slot_vendor({"models": {"first": "driver-a", "second": "driver-b"}}, ai) == "driver-a"
+    with pytest.raises(CoordinatorError) as exc:
+        _first_slot_vendor({"models": {"first": "driver-b", "second": "driver-a"}}, ai)
+    assert str(exc.value) == COMMAND_DRIVER_FIRST_REFUSED.format(driver="driver-b")
+    with pytest.raises(CoordinatorError) as exc:
+        _refuse_command_driver_first("driver-a", "driver-e", ai)
+    assert str(exc.value) == SEPARATE_IMPLEMENTER_REFUSED
     with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
         _first_slot_vendor(
             {
-                "models": {"first": "grok", "second": "codex"},
-                "implementer": "deepseek",
-            }
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "implementer": "driver-e",
+            },
+            ai,
         )
     with pytest.raises(CoordinatorError, match="task models is not configured"):
-        _first_slot_vendor({})
+        _first_slot_vendor({}, ai)
+    # A pin of a driver that drivers.json no longer configures fails loudly.
+    with pytest.raises(CoordinatorError) as exc:
+        _refuse_command_driver_first("driver-x", None, ai)
+    assert str(exc.value) == (
+        "vendor must be driver-a|driver-b|driver-c|driver-d|driver-e "
+        "(see drivers.json, docs/ai-accounts.md#drivers)"
+    )
+
+
+@pytest.mark.no_pg
+def test_write_hardening_appends_only_missing_configured_groups() -> None:
+    drivers = driver_specs()
+    assert harden_write_argv(["tool-a", "--deny", "Shell"], drivers["driver-a"]) == [
+        "tool-a", "--deny", "Shell", "--no-shell",
+    ]
+    assert harden_write_argv(["tool-c", "--print"], drivers["driver-c"]) == [
+        "tool-c", "--print",
+    ]
 
 
 
@@ -16739,17 +16779,17 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
     monkeypatch.setattr(coordinator_lanes, "verify_checkout_identity", lambda *a, **k: None)
     monkeypatch.setattr(coordinator_lanes, "verify_signed_clean_head", lambda *a, **k: fake.head)
-    pinned = {"first": "claude", "second": "codex"}
+    pinned = {"first": "driver-c", "second": "driver-b"}
     task = _seed_ready_side_task(
-        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d1", phase="pr_gates_codex",
-        checklist_codex={}, models=pinned, first_vendor="grok",
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d1", phase="pr_gates_second",
+        checklist_second={}, models=pinned, first_vendor="driver-a",
     )
     with pytest.raises(CoordinatorError, match="review-2 requires approved review-1/"):
-        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="codex", stage="review-2")
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="driver-b", stage="review-2")
 
     task = _seed_ready_side_task(
-        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d2", phase="pr_gates_grok",
-        checklist_codex={}, models=pinned, first_vendor="grok",
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d2", phase="pr_gates_first",
+        checklist_second={}, models=pinned, first_vendor="driver-a",
     )
     launched: list[str] = []
     diff = tmp_path / "review.diff"
@@ -16761,8 +16801,8 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
         lambda *a, **k: launched.append(k["role"]) or (_ for _ in ()).throw(CoordinatorError("stop")),
     )
     with pytest.raises(CoordinatorError, match="PR review lane preparation failed"):
-        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="claude", stage="review-1")
-    assert launched  # grok gates on a claude-pinned task are not taken as cached
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="driver-c", stage="review-1")
+    assert launched  # driver-a gates on a driver-c-pinned task are not taken as cached
 
 
 @pytest.mark.parametrize(
@@ -16772,14 +16812,14 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
         (
             Completed(
                 0,
-                grok_messages_stream("STATUS: partial\nRESULT: approved\n"),
+                event_stream_output("STATUS: partial\nRESULT: approved\n"),
                 "",
             ),
             "partial",
             "approved",
         ),
         (
-            Completed(0, grok_messages_stream("not reviewer protocol"), ""),
+            Completed(0, event_stream_output("not reviewer protocol"), ""),
             "partial",
             "",
         ),
@@ -16810,7 +16850,7 @@ def test_reviewer_audit_failure_recovers_every_finished_result(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -16864,7 +16904,7 @@ def test_reviewer_audit_failure_recovers_every_finished_result(
         worker,
         recovered_task,
         role="reviewer",
-        vendor="grok",
+        vendor="driver-a",
         round_num=1,
         spec_body="Review.",
         runner=lambda _argv: Completed(0, "", ""),
@@ -16907,7 +16947,7 @@ def test_reviewer_spool_bounds_serialized_stdout_and_stderr(tmp_path: Path) -> N
     agent = {"id": "aa000001-0000-4000-8000-000000000203"}
     result = LaneResult(
         role="pr-reviewer-quality",
-        vendor="codex",
+        vendor="driver-b",
         model="api_key=model-secret /opt/private/profile/" + "m" * 1_000_000,
         status="partial",
         argv=[],
@@ -16983,7 +17023,7 @@ def test_reviewer_spool_is_outside_lane_reads_and_reloads_config_dir(
     agent = {
         "id": "aa000001-0000-4000-8000-000000000224",
         "role": "pr-reviewer-quality",
-        "vendor": "codex",
+        "vendor": "driver-b",
     }
     worktree = worker.workspace_root / str(task["id"])
     path = coordinator_lanes._write_reviewer_spool(
@@ -16993,14 +17033,14 @@ def test_reviewer_spool_is_outside_lane_reads_and_reloads_config_dir(
         agent,
         LaneResult(
             role="pr-reviewer-quality",
-            vendor="codex",
-            model="codex-model",
+            vendor="driver-b",
+            model="driver-b-model",
             status="complete",
             argv=[],
             returncode=0,
             stdout="STATUS: complete\nRESULT: approved\n",
             stderr="",
-            config_dir="/test/codex",
+            config_dir="/test/driver-b",
             protocol_result="approved",
         ),
         round_num=None,
@@ -17015,7 +17055,7 @@ def test_reviewer_spool_is_outside_lane_reads_and_reloads_config_dir(
     )
     saved = json.loads(path.read_text(encoding="utf-8"))["result"]
     assert "config_dir" not in saved
-    assert "/test/codex" not in path.read_text(encoding="utf-8")
+    assert "/test/driver-b" not in path.read_text(encoding="utf-8")
 
     recovered = coordinator_lanes._read_reviewer_spool(
         store,
@@ -17028,7 +17068,7 @@ def test_reviewer_spool_is_outside_lane_reads_and_reloads_config_dir(
         stage="review-2",
     )
     assert recovered is not None
-    assert recovered[0].config_dir == "/test/codex"
+    assert recovered[0].config_dir == "/test/driver-b"
 
 
 def test_reviewer_spool_stores_only_owned_output_file_name(tmp_path: Path) -> None:
@@ -17043,7 +17083,7 @@ def test_reviewer_spool_stores_only_owned_output_file_name(tmp_path: Path) -> No
     agent = {
         "id": agent_id,
         "role": "pr-reviewer-quality",
-        "vendor": "codex",
+        "vendor": "driver-b",
         "reviewer_output": coordinator_lanes._reviewer_output_checkpoint(agent_id),
     }
     output = coordinator_lanes._reviewer_raw_output_path(
@@ -17056,14 +17096,14 @@ def test_reviewer_spool_stores_only_owned_output_file_name(tmp_path: Path) -> No
         agent,
         LaneResult(
             role="pr-reviewer-quality",
-            vendor="codex",
-            model="codex-model",
+            vendor="driver-b",
+            model="driver-b-model",
             status="complete",
             argv=[],
             returncode=0,
             stdout="STATUS: complete\nRESULT: approved\n",
             stderr="",
-            config_dir="/test/codex",
+            config_dir="/test/driver-b",
             protocol_result="approved",
         ),
         round_num=None,
@@ -17101,12 +17141,12 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
     make_session(store, "review-session", ["pr-review"])
     worker = make_worker(tmp_path)
     tid = "aa000001-0000-4000-8000-000000000204"
-    task = _seed_posted_codex_task(
+    task = _seed_posted_second_task(
         store,
         worker,
         tid,
-        codex_dims=(),
-        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+        second_dims=(),
+        second_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
@@ -17127,7 +17167,7 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
         material = " ".join(argv) + "\n" + (_stdin or "")
         if "pr-reviewer-logic" in material:
             assert logic_release.wait(5)
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text("STATUS: complete\nRESULT: approved\n", encoding="utf-8")
         return Completed(0, "", "")
 
@@ -17141,7 +17181,7 @@ def test_parallel_reviewer_spools_completed_sibling_before_join(
                 store.row("task", tid),
                 lambda _argv: Completed(0, "", ""),
                 reviewer,
-                vendor="codex",
+                vendor="driver-b",
                 stage="review-2",
             )
         except BaseException as exc:  # noqa: BLE001
@@ -17176,7 +17216,7 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
 ) -> None:
     from agent_cli import coordinator_lanes
 
-    store, worker, task = _codex_prelaunch_fixture(
+    store, worker, task = _second_prelaunch_fixture(
         tmp_path,
         monkeypatch,
         "aa000001-0000-4000-8000-000000000224",
@@ -17188,7 +17228,7 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
     real_write_spool = coordinator_lanes._write_reviewer_spool
 
     def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(
             "STATUS: complete\nRESULT: approved\nsecret model output\n",
             encoding="utf-8",
@@ -17227,7 +17267,7 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
             store.row("task", task["id"]),
             lambda _argv: Completed(0, "", ""),
             reviewer,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -17248,7 +17288,7 @@ def test_parallel_reviewer_coordinator_spool_failure_removes_owned_files_before_
         for row in failed
     )
     checkpoint = store.row("task", task["id"])["payload"]["coordinator"]
-    assert checkpoint["phase"] == "pr_gates_codex"
+    assert checkpoint["phase"] == "pr_gates_second"
     assert checkpoint.get("uncertain_lane") is not True
 
 
@@ -17261,8 +17301,8 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
     write_accounts(store.home)
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
-    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
-        "codex-rev"
+    accounts["sessions"]["worker-session"]["lanes"]["driver-b:reviewer"] = (
+        "driver-b-rev"
     )
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -17276,7 +17316,7 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -17294,7 +17334,7 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
     final_paths: list[Path] = []
 
     def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(
             "STATUS: complete\nRESULT: approved\nsecret model output\n",
             encoding="utf-8",
@@ -17327,7 +17367,7 @@ def test_sequential_reviewer_spool_failure_removes_raw_temporary_and_final_files
             worker,
             store.row("task", task_id),
             role="reviewer",
-            vendor="codex",
+            vendor="driver-b",
             round_num=1,
             spec_body="Review.",
             runner=lambda _argv: Completed(0, "", ""),
@@ -17348,13 +17388,13 @@ def test_advance_one_redacts_sequential_reviewer_spool_write_path(
     from agent_cli.coordinator_runtime import advance_one, execution_binding
 
     tid = "aa000001-0000-4000-8000-00000000022b"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
-    accounts["models"] = {"first": "openrouter", "second": "grok"}
+    accounts["models"] = {"first": "driver-d", "second": "driver-a"}
     accounts["accounts"]["router"] = {
-        "provider": "openrouter",
-        "config_dir": "/test/openrouter",
+        "provider": "driver-d",
+        "config_dir": "/test/driver-d",
     }
     accounts["roles"]["router-reviewer"] = {
         "account": "router",
@@ -17368,10 +17408,10 @@ def test_advance_one_redacts_sequential_reviewer_spool_write_path(
     }
     accounts["sessions"]["worker-session"]["lanes"].update(
         {
-            "openrouter:implementer": "router-builder",
-            "openrouter:reviewer": "router-reviewer",
-            "openrouter:pr-reviewer-quality": "router-reviewer",
-            "openrouter:pr-reviewer-logic": "router-reviewer",
+            "driver-d:implementer": "router-builder",
+            "driver-d:reviewer": "router-reviewer",
+            "driver-d:pr-reviewer-quality": "router-reviewer",
+            "driver-d:pr-reviewer-logic": "router-reviewer",
         }
     )
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
@@ -17383,7 +17423,7 @@ def test_advance_one_redacts_sequential_reviewer_spool_write_path(
     task["workflow"] = "implement"
     task["state"] = "reviewing"
     task["current_round"] = 1
-    task["models"] = {"first": "openrouter", "second": "grok"}
+    task["models"] = {"first": "driver-d", "second": "driver-a"}
     checkpoint = task["payload"]["coordinator"]
     checkpoint["phase"] = "inner_review"
     checkpoint["pr_number"] = 42
@@ -17416,7 +17456,7 @@ def test_advance_one_redacts_sequential_reviewer_spool_write_path(
         wrapper_index = next(
             index
             for index, value in enumerate(argv)
-            if "openrouter-api-key" in value
+            if "tool-d-key" in value
         )
         output = Path(argv[wrapper_index + 2])
         output.write_text(
@@ -17473,8 +17513,8 @@ def test_sequential_reviewer_baseexception_removes_unspooled_managed_output(
     write_accounts(store.home)
     accounts_path = store.home / "ai-accounts.json"
     accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
-    accounts["sessions"]["worker-session"]["lanes"]["codex:reviewer"] = (
-        "codex-rev"
+    accounts["sessions"]["worker-session"]["lanes"]["driver-b:reviewer"] = (
+        "driver-b-rev"
     )
     accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -17488,7 +17528,7 @@ def test_sequential_reviewer_baseexception_removes_unspooled_managed_output(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "codex", "second": "grok"},
+        "models": {"first": "driver-b", "second": "driver-a"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -17505,7 +17545,7 @@ def test_sequential_reviewer_baseexception_removes_unspooled_managed_output(
     raw_paths: list[Path] = []
 
     def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         raw_paths.append(output)
         output.write_text(
             "STATUS: complete\nRESULT: approved\nsecret\n", encoding="utf-8"
@@ -17523,7 +17563,7 @@ def test_sequential_reviewer_baseexception_removes_unspooled_managed_output(
             worker,
             store.row("task", tid),
             role="reviewer",
-            vendor="codex",
+            vendor="driver-b",
             round_num=1,
             spec_body="Review.",
             runner=lambda _argv: Completed(0, "", ""),
@@ -17551,13 +17591,13 @@ def test_parallel_reviewer_restart_removes_unspooled_managed_output(
     from agent_cli import coordinator_lanes
 
     tid = "aa000001-0000-4000-8000-00000000022d"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     prepared = coordinator_lanes._prepare_pr_review_agent(
         store,
         worker,
         task,
         role="pr-reviewer-quality",
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
         head=_POSTED_HEAD,
         spec_body="Review.",
@@ -17587,7 +17627,7 @@ def test_parallel_reviewer_restart_removes_unspooled_managed_output(
             store.row("task", tid),
             lambda _argv: Completed(0, "", ""),
             lambda *_a: pytest.fail("reviewer was relaunched"),
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -17616,6 +17656,7 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
     from agent_cli.coordinator_runtime import phase_inner_review
 
     store = Store(tmp_path)
+    write_drivers(store.home)
     worker = make_worker(tmp_path)
     tid = (
         "aa000001-0000-4000-8000-000000000230"
@@ -17643,7 +17684,7 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
                     "outcomes": [
                         {
                             "role": "reviewer",
-                            "vendor": "grok",
+                            "vendor": "driver-a",
                             "model": "test-model",
                             "round": 1,
                             "head": "a" * 40,
@@ -17666,7 +17707,7 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {"coordinator": coordinator},
     }
     store.write("task", "insert", tid, task)
@@ -17695,8 +17736,8 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
             "task_id": tid,
             "round": 1 if entrypoint == "inner" else None,
             "role": role,
-            "vendor": "grok" if entrypoint == "inner" else "codex",
-            "provider": "grok" if entrypoint == "inner" else "codex",
+            "vendor": "driver-a" if entrypoint == "inner" else "driver-b",
+            "provider": "driver-a" if entrypoint == "inner" else "driver-b",
             "model": "test-model",
             "head_sha": "a" * 40,
             "dimension": "inner" if entrypoint == "inner" else "quality",
@@ -17743,7 +17784,7 @@ def test_reviewer_restart_sweeps_raw_files_after_committed_outcome(
                 store.row("task", tid),
                 lambda _argv: Completed(0, "", ""),
                 None,
-                vendor="codex",
+                vendor="driver-b",
                 stage="review-2",
             )
 
@@ -17813,7 +17854,7 @@ def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
     from agent_cli import coordinator_lanes
 
     tid = "aa000001-0000-4000-8000-00000000022e"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -17831,7 +17872,7 @@ def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
                 "task_id": tid,
                 "stage": ambiguous_stage,
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -17869,7 +17910,7 @@ def test_pr_gate_synthetic_unavailable_stops_before_lane_or_comment(
             store.row("task", tid),
             lambda _argv: Completed(0, "", ""),
             lambda *_a: pytest.fail("reviewer lane was launched"),
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -17889,7 +17930,7 @@ def test_advance_one_ordering_unavailable_skips_rejection_and_blocker_publicatio
     from agent_cli import coordinator_lanes, coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-00000000022f"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -17907,7 +17948,7 @@ def test_advance_one_ordering_unavailable_skips_rejection_and_blocker_publicatio
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -17927,7 +17968,7 @@ def test_advance_one_ordering_unavailable_skips_rejection_and_blocker_publicatio
     rejection_id = "aa000001-0000-4000-8000-000000000230"
     c = task["payload"]["coordinator"]
     c["phase"] = "blocked"
-    c["resume_phase"] = "pr_gates_codex"
+    c["resume_phase"] = "pr_gates_second"
     c["blocker"] = "saved gate blocker"
     c["rejection_review_activity_ids"] = [rejection_id]
     store.write(
@@ -17984,7 +18025,7 @@ def test_advance_one_ordering_unavailable_in_gate_phase_parks_the_task(
     from agent_cli import coordinator_lanes, coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-000000000251"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -18002,7 +18043,7 @@ def test_advance_one_ordering_unavailable_in_gate_phase_parks_the_task(
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -18059,7 +18100,7 @@ def test_advance_one_ordering_unavailable_in_gate_phase_parks_the_task(
     stored = store.row("task", tid)
     checkpoint = stored["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["resume_phase"] == "pr_gates_second"
     assert checkpoint["blocker"] == message
     assert coordinator_runtime.parked(stored, worker)
     assert not [
@@ -18076,7 +18117,7 @@ def test_advance_one_ordering_unavailable_retries_a_failed_blocker_publication(
     from agent_cli import coordinator_lanes, coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-000000000252"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -18094,7 +18135,7 @@ def test_advance_one_ordering_unavailable_retries_a_failed_blocker_publication(
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -18190,7 +18231,7 @@ def test_ordering_blocker_retry_after_the_history_becomes_orderable_posts_one_co
     from agent_cli import coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-000000000253"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -18208,7 +18249,7 @@ def test_ordering_blocker_retry_after_the_history_becomes_orderable_posts_one_co
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -18299,7 +18340,7 @@ def test_phase_error_after_an_unpublished_ordering_blocker_clears_its_publish_st
     from agent_cli import coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-000000000254"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -18317,7 +18358,7 @@ def test_phase_error_after_an_unpublished_ordering_blocker_clears_its_publish_st
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -18412,7 +18453,7 @@ def test_unexpected_error_after_an_unpublished_ordering_blocker_clears_its_publi
     from agent_cli import coordinator_runtime
 
     tid = "aa000001-0000-4000-8000-000000000255"
-    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     ambiguous_ids = {
         f"{tid}-ambiguous-approved",
         f"{tid}-ambiguous-rejected",
@@ -18430,7 +18471,7 @@ def test_unexpected_error_after_an_unpublished_ordering_blocker_clears_its_publi
                 "task_id": tid,
                 "stage": "review-2",
                 "dimension": "quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "verdict": verdict,
                 "head_sha": _POSTED_HEAD,
                 "agent_id": f"{gate_id}-agent",
@@ -18519,7 +18560,7 @@ def test_review_two_post_lane_recheck_stops_on_review_one_ordering_unavailable(
     from agent_cli import coordinator_lanes
 
     tid = "aa000001-0000-4000-8000-000000000243"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, task = _second_prelaunch_fixture(tmp_path, monkeypatch, tid)
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     checks = 0
 
@@ -18540,7 +18581,7 @@ def test_review_two_post_lane_recheck_stops_on_review_one_ordering_unavailable(
     )
 
     def reviewer(argv: list[str], _stdin: str | None = None) -> Completed:
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text(
             "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
         )
@@ -18556,7 +18597,7 @@ def test_review_two_post_lane_recheck_stops_on_review_one_ordering_unavailable(
             store.row("task", tid),
             lambda _argv: Completed(0, "", ""),
             reviewer,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -18576,7 +18617,7 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
     from agent_cli import coordinator_lanes
     from agent_cli.lane import LaneResult
 
-    store, worker, task = _codex_prelaunch_fixture(
+    store, worker, task = _second_prelaunch_fixture(
         tmp_path,
         monkeypatch,
         "aa000001-0000-4000-8000-000000000205",
@@ -18589,9 +18630,9 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
         "session_id": worker.session_id,
         "task_id": task["id"],
         "round": None,
-        "vendor": "codex",
-        "provider": "codex",
-        "model": "codex-model",
+        "vendor": "driver-b",
+        "provider": "driver-b",
+        "model": "driver-b-model",
         "head_sha": head,
         "stage": "review-2",
         "status": "working",
@@ -18617,8 +18658,8 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
         {"id": quality_id},
         LaneResult(
             role="pr-reviewer-quality",
-            vendor="codex",
-            model="codex-model",
+            vendor="driver-b",
+            model="driver-b-model",
             status="complete",
             argv=[],
             returncode=0,
@@ -18655,7 +18696,7 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
             store.row("task", task["id"]),
             lambda _argv: Completed(0, "", ""),
             None,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -18663,7 +18704,7 @@ def test_pr_gate_recovery_checkpoints_spooled_sibling_before_uncertain_lane(
     assert store.row("agent", logic_id)["status"] == "done"
     saved = store.row("task", task["id"])["payload"]["coordinator"]
     assert "uncertain_lane" not in saved
-    assert saved["phase"] == "pr_gates_codex"
+    assert saved["phase"] == "pr_gates_second"
     assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "quality"
 
 
@@ -18674,7 +18715,7 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
     from agent_cli.lane import LaneResult
     from agent_cli.store import StoreError
 
-    store, worker, task = _codex_prelaunch_fixture(
+    store, worker, task = _second_prelaunch_fixture(
         tmp_path,
         monkeypatch,
         "aa000001-0000-4000-8000-000000000215",
@@ -18685,9 +18726,9 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
         "session_id": worker.session_id,
         "task_id": task["id"],
         "round": None,
-        "vendor": "codex",
-        "provider": "codex",
-        "model": "codex-model",
+        "vendor": "driver-b",
+        "provider": "driver-b",
+        "model": "driver-b-model",
         "head_sha": head,
         "stage": "review-2",
         "status": "working",
@@ -18716,14 +18757,14 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
         {"id": quality_id},
         LaneResult(
             role="pr-reviewer-quality",
-            vendor="codex",
-            model="codex-model",
+            vendor="driver-b",
+            model="driver-b-model",
             status="complete",
             argv=[],
             returncode=0,
             stdout="STATUS: complete\nRESULT: approved\n",
             stderr="",
-            config_dir="/test/codex",
+            config_dir="/test/driver-b",
             protocol_result="approved",
         ),
         round_num=None,
@@ -18749,7 +18790,7 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
         store.row("task", task["id"]),
         lambda _argv: Completed(0, "", ""),
         None,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
     assert lines == ["review-2/quality database checkpoint will be retried"]
@@ -18768,7 +18809,7 @@ def test_pr_gate_recovery_defers_missing_spool_until_saved_sibling_commits(
             store.row("task", task["id"]),
             lambda _argv: Completed(0, "", ""),
             None,
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
     assert store.row("agent", quality_id)["status"] == "done"
@@ -18784,7 +18825,7 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
     from agent_cli import coordinator_lanes
     from agent_cli.store import StoreError
 
-    store, worker, task = _codex_prelaunch_fixture(
+    store, worker, task = _second_prelaunch_fixture(
         tmp_path,
         monkeypatch,
         "aa000001-0000-4000-8000-000000000218",
@@ -18795,7 +18836,7 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
         material = " ".join(argv) + "\n" + (_stdin or "")
         if "pr-reviewer-quality" in material:
             raise RuntimeError("quality execution failed")
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text("STATUS: complete\nRESULT: approved\n", encoding="utf-8")
         return Completed(0, "", "")
 
@@ -18823,7 +18864,7 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
         store.row("task", task["id"]),
         lambda _argv: Completed(0, "", ""),
         reviewer,
-        vendor="codex",
+        vendor="driver-b",
         stage="review-2",
     )
 
@@ -18848,7 +18889,7 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
             store.row("task", task["id"]),
             lambda _argv: Completed(0, "", ""),
             lambda *_args: pytest.fail("reviewer was relaunched"),
-            vendor="codex",
+            vendor="driver-b",
             stage="review-2",
         )
 
@@ -18868,7 +18909,7 @@ def test_parallel_reviewer_failure_retries_sibling_checkpoint_before_blocking(
     ]
     assert len(runs) == 1
     saved = store.row("task", task["id"])["payload"]["coordinator"]
-    assert saved["phase"] == "pr_gates_codex"
+    assert saved["phase"] == "pr_gates_second"
     assert "uncertain_lane" not in saved
     assert saved["lane_outcome"]["outcomes"][0]["dimension"] == "logic"
 
@@ -18890,7 +18931,7 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
         "workflow": "implement",
         "state": "implementing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -18927,7 +18968,7 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
     def launch(_store: Store, _worker: Any, live: dict[str, Any], **_kwargs: Any):
         live["payload"]["coordinator"]["lane_outcome"] = {
             "role": "implementer",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "round": 1,
             "agent_id": "implementer-agent",
             "status": "complete",
@@ -18941,7 +18982,7 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
             {"id": "implementer-agent"},
             LaneResult(
                 role="implementer",
-                vendor="grok",
+                vendor="driver-a",
                 model="model",
                 status="complete",
                 argv=[],
@@ -19943,7 +19984,7 @@ def test_unavailable_inner_reviewer_commits_provider_incomplete_checkpoint(
     agent_id = "aa000001-0000-4000-8000-000000000212"
     outcome = {
         "role": "reviewer",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "model": "model",
         "round": 1,
         "head": "a" * 40,
@@ -19962,7 +20003,7 @@ def test_unavailable_inner_reviewer_commits_provider_incomplete_checkpoint(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",

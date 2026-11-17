@@ -28,6 +28,7 @@ from agent_cli.lane import LaneResult
 from agent_cli.runner_cmd import runner_paths
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
+from driver_fixtures import write_drivers
 
 HEAD = "a" * 40
 OTHER_HEAD = "b" * 40
@@ -84,9 +85,10 @@ def _write_worker_files(
         )
     if write_ai:
         ai = {
-            "models": {"first": "claude", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "lane_execution": {"mode": "this-device-is-lane-host"},
         }
+        write_drivers(tmp_path)
         (tmp_path / "ai-accounts.json").write_text(json.dumps(ai), encoding="utf-8")
     (paths.prompts / "pr-review.md").write_text(template, encoding="utf-8")
     return paths
@@ -534,7 +536,7 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
         "session_id",
     }
     assert launch["role"] == "reviewer"
-    assert launch["vendor"] == "claude"
+    assert launch["vendor"] == "driver-a"
     assert launch["tmux"] is False
     assert launch["session_id"] == "s"
     assert launch["config_home"] == tmp_path
@@ -590,7 +592,7 @@ def test_worker_gathers_facts_runs_one_read_only_lane_and_posts_the_review(
     assert payload["event"] == "COMMENT"
     assert payload["commit_id"] == HEAD
     assert payload["body"].startswith(
-        f"Review at `{HEAD[:12]}` (claude, m): approved\n\n"
+        f"Review at `{HEAD[:12]}` (driver-a, m): approved\n\n"
     )
     assert "Finding." in payload["body"]
     assert "STATUS:" not in payload["body"]
@@ -1888,8 +1890,8 @@ def test_exit_file_waits_for_a_blocked_heartbeat_write(
 
 def test_lane_start_reports_safe_configuration_detail() -> None:
     assert (
-        runner_worker._lane_start_message(SystemExit("vendor must be claude"))
-        == "review lane could not start: vendor must be claude"
+        runner_worker._lane_start_message(SystemExit("vendor must be driver-a"))
+        == "review lane could not start: vendor must be driver-a"
     )
     assert runner_worker._lane_start_message(OSError("secret")) == (
         "review lane could not start"

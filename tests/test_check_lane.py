@@ -30,6 +30,11 @@ from agent_cli.coordinator_common import (
 from agent_cli.preconditions import CHECKS
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
+from driver_fixtures import (
+    accounts_document,
+    write_accounts as write_placeholder_accounts,
+    write_drivers,
+)
 from test_coordinator_support import (
     FakeGh,
     make_order_worker,
@@ -40,7 +45,6 @@ from test_coordinator_support import (
     write_accounts,
     write_check_lane,
 )
-
 
 ORDER_ID = "11111111-1111-4111-8111-111111111111"
 FOREIGN = {
@@ -246,7 +250,7 @@ def test_no_duplicate_records_ja(
     assert agent["check_key"] == "duplicates_checked"
     assert agent["status"] == "done"
     assert agent["round"] is None
-    assert agent["model"] == "grok-model"
+    assert agent["model"] == "driver-a-model"
     runs = _lane_runs(store)
     assert len(runs) == 1
     assert runs[0]["payload"]["role"] == "check"
@@ -377,7 +381,7 @@ def test_configuration_error_is_not_an_attempt(
     with pytest.raises(
         CoordinatorError,
         match=(
-            "No AI lane configured for session worker-session slot grok:check"
+            "No AI lane configured for session worker-session slot driver-a:check"
         ),
     ):
         _resolve(ctx)
@@ -493,7 +497,7 @@ def test_check_lane_runs_in_an_empty_directory(
     argv = seen[0]
     assert argv[argv.index("--cwd") + 1] == str(cwd)
     assert argv[argv.index("--prompt-file") + 1] == str(
-        control_dir(worker, ORDER_ID) / "check-duplicates_checked-grok.md"
+        control_dir(worker, ORDER_ID) / "check-duplicates_checked-driver-a.md"
     )
     assert store.row("task", ORDER_ID) is not None
 
@@ -547,7 +551,7 @@ def _configure_check_provider(
 ) -> str:
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text(encoding="utf-8"))
-    if vendor == "grok":
+    if vendor == "driver-a":
         role = "rev"
     else:
         account = f"{vendor}-w"
@@ -564,12 +568,12 @@ def _configure_check_provider(
     data["models"]["first"] = vendor
     path.write_text(json.dumps(data), encoding="utf-8")
     write_check_lane(store.home, vendor, role)
-    task["models"] = {"first": vendor, "second": "codex"}
+    task["models"] = {"first": vendor, "second": "driver-b"}
     store.write("task", "update", ORDER_ID, strip_row(task))
     return role
 
 
-@pytest.mark.parametrize("vendor", ["grok", "claude", "openrouter"])
+@pytest.mark.parametrize("vendor", ["driver-a", "driver-c", "driver-d"])
 def test_check_lane_final_text_per_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
 ) -> None:
@@ -583,18 +587,18 @@ def test_check_lane_final_text_per_provider(
 
     def runner(argv, stdin=None):  # noqa: ANN001
         seen.append(list(argv))
-        if "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+        if "TOOL_C_BASE_URL=https://gateway.example.test/api" in argv:
             wrapper = next(
-                i for i, value in enumerate(argv) if "openrouter-api-key" in value
+                i for i, value in enumerate(argv) if "tool-d-key" in value
             )
             output_files.append(Path(argv[wrapper + 2]))
         return ordinary(argv, stdin)
 
     result = _resolve(replace(ctx, lane_runner=runner))
     assert isinstance(result, CheckValue) and result.status == "ja"
-    if vendor in ("claude", "openrouter"):
+    if vendor in ("driver-c", "driver-d"):
         assert seen[0][seen[0].index("--tools") + 1] == ""
-    if vendor == "openrouter":
+    if vendor == "driver-d":
         assert output_files and not output_files[0].exists()
 
 
@@ -604,12 +608,12 @@ def test_unreadable_output_file_is_a_failed_attempt(
     store, _worker, task, _fake, ctx = setup(
         tmp_path, monkeypatch, bind=False
     )
-    _configure_check_provider(store, task, "openrouter")
+    _configure_check_provider(store, task, "driver-d")
     output_files: list[Path] = []
 
     def unreadable(argv, _stdin=None):  # noqa: ANN001
         wrapper = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         output = Path(argv[wrapper + 2])
         output_files.append(output)
@@ -631,7 +635,7 @@ def test_output_file_failure_is_a_configuration_error(
     store, _worker, task, _fake, ctx = setup(
         tmp_path, monkeypatch, bind=False
     )
-    _configure_check_provider(store, task, "openrouter")
+    _configure_check_provider(store, task, "driver-d")
 
     def no_space(*_args, **_kwargs):
         raise OSError("no space left on device")
@@ -692,13 +696,13 @@ def test_stored_lane_text_hides_the_account_directory(
         monkeypatch,
         check_output=(
             "RESULT: no-duplicate\n"
-            "REASON: cannot read /test/grok/settings.json.\n"
+            "REASON: cannot read /test/driver-a/settings.json.\n"
         ),
     )
     result = _resolve(ctx)
     assert isinstance(result, CheckValue) and result.status == "ja"
     assert "<config_dir>/settings.json" in result.evidence
-    assert "/test/grok" not in result.evidence
+    assert "/test/driver-a" not in result.evidence
     record_check(
         store,
         ctx.task,
@@ -713,7 +717,7 @@ def test_stored_lane_text_hides_the_account_directory(
     final_text = _lane_runs(store)[0]["payload"]["final_text"]
     for value in (evidence, note, final_text):
         assert "<config_dir>/settings.json" in value
-        assert "/test/grok" not in value
+        assert "/test/driver-a" not in value
 
 
 def test_check_lane_closes_its_own_stale_row(
@@ -735,9 +739,9 @@ def test_check_lane_closes_its_own_stale_row(
                 "round": None,
                 "role": "check",
                 "check_key": key,
-                "vendor": "grok",
-                "provider": "grok",
-                "model": "grok-model",
+                "vendor": "driver-a",
+                "provider": "driver-a",
+                "model": "driver-a-model",
                 "prompt": "old",
                 "status": "working",
                 "started_at": "2026-01-01T00:00:00Z",
@@ -941,3 +945,73 @@ def test_a_waived_check_starts_no_resolver(
     assert result is None
     assert "check" not in fake.launched
     assert not fake.listed()
+
+
+def _placeholder_check_context(
+    tmp_path: Path, first: str, *, accounts: dict | None = None, lanes=None
+) -> CheckContext:
+    store = Store(tmp_path)
+    write_placeholder_accounts(store.home, accounts)
+    write_drivers(store.home)
+    worker = make_order_worker(tmp_path)
+    second = "driver-a" if first == "driver-b" else "driver-b"
+    task = {"id": ORDER_ID, "models": {"first": first, "second": second}}
+    return CheckContext(
+        store, worker, task, FakeGh(), lanes, CHECKS["duplicates_checked"], "open_draft"
+    )
+
+
+def _run_placeholder_check(ctx: CheckContext):
+    from agent_cli.coordinator_check_lane import run_check_lane
+
+    return run_check_lane(
+        ctx,
+        key="duplicates_checked",
+        prompt="Is this a duplicate?",
+        prompt_record="Is this a duplicate?",
+        parse=lambda text: "ok" if "RESULT: ok" in text else None,
+    )
+
+
+def test_check_lane_refuses_a_driver_without_a_judgment_template(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.drivers import JUDGMENT_UNSUPPORTED
+
+    ctx = _placeholder_check_context(tmp_path, "driver-b")
+    with pytest.raises(CoordinatorError) as exc:
+        _run_placeholder_check(ctx)
+    assert str(exc.value) == JUDGMENT_UNSUPPORTED.format(driver="driver-b")
+    assert not ctx.store.rows("agent")
+
+
+def test_check_lane_refuses_a_lane_root_inside_the_key_directory(
+    tmp_path: Path,
+) -> None:
+    accounts = accounts_document()
+    accounts["accounts"]["driver-d-account"]["config_dir"] = str(tmp_path)
+    ctx = _placeholder_check_context(tmp_path, "driver-d", accounts=accounts)
+    with pytest.raises(
+        CoordinatorError, match="driver-d worktree overlaps account config_dir"
+    ):
+        _run_placeholder_check(ctx)
+    assert not ctx.store.rows("agent")
+
+
+def test_check_lane_runs_the_driver_judgment_template(tmp_path: Path) -> None:
+    seen: list[tuple[list[str], str | None]] = []
+    result = {"type": "result", "subtype": "success", "is_error": False, "result": "RESULT: ok"}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append((list(argv), stdin))
+        return Completed(0, json.dumps(result), "")
+
+    ctx = _placeholder_check_context(tmp_path, "driver-c", lanes=lane)
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    argv, stdin = seen[0]
+    assert argv[argv.index("tool-c") :] == [
+        "tool-c", "--print", "--model", "driver-c-model",
+        "--tools", "", "--mode", "default",
+    ]
+    assert stdin == "Is this a duplicate?"

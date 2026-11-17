@@ -848,7 +848,7 @@ def test_issue_task_with_a_conflict_still_blocks(
         "repo": "example/project",
         "state": "open",
         "current_round": 0,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "readiness",
@@ -963,7 +963,7 @@ def test_issue_task_in_conflict_keeps_waiting_in_await_merge(
         "repo": "example/project",
         "state": "open",
         "current_round": 0,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "await_merge",

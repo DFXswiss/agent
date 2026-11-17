@@ -7,12 +7,12 @@ import re
 import shlex
 import subprocess
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .grok_pane import grok_pane_is_working
-from .lane import LANE_STRIP_ENV
+from .drivers import InteractiveSpec, PaneMarkers, expand_template
+from .pane_state import pane_is_working
 from .store import StoreError
 
 TARGETS_FILE = "runtime-targets.json"
@@ -36,42 +36,51 @@ def tmux_name(session_id: str) -> str:
     return f"agent-{cleaned}"
 
 
-def grok_new_session_id() -> str:
-    """Grok `--session-id` rejects a ULID. Always mint a UUID."""
+def new_interactive_session_id() -> str:
+    """Mint the id an interactive driver starts its session with.
+
+    ``uuid`` is the only ``interactive.session_id`` format the configuration
+    accepts; such a driver rejects other ids (for example a ULID).
+    """
     return str(uuid.uuid4())
 
 
-def grok_model(raw: str | None) -> str:
+def interactive_model(raw: str | None) -> str:
     if not isinstance(raw, str):
-        raise StoreError("Grok model must be explicitly configured")
+        raise StoreError("interactive model must be explicitly configured")
     stripped = raw.strip()
     if stripped == "":
-        raise StoreError("Grok model must be explicitly configured")
+        raise StoreError("interactive model must be explicitly configured")
     return stripped
 
 
-def grok_launch_argv(*, existing: str, model: str, new_id: str) -> list[str]:
-    resolved = grok_model(model)
+def interactive_launch_argv(
+    spec: InteractiveSpec, *, existing: str, model: str, new_id: str
+) -> list[str]:
+    """Resume ``existing`` or start a new session under ``new_id`` (a UUID)."""
+    resolved = interactive_model(model)
     if existing:
-        return ["grok", "--always-approve", "--resume", existing, "--model", resolved]
+        return expand_template(spec.argv_resume, {"session_id": existing, "model": resolved})
     if not _UUID_RE.match(new_id):
-        raise SystemExit("grok --session-id requires a UUID")
-    return [
-        "grok",
-        "--always-approve",
-        "--session-id",
-        new_id,
-        "--model",
-        resolved,
-    ]
+        raise SystemExit("interactive session id must be a UUID")
+    return expand_template(spec.argv_new, {"session_id": new_id, "model": resolved})
 
 
-def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[str]:
-    """Prefix that drops Claude credentials from the pane environment."""
+def interactive_command_argv(
+    spec: InteractiveSpec,
+    *,
+    existing: str,
+    model: str,
+    new_id: str,
+    scrub: Sequence[str],
+) -> list[str]:
+    """Prefix that drops every ``scrub`` variable from the pane environment."""
     argv: list[str] = ["env"]
-    for key in LANE_STRIP_ENV:
+    for key in scrub:
         argv.extend(["-u", key])
-    argv.extend(grok_launch_argv(existing=existing, model=model, new_id=new_id))
+    argv.extend(
+        interactive_launch_argv(spec, existing=existing, model=model, new_id=new_id)
+    )
     return argv
 
 
@@ -126,9 +135,17 @@ class Runtime:
         runner: Callable[[list[str]], Completed] | None = None,
         *,
         tmux_targets: dict[str, list[str]] | None = None,
+        markers_for: Callable[[str], PaneMarkers] | None = None,
     ) -> None:
         self._runner = runner or _default_runner
         self._tmux_targets = dict(tmux_targets) if tmux_targets is not None else {}
+        self._markers_for = markers_for
+
+    def markers_for(self, session_id: str) -> PaneMarkers:
+        """The pane markers that classify this session's pane."""
+        if self._markers_for is None:
+            raise StoreError(f"no pane markers are resolved for session {session_id}")
+        return self._markers_for(session_id)
 
     def _run(self, argv: list[str]) -> Completed:
         return self._runner(argv)
@@ -150,14 +167,15 @@ class Runtime:
         return self._tmux(session_id, ["tmux", "has-session", "-t", name]).returncode == 0
 
     def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
-        """True when Grok's TUI in this tmux pane shows an in-flight turn."""
+        """True when the driver's pane in this tmux session shows an in-flight turn."""
         del settle
-        return self.grok_working(session_id)
+        return self.pane_working(session_id)
 
-    def grok_working(self, session_id: str) -> bool:
+    def pane_working(self, session_id: str) -> bool:
         if not self.exists(session_id):
             return False
-        return grok_pane_is_working(self.capture(session_id))
+        markers = self.markers_for(session_id)
+        return pane_is_working(self.capture(session_id), markers)
 
     def start(
         self,
@@ -251,9 +269,21 @@ class Runtime:
 class PreflightRuntime(Runtime):
     """Run a session-specific authorization check before every tmux command."""
 
-    def __init__(self, runtime: Runtime, preflight: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        preflight: Callable[[str], None],
+        *,
+        markers_for: Callable[[str], PaneMarkers] | None = None,
+    ) -> None:
         self._runtime = runtime
         self._preflight = preflight
+        self._markers_for = markers_for
+
+    def markers_for(self, session_id: str) -> PaneMarkers:
+        if self._markers_for is None:
+            return self._runtime.markers_for(session_id)
+        return self._markers_for(session_id)
 
     def _tmux(self, session_id: str, tmux_argv: list[str]) -> Completed:
         self._preflight(session_id)

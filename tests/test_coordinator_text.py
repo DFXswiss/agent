@@ -17,7 +17,7 @@ from agent_cli.store import Store, StoreError
 from test_coordinator_flow import seed_task
 from test_coordinator_support import (
     FakeGh,
-    grok_messages_stream,
+    event_stream_output,
     lane_runner,
     make_session,
     make_worker,
@@ -102,10 +102,10 @@ def _gate_task(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "payload": {
                 "coordinator": {
-                    "phase": "pr_gates_grok",
+                    "phase": "pr_gates_first",
                     "source": {
                         "repo": "example/project",
                         "number": 7,
@@ -191,7 +191,7 @@ def _gate_task(
             store.row("task", tid),
             fake,
             lane,
-            vendor="grok",
+            vendor="driver-a",
             stage="review-1",
         )
     return store, tid, lines
@@ -358,7 +358,7 @@ def test_prompts_that_forbid_git_do_not_allow_read_only_commands(
         "workflow": "implement",
         "state": "reviewing",
         "current_round": 1,
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {
             "coordinator": {
                 "phase": "inner_review",
@@ -398,14 +398,14 @@ def test_prompts_that_forbid_git_do_not_allow_read_only_commands(
         saved,
         lambda _argv: Completed(0, "", ""),
         lambda _argv, _stdin: Completed(
-            0, grok_messages_stream("STATUS: complete\nRESULT: rejected\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: rejected\n"), ""
         ),
     )
     inner_reviewer = (
         worker.workspace_root
         / ".coordinator-control"
         / task_id
-        / "reviewer-grok.md"
+        / "reviewer-driver-a.md"
     ).read_text(encoding="utf-8")
 
     assert "Reading files with read-only commands" not in inner_reviewer
@@ -457,7 +457,7 @@ def test_issue_text_reaches_the_implementer_untruncated(
     body = "task text line\n" * 400 + "END-MARKER"
     _store, worker, task = _implemented(tmp_path, monkeypatch, body)
     control = worker.workspace_root / ".coordinator-control" / task["id"]
-    assert "END-MARKER" in (control / "implementer-grok.md").read_text()
+    assert "END-MARKER" in (control / "implementer-driver-a.md").read_text()
     assert (control / "task-text.md").read_text() == body
 
 
@@ -480,7 +480,7 @@ def test_short_task_text_keeps_the_launched_prompt_in_the_agent_row(
         worker.workspace_root
         / ".coordinator-control"
         / task["id"]
-        / "implementer-grok.md"
+        / "implementer-driver-a.md"
     ).read_text()
     assert row["prompt"] == spec
 
@@ -676,7 +676,7 @@ def test_a38_precheck_findings_keep_the_end(
         "title": "A38 tests",
         "repo": "example/project",
         "ref": 42,
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {
             "coordinator": {
                 "phase": "tests",
@@ -800,10 +800,10 @@ def test_approved_dimension_is_recorded_next_to_a_rejected_one(
 
 _PROVIDER_402 = (
     "API error (status 402 Payment Required): "
-    "Grok Build usage balance exhausted"
+    "Tool A usage balance exhausted"
 )
 _TODAY_INCOMPLETE_BLOCKER = (
-    "grok quality, logic review unavailable/incomplete "
+    "driver-a quality, logic review unavailable/incomplete "
     "(quality: status=unavailable, result=empty; "
     "logic: status=unavailable, result=empty). Not a code rejection."
 )
@@ -819,8 +819,8 @@ def _lane_result(
 ) -> LaneResult:
     return LaneResult(
         role="pr-reviewer-quality",
-        vendor="grok",
-        model="grok-model",
+        vendor="driver-a",
+        model="driver-a-model",
         status=status,
         argv=[],
         returncode=1,
@@ -942,7 +942,7 @@ def test_reviewer_spool_keeps_the_excerpt_of_the_complete_output(
     agent = {
         "id": "aa000001-0000-4000-8000-000000000302",
         "role": "pr-reviewer-quality",
-        "vendor": "codex",
+        "vendor": "driver-b",
     }
     identity = {
         "round_num": None,
@@ -957,7 +957,7 @@ def test_reviewer_spool_keeps_the_excerpt_of_the_complete_output(
         agent,
         replace(
             _lane_result(stderr=f"{_progress_lines()}{_PROVIDER_402}\n"),
-            vendor="codex",
+            vendor="driver-b",
         ),
         output_file=None,
         **identity,
@@ -1004,7 +1004,7 @@ def test_incomplete_review_blocker_names_the_provider_error(
     )
     c = store.row("task", tid)["payload"]["coordinator"]
     assert c["phase"] == "blocked"
-    assert c["resume_phase"] == "pr_gates_grok"
+    assert c["resume_phase"] == "pr_gates_first"
     assert c["blocker_publish_kind"] == "provider-incomplete"
     # The logic lane produced no output, so its details keep today's text.
     assert c["blocker"] == (

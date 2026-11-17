@@ -133,7 +133,7 @@ def create_order_task(
 
     from .coordinator_runtime import (
         _discard_task_text,
-        _refuse_codex_first,
+        _refuse_command_driver_first,
         _require_second_for_worker,
         execution_binding,
         require_single_first_model,
@@ -141,7 +141,7 @@ def create_order_task(
 
     try:
         ai = load_ai_accounts(store.home)
-        _refuse_codex_first(ai.models.first, ai.implementer)
+        _refuse_command_driver_first(ai.models.first, ai.implementer, ai)
         _require_second_for_worker(
             ai.models.second, worker.a38, worker.a38_second_review
         )

@@ -83,13 +83,13 @@ def seed_review_order(
         fake,
         tid=oid,
         phase=phase,
-        checklist_codex={
+        checklist_second={
             "review_2_quality": "pending",
             "review_2_logic": "pending",
         },
         seed_formal_review=formal,
         extra_evidence=evidence,
-        models={"first": "grok", "second": "codex"},
+        models={"first": "driver-a", "second": "driver-b"},
     )
     c = task["payload"]["coordinator"]
     c["source"] = order_source(oid)
@@ -120,7 +120,7 @@ def second_gate(store, task, fake, dimension, verdict, head=None):  # noqa: ANN0
         task,
         stage="review-2",
         dimension=dimension,
-        vendor="codex",
+        vendor="driver-b",
         verdict=verdict,
         head=head or fake.head,
         agent_id="agent-1",
@@ -289,9 +289,9 @@ def test_ci_gate_routes_to_the_second_review(tmp_path, monkeypatch) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     task = seed_review_order(store, worker, fake, OID, phase="ci")
     assert evaluate_action(store, worker, task, fake, None, action="ci") == [
-        "check review_2 is pending; routing to pr_gates_codex"
+        "check review_2 is pending; routing to pr_gates_second"
     ]
-    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_codex"
+    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_second"
     saved = fact(store, OID, "review_2")
     assert (saved["status"], saved["source"], saved["head_sha"]) == (
         "pending",
@@ -334,7 +334,7 @@ def test_manual_n_a_does_not_drop_the_second_review(tmp_path, monkeypatch) -> No
     task = seed_review_order(store, worker, fake, OID, phase="ci")
     set_rows_n_a(store, OID)
     assert evaluate_action(store, worker, task, fake, None, action="ci") == [
-        "check review_2 is pending; routing to pr_gates_codex"
+        "check review_2 is pending; routing to pr_gates_second"
     ]
     store.close()
 
@@ -344,6 +344,11 @@ def test_manual_n_a_does_not_drop_the_second_review(tmp_path, monkeypatch) -> No
     [
         ("none", None),
         ("external", "the second review of this order comes from external reviewers"),
+        (
+            "unrecorded",
+            f"task {OID} predates model pins; configure recorded_slots in "
+            "drivers.json to read it (docs/ai-accounts.md#drivers)",
+        ),
         ("first", "the first review is not complete"),
         ("approved", "a second review was already approved for this pull request"),
         ("a38-rejected", "a second review already rejected this pull request"),
@@ -353,9 +358,11 @@ def test_manual_n_a_does_not_drop_the_second_review(tmp_path, monkeypatch) -> No
 )
 def test_waiver_refusal_rules(tmp_path, monkeypatch, mutation, reason):  # noqa: ANN001
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     if mutation == "external":
-        task["models"] = {"first": "grok", "second": None}
+        task["models"] = {"first": "driver-a", "second": None}
+    elif mutation == "unrecorded":
+        task.pop("models")
     elif mutation == "first":
         row = rows(store, OID)["review_1_logic"]
         row["status"] = "pending"
@@ -381,7 +388,7 @@ def test_waiver_refusal_rules(tmp_path, monkeypatch, mutation, reason):  # noqa:
         second_gate(store, task, fake, "quality", "rejected")
     elif mutation == "no-pr":
         task["payload"]["coordinator"].pop("pr_number")
-    if mutation in ("external", "a38-rejected", "no-pr"):
+    if mutation in ("external", "unrecorded", "a38-rejected", "no-pr"):
         store.write(
             "task",
             "update",
@@ -427,7 +434,7 @@ def test_one_review_permitted_reads_the_trusted_list(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     _list_opener(fake)
     value = resolve_one_review_permitted(
         context(
@@ -491,7 +498,7 @@ def test_one_review_permitted_defers_a_trusted_list_failure(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
 
     def down(*args, **kwargs):  # noqa: ANN002, ANN003
         raise PrGuardLookupError("down")
@@ -518,7 +525,7 @@ def test_trusted_done_review_still_requires_both_keys_n_a(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
 
     def fail(*args, **kwargs):  # noqa: ANN002, ANN003
         pytest.fail("runner called")
@@ -537,7 +544,7 @@ def test_set_checklist_is_unchanged_without_snapshot_extra(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     with pytest.raises(
         CoordinatorError,
         match="close_allowed denied for review_2_quality: review_2_quality n_a requires one_review_authors",
@@ -557,7 +564,7 @@ def test_set_checklist_closes_n_a_with_the_trusted_list(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     extra = {
         "trusted_pr_guard": {"one_review_authors": ["worker-bot"]},
         "pull_opener": "worker-bot",
@@ -603,7 +610,7 @@ def test_set_checklist_closes_n_a_with_the_trusted_list(
 def test_override_waives_the_second_review(tmp_path, monkeypatch) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     _list_opener(fake)
-    seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     iid = override_intent(store, worker, OID)
     assert consume(store, worker, fake, OID, iid) == [
         "check review_2 overridden by human-owner"
@@ -639,7 +646,7 @@ def test_override_is_refused_when_the_repository_requires_two_reviews(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     iid = override_intent(store, worker, OID)
     assert consume(store, worker, fake, OID, iid) is None
     intent = store.row("activity", iid)
@@ -654,14 +661,14 @@ def test_override_is_refused_when_the_repository_requires_two_reviews(
         rows(store, OID)[key]["status"] == "pending"
         for key in ("review_2_quality", "review_2_logic")
     )
-    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_codex"
+    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_second"
     store.close()
 
 
 def test_override_waits_for_the_trusted_list(tmp_path, monkeypatch) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     _list_opener(fake)
-    seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     iid = override_intent(store, worker, OID)
 
     def down(*args, **kwargs):  # noqa: ANN002, ANN003
@@ -679,7 +686,7 @@ def test_override_waits_for_the_trusted_list(tmp_path, monkeypatch) -> None:
         rows(store, OID)[key]["status"] == "pending"
         for key in ("review_2_quality", "review_2_logic")
     )
-    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_codex"
+    assert store.row("task", OID)["payload"]["coordinator"]["phase"] == "pr_gates_second"
     assert consume(store, worker, fake, OID, iid) == [
         "check review_2 overridden by human-owner"
     ]
@@ -693,7 +700,7 @@ def test_override_is_resumed_after_a_crash_between_rows_and_fact(
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     _list_opener(fake)
-    seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     set_rows_n_a(store, OID)
     iid = override_intent(store, worker, OID)
     consume(store, worker, fake, OID, iid)
@@ -715,12 +722,12 @@ def test_override_resumes_an_order_blocked_in_the_second_review(
         fake,
         OID,
         phase="blocked",
-        resume_phase="pr_gates_codex",
-        blocker="codex quality review unavailable/incomplete",
+        resume_phase="pr_gates_second",
+        blocker="driver-b quality review unavailable/incomplete",
         blocker_publish_once=True,
         blocker_publish_kind="provider-incomplete",
         blocker_activity_id="activity-1",
-        retry={"phase": "pr_gates_codex", "attempt": 1, "reason": "x"},
+        retry={"phase": "pr_gates_second", "attempt": 1, "reason": "x"},
         lane_outcome={
             "role": "reviewer-results",
             "outcomes": [{"stage": "review-2", "dimension": "quality"}],
@@ -753,7 +760,7 @@ def test_override_waits_for_the_blocker_comment(tmp_path, monkeypatch) -> None:
         fake,
         OID,
         phase="blocked",
-        resume_phase="pr_gates_codex",
+        resume_phase="pr_gates_second",
         blocker="review incomplete",
         blocker_publish_once=True,
     )
@@ -820,7 +827,7 @@ def test_override_with_a_written_fact_only_finishes(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     iid = override_intent(store, worker, OID)
     record_check(
         store,
@@ -851,14 +858,14 @@ def test_waived_order_skips_the_second_review_on_a_later_head(
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
     _list_opener(fake)
-    seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     iid = override_intent(store, worker, OID)
     assert consume(store, worker, fake, OID, iid) == [
         "check review_2 overridden by human-owner"
     ]
     task = store.row("task", OID)
     c = task["payload"]["coordinator"]
-    c["phase"] = "pr_gates_codex"
+    c["phase"] = "pr_gates_second"
     c["head_sha"] = "e" * 40
     c["lane_outcome"] = {
         "role": "reviewer-results",
@@ -946,7 +953,7 @@ def test_waived_order_reaches_ready_without_review_2(
         worker,
         fake,
         OID,
-        phase="pr_gates_codex",
+        phase="pr_gates_second",
         formal=True,
         evidence={"ci_green": True, "ci_head": fake.head},
     )
@@ -1022,7 +1029,7 @@ def test_resume_after_second_review_waiver() -> None:
             "payload": {"coordinator": checkpoint},
         }
 
-    for phase in ("pr_gates_codex", "a38_second_comment"):
+    for phase in ("pr_gates_second", "a38_second_comment"):
         task = task_for(phase)
         resume_after_second_review_waiver(task)
         assert task["payload"]["coordinator"]["phase"] == "ci"
@@ -1062,7 +1069,7 @@ def test_resume_after_second_review_waiver() -> None:
     assert blocked["payload"]["coordinator"]["blocker"] == "stop"
 
     reviewer = task_for(
-        "pr_gates_codex",
+        "pr_gates_second",
         lane_outcome={
             "role": "reviewer-results",
             "outcomes": [
@@ -1077,7 +1084,7 @@ def test_resume_after_second_review_waiver() -> None:
     ]
 
     implementer = task_for(
-        "pr_gates_codex",
+        "pr_gates_second",
         lane_outcome={"role": "implementer", "round": 1},
     )
     resume_after_second_review_waiver(implementer)
@@ -1091,7 +1098,7 @@ def test_resolve_action_records_facts_without_outcomes(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     task["payload"]["coordinator"].pop("pr_number")
     store.write(
         "task",
@@ -1130,7 +1137,7 @@ def test_override_command_refuses_from_the_store(
     tmp_path, monkeypatch, mutation
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     if mutation == "first":
         row = rows(store, OID)["review_1_logic"]
         row["status"] = "pending"
@@ -1167,7 +1174,7 @@ def test_override_command_accepts_a_pending_review_2(
     tmp_path, monkeypatch
 ) -> None:
     store, worker, fake = review_env(tmp_path, monkeypatch)
-    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_codex")
+    task = seed_review_order(store, worker, fake, OID, phase="pr_gates_second")
     missing = op_override(
         store,
         store.home,
@@ -1395,17 +1402,17 @@ def test_preflight_requires_one_first_model_for_order_workers(
     path = store.home / "ai-accounts.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest["roles"]["rev-other"] = {
-        "account": "grok-w",
+        "account": "driver-a-w",
         "model": "other-model",
         "access": "read-only",
     }
     manifest["sessions"]["worker-session"]["lanes"][
-        "grok:pr-reviewer-logic"
+        "driver-a:pr-reviewer-logic"
     ] = "rev-other"
     path.write_text(json.dumps(manifest), encoding="utf-8")
     message = (
         "order workers require one model for the implementer and the first review: "
-        "grok:pr-reviewer-logic uses other-model, grok:implementer uses grok-model"
+        "driver-a:pr-reviewer-logic uses other-model, driver-a:implementer uses driver-a-model"
     )
     assert run_tick(store, worker, fake, lane) == [f"preflight blocked: {message}"]
     with pytest.raises(CoordinatorError, match=message):

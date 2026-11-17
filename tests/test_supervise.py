@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agent_cli.drivers import PaneMarkers
 from agent_cli.runtime import Completed, PreflightRuntime, Runtime
 from agent_cli.store import Store
 from agent_cli.supervise import (
@@ -18,7 +19,11 @@ from agent_cli.supervise import (
 
 
 
+from driver_fixtures import PANE_PERMISSION, pane_markers
 from github_support import configure_accounts, transport
+
+
+CHROME = pane_markers("driver-a").chrome
 
 
 def enqueue_assigned(store, session_id, repo, number, runner):
@@ -47,8 +52,11 @@ class FakeRuntime(Runtime):
     def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
         return self.busy
 
-    def grok_working(self, session_id: str) -> bool:
+    def pane_working(self, session_id: str) -> bool:
         return self.busy
+
+    def markers_for(self, session_id: str) -> PaneMarkers:
+        return pane_markers("driver-a")
 
     def capture(self, session_id: str) -> str:
         return self.pane
@@ -103,20 +111,24 @@ def _assigned(store: Store, sid: str = "runner-1") -> str:
 
 def test_parse_closed_answer_last_token() -> None:
     pane = "story\nJa\nNein\n"
-    assert parse_closed_answer(pane) == ANSWER_NO
-    assert parse_closed_answer("hello") is None
-    assert parse_closed_answer(f'"{ANSWER_YES}"') == ANSWER_YES
+    assert parse_closed_answer(pane, CHROME) == ANSWER_NO
+    assert parse_closed_answer("hello", CHROME) is None
+    assert parse_closed_answer(f'"{ANSWER_YES}"', CHROME) == ANSWER_YES
 
 
 def test_parse_closed_answer_ignores_ja_in_scrollback() -> None:
     pane = (
         "Ja\n"
         "Referral-Programm umsetzen, nächster Schritt.\n"
-        "     Worked for 35m21s\n"
-        "  Help improve Grok                                         [Opt out] [Opt in]\n"
-        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+        "  Status bar: model-a                                   [Opt out] [Opt in]\n"
     )
-    assert parse_closed_answer(pane) is None
+    assert parse_closed_answer(pane, CHROME) is None
+
+
+def test_parse_closed_answer_skips_configured_chrome_lines() -> None:
+    pane = "Ja\n  Status bar: model-a\n"
+    assert parse_closed_answer(pane, CHROME) == ANSWER_YES
+    assert parse_closed_answer(pane, ()) is None
 
 
 def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
@@ -317,11 +329,7 @@ def test_tick_approves_permission_prompt_even_when_busy(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
     assigned = _assigned(store)
-    pane = (
-        "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
-        "  1/3:select  \u2502  Tab:next option\n"
-    )
-    rt = FakeRuntime(busy=True, pane=pane)
+    rt = FakeRuntime(busy=True, pane=PANE_PERMISSION)
     tick(
         store,
         rt,
@@ -365,7 +373,9 @@ def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
         assert session_id == "runner-1"
         events.append("preflight")
 
-    runtime = PreflightRuntime(Runtime(runner=runner), preflight)
+    runtime = PreflightRuntime(
+        Runtime(runner=runner), preflight, markers_for=lambda _sid: pane_markers()
+    )
 
     tick(
         store,
@@ -383,10 +393,7 @@ def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
         quiet_seconds=0,
         ask=True,
     )
-    state["pane"] = (
-        "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
-        "  1/3:select  \u2502  Tab:next option\n"
-    )
+    state["pane"] = PANE_PERMISSION
     tick(
         store,
         runtime,

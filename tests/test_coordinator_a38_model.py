@@ -213,7 +213,7 @@ def seed_model_task(
     task = {
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "pr-review", "title": "A38 model task", "repo": "example/project", "ref": "42",
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "change_summary_en": "The coordinator runs the model second review.",
         "change_summary_de": "The coordinator runs the model second review.",
         "payload": {"coordinator": {
@@ -234,7 +234,7 @@ def seed_model_task(
         "current_round": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
     }
     seed_task(store, worker, tid, task)
-    for stage, vendor, model in (("review-1", "grok", "grok-model"),):
+    for stage, vendor, model in (("review-1", "driver-a", "driver-a-model"),):
         for dimension in ("quality", "logic"):
             aid = f"{tid}-{stage}-{dimension}-agent"
             gid = f"{tid}-{stage}-{dimension}"
@@ -273,13 +273,13 @@ def seed_model_task(
         gid = f"{tid}-review-2-{dimension}"
         store.write("agent", "insert", aid, {
             "id": aid, "session_id": worker.session_id, "task_id": tid,
-            "role": f"pr-reviewer-{dimension}", "vendor": "codex", "provider": "codex",
-            "model": "codex-model", "prompt": second_prompt or COMPLIANCE_PROMPT + f" Check {dimension}.",
+            "role": f"pr-reviewer-{dimension}", "vendor": "driver-b", "provider": "driver-b",
+            "model": "driver-b-model", "prompt": second_prompt or COMPLIANCE_PROMPT + f" Check {dimension}.",
             "stage": "review-2", "head_sha": fake.head, "dimension": dimension, "status": "done",
         })
         store.write("review_gate", "insert", gid, {
             "id": gid, "task_id": tid, "stage": "review-2", "dimension": dimension,
-            "vendor": "codex", "verdict": verdict, "evidence": evidence,
+            "vendor": "driver-b", "verdict": verdict, "evidence": evidence,
             "head_sha": fake.head, "agent_id": aid, "recorded_at": "2026-01-01T00:00:01Z",
         })
     saved = store.row("task", tid)
@@ -292,7 +292,7 @@ def one_lane(fake: FakeGh, text: str):
         joined = " ".join(argv) + "\n" + (stdin or "")
         role = next(name for name in ("pr-reviewer-quality", "pr-reviewer-logic") if name in joined)
         fake.launched.append(role)
-        Path(argv[argv.index("--output-last-message") + 1]).write_text(text, encoding="utf-8")
+        Path(argv[argv.index("--last-message") + 1]).write_text(text, encoding="utf-8")
         return Completed(0, "", "")
     return run
 
@@ -345,7 +345,7 @@ def test_created_task_pins_the_model_mode(tmp_path: Path) -> None:
     )
     assert task is not None
     assert task["payload"]["coordinator"]["a38"] == {"enabled": True, "second_review_mode": "model"}
-    assert task["models"] == {"first": "grok", "second": "codex"}
+    assert task["models"] == {"first": "driver-a", "second": "driver-b"}
 
 
 def test_order_task_pins_the_model_mode(tmp_path: Path) -> None:
@@ -364,14 +364,14 @@ def test_order_task_pins_the_model_mode(tmp_path: Path) -> None:
         submit_order(store, worker)
     assert store.rows("task") == []
 
-    data["models"]["second"] = "codex"
+    data["models"]["second"] = "driver-b"
     manifest.write_text(json.dumps(data), encoding="utf-8")
     task = submit_order(store, worker)
     assert task["payload"]["coordinator"]["a38"] == {
         "enabled": True,
         "second_review_mode": "model",
     }
-    assert task["models"] == {"first": "grok", "second": "codex"}
+    assert task["models"] == {"first": "driver-a", "second": "driver-b"}
 
 
 def test_binding_hash_unchanged_without_new_options(tmp_path: Path) -> None:
@@ -379,7 +379,7 @@ def test_binding_hash_unchanged_without_new_options(tmp_path: Path) -> None:
     write_accounts(store.home)
     worker = make_worker(tmp_path)
     altered = replace(worker, park_poll_seconds=5, lane_retries=7, max_rounds=3,
-                      max_rounds_by_model={"grok-model": 4}, orders=True, draft_on_accept=True)
+                      max_rounds_by_model={"driver-a-model": 4}, orders=True, draft_on_accept=True)
     assert execution_binding(store, worker, "example/project") == execution_binding(store, altered, "example/project")
     model = replace(worker, review_session=None, a38=True, a38_second_review="model")
     assert execution_binding(store, model, "example/project") != execution_binding(
@@ -393,7 +393,7 @@ def test_first_comment_of_a_model_task_goes_to_the_second_pair(tmp_path: Path, m
     task = seed_model_task(store, worker, fake, tid, phase="a38_first_comment")
     assert phase_first_comment(store, worker, task, fake) == [f"first A38 review comment posted on {fake.head[:7]}"]
     c = checkpoint(store, tid)
-    assert c["phase"] == "pr_gates_codex" and len(comments(store)) == 1 and store.rows("ping") == []
+    assert c["phase"] == "pr_gates_second" and len(comments(store)) == 1 and store.rows("ping") == []
     assert "second_review" not in c["a38"]
     first = c["a38"]["first_comment"]
     assert first["body"] and first["passes"] == 1 and first["url"] == "https://x" and "request_key" not in first
@@ -425,8 +425,8 @@ def test_reconcile_posts_a_saved_first_comment_of_a_model_task(tmp_path: Path, m
 def test_approved_second_pair_goes_to_the_second_comment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store, worker, fake = env(tmp_path, monkeypatch)
     tid = "20000000-0000-4000-8000-000000000001"
-    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_codex")
-    phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="codex", stage="review-2")
+    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_second")
+    phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="driver-b", stage="review-2")
     gates = _gates(store, tid)
     assert {g["dimension"] for g in gates if g["verdict"] == "approved"} == {"quality", "logic"}
     checklist = {r["key"]: r["status"] for r in store.rows("checklist_item") if r.get("task_id") == tid}
@@ -439,9 +439,9 @@ def test_approved_second_pair_goes_to_the_second_comment(tmp_path: Path, monkeyp
 def test_rejected_second_pair_posts_no_plain_comment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store, worker, fake = env(tmp_path, monkeypatch)
     tid = "20000000-0000-4000-8000-000000000002"
-    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_codex")
+    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_second")
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: rejected\nQ-FINDING in the widget\n"
-    lines = phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="codex", stage="review-2")
+    lines = phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="driver-b", stage="review-2")
     assert {g["verdict"] for g in _gates(store, tid)} == {"approved", "rejected"}
     assert not [r for r in store.rows("activity") if r.get("type") == "review.post"]
     c = checkpoint(store, tid)
@@ -453,12 +453,12 @@ def test_rejected_second_pair_posts_no_plain_comment(tmp_path: Path, monkeypatch
 def test_rejection_waits_for_an_incomplete_sibling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store, worker, fake = env(tmp_path, monkeypatch)
     tid = "20000000-0000-4000-8000-000000000003"
-    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_codex")
+    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_second")
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: rejected\nQ-FINDING\n"
     fake.model_outputs["pr-reviewer-logic"] = "STATUS: unavailable\n"
-    phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="codex", stage="review-2")
+    phase_pr_gates(store, worker, task, fake, lane_runner(fake), vendor="driver-b", stage="review-2")
     c = checkpoint(store, tid)
-    assert c["phase"] == "blocked" and c["resume_phase"] == "pr_gates_codex"
+    assert c["phase"] == "blocked" and c["resume_phase"] == "pr_gates_second"
     assert "review unavailable/incomplete" in c["blocker"] and "second_review_passes" not in c["a38"]
     gates = _gates(store, tid)
     assert {g["dimension"]: g["verdict"] for g in gates} == {"quality": "rejected", "logic": "unavailable"}
@@ -466,12 +466,12 @@ def test_rejection_waits_for_an_incomplete_sibling(tmp_path: Path, monkeypatch: 
     assert not [r for r in store.rows("activity") if r.get("type") == "review.post"]
     assert not [r for r in comments(store) if REVIEW_BEGIN in str(r.get("payload", {}).get("body") or "")]
     saved = store.row("task", tid)
-    saved["payload"]["coordinator"]["phase"] = "pr_gates_codex"
+    saved["payload"]["coordinator"]["phase"] = "pr_gates_second"
     saved["payload"]["coordinator"].pop("resume_phase", None)
     _update(store, "task", saved)
     fake.launched.clear()
     lines = phase_pr_gates(store, worker, store.row("task", tid), fake,
-                           one_lane(fake, "STATUS: complete\nRESULT: approved\n"), vendor="codex", stage="review-2")
+                           one_lane(fake, "STATUS: complete\nRESULT: approved\n"), vendor="driver-b", stage="review-2")
     assert fake.launched == ["pr-reviewer-logic"] and "review-2/quality=rejected (kept)" in lines
     assert [g["id"] for g in _gates(store, tid) if g["dimension"] == "quality"] == [quality_id]
     c = checkpoint(store, tid)
@@ -481,18 +481,18 @@ def test_rejection_waits_for_an_incomplete_sibling(tmp_path: Path, monkeypatch: 
 def test_recorded_pair_in_the_gate_phase_goes_to_the_second_comment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store, worker, fake = env(tmp_path, monkeypatch)
     tid = "20000000-0000-4000-8000-000000000004"
-    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_codex",
+    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_second",
                            second={"quality": ("approved", None), "logic": ("approved", None)})
     def no_lane(*_a, **_k):  # noqa: ANN202
         pytest.fail("a recorded pair must not launch a lane")
-    assert phase_pr_gates(store, worker, task, fake, no_lane, vendor="codex", stage="review-2") == [
+    assert phase_pr_gates(store, worker, task, fake, no_lane, vendor="driver-b", stage="review-2") == [
         f"review-2 already complete on {fake.head[:7]}"
     ]
     assert checkpoint(store, tid)["phase"] == "a38_second_comment"
     tid = "20000000-0000-4000-8000-000000000005"
-    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_codex",
+    task = seed_model_task(store, worker, fake, tid, phase="pr_gates_second",
                            second={"quality": ("rejected", "Q-FINDING"), "logic": ("approved", None)})
-    assert phase_pr_gates(store, worker, task, fake, no_lane, vendor="codex", stage="review-2") == [
+    assert phase_pr_gates(store, worker, task, fake, no_lane, vendor="driver-b", stage="review-2") == [
         "review-2/quality=rejected (kept)", "review-2/logic=approved (cached)"
     ]
     assert checkpoint(store, tid)["phase"] == "a38_second_comment"
@@ -511,7 +511,7 @@ def test_second_comment_is_rendered_by_the_guard_renderer(tmp_path: Path, monkey
     assert len(rows) == 1 and rows[0]["payload"]["target"] == "pr"
     assert rows[0]["payload"][COMMENT_KIND_KEY] == A38_MODEL_SECOND_REVIEW_COMMENT
     body = rows[0]["payload"]["body"]
-    assert body.startswith("EN:\nSecond review with codex-model\nNo defects.")
+    assert body.startswith("EN:\nSecond review with driver-b-model\nNo defects.")
     assert "conformity-b" in body and "logic-b" in body
     assert '"blocks_merge":false' in body and '"defects":0' in body and "Second review by @" not in body
     declaration = _validate(body, fake.head)
@@ -561,12 +561,12 @@ def test_unchanged_head_after_a_blocking_comment_reviews_the_rejected_dimension_
                            second={"quality": ("rejected", "Q-FINDING"), "logic": ("approved", None)})
     phase_second_comment(store, worker, task, fake)
     saved = store.row("task", tid)
-    saved["payload"]["coordinator"]["phase"] = "pr_gates_codex"
+    saved["payload"]["coordinator"]["phase"] = "pr_gates_second"
     _update(store, "task", saved)
     fake.launched.clear()
     lines = phase_pr_gates(
         store, worker, store.row("task", tid), fake,
-        one_lane(fake, "STATUS: complete\nRESULT: approved\n"), vendor="codex", stage="review-2",
+        one_lane(fake, "STATUS: complete\nRESULT: approved\n"), vendor="driver-b", stage="review-2",
     )
     assert fake.launched == ["pr-reviewer-quality"] and "review-2/logic=approved (cached)" in lines
     assert checkpoint(store, tid)["a38"]["second_review_passes"] == 1
@@ -656,7 +656,7 @@ def test_second_comment_returns_to_the_gates_when_a_gate_is_unusable(
             gate["head_sha"] = "b" * 40
             _update(store, "review_gate", gate)
         elif case == "other-vendor":
-            gate["vendor"] = "grok"
+            gate["vendor"] = "driver-a"
             _update(store, "review_gate", gate)
         elif case == "unavailable":
             gate["verdict"] = "unavailable"
@@ -668,7 +668,7 @@ def test_second_comment_returns_to_the_gates_when_a_gate_is_unusable(
     assert phase_second_comment(store, worker, task, fake) == [
         f"second review logic gate missing on {fake.head[:7]}; re-running gate"
     ]
-    assert checkpoint(store, tid)["phase"] == "pr_gates_codex" and comments(store) == []
+    assert checkpoint(store, tid)["phase"] == "pr_gates_second" and comments(store) == []
 
 
 def test_second_comment_follows_a_changed_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -723,11 +723,11 @@ def test_readiness_of_a_model_task_requires_all_four_gates(
     store, ordinary, fake = _ready_side_env(tmp_path, monkeypatch)
     worker = replace(ordinary, review_session=None, a38=True, a38_second_review="model")
 
-    def ready_task(tid: str, codex: tuple[str, ...]) -> dict[str, Any]:
+    def ready_task(tid: str, second: tuple[str, ...]) -> dict[str, Any]:
         task = _seed_ready_side_task(
             store, worker, fake, tid=tid, phase="readiness",
-            checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
-            codex_gates=codex, models={"first": "grok", "second": "codex"},
+            checklist_second={"review_2_quality": "ja", "review_2_logic": "ja"},
+            second_gates=second, models={"first": "driver-a", "second": "driver-b"},
         )
         task["payload"]["coordinator"]["a38"] = {
             "enabled": True, "second_review_mode": "model", "base_sha": fake.base,
@@ -1461,7 +1461,7 @@ def test_invalidate_head_evidence_drops_a_second_comment_of_another_head() -> No
 
 def _declaration() -> dict[str, Any]:
     lanes = [{
-        "id": lane_id, "provider": "OpenAI", "model": "Reviewer Model 2",
+        "id": lane_id, "provider": "Vendor B", "model": "Reviewer Model 2",
         "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT,
         "status": "complete", "result": "pass",
     } for lane_id in ("conformity-b", "logic-b")]
@@ -1500,3 +1500,22 @@ def test_quoted_findings() -> None:
 @pytest.mark.no_pg
 def test_handler_map_covers_every_phase() -> None:
     assert set(phase_handlers(None, None, {}, None, None)) | {"queued"} == set(preconditions.PHASES)
+
+
+@pytest.mark.no_pg
+def test_review_display_name_comes_from_the_driver_configuration(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from agent_cli.coordinator_a38 import _driver_display_name
+    from driver_fixtures import write_drivers
+
+    write_drivers(tmp_path)
+    store = SimpleNamespace(home=tmp_path)
+    assert _driver_display_name(store, "driver-a", "review-1") == "Vendor A"
+    for driver in ("driver-e", "driver-x"):
+        with pytest.raises(CoordinatorError) as exc:
+            _driver_display_name(store, driver, "review-2")
+        assert str(exc.value) == (
+            f"driver {driver} recorded on review-2 has no display_name "
+            "(see drivers.json, docs/ai-accounts.md#drivers)"
+        )

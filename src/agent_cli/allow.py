@@ -16,6 +16,7 @@ from .model_slots import (
     canonical_key,
     implementer_from_snapshot,
     models_from_snapshot,
+    unrecorded_rows_hint,
 )
 from .pr_guard_config import one_review_for
 from .small_change import VERDICT_SMALL, is_small_change_evidence
@@ -381,6 +382,25 @@ def _open_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [t for t in tasks if str(t.get("state")) not in TERMINAL_STATES]
 
 
+def stored_names_hint(tasks: list[dict[str, Any]]) -> str:
+    """The ``recorded_slots`` hint when a task holds names of an earlier version.
+
+    Without ``recorded_slots`` such gate stages and checklist keys read as
+    absent, so the refusal names the missing configuration.
+    """
+    names: list[object] = []
+    for task in tasks:
+        checklist = task.get("checklist")
+        if isinstance(checklist, Mapping):
+            names.extend(checklist)
+        names.extend(
+            gate.get("stage")
+            for gate in task.get("gates") or []
+            if isinstance(gate, Mapping)
+        )
+    return unrecorded_rows_hint(names)
+
+
 def evaluate_allow(
     action: str,
     *,
@@ -423,7 +443,8 @@ def evaluate_allow(
                 action=action,
                 session=session_id,
                 task_id=task_id,
-                reason="open tasks are not ready_for_done",
+                reason="open tasks are not ready_for_done"
+                + stored_names_hint(open_tasks),
                 blocking=blocking,
             )
         return AllowResult(
@@ -512,7 +533,7 @@ def evaluate_allow(
             action=action,
             session=session_id,
             task_id=task_id,
-            reason="task is not ready_for_done",
+            reason="task is not ready_for_done" + stored_names_hint(match[:1]),
             blocking=blocking,
         )
     return AllowResult(

@@ -15,20 +15,31 @@ There is no
 implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
+The repository ships no driver table either. Every provider that accounts,
+`models`, `implementer`, lane slots and usage selections name is a driver that
+the operator describes in a second file, `$AGENT_HOME/drivers.json`: its
+executable and argument templates, how the spec and the output travel, its
+configuration-directory variable, the credential variables to scrub, capability
+flags, the usage adapter, the attribution display name and the terminal pane
+markers. See [Drivers](#drivers). When anything names a driver and
+`drivers.json` is missing or does not describe it, the load fails with an error
+that names `drivers.json` and this document.
+
 This device-local manifest is used by `agent lane run`, the lane steps of
-`agent run`, interactive Grok session starts, optional Grok, OpenRouter and Claude usage reads,
+`agent run`, interactive session starts, optional usage reads,
 and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
-unknown top-level key or a malformed model selection therefore stops task
-creation. `agent task create` and error-fix tasks ignore errors inside
+unknown top-level key, a malformed model selection or an invalid `drivers.json`
+therefore stops task creation. `agent task create` and error-fix tasks ignore errors inside
 `accounts`, `roles`, `sessions`, `lanes` or `usage_accounts`; the issue
 coordinator validates the whole manifest, including `lane_execution`, before it
 accepts a task.
 It does not implement the complete issue-to-PR coordinator or a sandbox.
 
 The following is an **operator-supplied example**, never an installed default.
-It configures model slot `first` = Claude and model slot `second` = Codex and
-binds the lanes device-wide:
+It configures model slot `first` = `driver-a` and model slot `second` =
+`driver-b`, two drivers that `drivers.json` describes, and binds the lanes
+device-wide:
 
 ```json
 {
@@ -36,43 +47,43 @@ binds the lanes device-wide:
     "mode": "this-device-is-lane-host"
   },
   "models": {
-    "first": "claude",
-    "second": "codex"
+    "first": "driver-a",
+    "second": "driver-b"
   },
   "accounts": {
-    "claude-profile": {
-      "provider": "claude",
-      "config_dir": "/operator/claude-config"
+    "driver-a-profile": {
+      "provider": "driver-a",
+      "config_dir": "/operator/driver-a-config"
     },
-    "codex-profile": {
-      "provider": "codex",
-      "config_dir": "/operator/codex-config"
+    "driver-b-profile": {
+      "provider": "driver-b",
+      "config_dir": "/operator/driver-b-config"
     }
   },
   "roles": {
     "first-builder": {
-      "account": "claude-profile",
+      "account": "driver-a-profile",
       "model": "operator-selected-model",
       "access": "workspace-write"
     },
     "first-reader": {
-      "account": "claude-profile",
+      "account": "driver-a-profile",
       "model": "operator-selected-model",
       "access": "read-only"
     },
     "second-reader": {
-      "account": "codex-profile",
+      "account": "driver-b-profile",
       "model": "operator-selected-model",
       "access": "read-only"
     }
   },
   "lanes": {
-    "claude:implementer": "first-builder",
-    "claude:reviewer": "first-reader",
-    "claude:pr-reviewer-quality": "first-reader",
-    "claude:pr-reviewer-logic": "first-reader",
-    "codex:pr-reviewer-quality": "second-reader",
-    "codex:pr-reviewer-logic": "second-reader"
+    "driver-a:implementer": "first-builder",
+    "driver-a:reviewer": "first-reader",
+    "driver-a:pr-reviewer-quality": "first-reader",
+    "driver-a:pr-reviewer-logic": "first-reader",
+    "driver-b:pr-reviewer-quality": "second-reader",
+    "driver-b:pr-reviewer-logic": "second-reader"
   },
   "sessions": {}
 }
@@ -117,13 +128,13 @@ for a lane started elsewhere does not need it.
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
-`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, `check`) and from the supported
-provider adapters (`grok`, `codex`, `claude`, `openrouter`). The `check` kind is
+`reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, `check`) and from the
+driver ids that `drivers.json` configures. The `check` kind is
 read-only and is required for the provider of model slot `first` when a worker
 enables orders, through lane slot `<first>:check`. The implementer and first
-review roles of that worker must name one model. Those workflow kinds and adapters
-are protocol capabilities used when resolving a lane slot, not preinstalled user
-roles.
+review roles of that worker must name one model. Those workflow kinds are
+protocol capabilities used when resolving a lane slot, and drivers are operator
+configuration; neither is a preinstalled user role.
 
 ## Model slots
 
@@ -132,38 +143,45 @@ inner loop and runs the first PR review pair; model slot `second` runs the
 second PR review pair. The required top-level `models` block names the provider
 of each review slot:
 
-- `first`: `grok`, `codex`, `claude` or `openrouter`
-- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
+- `first`: a driver that `drivers.json` configures with a `lane` section
+- `second`: a driver with a `lane` section, different from `first`,
   or JSON `null` when an A38 coordinator worker obtains the second review
   externally. An A38 worker with `a38_second_review: "model"` sets `second` to
   a provider.
 
 The optional top-level `implementer` names the implementation provider. It may
-be `grok`, `codex`, `claude`, `openrouter`, or `deepseek`. It must differ from
+be any driver that `drivers.json` configures, including a record-only driver
+without a `lane` section. It must differ from
 `models.second`; matching `models.first` is allowed and means there is no
 separate implementation provider. When the key is absent, the implementer is
-`models.first`. `deepseek` is an implementer value only and remains invalid in
-either `models` slot. For example, a device may configure:
+`models.first`. A record-only driver is an implementer value only and remains
+invalid in either `models` slot. For example, a device may configure:
 
 ```json
 {
-  "models": {"first": "codex", "second": "grok"},
-  "implementer": "deepseek"
+  "models": {"first": "driver-b", "second": "driver-a"},
+  "implementer": "driver-e"
 }
 ```
 
+A device selection outside the configured drivers fails with, for example,
+`models.first must be one of driver-a|driver-b (see drivers.json,
+docs/ai-accounts.md#drivers)`. A model pin stored on a task is checked for its
+shape only, so a task recorded on another device stays readable.
+
 Which provider a person works with is this device-local choice; no provider
 name is fixed in the chain. Gate stages are `review-1` and `review-2`, with
-checklist prefixes `review_1_` and `review_2_`. The old stages `grok-pr` and
-`codex-pr` and old keys `grok_pr_quality`, `grok_pr_logic`, `codex_pr_quality`,
-and `codex_pr_logic` are legacy aliases: CLI input accepts and warns about them,
-and stored rows remain readable without a database rewrite. Coordinator phases `pr_gates_grok` and
-`pr_gates_codex` retain their internal persisted names. A device without a
+checklist prefixes `review_1_` and `review_2_`, and the coordinator phases of
+the two PR review pairs are `pr_gates_first` and `pr_gates_second`. Earlier
+versions named these after the driver that ran the slot. Those stored names
+stay readable through `recorded_slots` in `drivers.json` (see
+[Recorded slot names](#recorded-slot-names)): CLI input accepts and warns about
+them, and stored rows remain readable without a database rewrite. A device without a
 `models` block has no slot assignment; task creation, device model display, and
 launch configuration fail loudly.
 
-Tasks recorded before model slots existed may use the historical `grok`, then
-`codex` mapping only to read or display their existing agent and gate rows; they
+Tasks recorded before model slots existed read their slots from
+`recorded_slots` only to read or display their existing agent and gate rows; they
 cannot start a new lane or write a new agent or gate row.
 `agent models` prints `second=external` (or `external` for the selected slot)
 for a pinned null second slot; JSON output preserves `null`. A null second slot
@@ -190,47 +208,58 @@ task's execution binding: a later change stops the task with "task execution
 configuration changed" until the accepted configuration is restored. A task
 accepted before the current hash formula accepts the matching legacy formula
 once and is immediately repinned; this compatibility covers only
-the newly added `lane_execution` field and the former omission of the historical
-`grok`/`codex` `models` value. Other changes still stop the task. For the PR reviewer roles, `agent agent start --stage review-1|review-2` requires the
+the newly added `lane_execution` field and the former omission of a `models`
+value equal to the slots of `recorded_slots`. Other changes still stop the task.
+Driver descriptions in `drivers.json` are not part of the execution binding, so
+changing them does not stop an accepted task. For the PR reviewer roles, `agent agent start --stage review-1|review-2` requires the
 provider pinned to that stage. A second-stage agent cannot start until both
 first-stage dimensions are approved. `gate record` repeats the slot check and
 verifies the agent's recorded stage. Older tasks without an `implementer` field use their
 pinned `models.first`. Tasks recorded before model slots existed and therefore
-missing `models` remain readable with the historical `grok`, then `codex`
-mapping for existing agent and gate rows. They cannot start a new lane or write
+missing `models` remain readable through `recorded_slots` (`first`, then
+`second`) for existing agent and gate rows. Without that entry such a task
+cannot be read and the command fails with `task <id> predates model pins;
+configure recorded_slots in drivers.json to read it
+(docs/ai-accounts.md#drivers)`. They cannot start a new lane or write
 a new agent or gate row; recreate them after the local harness has written the
 device's `models` selection. For a nonterminal legacy error-fix task, run
 `agent task state <id> superseded`; the next `agent watch error-fix` scan ignores
 the terminal task and creates a newly pinned task. The watcher performs no
 staging or Git operation while that explicit transition is still required.
-When `agent run --spec-file` resolves an implementer without a local lane
-adapter, it deliberately uses the existing handoff path, names the pinned
-provider as the implementer, and creates no agent row.
+When `agent run --spec-file` resolves a record-only implementer driver (one
+without a `lane` section), it deliberately uses the existing handoff path, names
+the pinned provider as the implementer, and creates no agent row. A pinned
+driver that `drivers.json` does not configure stops the command instead.
 
-The issue coordinator refuses `models.first = codex`: its implementer must not
-execute software, and the codex lane (`codex exec --sandbox workspace-write`)
-cannot be kept from running commands. It also refuses a configured implementer
+The issue coordinator refuses a `models.first` driver that `drivers.json`
+configures with `lane.may_run_commands: true`: its implementer must not
+execute software, and such a driver's write lane cannot be kept from running
+commands. The error is `models.first = <driver> is not supported by the
+coordinator: driver <driver> is configured with may_run_commands, so its
+implementer lane cannot be restricted from running commands`. It also refuses a configured implementer
 that differs from `models.first`; separate implementers are not supported by
-the coordinator yet. `agent lane run` and `agent run` accept `models.first = codex`.
-Every codex lane also passes `-c model_reasoning_effort="high"`, so the reasoning
-effort of the account's own codex configuration does not apply to lanes.
+the coordinator yet. `agent lane run` and `agent run` accept such a driver in
+`models.first`. A fixed setting that a lane must not take from the account's own
+CLI configuration belongs in the driver's `lane.argv` templates.
 
-The `claude` and `openrouter` adapters run Claude Code with `--restricted`,
-`--strict-mcp-config`, `--disable-slash-commands`, and an explicit file-tool
-list. Restricted mode ignores user, project and local settings. A write lane
-gets only `Read,Grep,Glob,Edit,Write` in its worktree and cannot receive an
-extra directory. A read-only lane gets only `Read,Grep,Glob`; a static script
-may add an explicit read directory for control artifacts.
+What a lane may read and write is the driver's argv templates: `lane.argv.read`
+for a read-only lane, `lane.argv.write` for a write lane and the optional
+`lane.argv.judgment` for a check lane without tools. A driver that configures
+`lane.read_dir_args` receives an explicit read directory for control artifacts
+on a read-only lane, and its write lane cannot receive an extra directory
+(`write lane takes no extra directories`).
 
-The `openrouter` adapter points Claude Code at OpenRouter's Anthropic-compatible
-endpoint. Its model is the operator-supplied OpenRouter model id; there is no
-default. Put the key in `<config_dir>/openrouter-api-key`. A shell wrapper reads
-it only after launch and exports it as `ANTHROPIC_AUTH_TOKEN`; the key never
-appears in argv. Keep every OpenRouter `config_dir` outside every worktree and
-every added read directory. Launch is refused when those paths overlap. Claude
-Code's reported token counts and tool calls are stored in `lane.run`; its
-Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
-not OpenRouter prices.
+A driver with `lane.credential_file` keeps its key in
+`<config_dir>/<credential_file.file>`. A generated shell wrapper reads it only
+after launch and exports it as the configured `credential_file.env` variable;
+the key never appears in argv. A missing, unreadable or empty key file ends the
+lane as unavailable with `<driver> key missing`. Keep such an account's
+`config_dir` outside every worktree and every added read directory. Launch is
+refused when those paths overlap, for example with `<driver> worktree overlaps
+account config_dir`. The model is the operator-supplied model id of the role;
+there is no default. The `event-stream` parser stores reported token counts and
+tool calls in `lane.run`; it stores no cost field a driver reports, because that
+need not be the price of the endpoint the driver talks to.
 Stored file-tool targets are fail-closed host evidence. Complete terminal
 escapes are removed, separators are normalized, and regex backslash escapes are
 removed first. A target containing `..` anywhere, `~`, a drive fragment, or `/`
@@ -433,16 +462,17 @@ posted and whose newest review does not block the merge.
 
 Each account requires:
 
-- `provider`: `grok`, `codex`, `claude` or `openrouter`
-- `config_dir`: absolute path to that profile's provider CLI configuration
-  directory (no NUL, newline, CR, or parent traversal); for `claude` this is
-  the directory the `CLAUDE_CONFIG_DIR` variable points to. The default
-  profile is `~/.claude`: Claude Code keeps its login outside that directory,
-  so for exactly this path the lane leaves `CLAUDE_CONFIG_DIR` unset instead of
-  pointing it there. Any other directory is a named profile the operator logged
-  in with `CLAUDE_CONFIG_DIR=<dir> claude auth login`. An `openrouter` account
-  always sets `CLAUDE_CONFIG_DIR`, including when the directory is named
-  `~/.claude`.
+- `provider`: a driver id that `drivers.json` configures with `home_env`
+- `config_dir`: absolute path to that profile's driver CLI configuration
+  directory (no NUL, newline, CR, or parent traversal); the role prefix points
+  the driver's `home_env` variable at it. When the driver configures
+  `home_default_dir` and `config_dir` resolves to that directory, the prefix
+  leaves the variable unset instead: some CLIs keep the login of their default
+  profile outside that directory, so pointing the variable there would start an
+  empty, logged-out profile. Any other directory is a named profile the
+  operator logged in with the variable set. A driver without `home_default_dir`
+  always sets the variable, also for a directory that another driver names as
+  its default.
 
 Each role requires:
 
@@ -451,69 +481,78 @@ Each role requires:
 - `access`: `read-only` or `workspace-write` (no default)
 
 The optional top-level `usage_session` selects an explicitly configured
-interactive Grok session for automatic billing reads. Missing/null disables
+interactive session for automatic billing reads. The driver of its interactive
+role must have a `period` usage adapter (see [Usage adapters](#usage-adapters)).
+Missing/null disables
 those reads; it never chooses the host profile or the first available account.
 The selected session must exist locally, be owned and active.
+`agent watch session-usage` records a changed period snapshot as `usage.snapshot`.
 
 The optional top-level `usage_accounts` is a list of explicitly named
-`openrouter` or `claude` accounts. Missing/null/`[]` disables account usage
-polling. Unknown names, accounts of another provider and duplicate names are
-rejected. The device daemon polls these accounts on the same 60-second usage
-tick as the Grok billing read; each provider's scanner reads only its own
-accounts. On that tick it reads each `claude` account at most once every 15
-minutes, because the Claude usage endpoint answers per-minute polling with
-HTTP 429. A rate-limit answer is reported as
-`usage.snapshot error: <account>: Claude usage returned HTTP 429`, followed by
+accounts whose driver has a `spend` or `windows` usage adapter. Missing/null/`[]`
+disables account polling. An account whose driver has a `windows` adapter is
+read by `agent watch window-usage`; any other selected account must have a
+`spend` adapter and is read by `agent watch account-usage`. Unknown names,
+accounts whose driver has no `spend` adapter and no `windows` adapter and
+duplicate names are rejected,
+for example with `usage_accounts account <name> uses driver <driver>, which has
+no spend usage section in drivers.json (docs/ai-accounts.md#drivers)` or the
+same message with `windows`. `agent watch account-usage` records changed USD
+key-usage values from the adapter's requests as `usage.snapshot`; it stores
+only the configured spend fields and never the key. A spend account's key is
+read from `<config_dir>/<usage.credential.file>`. With
+`proxy_from_environment: false` its requests use an owned client with
+`trust_env=False`, so ambient proxy and CA environment variables are ignored
+and the bearer key cannot be routed through an intercepting proxy.
+
+The device daemon polls `usage_accounts` on the same 60-second tick as the
+period-usage read. Each scanner reads only its own accounts. A `windows`
+account is read no more often than its adapter's `poll_seconds`
+(1-86400 seconds); without pacing, as in `agent watch window-usage`, every
+selected window account is read immediately. A rate-limit answer is reported as
+`usage.snapshot error: <account>: <label> returned HTTP 429`, followed by
 `; retry after <N> s` when its `Retry-After` header gives a usable number of
-seconds, and postpones the next read of that account by its `Retry-After` when that is
-longer than 15 minutes. `agent watch claude-usage` reads every Claude account
-immediately.
+seconds, and postpones the next read of that account by its `Retry-After` when
+that is longer than the adapter's `poll_seconds`. Usage-account failures are
+reported and never stored as zero values.
 
-Each `openrouter` account is read from `<config_dir>/openrouter-api-key`.
-`agent watch openrouter-usage`
-records changed USD key-usage values from OpenRouter's key endpoint as
-`usage.snapshot`, without storing the key, label, or provider ids. Its request
-uses an owned client with `trust_env=False`, so ambient proxy and CA
-environment variables are ignored and the bearer key cannot be routed through
-an intercepting proxy.
+Each `windows` account uses the login of its `config_dir`; the operator logs in
+there with the driver's own tool, Agent never logs in, refreshes a token or
+reads the refresh token. `agent watch window-usage` records changed
+subscription usage from the adapter's configured requests as `usage.snapshot`:
 
-Each `claude` account uses the Claude Code login of its `config_dir`; the
-operator logs in there with Claude Code, Agent never logs in, refreshes a token
-or reads the refresh token. `agent watch claude-usage` records changed
-subscription usage from Claude's OAuth usage endpoint as `usage.snapshot`:
-
-- Identity: `oauthAccount.emailAddress` from Claude Code's global config file,
-  `~/.claude.json` for the default profile `~/.claude` and
-  `<config_dir>/.claude.json` for any other directory.
-- Credentials on macOS: the Keychain generic password of service
-  `Claude Code-credentials` (default profile) or
-  `Claude Code-credentials-<first 8 hex characters of the SHA-256 of the NFC
-  form of config_dir>` (any other directory), account `$USER` when it consists
-  only of `a-z`, `A-Z`, `0-9`, `.`, `_` and `-`, else `claude-code-user`. It is
-  read with `/usr/bin/security find-generic-password -w`. When the item does not
-  exist, and on every other system, the credentials come from
-  `<config_dir>/.credentials.json`. When the Keychain read fails (time-out or
-  another exit status), the file is used if it exists; the Keychain failure is
-  reported only when there is no file. Only `claudeAiOauth.accessToken`,
-  `expiresAt`, `subscriptionType` and `rateLimitTier` are used.
-- A missing login or a token whose `expiresAt` has passed skips the account
-  quietly (the next Claude Code start renews the token); `agent watch
-  claude-usage` prints `usage.snapshot skipped <account>: <reason>`. Malformed
-  files, a failed Keychain read without a credentials file, and request
+- Identity: the configured `account_file.file`, read for `account_file.object`
+  and `account_file.field`. `account_file.default_name` names the file in the
+  home directory for a `config_dir` that is the driver's `home_default_dir`;
+  otherwise the file is `<config_dir>/<account_file.file>`.
+- Credentials: `credential.file` is the login file in the account's
+  `config_dir`. A configured `credential.keychain` is read first on its
+  `platform`; when that item does not exist, or on another platform, the file
+  is used. A failed secret-store read falls back to an existing file and is
+  reported only when there is no file. The configured `credential.object`,
+  `token`, `expires_at`, `subscription` and optional `multiplier` fields select
+  the login data; `label`, `token_name`, `login_name` and `renew` label errors
+  and the renewal hint. `credential.expires_unit` is `epoch-ms`; when the
+  subscription equals `multiplier.plan`, a match of its pattern in
+  `multiplier.field` adds the captured value to the tier name.
+- A missing login or an expired token skips the account quietly; `agent watch
+  window-usage` prints `usage.snapshot skipped <account>: <reason>`. Malformed
+  files, a failed secret-store read without a credentials file, and request
   failures are reported as `usage.snapshot error: <account>: <reason>` and are
   never stored as 0 %.
-- Request: `GET https://api.anthropic.com/api/oauth/usage` with the access
-  token, header `anthropic-beta: oauth-2025-04-20` and `User-Agent: dfx-agent`,
-  through an owned client with `trust_env=False` as above.
-- Snapshot: `account_email`, `tier` (the plan, with the Max multiplier, for
-  example `max_20x`), and `windows` with `five_hour`, `weekly` (all models) and
-  `weekly_models` (weekly limits scoped to one model, with the model's display
-  name). Each window has `used_percent` and `resets_at` (UTC, rounded to the nearest
-  minute, because the endpoint reports the same reset with about a second of
-  jitter); a
-  window the response does not report is `null`, not 0 %. A snapshot is stored
-  only when a value other than `fetched_at` changed. The token is never stored
-  or logged.
+- Request: every configured `requests` entry in order, with the access token,
+  the fixed `Authorization` and `Accept` headers, its configured headers and an
+  owned client whose `trust_env` follows `proxy_from_environment`.
+- Snapshot: `vendor` and `provider` (the driver id), `account_email`, `tier`
+  (the configured subscription plan, or null), and `windows` with `five_hour`,
+  `weekly` (all models) and `weekly_models`
+  (weekly limits scoped to one model, with the configured display-name key).
+  `weekly` uses the configured pointer or the first all-models limit. Each
+  window has `used_percent` and `resets_at` (UTC, rounded to the nearest
+  minute); a window the response does not report, or whose configured
+  `used_percent` is absent, is `null`, not 0 %. `fetched_at` records the scan.
+  A snapshot is stored only when a value other than `fetched_at` changed. The
+  token is never stored or logged.
 
 ## Subscription inventory
 
@@ -525,8 +564,8 @@ inventory is configured. Example (operator-supplied, never installed):
 ```json
 {
   "subscriptions": [
-    {"provider": "claude", "account": "seat-1@example.com", "label": "Team seat 1", "status": "active", "note": "Billed yearly"},
-    {"provider": "openrouter", "account": "router-a"}
+    {"provider": "driver-a", "account": "seat-1@example.com", "label": "Team seat 1", "status": "active", "note": "Billed yearly"},
+    {"provider": "driver-b", "account": "router-a"}
   ]
 }
 ```
@@ -535,8 +574,9 @@ inventory is configured. Example (operator-supplied, never installed):
 - `provider`: required lowercase token of `a-z`, `0-9` and `-`; it is not
   limited to providers with a usage reader, so other AI plans can be listed.
 - `account`: required non-empty single-line string, unique per provider
-  without regard to case. For `claude` and `grok` it is the login's e-mail
-  address; for `openrouter` it is the account name from `ai-accounts.json`.
+  without regard to case. For a driver with a `windows` adapter it is the
+  login's e-mail address; for a driver with a `spend` adapter it is the account
+  name from `ai-accounts.json`.
 - `label`, `status`, `note`: optional non-empty single-line strings.
 - Unknown keys are rejected with an error naming the entry.
 
@@ -546,7 +586,7 @@ status and note, joined with the newest `usage.snapshot` of the same provider
 and account (case-insensitive). A listed subscription that no paired device
 polls shows `No usage: no paired device polls this login`. Usage snapshots of
 accounts missing from the inventory are still shown and marked `not listed`.
-Claude rows show the five-hour, weekly and per-model weekly percentages with
+Windows rows show the five-hour, weekly and per-model weekly percentages with
 their reset times. `status` is shown as an icon from the dashboard's state
 mapping with the word as the cell's title; a word the mapping does not know
 gets the neutral fallback icon. A file that does not validate is shown as an error on that
@@ -563,8 +603,10 @@ keys. A session's own `lanes` entry wins; a slot the session does not bind
 falls back to the device-wide map. This is explicit configuration for every
 session on the device, not an implicit identity.
 
-Lane slots are arbitrary non-empty single-line strings. Resolvers look up the
-explicit key `vendor:workflow-kind` (for example `claude:implementer`) and
+Lane slots are non-empty single-line strings of the form
+`vendor:workflow-kind`, where `vendor` names a driver with a `lane` section in
+`drivers.json`. Resolvers look up the
+explicit key (for example `driver-a:implementer`) and
 require the bound role's account provider to match `vendor`. For workflow kinds
 `reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`, and `check`, the bound
 role must use `access: read-only`; a writable binding is refused. The `check`
@@ -577,45 +619,554 @@ from the loader does not echo credential contents.
 
 ## Process isolation prefix
 
-`AIRole.env_prefix()` returns an `env` argv prefix for child processes. It
-removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
-`OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
-`ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
-`AWS_BEARER_TOKEN_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_FOUNDRY_API_KEY`,
-`ANTHROPIC_FOUNDRY_BASE_URL`, `ANTHROPIC_FOUNDRY_RESOURCE`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `GROK_HOME`,
-`CODEX_HOME`, and `CLAUDE_CONFIG_DIR`, then sets `GROK_HOME`, `CODEX_HOME` or
-`CLAUDE_CONFIG_DIR` to the role's account `config_dir`. It does not mutate the parent `os.environ`. Unrelated environment
+`AIRole.env_prefix(drivers)` returns an `env` argv prefix for child processes.
+It removes every ambient variable that any configured driver lists in
+`credential_env`, the network and CA overrides below, and every configured
+driver's `home_env`, in configuration order, then sets the role driver's
+`home_env` to the role's account `config_dir` (unless `home_default_dir`
+applies, see [Required fields](#required-fields)). It does not mutate the parent `os.environ`. Unrelated environment
 variables are left for the child to inherit. This is process configuration
 isolation, not a sandbox and not a claim that the provider CLI is already
 authenticated for that profile.
 
-Every lane provider also removes the upper- and lower-case `HTTP_PROXY`,
+Every lane and every interactive pane also removes the union of all configured
+`credential_env` variables and the upper- and lower-case `HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` variables and the CA overrides
 `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`
-and `CURL_CA_BUNDLE`. A lane therefore never inherits an ambient proxy or CA
+and `CURL_CA_BUNDLE`. The network and CA list is built in; the credential
+variables come only from `drivers.json`, so removing a driver from that file
+also stops scrubbing its variables. A lane therefore never inherits an ambient proxy or CA
 trust that could read its provider credential. There is no opt-in for this
-stripping. The script-owned OpenRouter and Claude usage watchers build their own
-HTTP client with `trust_env=False` for the same reason.
+stripping. A usage adapter with `proxy_from_environment: false` builds its own
+HTTP client with `trust_env=False` for the same reason. A windows adapter's
+`trust_env` follows its `proxy_from_environment` key as well.
+
+This lane and pane list equals the role prefix's list without the `home_env`
+variables, and the role prefix runs before it, so it never changes the child's
+environment.
+Earlier versions put only part of the credential variables into the lane and
+pane list and left the others to the role prefix alone. With the same
+variables configured, a lane or pane argv, and so the output of
+`agent lane run --dry-run`, now carries one more `-u` pair for each of those
+others; the child's environment is unchanged.
 
 ## Interactive selection
 
 `AIAccounts.for_session(session_id)` resolves `sessions[session_id].interactive`
-and fails when that binding is absent or null. The loader may represent Codex
-and Claude/OpenRouter roles in the manifest. Interactive runtime support remains Grok-only;
-unsupported interactive providers are refused. The `claude` adapter is a
-headless lane (`claude --print`, spec on stdin, `Read,Grep,Glob` for a
-read-only lane, plus `Edit,Write` in permission mode `acceptEdits` for a write
-lane, edits inside the worktree only; never Bash, subagents or the web). The OpenRouter adapter uses the same restricted file-tool
-surface. The configured model is required,
-and a supplied `--model` must agree with it. A resumed conversation is pinned to
+and fails when that binding is absent or null. The loader may represent roles of
+any configured driver in the manifest. An interactive start needs the role
+driver's `interactive` section in `drivers.json`; a driver without one, or one
+that `drivers.json` does not configure, is refused with `provider must be
+<drivers with an interactive section> (see drivers.json,
+docs/ai-accounts.md#drivers)`. `agent session start --id ID --provider <driver>` and the
+control payload `{provider: "<driver>"}` require that driver to be the one of the
+session's interactive role (`configured interactive role does not match the
+requested provider`); the dashboard's "Start AI session" button sends
+`{interactive: true}` and starts whatever driver that role names. `--model`
+requires `--provider`. The configured model is required,
+and a supplied `--model` must agree with it. A read-only role appends the
+driver's `interactive.read_only_args`, and every start appends its
+`interactive.hardening_args`. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
-a changed or missing binding requires a new session. Existing unbound Grok conversation IDs are not silently adopted under a newly
+a changed or missing binding requires a new session. Existing unbound interactive session IDs are not silently adopted under a newly
 configured account. Interactive provider starts run only on a declared lane
 host. Agent does not provide its own remote lane transport or workspace
 mirroring. Interactive tmux sessions may still use
 `$AGENT_HOME/runtime-targets.json` after the `models` and `lane_execution` checks
 pass.
+
+A new start creates a UUID, stores it as `interactive_session_id` in the
+session's `runtime` together with `interactive_start_pending` until the tmux
+session is attached, and prints `started <sid> tmux=<name> interactive=<uuid>`.
+If the tmux session already exists, the start fails with `tmux session already
+exists; the interactive driver was not started`. Runtimes written by an earlier
+version stored these two values under keys named after the driver
+(`<driver>_session_id` and `<driver>_start_pending`). For every configured
+driver with an `interactive` section those keys are read as the neutral keys,
+and the next session write stores the neutral keys.
+
+`agent allow` without `--session` reads the session id from the first
+configured `interactive.session_env` variable that is set, in configuration
+order. A variable exported with an empty value counts as set and yields the
+empty session id, which matches no task. Without `drivers.json` it cannot know
+those variables, so every action without `--session` fails with `drivers is
+not configured: ...` instead of deciding without a session. The same holds when
+`drivers.json` exists but no driver configures `interactive.session_env`: every
+action without `--session` fails with `no driver in drivers.json configures
+interactive.session_env; pass --session (see drivers.json,
+docs/ai-accounts.md#drivers)`. When variables are configured but none is set,
+the action runs as if no session were given; `task-done` then uses the task's
+own session.
+
+The script classifies an interactive pane (knock, keep-working, supervise) with
+the pane markers of the driver of the session's interactive role. A session
+without an interactive role, or whose role's driver has no `interactive`
+section, is classified with the markers of `pane_driver`. Without either, the
+call fails with `session <sid> has no interactive driver and no pane_driver is
+configured; cannot classify its pane (see drivers.json,
+docs/ai-accounts.md#drivers)`, and a knock stays queued.
+
+## Drivers
+
+`$AGENT_HOME/drivers.json` is the operator's description of every driver. Installation
+creates no such file, and the repository ships no driver table, no driver
+default and no fallback. The file is a JSON object with at most three top-level
+keys:
+
+- `drivers`: an object of driver id → driver entry, or null.
+- `recorded_slots`: optional; the driver ids an earlier version wrote into
+  stored names (see [Recorded slot names](#recorded-slot-names)).
+- `pane_driver`: optional; a driver with an `interactive` section whose pane
+  markers classify a pane that no interactive driver owns.
+
+`ai-accounts.json` keeps its own keys. Its accounts, `models`, `implementer`,
+lane slots and usage selections name drivers by id, and the loader checks every
+reference against `drivers.json` through the same configuration error. Unknown
+keys are rejected at every level of `drivers.json`, so a typo fails instead of
+reading as absent.
+
+### Rollout
+
+Versions before drivers existed ignore `drivers.json`. Place the file on every
+device before upgrading; the upgrade then finds it in place. A device that is
+upgraded without the file fails as soon as anything names a driver, and
+`agent allow` without `--session` fails the same way:
+
+```text
+drivers is not configured: drivers.json must describe every driver that ai-accounts.json names in accounts, models, implementer, lanes and usage selections (docs/ai-accounts.md#drivers)
+```
+
+Use the driver ids the device already uses as keys of `drivers`. Those ids are
+stored in task pins, agent and gate rows, lane slot keys, session runtimes and
+usage snapshots, and nothing rewrites them. Keep every driver that stored rows
+name: removing one also removes its credential variables from the scrub lists
+and its display name from review records. Configure `recorded_slots` when stored
+rows may still hold names an earlier version wrote.
+
+### Example
+
+The following placeholder document describes five drivers. It is an
+illustration of the schema, not a working configuration for any tool.
+
+```json
+{
+  "drivers": {
+    "driver-a": {
+      "display_name": "Vendor A",
+      "home_env": "TOOL_A_HOME",
+      "credential_env": ["TOOL_A_API_KEY"],
+      "lane": {
+        "spec": "file-arg",
+        "output": "event-stream",
+        "may_run_commands": false,
+        "audit_stderr_when_empty": false,
+        "argv": {
+          "read": ["tool-a", "--prompt-file", "{spec_file}", "-m", "{model}", "--read-only", "--cwd", "{cwd}"],
+          "write": ["tool-a", "--prompt-file", "{spec_file}", "-m", "{model}", "--edit", "--cwd", "{cwd}"],
+          "judgment": ["tool-a", "--prompt-file", "{spec_file}", "-m", "{model}", "--no-tools", "--cwd", "{cwd}"]
+        },
+        "write_hardening": [["--no-shell"], ["--deny", "Shell"]]
+      },
+      "interactive": {
+        "argv_new": ["tool-a", "--session-id", "{session_id}", "--model", "{model}"],
+        "argv_resume": ["tool-a", "--resume", "{session_id}", "--model", "{model}"],
+        "session_id": "uuid",
+        "read_only_args": ["--deny", "Edit"],
+        "hardening_args": ["--deny", "Shell"],
+        "session_env": "TOOL_A_SESSION_ID",
+        "pane": {
+          "working": ["(?i)working\\.\\.\\.", "\\[stop\\]"],
+          "queued": [["queued", "send now"]],
+          "idle": ["> $"],
+          "permission": ["(?i)approve\\?"],
+          "permission_confirm": ["Tab:next"],
+          "chrome": ["Status bar"]
+        }
+      },
+      "usage": {
+        "snapshot": "period",
+        "credential": {
+          "file": "auth.json",
+          "format": "json-entry",
+          "entry_prefix": "https://auth.example.test::",
+          "token": "key",
+          "expires_at": "expires_at",
+          "account": "email"
+        },
+        "proxy_from_environment": false,
+        "requests": [
+          {"name": "billing", "url": "https://usage.example.test/v1/billing", "headers": {"x-client": "agent"}},
+          {"name": "plan", "url": "https://usage.example.test/v1/plan"}
+        ],
+        "fields": {
+          "tier": "/plan/tier",
+          "used_percent": "/billing/used",
+          "period_type": "/billing/period/type",
+          "period_start": "/billing/period/start",
+          "period_end": "/billing/period/end",
+          "products": {"list": "/billing/products", "product": "/name", "used_percent": "/used"},
+          "prepaid_val": "/billing/prepaid/val",
+          "on_demand_cap_val": "/billing/cap/val",
+          "on_demand_used_val": "/billing/on_demand/val"
+        }
+      }
+    },
+    "driver-b": {
+      "display_name": "Vendor B",
+      "home_env": "TOOL_B_HOME",
+      "credential_env": ["TOOL_B_API_KEY"],
+      "lane": {
+        "spec": "stdin",
+        "output": "last-message-file",
+        "may_run_commands": true,
+        "audit_stderr_when_empty": false,
+        "argv": {
+          "read": ["tool-b", "exec", "--model", "{model}", "--sandbox", "read-only", "--cd", "{cwd}", "--last-message", "{output_file}", "-"],
+          "write": ["tool-b", "exec", "--model", "{model}", "--sandbox", "workspace-write", "--cd", "{cwd}", "--last-message", "{output_file}", "-"]
+        }
+      }
+    },
+    "driver-c": {
+      "display_name": "Vendor C",
+      "home_env": "TOOL_C_CONFIG",
+      "home_default_dir": "~/.tool-c",
+      "credential_env": ["TOOL_C_API_KEY", "TOOL_C_TOKEN"],
+      "lane": {
+        "spec": "stdin",
+        "output": "event-stream",
+        "may_run_commands": false,
+        "audit_stderr_when_empty": true,
+        "argv": {
+          "read": ["tool-c", "--print", "--model", "{model}", "--tools", "Read", "--mode", "default"],
+          "write": ["tool-c", "--print", "--model", "{model}", "--tools", "Read,Edit", "--mode", "edit"],
+          "judgment": ["tool-c", "--print", "--model", "{model}", "--tools", "", "--mode", "default"]
+        },
+        "read_dir_args": ["--add-dir", "{dir}"]
+      }
+    },
+    "driver-d": {
+      "display_name": "Vendor D",
+      "home_env": "TOOL_C_CONFIG",
+      "credential_env": ["TOOL_D_API_KEY", "TOOL_C_API_KEY", "TOOL_C_TOKEN"],
+      "lane": {
+        "spec": "stdin",
+        "output": "event-stream",
+        "may_run_commands": false,
+        "audit_stderr_when_empty": true,
+        "argv": {
+          "read": ["tool-c", "--print", "--model", "{model}", "--tools", "Read", "--mode", "default"],
+          "write": ["tool-c", "--print", "--model", "{model}", "--tools", "Read,Edit", "--mode", "edit"]
+        },
+        "read_dir_args": ["--add-dir", "{dir}"],
+        "env": {"TOOL_C_BASE_URL": "https://gateway.example.test/api", "TOOL_C_API_KEY": ""},
+        "credential_file": {"file": "tool-d-key", "env": "TOOL_C_TOKEN"}
+      },
+      "usage": {
+        "snapshot": "spend",
+        "credential": {"file": "tool-d-key", "format": "text"},
+        "proxy_from_environment": false,
+        "requests": [{"name": "key", "url": "https://gateway.example.test/api/v1/key"}],
+        "fields": {
+          "usage_usd": "/key/data/usage",
+          "usage_daily_usd": "/key/data/usage_daily",
+          "usage_weekly_usd": "/key/data/usage_weekly",
+          "usage_monthly_usd": "/key/data/usage_monthly",
+          "limit_usd": "/key/data/limit",
+          "limit_remaining_usd": "/key/data/limit_remaining",
+          "limit_reset": "/key/data/limit_reset"
+        }
+      }
+    },
+    "driver-e": {}
+  },
+  "recorded_slots": {"first": "driver-a", "second": "driver-b"},
+  "pane_driver": "driver-a"
+}
+```
+
+Not every driver needs every section. `driver-e` is record-only: it may be the
+`implementer` value and be recorded by `agent agent start --role implementer`,
+and every lane launcher refuses it like an unknown `--vendor`: `vendor must be
+driver-a|driver-b|driver-c|driver-d (see drivers.json,
+docs/ai-accounts.md#drivers)`. `driver-d` runs the same CLI as `driver-c` against another
+endpoint and shares its configuration-directory variable.
+
+### Driver entry
+
+A driver id starts with a letter or digit, continues with letters, digits, `-`
+or `_`, has at most 32 characters and is neither `first` nor `second`.
+
+| Key | Meaning |
+|---|---|
+| `display_name` | Provider name in A38 review records. Required for a driver with a `lane` section. |
+| `home_env` | Environment variable that selects the account's `config_dir`. Required for a driver that an account names. |
+| `home_default_dir` | Optional `~/...` or absolute path of the CLI's own default profile; for that `config_dir` the role prefix leaves `home_env` unset. |
+| `credential_env` | Optional list of credential variables that every lane, pane and role prefix clears. It must not name any driver's `home_env`. |
+| `lane` | Optional; how a headless lane runs. Without it the driver cannot fill a model slot or run a lane. |
+| `interactive` | Optional; how an interactive terminal session runs and how its pane is read. |
+| `usage` | Optional; the usage adapter for `usage_session` (`period`) or `usage_accounts` (`spend` or `windows`). |
+
+### Lane section
+
+| Key | Meaning |
+|---|---|
+| `spec` | Required. `stdin` passes the spec text on standard input; `file-arg` passes the spec file through `{spec_file}`. |
+| `output` | Required. `event-stream` reads a JSON event stream; `last-message-file` reads the final message from `{output_file}`. |
+| `may_run_commands` | Required boolean. `true` marks a driver whose write lane cannot be kept from running commands. |
+| `audit_stderr_when_empty` | Required boolean. `true` records the lane's stderr as its audit final text when stdout is empty. |
+| `argv.read`, `argv.write` | Required argv templates of a read-only and a write lane. |
+| `argv.judgment` | Optional argv template of a check lane without tools and file access. |
+| `read_dir_args` | Optional template appended once per extra read directory, with `{dir}` exactly once. |
+| `write_hardening` | Optional list of argv groups that every coordinator implementer lane and every conflict worker lane must carry. |
+| `env` | Optional object of fixed variables set for the child after the scrub list; an empty value is allowed. A key must not name any driver's `home_env`. |
+| `credential_file` | Optional `{file, env}`: a key file in the account's `config_dir`, exported as `env` after launch. Requires `home_env` and `output: event-stream`; `env` must not name any driver's `home_env`. |
+
+Template rules: an argv template is a non-empty list of at most 200 single-line
+strings; an empty string is allowed. An element that is exactly one placeholder
+is substituted; every other element is literal, and a `{` or `}` in any other
+element is a validation error. The placeholders are `{model}` (required in every
+lane template), `{cwd}` (optional), `{spec_file}` (required for `file-arg`),
+`{output_file}` (required for `last-message-file` and refused otherwise) and,
+only in `read_dir_args`, `{dir}`.
+
+The lane child runs `env`, which clears the scrub list, then sets `lane.env`,
+then runs the credential wrapper when `credential_file` is set, then the
+expanded template. A lane that needs an output file without getting one fails
+with `driver <driver> requires an output file`. The event stream is read from
+standard output, or from the output file when the lane runs in a tmux pane or
+uses `credential_file`.
+
+A lane held in a tmux pane follows four rules, derived from `spec`, `output`
+and `credential_file`:
+
+1. `credential_file` set: the wrapper writes the stream to the output file. A
+   `stdin` spec is redirected from the spec file.
+2. `event-stream` with `stdin`: the spec file is redirected to standard input
+   and the stream to the output file.
+3. `event-stream` with `file-arg`: the stream is redirected to the output file.
+4. `last-message-file`: no redirect; the driver writes its own output file, and
+   a `stdin` spec is typed into the pane.
+
+Capabilities that follow from the lane section:
+
+- A driver with `may_run_commands: true` is refused by the issue coordinator as
+  `models.first`, whose driver is the coordinator's implementer, and by the
+  conflict worker as implementer (`<driver> is refused as implementer provider
+  because it can run commands`). `agent lane run` and `agent run` still start
+  it.
+- A driver without `argv.judgment` cannot run a check lane: `driver <driver> has
+  no lane.argv.judgment; it cannot run a check lane`.
+- A driver without `read_dir_args` receives no extra read directory; one with
+  it refuses extra directories on a write lane.
+- `write_hardening` appends each group that the write argv does not already
+  contain as a contiguous run. It is process argv hardening, not a sandbox.
+- A review record names the driver recorded on a stage by its `display_name`;
+  a recorded driver without one stops the comment with `driver <driver>
+  recorded on <stage> has no display_name (see drivers.json,
+  docs/ai-accounts.md#drivers)`.
+- A driver with `credential_file` refuses a worktree or read directory that
+  overlaps the account's `config_dir`, for example `<driver> worktree overlaps
+  account config_dir`.
+
+### Interactive section
+
+| Key | Meaning |
+|---|---|
+| `argv_new` | Required template of a new session; uses `{session_id}` and `{model}`. |
+| `argv_resume` | Required template that resumes a session; uses `{session_id}` and `{model}`. |
+| `session_id` | Required; `uuid` is the only format. |
+| `read_only_args` | Required list appended for a read-only role (may be empty). |
+| `hardening_args` | Required list appended to every start (may be empty). |
+| `session_env` | Optional variable through which the driver exports its session id to hooks; `agent allow` reads it. `agent allow` without `--session` fails while no driver configures one. |
+| `pane` | Required pane markers, below. |
+
+Pane markers are read from the pane text after terminal sanitization:
+
+| Key | Meaning |
+|---|---|
+| `working` | Required regular expressions; one match means the driver is in a turn. |
+| `queued` | Optional groups of substrings; a group whose substrings are all present (case-insensitive) also means working. |
+| `idle` | Required regular expressions; one match means the composer waits for a prompt, unless the pane is working or shows a permission prompt. |
+| `permission` | Required regular expressions of a tool-approval modal. |
+| `permission_confirm` | Required substrings (case-insensitive); one of them must be present together with a `permission` match, so quoted text alone is not a modal. The script confirms such a modal with Enter. |
+| `chrome` | Required substrings of interface lines that `supervise` skips when it reads a closed answer. |
+
+Each regular expression has at most 500 characters and must compile; each list
+has at most 20 expressions or 50 substrings.
+
+### Usage adapters
+
+A `usage` section turns HTTPS responses into a `usage.snapshot`. The code keeps
+the request semantics: a bearer token in `Authorization`, `Accept:
+application/json`, an 8 second timeout and no redirects. A configured header
+cannot replace either of the two fixed headers (`requests[i].headers.<name> is
+set by the usage adapter itself`).
+
+| Key | Meaning |
+|---|---|
+| `snapshot` | `period` (subscription period usage of the `usage_session` account), `spend` (USD key spend of each `usage_accounts` account) or `windows` (five-hour, weekly and per-model weekly windows of each `usage_accounts` account). |
+| `credential` | `period` needs `{"format": "json-entry", file, entry_prefix, token, expires_at, account}`: the first top-level key of the JSON file that starts with `entry_prefix` holds the entry, whose `token`, `expires_at` (ISO-8601 with offset) and `account` fields are read. `spend` needs `{"format": "text", file}`: the whole file is the key. `windows` needs `{"format": "oauth-file", file, label, object, token, token_name, expires_at, expires_unit, subscription, login_name, renew}`: the file holds a login object with the token, expiry and subscription fields, and `renew` names the operator's login command. An optional `multiplier` is `{plan, pattern, field}`; an optional `keychain` is `{argv, service, user_env, user_pattern, fallback_user, missing_status, platform}` plus optional `service_suffix: nfc-sha256-8`. The file lies in the account's `config_dir`. |
+| `proxy_from_environment` | Required boolean. `true` lets the requests honour proxy and CA variables from the environment; `false` builds an owned client with `trust_env=False`. |
+| `requests` | One to ten `{name, url, headers}` objects; `url` must be `https://`, `headers` is optional. Every request is sent in order. |
+| `fields` | JSON pointers (RFC 6901) whose first segment names a request. `period`: `tier`, `used_percent`, `period_type`, `period_start`, `period_end`, `products` (`list` pointer plus `product` and `used_percent` pointers inside each item), `prepaid_val`, `on_demand_cap_val`, `on_demand_used_val`. `spend`: `usage_usd`, `usage_daily_usd`, `usage_weekly_usd`, `usage_monthly_usd`, `limit_usd`, `limit_remaining_usd`, `limit_reset`. `windows`: `five_hour`, `weekly`, `limits`. |
+| `label` | Required by `windows`; a non-empty single-line display name used in its error texts. |
+| `poll_seconds` | Required by `windows`; an integer from 1 to 86400, the minimum interval between reads of one account under the daemon. |
+| `account_file` | Required by `windows`; `{file, object, field}` names the JSON file that holds the login identity. Optional `default_name` reads that file from the home directory for the driver's `home_default_dir`; `default_name` requires `home_default_dir`. |
+| `window` | Required by `windows`; `{used_percent, resets_at, round}` names the response fields of one window. `round` must be `minute`. |
+| `limits` | Required by `windows`; `{kind, weekly_all, weekly_model, used_percent, resets_at, scope, model, model_names}` names the limits list and its item fields. `model_names` is a list of display-name keys. |
+
+For a `windows` adapter, `label`, `window.used_percent`, `window.resets_at`,
+`limits.kind`, `limits.weekly_all`, `limits.weekly_model`,
+`limits.used_percent`, `limits.resets_at`, `limits.scope`, `limits.model` and
+each `limits.model_names` entry are non-empty single-line strings.
+`poll_seconds` is an integer from 1 to 86400. `proxy_from_environment` is a
+boolean. `account_file.file`, `credential.file` and optional
+`account_file.default_name` are plain file names. `account_file.object` and
+`account_file.field` are non-empty single-line strings. The required
+`credential` keys `label`, `object`, `token`, `token_name`, `expires_at`,
+`subscription`, `login_name` and `renew` are non-empty single-line strings;
+`multiplier.plan` and `multiplier.field` are too. `multiplier.pattern` is a
+non-empty string of at most 500 characters with exactly one group. The
+`keychain` keys `service`, `user_env`, `fallback_user` and `platform` are
+non-empty single-line strings, `user_env` is an environment variable name,
+`user_pattern` is a valid regular expression, and `argv` is a non-empty list of
+at most 200 strings that uses `{service}` and `{user}`. `keychain.argv` is the
+program and arguments that read one secret-store item. An optional
+`service_suffix` is `nfc-sha256-8`. `window.round` is `minute`;
+`credential.format` is `oauth-file` and `credential.expires_unit` is
+`epoch-ms`. `limits.model_names` is a list of 1 to 100 entries. `fields` has
+exactly the `five_hour`, `weekly` and `limits` pointers; `window` has exactly
+`used_percent`, `resets_at` and `round`; `limits` has exactly its eight keys.
+`credential.keychain.missing_status` is an integer from 0 to 255. A missing
+key fails as `<path>.<key> is required`; a wrong value fails with the matching
+type error, such as `must be a non-empty single-line string`, `must be a plain
+file name`, `must be one of minute`, `must be an integer from 1 to 86400`, or
+`must be a JSON pointer`.
+
+Every field is required. Text fields must be non-empty strings, percentages and
+amounts finite numbers, and the three `*_val` fields integers. In a `spend`
+snapshot, `limit_usd` and `limit_remaining_usd` may be null, and those two and
+`limit_reset` read as null when an existing object lacks their last segment.
+In a `windows` snapshot, `five_hour`, `weekly` and each limit may be null when
+the response has no value or its configured `used_percent` field is absent.
+Nothing else is defaulted. The errors name the driver, the field and its
+pointer, for example `<driver> usage field <name> at <pointer> is missing` or
+`... must be a number`. A request fails with `<driver> usage request <name>
+returned HTTP <code>`, `... failed: <ExceptionClass>`, `... returned invalid
+JSON` or `... response is not an object`; no message contains the token.
+Unknown keys are rejected at every level of the usage object (`<path> accepts
+only ...`), and a missing or wrong value fails as `<path>.<key> is required`,
+`... must be a non-empty single-line string`, `... must be true or false`,
+`... must be an integer from 1 to 86400`, `... must be one of minute`, or
+`... must be a JSON pointer`.
+
+On the `usage_session` path, a missing credential file, a missing entry
+(`<driver> credential file has no entry that starts with <prefix>`) or an
+expired token (`<driver> credential expired; log in again`) is not a scan
+failure: `agent watch session-usage` prints `usage.snapshot skipped`. An invalid
+file or entry field fails (`<driver> credential entry field <field> is missing
+or invalid`). On the `usage_accounts` path, a missing or empty key file is an
+error of that account (`<driver> key missing`); `agent watch account-usage`
+records the other accounts, prints `usage.snapshot error: ...` per failed
+account and exits 1. On the `windows` path, `agent watch window-usage` records
+the other accounts, prints `usage.snapshot skipped <account>: <reason>` for a
+missing or expired login, prints `usage.snapshot error: ...` per failed account,
+and exits 1 on an error. The lock keys are `usage.snapshot:<driver>` and
+`usage.snapshot:<driver>:<account>`. The dashboard tells the snapshot shapes
+apart by their fields: a spend snapshot names its `account`, and a windows
+snapshot names `account_email` and `windows`.
+
+### Recorded slot names
+
+Earlier versions named the first and second review stage after the driver that
+ran it and wrote those names into stored rows: gate and agent stages
+`<driver>-pr`, checklist keys `<driver>_pr_quality` and `<driver>_pr_logic`, and
+coordinator phases `pr_gates_<driver>`. History is immutable and replicated, so
+these names stay readable permanently through `recorded_slots`:
+
+```json
+{"recorded_slots": {"first": "driver-a", "second": "driver-b"}}
+```
+
+With this entry, `driver-a-pr` reads as `review-1`, `driver-b_pr_logic` as
+`review_2_logic` and `pr_gates_driver-a` as `pr_gates_first`. CLI input
+(`agent agent start --stage`, `gate record`, `checklist set`, `close-step`)
+accepts the old names with a deprecation warning. The coordinator rewrites the
+old phase names of a task (`phase`, `resume_phase`, the retry and gate-route
+phases, and the order checkpoint) when it next advances that task. A task
+created before tasks pinned model slots reads its slots as `first`, then
+`second` of this entry, only to read or display its recorded rows.
+
+The two ids must differ and follow the driver id rule; they only name history,
+so they need not be configured drivers. Every command that opens the store reads
+only this entry, so an error elsewhere in `drivers.json` does not hide stored
+rows; an invalid entry or an unreadable file stops the command.
+
+Without the entry, the old names are unknown names. Each refusal listed below
+then ends with the hint `(written by an earlier version? configure
+recorded_slots in drivers.json, docs/ai-accounts.md#drivers)`:
+
+- CLI input of an old name fails with the command's usual refusal plus the
+  hint: `stage must be review-1|review-2` for `agent agent start --stage` and
+  `gate record`, `checklist <key> for task <id> not found` for `checklist set`,
+  and `unknown key <key>` for `close-step`.
+- Stored gate and checklist rows with an old name read as absent, so a gate or
+  checklist key that only such a row holds counts as missing; such a row never
+  counts as an approval. `agent allow --action task-done|claim-done` and
+  `agent task state <id> done` add the hint to their refusal when the task
+  holds such a row. Other readers, such as `agent next`, treat the gate or key
+  as missing without the hint.
+- The coordinator does not advance a task whose checklist holds a key of an
+  old name. When the tick would visit that task, it reports `blocked: task <id>
+  holds unknown checklist key <key>` plus the hint instead. It also adds no
+  checklist row for that task, so the recorded values read again once the
+  entry is configured.
+- An old phase name fails coordinator dispatch with `unknown coordinator phase
+  <phase>` plus the hint.
+
+An unknown name of any other shape fails with the same refusal without the
+hint.
+
+A task without a model pin cannot be read without the entry either (`task <id>
+predates model pins; configure recorded_slots in drivers.json to read it
+(docs/ai-accounts.md#drivers)`). The coordinator reports that error for such a
+task instead of routing its second review, and refuses a second review waiver
+with it.
+
+### Validation and errors
+
+`drivers.json` is validated completely whenever the AI configuration is loaded.
+Every message names the failing path and ends with `(see drivers.json,
+docs/ai-accounts.md#drivers)`, for example:
+
+- `drivers.json accepts only drivers, recorded_slots, pane_driver`
+- `drivers.<id>.lane accepts only spec, output, may_run_commands, ...`
+- `drivers.<id>.lane.argv.write is required`
+- `drivers.<id>.lane.argv.read[4] uses unknown placeholder {x}`
+- `drivers.<id>.lane.argv.read must use {spec_file}`
+- `drivers.<id>.display_name is required for a driver with a lane section`
+- `drivers.<id>.lane.credential_file requires home_env`
+- `drivers.<id>.credential_env[0] names home_env <VAR> of driver <id2>`, and the
+  same for a `lane.env` key or `lane.credential_file.env`: the role prefix sets
+  the home variable first, so a later scrub or fixed value would run the driver
+  on another directory than the account's
+- `drivers.<id>.home_env <VAR> is a network override that every lane clears`
+- `drivers.<id>.interactive.pane.working[0] is not a valid regular expression`
+- `drivers.<id>.usage.fields.tier must start with the name of a configured request`
+- `pane_driver <id> must name a driver with an interactive section`
+- `recorded_slots.first and recorded_slots.second must differ`
+
+References from `ai-accounts.json` fail with errors such as `Unsupported
+provider for account <name>: drivers.json configures no such driver
+(docs/ai-accounts.md#drivers)`, `Lane slot <slot> must name a driver with a lane
+section in drivers.json (docs/ai-accounts.md#drivers)`, `usage_session uses
+driver <driver>, which has no period usage section in drivers.json
+(docs/ai-accounts.md#drivers)` and, at launch, the refusal of an unknown
+`--vendor`, `vendor must be <configured drivers> (see drivers.json,
+docs/ai-accounts.md#drivers)`; a task pin of a driver that is no longer
+configured fails the same way. Without `drivers.json` the refusal is
+`drivers is not configured: ...`. An unreadable file
+fails with `Cannot read drivers.json (docs/ai-accounts.md#drivers)`.
 
 ## Migration from implicit defaults
 
@@ -623,25 +1174,27 @@ Before this manifest, lane launchers and the interactive runtime used fixed
 vendor/role lists and built-in model choices in code. After adopting
 `ai-accounts.json`:
 
-1. Create one account entry per provider CLI profile directory you intend to use.
-2. Define roles with explicit `account`, `model`, and `access` (no omitted
+1. Describe every driver in `drivers.json` (see [Drivers](#drivers)) and place
+   that file before upgrading.
+2. Create one account entry per provider CLI profile directory you intend to use.
+3. Define roles with explicit `account`, `model`, and `access` (no omitted
    fields).
-3. Choose the two model slots in `models` and bind the lanes, device-wide in
-   the top-level `lanes` map or per session: keys such as `claude:implementer`
+4. Choose the two model slots in `models` and bind the lanes, device-wide in
+   the top-level `lanes` map or per session: keys such as `driver-a:implementer`
    and, when needed, `interactive`.
-4. On the external lane host, set `lane_execution` to
+5. On the external lane host, set `lane_execution` to
    `{"mode":"this-device-is-lane-host"}` before enabling launch paths. The
    local harness's lane starter is responsible for starting work on that host.
-5. Sessions without a binding of their own use the device-wide `lanes` map.
+6. Sessions without a binding of their own use the device-wide `lanes` map.
    An empty or missing file does not authorize a fallback identity.
 
 Configure the lane bindings (device-wide `lanes` or per session) before
 enabling launch paths after upgrading.
 For example, the static script invokes `agent lane run --session chosen-session
---role implementer --vendor claude --spec-file task.md --no-tmux`; it resolves the
-`claude:implementer` slot to the operator-defined role. `agent run` resolves slots
+--role implementer --vendor driver-a --spec-file task.md --no-tmux`; it resolves the
+`driver-a:implementer` slot to the operator-defined role. `agent run` resolves slots
 using its task session. Interactive starts on the lane host use `agent session
-start --id chosen-session --provider grok`. Raw terminal
+start --id chosen-session --provider driver-a`. Raw terminal
 `--cmd` remains an explicitly
 supplied script command, outside provider-profile launch enforcement; it is not
 a sandboxed model interface. No model lane may invoke these execution commands.

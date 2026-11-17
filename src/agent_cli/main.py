@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,9 +27,12 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from .ai_accounts import (
     AISubscription,
+    AccountError as AIAccountError,
     load_ai_accounts,
     load_ai_subscriptions,
+    load_driver_configuration,
     load_model_configuration,
+    load_recorded_names,
 )
 from .allow import (
     ACTIONS,
@@ -43,6 +46,7 @@ from .allow import (
     ready_for_done_blocking,
     requires_evidence,
     second_review_na,
+    stored_names_hint,
 )
 from .chain import (
     CLOSE_STATUSES,
@@ -57,6 +61,16 @@ from .chain import (
     to_json as step_to_json,
 )
 from .coordinator_common import parse_model_result, redact as redact_secrets
+from .drivers import (
+    DRIVERS_NOT_CONFIGURED,
+    SESSION_ENV_NOT_CONFIGURED,
+    DriverSpec,
+    PaneMarkers,
+    declared_driver_ids,
+    driver_refusal,
+    lane_driver_ids,
+    lane_scrub_env,
+)
 from .gate_order import latest_gates as durable_latest_gates
 from .gate_order import ordered_snapshot_gates
 from .github_act import _repo_ok
@@ -65,7 +79,6 @@ from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import (
     LANE_ROLES,
-    LANE_VENDORS,
     LaneResult,
     launch,
     record_lane_run,
@@ -75,9 +88,6 @@ from .lane import (
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
     EXTERNAL_SECOND_TASK_CREATION_ERROR,
-    IMPLEMENTER_PROVIDER_CHOICES,
-    IMPLEMENTER_PROVIDERS,
-    PROVIDER_CHOICES,
     SLOT_STAGES,
     STAGE_CHOICES,
     STAGE_SLOTS,
@@ -85,16 +95,19 @@ from .model_slots import (
     ModelSlots,
     ModelSlotsError,
     PinnedModelSlotsError,
+    UnrecordedSlotsError,
     canonical_checklist,
     canonical_key,
     canonical_stage,
     implementer_for_new_record,
+    install_recorded_names,
     implementer_from_snapshot,
     model_pins,
     models_for_new_record,
     models_from_snapshot,
     parse_implementer,
     parse_model_slots,
+    unrecorded_name_hint,
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
@@ -103,10 +116,10 @@ from .runner_cmd import cmd_runner
 from .runtime import (
     PreflightRuntime,
     Runtime,
-    grok_model,
-    grok_new_session_id,
-    grok_tmux_command_argv,
+    interactive_command_argv,
+    interactive_model,
     load_tmux_targets,
+    new_interactive_session_id,
     run_argv,
     tmux_name,
 )
@@ -123,9 +136,10 @@ from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import (
     AccountUsageError,
     AuthStale,
-    scan_claude_usage,
-    scan_openrouter_usage,
-    scan_usage,
+    is_spend_snapshot,
+    scan_account_usage,
+    scan_session_usage,
+    scan_window_usage,
     usage_poll_due,
 )
 from .watch import (
@@ -250,10 +264,6 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
-# Supported provider adapters. `ai-accounts.json` supplies a slot's default
-# when a task is created; the task pin governs and can be changed with
-# `agent task models`.
-VENDORS = LANE_VENDORS
 N_A_ALLOWED = frozenset(
     {
         "coverage_ok",
@@ -301,6 +311,33 @@ def _warn_deprecated_name(supplied: str, canonical: str) -> None:
         )
 
 
+def _install_recorded_names(agent_home: Path) -> None:
+    """Make the names an earlier version stored readable in this process."""
+    try:
+        install_recorded_names(load_recorded_names(agent_home))
+    except AIAccountError as exc:
+        die(str(exc))
+
+
+def _canonical_input(supplied: str, canonicalize: Callable[[str], str]) -> str:
+    """Canonicalize a ``--stage`` or ``--key`` value before the store is opened."""
+    _install_recorded_names(home())
+    canonical = canonicalize(supplied)
+    _warn_deprecated_name(supplied, canonical)
+    return canonical
+
+
+def _refuse_unrecorded(name: str, refusal: str) -> None:
+    """Refuse a name an earlier version wrote while no ``recorded_slots`` is set.
+
+    Without that entry such a name is no current stage or key, and every reader
+    treats a row stored under it as absent; the refusal names the missing entry.
+    """
+    hint = unrecorded_name_hint(name)
+    if hint:
+        die(f"{refusal}{hint}")
+
+
 def default_home() -> Path:
     return Path.home() / ".local" / "share" / "agent"
 
@@ -310,10 +347,34 @@ def _same_home(a: Path, b: Path) -> bool:
     return a.expanduser().resolve() == b.expanduser().resolve()
 
 
+def _store_home(store: Any) -> Path:
+    store_home = getattr(store, "home", None)
+    return store_home if isinstance(store_home, Path) else home()
+
+
 def _store_model_configuration(store: Any) -> tuple[ModelSlots, str]:
     """One manifest read for the task's model check and its pinned selection."""
-    store_home = getattr(store, "home", None)
-    return load_model_configuration(store_home if isinstance(store_home, Path) else home())
+    return load_model_configuration(_store_home(store))
+
+
+def _require_vendor(
+    vendor: str, agent_home: Path, *, implementer: bool = False
+) -> DriverSpec:
+    """A ``--vendor`` or a task pin must name a configured driver; returns it.
+
+    Lane roles, gates and model slots need a driver with a lane section; an
+    implementer may also name a record-only driver.
+    """
+    config = load_driver_configuration(agent_home)
+    choices = (
+        declared_driver_ids(config.drivers)
+        if implementer
+        else lane_driver_ids(config.drivers)
+    )
+    refused = driver_refusal(config, vendor, choices)
+    if refused is not None:
+        die(refused)
+    return config.drivers[vendor]
 
 
 def home() -> Path:
@@ -373,6 +434,7 @@ def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> St
         require_loopback_dsn(dsn)
     except PgError as exc:
         die(str(exc))
+    _install_recorded_names(h)
     return Store(h, dsn)
 
 
@@ -653,13 +715,15 @@ def cmd_session(args: list[str]) -> None:
                 model=model,
             )
             row = store.row("session", sid)
-            grok_id = ""
+            interactive_id = ""
             if isinstance(row, dict):
                 meta = row.get("runtime")
-                if isinstance(meta, dict) and isinstance(meta.get("grok_session_id"), str):
-                    grok_id = meta["grok_session_id"]
-            if grok_id:
-                print(f"started {sid} tmux={name} grok={grok_id}")
+                if isinstance(meta, dict) and isinstance(
+                    meta.get(INTERACTIVE_SESSION_KEY), str
+                ):
+                    interactive_id = meta[INTERACTIVE_SESSION_KEY]
+            if interactive_id:
+                print(f"started {sid} tmux={name} interactive={interactive_id}")
             else:
                 print(f"started {sid} tmux={name}")
             return
@@ -984,11 +1048,9 @@ def cmd_task(args: list[str]) -> None:
                 die("slot must be first|second|implementer")
             if not reason:
                 die("--reason must not be empty")
-            if slot == "implementer":
-                if vendor not in IMPLEMENTER_PROVIDERS:
-                    die(f"vendor must be {IMPLEMENTER_PROVIDER_CHOICES}")
-            elif vendor not in VENDORS:
-                die(f"vendor must be {PROVIDER_CHOICES}")
+            _require_vendor(
+                vendor, _store_home(store), implementer=slot == "implementer"
+            )
             row = _need(store, "task", tid)
             _require_owned(store, row, "task")
             _require_skill(_need(store, "session", row["session_id"]), "spine")
@@ -1105,9 +1167,8 @@ def cmd_checklist(args: list[str]) -> None:
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
-    supplied_key = require_flag(rest, "--key")
-    key = canonical_key(supplied_key)
-    _warn_deprecated_name(supplied_key, key)
+    key = _canonical_input(require_flag(rest, "--key"), canonical_key)
+    _refuse_unrecorded(key, f"checklist {key} for task {tid} not found")
     if key in REGISTRY_KEYS:
         die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     status = require_flag(rest, "--status")
@@ -1302,11 +1363,9 @@ def cmd_agent(args: list[str]) -> None:
             vendor = require_flag(rest, "--vendor")
             if role not in AGENT_ROLES:
                 die(f"role must be {'|'.join(AGENT_ROLES)}")
-            if role == "implementer":
-                if vendor not in IMPLEMENTER_PROVIDERS:
-                    die(f"vendor must be {IMPLEMENTER_PROVIDER_CHOICES}")
-            elif vendor not in VENDORS:
-                die(f"vendor must be {PROVIDER_CHOICES}")
+            _require_vendor(
+                vendor, _store_home(store), implementer=role == "implementer"
+            )
             round_raw = flag(rest, "--round")
             round_num: int | None = None
             supplied_stage = flag(rest, "--stage")
@@ -1321,7 +1380,10 @@ def cmd_agent(args: list[str]) -> None:
                     stage = canonical_stage(supplied_stage)
                     _warn_deprecated_name(supplied_stage, stage)
                     if stage not in STAGE_SLOTS:
-                        die(f"stage must be {STAGE_CHOICES}")
+                        die(
+                            f"stage must be {STAGE_CHOICES}"
+                            f"{unrecorded_name_hint(stage)}"
+                        )
             # Preserve the historical vendor-precondition order for an unknown
             # task and use a present task pin when it is valid. A legacy task
             # without ``models`` must not turn the display-only mapping into a
@@ -1861,14 +1923,12 @@ def cmd_gate(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             f"Usage: agent gate record --task UUID --stage {STAGE_CHOICES} "
-            f"--dimension quality|logic --vendor {PROVIDER_CHOICES} --verdict approved|rejected|unavailable "
+            "--dimension quality|logic --vendor DRIVER --verdict approved|rejected|unavailable "
             "--head SHA --agent UUID [--evidence TEXT; required when rejected or unavailable]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
-    supplied_stage = require_flag(rest, "--stage")
-    stage = canonical_stage(supplied_stage)
-    _warn_deprecated_name(supplied_stage, stage)
+    stage = _canonical_input(require_flag(rest, "--stage"), canonical_stage)
     dimension = require_flag(rest, "--dimension")
     vendor = require_flag(rest, "--vendor")
     verdict = require_flag(rest, "--verdict")
@@ -1876,11 +1936,10 @@ def cmd_gate(args: list[str]) -> None:
     agent_id = require_flag(rest, "--agent")
     evidence = flag(rest, "--evidence")
     if stage not in STAGE_SLOTS:
-        die(f"stage must be {STAGE_CHOICES}")
+        die(f"stage must be {STAGE_CHOICES}{unrecorded_name_hint(stage)}")
     if dimension not in ("quality", "logic"):
         die("dimension must be quality|logic")
-    if vendor not in VENDORS:
-        die(f"vendor must be {PROVIDER_CHOICES}")
+    _require_vendor(vendor, home())
     if verdict not in ("approved", "rejected", "unavailable"):
         die("verdict must be approved|rejected|unavailable")
     if verdict == "rejected" and not (evidence or "").strip():
@@ -2383,11 +2442,10 @@ def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
 def _usage_account(payload: dict[str, Any]) -> tuple[Any, Any]:
     """Provider and account named by a usage snapshot payload.
 
-    OpenRouter snapshots name the device-local account alias; Grok and Claude
-    snapshots name the login's e-mail address.
+    A spend snapshot names the usage account; any other snapshot names an e-mail.
     """
     provider = payload.get("provider") or payload.get("vendor")
-    if provider == "openrouter":
+    if is_spend_snapshot(payload):
         return provider, payload.get("account")
     return provider, payload.get("account_email")
 
@@ -2395,9 +2453,9 @@ def _usage_account(payload: dict[str, Any]) -> tuple[Any, Any]:
 def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep the newest usage snapshot per provider account for the dashboard.
 
-    OpenRouter account aliases are device-local manifest names, so replicated
-    devices may reuse an alias for different accounts. The origin device is
-    part of an OpenRouter snapshot's identity.
+    A spend snapshot names a usage account by its device-local manifest name,
+    so replicated devices may reuse that name for different accounts. The
+    origin device is part of a spend snapshot's identity.
     """
     seen: set[tuple[str, str, str]] = set()
     rows: list[dict[str, Any]] = []
@@ -2407,12 +2465,16 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
-        provider, account = _usage_account(payload)
-        if provider == "openrouter":
+        provider = payload.get("provider") or payload.get("vendor")
+        if is_spend_snapshot(payload):
             origin = event.get("_origin_device_id")
-            key = (str(provider), origin if isinstance(origin, str) else "", str(account))
+            key = (
+                str(provider),
+                origin if isinstance(origin, str) else "",
+                str(payload.get("account")),
+            )
         else:
-            key = (str(provider), "", str(account))
+            key = (str(provider), "", str(payload.get("account_email")))
         if key in seen:
             continue
         seen.add(key)
@@ -2792,14 +2854,47 @@ def _dim_value(raw: object, label: str) -> int:
     return value
 
 
+# Neutral keys of an interactive session in ``session.runtime``.
+INTERACTIVE_SESSION_KEY = "interactive_session_id"
+INTERACTIVE_PENDING_KEY = "interactive_start_pending"
+
+
+def _runtime_meta(meta: dict[str, Any], drivers: Mapping[str, DriverSpec]) -> dict[str, Any]:
+    """Read a session runtime with earlier per-driver keys under neutral names.
+
+    Earlier versions stored the interactive session id and the start marker
+    under keys named after the driver (``<driver>_session_id``,
+    ``<driver>_start_pending``). Each configured interactive driver's keys map
+    to the neutral keys; the next session write persists the mapped runtime.
+    """
+    out = dict(meta)
+    for driver_id, spec in drivers.items():
+        if spec.interactive is None:
+            continue
+        for legacy, key in (
+            (f"{driver_id}_session_id", INTERACTIVE_SESSION_KEY),
+            (f"{driver_id}_start_pending", INTERACTIVE_PENDING_KEY),
+        ):
+            if legacy != key and legacy in out:
+                value = out.pop(legacy)
+                out.setdefault(key, value)
+    return out
+
+
 def _interactive_preflight(
     store: Store,
     sid: str,
     *,
     meta: dict[str, Any] | None = None,
     model: str | None = None,
-) -> tuple[Any, dict[str, Any], str]:
-    """Validate an interactive Grok binding before touching its runtime."""
+    provider: str | None = None,
+) -> tuple[Any, dict[str, Any], str, Any]:
+    """Validate an interactive binding before touching its runtime.
+
+    ``provider`` is the driver a start requested; ``None`` accepts the driver
+    of the session's interactive role. Returns the role, its binding, the
+    stored session id and the loaded AI configuration.
+    """
     from .ai_accounts import load_ai_accounts
 
     if meta is None:
@@ -2807,11 +2902,14 @@ def _interactive_preflight(
         raw = row.get("runtime")
         meta = dict(raw) if isinstance(raw, dict) else {}
     ai = load_ai_accounts(store.home, defer_model_configuration=True)
+    if provider is not None:
+        ai.interactive(provider)
     selected = ai.for_session(sid)
     ai.require_model_configuration()
     ai.require_lane_execution()
-    if selected.account.provider != "grok":
+    if provider is not None and selected.account.provider != provider:
         die("configured interactive role does not match the requested provider")
+    ai.interactive(selected.account.provider)
     if model is not None and model != selected.model:
         die("--model does not match the configured interactive role")
     binding = {
@@ -2822,20 +2920,21 @@ def _interactive_preflight(
         "access": selected.access,
         "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
     }
-    existing = meta.get("grok_session_id")
+    current = _runtime_meta(meta, ai.drivers)
+    existing = current.get(INTERACTIVE_SESSION_KEY)
     existing_s = existing if isinstance(existing, str) and existing else ""
-    stored_binding = meta.get("ai_binding")
+    stored_binding = current.get("ai_binding")
     comparable_binding = (
         dict(stored_binding) if isinstance(stored_binding, dict) else stored_binding
     )
     if isinstance(comparable_binding, dict):
         comparable_binding.pop("lane_execution", None)
-    if _is_grok_runtime(meta) and comparable_binding != binding:
+    if _is_interactive_runtime(current) and comparable_binding != binding:
         die(
             "interactive AI binding changed or is missing; "
             "configure a new session instead of resuming"
         )
-    return selected, binding, existing_s
+    return selected, binding, existing_s, ai
 
 
 def _interactive_runtime_preflight(
@@ -2843,36 +2942,50 @@ def _interactive_runtime_preflight(
     sid: str,
     *,
     meta: dict[str, Any] | None = None,
-    provider: str | None = None,
+    interactive: bool = False,
 ) -> str | None:
-    """Preflight a Grok-bound runtime while leaving raw terminals unchanged."""
+    """Preflight an interactive runtime while leaving raw terminals unchanged.
+
+    ``interactive`` marks a session about to start as interactive.
+    """
     if meta is None:
         row = store.row("session", sid)
         if row is None:
-            if provider != "grok":
+            if not interactive:
                 die(f"unknown session: {sid}")
             meta = {}
         else:
             raw = row.get("runtime")
             meta = dict(raw) if isinstance(raw, dict) else {}
-    if not _is_grok_runtime(meta):
+    if not _is_interactive_runtime(meta):
         raw_terminal = isinstance(meta.get("tmux_session"), str) and bool(
             meta["tmux_session"]
         )
-        if provider != "grok" or raw_terminal:
+        if not interactive or raw_terminal:
             return None
-    selected, _binding, _existing = _interactive_preflight(store, sid, meta=meta)
+    selected, _binding, _existing, _ai = _interactive_preflight(store, sid, meta=meta)
     return selected.account.config_dir
 
 
-def _is_grok_runtime(meta: dict[str, Any]) -> bool:
+def _is_interactive_runtime(meta: dict[str, Any]) -> bool:
+    """True once a start bound the runtime to an interactive driver.
+
+    Every interactive start records ``provider`` and ``ai_binding`` together
+    with its session id, so runtimes written by earlier versions qualify too.
+    """
     binding = meta.get("ai_binding")
     return (
-        meta.get("grok_start_pending") is True
-        or meta.get("provider") == "grok"
-        or bool(meta.get("grok_session_id"))
-        or (isinstance(binding, dict) and binding.get("provider") == "grok")
+        meta.get(INTERACTIVE_PENDING_KEY) is True
+        or bool(meta.get(INTERACTIVE_SESSION_KEY))
+        or bool(meta.get("provider"))
+        or (isinstance(binding, dict) and bool(binding.get("provider")))
     )
+
+
+def _pane_markers(store: Store, sid: str) -> PaneMarkers:
+    from .ai_accounts import load_ai_accounts
+
+    return load_ai_accounts(store.home, defer_model_configuration=True).pane_markers(sid)
 
 
 def _preflight_runtime(
@@ -2888,10 +3001,12 @@ def _preflight_runtime(
         return PreflightRuntime(
             runtime,
             lambda sid: _interactive_runtime_preflight(store, sid),
+            markers_for=lambda sid: _pane_markers(store, sid),
         )
     return PreflightRuntime(
         runtime,
         lambda sid: _interactive_runtime_preflight(store, sid, meta=pending_meta),
+        markers_for=lambda sid: _pane_markers(store, sid),
     )
 
 
@@ -2905,17 +3020,23 @@ def _session_start(
     provider: str | None = None,
     model: str | None = None,
     cwd: str | None = None,
+    *,
+    interactive: bool = False,
 ) -> str:
+    """Start the session's tmux runtime: a raw command or its interactive driver.
+
+    ``interactive`` starts the driver of the session's interactive role;
+    ``provider`` does the same and requires that driver.
+    """
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
-    if provider is not None and provider != "grok":
-        die("provider must be grok")
-    if provider == "grok" and command:
+    interactive = interactive or provider is not None
+    if interactive and command:
         die("provider and --cmd cannot be used together")
-    if model is not None and provider != "grok":
-        die("--model requires --provider grok")
+    if model is not None and not interactive:
+        die("--model requires --provider")
     name = tmux_name(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
@@ -2923,36 +3044,44 @@ def _session_start(
     command_argv: list[str] | None = None
     start_command = command
     existing_s = ""
-    binding: dict[str, Any] = {}
-    if provider == "grok":
-        selected, binding, existing_s = _interactive_preflight(
-            store, sid, meta=meta, model=model
+    marker_meta: dict[str, Any] | None = None
+    if interactive:
+        selected, binding, existing_s, ai = _interactive_preflight(
+            store, sid, meta=meta, model=model, provider=provider
         )
-        new_id = grok_new_session_id() if not existing_s else ""
-        resolved = grok_model(selected.model)
+        spec = ai.interactive(selected.account.provider)
+        meta = _runtime_meta(meta, ai.drivers)
+        new_id = ""
         if not existing_s:
-            meta["grok_session_id"] = new_id
-        meta["provider"] = "grok"
+            # Stored until the new session is attached: a start is in flight.
+            marker_meta = {**meta, INTERACTIVE_PENDING_KEY: True, "ai_binding": binding}
+            new_id = new_interactive_session_id()
+            meta[INTERACTIVE_SESSION_KEY] = new_id
+        resolved = interactive_model(selected.model)
+        meta["provider"] = selected.account.provider
         meta["model"] = resolved
         meta["ai_binding"] = binding
         runtime = _preflight_runtime(store, runtime, pending_meta=meta)
-        command_argv = [*selected.env_prefix(), *grok_tmux_command_argv(
-            existing=existing_s, model=resolved, new_id=new_id,
+        command_argv = [*selected.env_prefix(ai.drivers), *interactive_command_argv(
+            spec,
+            existing=existing_s,
+            model=resolved,
+            new_id=new_id,
+            scrub=lane_scrub_env(ai.drivers),
         )]
         if selected.access == "read-only":
-            command_argv.extend(["--deny", "Write", "--deny", "Edit"])
-        command_argv.extend(["--deny", "Bash", "--no-subagents", "--disable-web-search"])
+            command_argv.extend(spec.read_only_args)
+        command_argv.extend(spec.hardening_args)
         start_command = None
     else:
+        if _is_interactive_runtime(meta):
+            meta = _runtime_meta(meta, load_driver_configuration(store.home).drivers)
         runtime = _preflight_runtime(store, runtime)
-    if provider == "grok" and not existing_s:
-        pending_meta = dict(raw) if isinstance(raw, dict) else {}
-        pending_meta["grok_start_pending"] = True
-        pending_meta["ai_binding"] = binding
-        row["runtime"] = pending_meta
+    if marker_meta is not None:
+        row["runtime"] = marker_meta
         store.write("session", "update", sid, _strip(row))
     try:
-        if provider == "grok":
+        if interactive:
             if not runtime.available(sid):
                 die("tmux is not installed")
             runtime_exists = runtime.exists(sid)
@@ -2965,16 +3094,16 @@ def _session_start(
             rows,
             command_argv=command_argv,
             cwd=cwd,
-            require_new=provider == "grok" and not existing_s,
+            require_new=interactive and not existing_s,
         )
-        if provider == "grok" and not existing_s and not started:
-            die("tmux session already exists; Grok was not started")
+        if interactive and not existing_s and not started:
+            die("tmux session already exists; the interactive driver was not started")
     except BaseException:
-        if provider == "grok" and not existing_s:
+        if interactive and not existing_s:
             store.write("session", "update", sid, original)
         raise
-    if provider == "grok":
-        meta.pop("grok_start_pending", None)
+    if interactive:
+        meta.pop(INTERACTIVE_PENDING_KEY, None)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -3095,6 +3224,9 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
             provider = payload.get("provider")
             if provider is not None and not isinstance(provider, str):
                 die("provider must be a string")
+            interactive = payload.get("interactive")
+            if interactive is not None and not isinstance(interactive, bool):
+                die("interactive must be a boolean")
             model = payload.get("model")
             if model is not None and not isinstance(model, str):
                 die("model must be a string")
@@ -3111,6 +3243,7 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
                 rows_i,
                 provider=provider,
                 model=model,
+                interactive=interactive is True,
             )
         elif action == "stop":
             _session_stop(store, runtime, sid)
@@ -3170,7 +3303,7 @@ def _publish_terminals(
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:
-            if not _is_grok_runtime(meta):
+            if not _is_interactive_runtime(meta):
                 raise
             error = exc.args[0] if getattr(exc, "args", None) else str(exc)
             message = str(error).removeprefix("agent: ")
@@ -3399,49 +3532,81 @@ def _assert_ready(store: Store, task: dict) -> None:
     blocking = ready_for_done_blocking(snap)
     if not blocking:
         return
+    # Rows stored under names of an earlier version read as absent without
+    # recorded_slots; the refusal then names that configuration.
+    die(f"{_not_done_reason(tid, blocking)}{stored_names_hint([snap])}")
+
+
+def _not_done_reason(tid: str, blocking: list[str]) -> str:
+    """The refusal of ``task done`` for these blocking entries."""
     if any(":summary=missing" in b for b in blocking):
-        die("task is not done: summaries missing")
+        return "task is not done: summaries missing"
     for b in blocking:
         if ":gate:" in b and b.endswith("=missing"):
             # "{tid}:gate:{stage}/{dim}=missing"
             rest = b.split(":gate:", 1)[1]
             pair = rest.rsplit("=", 1)[0]
-            die(f"task is not done: missing gate {pair}")
+            return f"task is not done: missing gate {pair}"
         if ":gate:" in b and "=no_head" in b:
             rest = b.split(":gate:", 1)[1]
             pair = rest.rsplit("=", 1)[0]
-            die(f"task is not done: gate {pair} missing head_sha")
+            return f"task is not done: gate {pair} missing head_sha"
         if ":gate:head_sha=mismatch" in b:
-            die("task is not done: gate heads must match")
+            return "task is not done: gate heads must match"
         if ":gate:" in b:
             rest = b.split(":gate:", 1)[1]
             pair, _, detail = rest.partition("=")
             if "/" in detail:
-                die(f"task is not done: gate {pair} vendor mismatch")
-            die(f"task is not done: gate {pair} not approved")
+                return f"task is not done: gate {pair} vendor mismatch"
+            return f"task is not done: gate {pair} not approved"
         if ":local_check:" in b and b.endswith("=fail"):
             name = b.split(":local_check:", 1)[1].rsplit("=", 1)[0]
-            die(f"task is not done: local_check {name}=fail")
+            return f"task is not done: local_check {name}=fail"
         if b.endswith(":local_check_pass=ja_without_pass_skip"):
-            die("task is not done: local_check_pass=ja requires a pass or skip check")
+            return "task is not done: local_check_pass=ja requires a pass or skip check"
         if ":deviation_granted=" in b:
-            die("task is not done: deviation_declared=ja requires deviation_granted=ja")
+            return "task is not done: deviation_declared=ja requires deviation_granted=ja"
         prefix = f"{tid}:"
         if b.startswith(prefix):
             body = b[len(prefix) :]
             if body.startswith("workflow="):
-                die("unknown workflow")
+                return "unknown workflow"
             if "=" in body and not body.startswith("gate:") and not body.startswith("local_check"):
                 key, _, status = body.partition("=")
                 if key not in ("summary",):
-                    die(f"task is not done: checklist {key}={status}")
-    die(f"task is not done: {', '.join(blocking)}")
+                    return f"task is not done: checklist {key}={status}"
+    return f"task is not done: {', '.join(blocking)}"
+
+
+def _driver_session_env(agent_home: Path) -> str | None:
+    """The interactive session id a driver exports to its hooks.
+
+    Reads the first set variable among the configured ``interactive.session_env``
+    names, in configuration order. A variable set to the empty string counts as
+    set and yields the empty session id; ``None`` means no configured variable
+    is set. Without ``drivers.json``, or when no driver configures
+    ``interactive.session_env``, the variable names are unknown, so the call
+    fails instead of deciding without a session.
+    """
+    config = load_driver_configuration(agent_home)
+    if not config.present:
+        die(DRIVERS_NOT_CONFIGURED)
+    names = [
+        spec.interactive.session_env
+        for spec in config.drivers.values()
+        if spec.interactive is not None and spec.interactive.session_env is not None
+    ]
+    if not names:
+        die(SESSION_ENV_NOT_CONFIGURED)
+    for name in names:
+        if name in os.environ:
+            return os.environ[name]
+    return None
 
 
 def cmd_allow(args: list[str]) -> None:
     """Done-gate: exit 0 allow, exit 2 deny, exit 1 usage."""
     action = flag(args, "--action")
-    session_id = flag(args, "--session") or os.environ.get("GROK_SESSION_ID")
     task_id = flag(args, "--task")
     draft = flag(args, "--draft")
     as_json = "--json" in args
@@ -3455,6 +3620,7 @@ def cmd_allow(args: list[str]) -> None:
     if draft is not None and draft not in ("true", "false"):
         die("--draft must be true|false")
     create_has_draft = draft == "true"
+    session_id = flag(args, "--session") or _driver_session_env(home())
 
     store = open_store()
     try:
@@ -3604,9 +3770,11 @@ def cmd_next(args: list[str]) -> None:
 def cmd_close_step(args: list[str]) -> None:
     tid = flag(args, "--task")
     supplied_key = flag(args, "--key")
-    key = canonical_key(supplied_key) if supplied_key is not None else None
-    if supplied_key is not None and key is not None:
-        _warn_deprecated_name(supplied_key, key)
+    key = (
+        _canonical_input(supplied_key, canonical_key)
+        if supplied_key is not None
+        else None
+    )
     source = flag(args, "--source")
     evidence = flag(args, "--evidence")
     status = flag(args, "--status") or "ja"
@@ -3616,6 +3784,7 @@ def cmd_close_step(args: list[str]) -> None:
             "Usage: agent close-step --task ID --key KEY --source script|human|runner "
             "--evidence TEXT [--status ja|n_a|unavailable] [--head SHA]"
         )
+    _refuse_unrecorded(key, f"unknown key {key}")
     if key in REGISTRY_KEYS:
         die(f"{key} is a coordinator precondition check; its resolver or agent order override closes it")
     if status not in CLOSE_STATUSES:
@@ -4408,7 +4577,8 @@ def cmd_run(args: list[str]) -> None:
                         die("model slot second is external; no agent lane can be started")
                     die(f"{step.key} has no model provider")
                 session_id = str(snap.get("session_id") or "")
-                if vendor not in LANE_VENDORS:
+                if _require_vendor(vendor, store.home, implementer=True).lane is None:
+                    # A record-only driver runs outside this launcher.
                     _agent_handoff_exit(step, tid, session_id, models, snap)
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
@@ -4955,7 +5125,7 @@ def cmd_models(args: list[str]) -> None:
 def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
-            f"Usage: agent lane run --role ROLE --vendor {PROVIDER_CHOICES} "
+            "Usage: agent lane run --role ROLE --vendor DRIVER "
             "--session ID --spec-file PATH [--cwd PATH] [--dry-run] [--no-tmux]"
         )
     rest = args[1:]
@@ -4968,8 +5138,7 @@ def cmd_lane(args: list[str]) -> None:
     tmux = "--no-tmux" not in rest
     if role not in LANE_ROLES:
         die(f"role must be {'|'.join(LANE_ROLES)}")
-    if vendor not in LANE_VENDORS:
-        die(f"vendor must be {PROVIDER_CHOICES}")
+    _require_vendor(vendor, home())
     result = launch(
         role=role,
         vendor=vendor,
@@ -5034,16 +5203,16 @@ def cmd_knock(args: list[str]) -> None:
         from .runtime import run_argv
 
         last_poll: float | None = None
-        # Not-before times per Claude account; the usage tick stays the only clock.
-        claude_pace: dict[str, float] = {}
-        scan_claude_paced = functools.partial(scan_claude_usage, pace=claude_pace)
+        # Not-before times per window-usage account; the usage tick stays the only clock.
+        window_pace: dict[str, float] = {}
+        scan_window_paced = functools.partial(scan_window_usage, pace=window_pace)
         from .coordinator import shared_github_runner
 
         github_runner = shared_github_runner(run_argv, home=store.home)
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
                 try:
-                    usage_id = scan_usage(store)
+                    usage_id = scan_session_usage(store)
                     if usage_id:
                         print(f"usage.snapshot {usage_id}")
                 except AuthStale:
@@ -5058,8 +5227,8 @@ def cmd_knock(args: list[str]) -> None:
                     usage_accounts = ()
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 if usage_accounts:
-                    # One scanner per provider; each reads only its own accounts.
-                    for scan_accounts in (scan_openrouter_usage, scan_claude_paced):
+                    # Spend accounts and window-usage accounts.
+                    for scan_accounts in (scan_account_usage, scan_window_paced):
                         _print_account_usage(scan_accounts, store)
                 try:
                     created, skipped = scan_merged(store, github_runner)
@@ -5209,15 +5378,15 @@ def cmd_watch(args: list[str]) -> None:
         "pr-merged",
         "pending",
         "assigned",
-        "grok-usage",
-        "openrouter-usage",
-        "claude-usage",
+        "session-usage",
+        "account-usage",
+        "window-usage",
         "errors",
         "error-fix",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|claude-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|errors|error-fix"
         )
     store = open_store()
     try:
@@ -5232,9 +5401,9 @@ def cmd_watch(args: list[str]) -> None:
             if not created:
                 print("pr.merged none")
             return
-        if args[0] == "grok-usage":
+        if args[0] == "session-usage":
             try:
-                activity_id = scan_usage(store)
+                activity_id = scan_session_usage(store)
             except AuthStale:
                 print("usage.snapshot skipped")
                 return
@@ -5243,13 +5412,24 @@ def cmd_watch(args: list[str]) -> None:
             else:
                 print("usage.snapshot none")
             return
-        if args[0] in ("openrouter-usage", "claude-usage"):
+        if args[0] == "account-usage":
+            try:
+                activity_ids = scan_account_usage(store)
+            except AccountUsageError as exc:
+                for activity_id in exc.activity_ids:
+                    print(f"usage.snapshot {activity_id}")
+                for message in exc.errors:
+                    print(f"usage.snapshot error: {message}", file=sys.stderr)
+                raise SystemExit(1) from None
+            for activity_id in activity_ids:
+                print(f"usage.snapshot {activity_id}")
+            if not activity_ids:
+                print("usage.snapshot none")
+            return
+        if args[0] == "window-usage":
             skipped: list[str] = []
             try:
-                if args[0] == "openrouter-usage":
-                    activity_ids = scan_openrouter_usage(store)
-                else:
-                    activity_ids = scan_claude_usage(store, skipped=skipped)
+                activity_ids = scan_window_usage(store, skipped=skipped)
             except AccountUsageError as exc:
                 for activity_id in exc.activity_ids:
                     print(f"usage.snapshot {activity_id}")
@@ -5273,7 +5453,7 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|claude-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|session-usage|account-usage|window-usage|errors|error-fix"
                 )
             follow = extra == ["--follow"]
             while True:
@@ -5294,8 +5474,8 @@ def cmd_watch(args: list[str]) -> None:
                                 None,
                                 None,
                                 None,
-                                provider="grok",
                                 cwd=str(cwd),
+                                interactive=True,
                             )
 
                         def pane_up(session_id: str) -> bool:
@@ -5393,7 +5573,7 @@ def cmd_supervise(args: list[str]) -> None:
                 die(f"supervise --follow already running for session {sid}")
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
-        _interactive_runtime_preflight(store, sid, provider="grok")
+        _interactive_runtime_preflight(store, sid, interactive=True)
         runtime = _preflight_runtime(store, _runtime())
         from .telegram_act import reset_idle_clock
 
@@ -5416,8 +5596,8 @@ def cmd_supervise(args: list[str]) -> None:
                 None,
                 None,
                 None,
-                provider="grok",
                 cwd=str(cwd),
+                interactive=True,
             )
 
         queued = False
@@ -5431,10 +5611,10 @@ def cmd_supervise(args: list[str]) -> None:
                 print(f"issue.assigned {assigned_id}")
                 queued = True
             pane = runtime_capture(sid) if runtime_exists(sid) else ""
-            from .grok_pane import grok_pane_is_working
+            from .pane_state import pane_is_working
             from .telegram_act import notify_status
 
-            working = grok_pane_is_working(pane)
+            working = pane_is_working(pane, runtime.markers_for(sid))
             line = tick(
                 store,
                 runtime,
@@ -5652,6 +5832,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         COMMANDS[cmd](args[1:])
     except (StoreError, HubError) as exc:
+        die(str(exc))
+    except UnrecordedSlotsError as exc:
         die(str(exc))
     except PinnedModelSlotsError as exc:
         die(f"invalid models pinned on the task: {exc}")

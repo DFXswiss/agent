@@ -18,7 +18,7 @@ from typing import Any
 
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
-from .ai_accounts import load_ai_accounts
+from .ai_accounts import AIAccounts, load_ai_accounts
 from .chain import close_allowed
 from .coordinator_common import (
     ORDER_KIND,
@@ -33,7 +33,7 @@ from .coordinator_common import (
     control_dir,
     coord,
     evidence_base_sha,
-    harden_grok_write_argv,
+    harden_write_argv,
     is_order,
     is_sha,
     parse_change_summaries,
@@ -54,17 +54,21 @@ from .coordinator_config import WorkerConfig
 from .coordinator_exec import kill_process_group, read_capture_returncode, run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
 from .gate_order import latest_gates, ordered_snapshot_gates
+from .drivers import (
+    DriverSpec,
+    LaneIO,
+    credential_dir_overlap_error,
+    lane_argv,
+    lane_io,
+    lane_scrub_env,
+)
 from .lane import (
     LANE_MODEL_LIMIT,
     LANE_ROLES,
-    OUTPUT_FILE_VENDORS,
-    SPEC_VIA_STDIN,
     LaneResult,
     LaneUsage,
     bounded_lane_metadata,
     finalize_lane_output,
-    openrouter_path_error,
-    provider_argv,
     redact_lane_text,
     record_lane_run,
     replace_path_roots,
@@ -237,8 +241,8 @@ def gate_ordering_unavailable(
         if isinstance(resume_phase, str):
             effective_phase = resume_phase
     stage = {
-        "pr_gates_grok": SLOT_STAGES["first"],
-        "pr_gates_codex": SLOT_STAGES["second"],
+        "pr_gates_first": SLOT_STAGES["first"],
+        "pr_gates_second": SLOT_STAGES["second"],
     }.get(effective_phase)
     if stage is None:
         return None
@@ -940,12 +944,14 @@ def _read_reviewer_spool(
         return None
     usage_payload = saved.get("usage")
     try:
-        selected = load_ai_accounts(store.home).for_lane(
+        ai = load_ai_accounts(store.home)
+        selected = ai.for_lane(
             worker.session_id,
             str(agent.get("role") or ""),
             str(agent.get("vendor") or ""),
             require_execution=False,
         )
+        _driver, io = _coordinator_lane_driver(ai, str(agent.get("vendor") or ""))
         usage = LaneUsage(**usage_payload) if isinstance(usage_payload, dict) else None
         result = LaneResult(
             role=saved["role"],
@@ -961,8 +967,9 @@ def _read_reviewer_spool(
             tools=tuple(saved.get("tools") or ()),
             tools_truncated=saved.get("tools_truncated") is True,
             protocol_result=saved["protocol_result"],
+            audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
-    except (AIAccountError, KeyError, TypeError, ValueError):
+    except (AIAccountError, CoordinatorError, KeyError, TypeError, ValueError):
         return None
     if (
         result.role != agent.get("role")
@@ -1169,6 +1176,21 @@ def _lane_result_from_reviewer_replay(outcome: dict[str, Any]) -> LaneResult:
         config_dir=None,
         protocol_result=str(outcome.get("result") or ""),
     )
+
+
+def _coordinator_lane_driver(
+    ai: AIAccounts, vendor: str
+) -> tuple[DriverSpec, LaneIO]:
+    """The driver of a coordinator lane and how it passes its spec and output.
+
+    Coordinator lanes run as plain subprocesses, never in tmux. An unconfigured
+    driver, or one without a lane section, is refused like an unknown --vendor.
+    """
+    try:
+        driver = ai.driver(vendor, lane=True)
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    return driver, lane_io(driver, tmux=False)
 
 
 def render_spec(role: str, body: str, *, read_commands: bool = True) -> str:
@@ -1428,8 +1450,8 @@ def _saved_reviewer_result(
     elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
         round_num = None
         expected = {
-            "pr_gates_grok": SLOT_STAGES["first"],
-            "pr_gates_codex": SLOT_STAGES["second"],
+            "pr_gates_first": SLOT_STAGES["first"],
+            "pr_gates_second": SLOT_STAGES["second"],
         }.get(phase)
         if expected is None or stage != expected:
             return False
@@ -1482,12 +1504,12 @@ def _captured_output_path(
     task: dict[str, Any],
     row: dict[str, Any],
     paths: dict[str, Path],
+    io: LaneIO,
 ) -> Path | None:
-    """Provider output file for this lane, when its vendor writes one."""
-    role = str(row.get("role") or "")
-    vendor = str(row.get("vendor") or "")
-    if vendor not in OUTPUT_FILE_VENDORS:
+    """Provider output file for this lane, when its driver writes one."""
+    if not io.output_file:
         return None
+    role = str(row.get("role") or "")
     if role == "implementer":
         return paths["provider"]
     owned = _owned_reviewer_output(store, worker, str(task["id"]), row)
@@ -1564,6 +1586,7 @@ def _finish_captured_lane(
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    _, io = _coordinator_lane_driver(ai, vendor)
     paths = _lane_capture_paths(worker, str(task["id"]), agent_id)
     path_replacements = _coordinator_path_replacements(store, worker, task)
     try:
@@ -1584,7 +1607,7 @@ def _finish_captured_lane(
         path_replacements=path_replacements,
         limit=None,
     )
-    output_path = _captured_output_path(store, worker, task, agent, paths)
+    output_path = _captured_output_path(store, worker, task, agent, paths, io)
     output_file_text = ""
     if read_error is None and output_path is not None:
         try:
@@ -1601,16 +1624,16 @@ def _finish_captured_lane(
             stderr=stderr,
             exc=read_error,
             config_dir=selected.account.config_dir,
+            audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
         finalized = None
         replay_source = None
     else:
         finalized = finalize_lane_output(
-            vendor,
+            io,
             stdout,
             output_file_text,
             cwd=worktree,
-            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
             config_dir=selected.account.config_dir,
         )
         status, model_result = parse_model_result(finalized.source_text, returncode)
@@ -1634,6 +1657,7 @@ def _finish_captured_lane(
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
             protocol_result=model_result,
+            audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
         replay_source = finalized.source_text
     round_raw = agent.get("round")
@@ -2041,14 +2065,16 @@ def launch_lane(
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    driver, io = _coordinator_lane_driver(ai, vendor)
 
     ctrl = control_dir(worker, task["id"])
     write = selected.access == "workspace-write"
     read_dirs = () if write else (str(ctrl.resolve()),)
-    if vendor == "openrouter":
-        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
-        if overlap is not None:
-            raise CoordinatorError(overlap)
+    overlap = credential_dir_overlap_error(
+        driver, selected.account.config_dir, worktree, read_dirs
+    )
+    if overlap is not None:
+        raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}.md"
     write_spec(spec_path, role, spec_body, read_commands=read_commands)
     spec_text = spec_path.read_text(encoding="utf-8")
@@ -2062,7 +2088,7 @@ def launch_lane(
             ai.require_lane_execution()
         except AIAccountError as exc:
             raise CoordinatorError(str(exc)) from exc
-        if vendor in OUTPUT_FILE_VENDORS:
+        if io.output_file:
             if role == "reviewer":
                 lane_output = str(
                     _reviewer_raw_output_path(
@@ -2077,20 +2103,21 @@ def launch_lane(
                 Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
                 Path(lane_output).write_text("", encoding="utf-8")
         argv = [
-            *selected.env_prefix(),
-            *provider_argv(
-                vendor,
+            *selected.env_prefix(ai.drivers),
+            *lane_argv(
+                driver,
+                "write" if write else "read",
+                scrub=lane_scrub_env(ai.drivers),
                 spec_file=str(spec_path),
                 cwd=worktree,
-                write=write,
                 model=selected.model,
                 output_file=lane_output,
                 read_dirs=read_dirs,
             ),
         ]
-        if vendor == "grok" and role == "implementer":
-            argv = harden_grok_write_argv(argv)
-        stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
+        if role == "implementer":
+            argv = harden_write_argv(argv, driver)
+        stdin_text = spec_text if io.stdin else None
 
         store.write(
             "agent",
@@ -2199,15 +2226,15 @@ def launch_lane(
                     stderr=stderr,
                     exc=lane_output_read_error,
                     config_dir=selected.account.config_dir,
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
                 )
                 finalized = None
             else:
                 finalized = finalize_lane_output(
-                    vendor,
+                    io,
                     stdout,
                     output_file_text,
                     cwd=worktree,
-                    stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
                     config_dir=selected.account.config_dir,
                 )
                 replay_source = finalized.source_text
@@ -2270,6 +2297,7 @@ def launch_lane(
                 tools=finalized.tools,
                 tools_truncated=finalized.tools_truncated,
                 protocol_result=model_result,
+                audit_stderr_when_empty=io.audit_stderr_when_empty,
             )
         if role != "reviewer":
             _record_lane_audit(
@@ -3201,15 +3229,16 @@ def _prepare_pr_review_agent(
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    driver, io = _coordinator_lane_driver(ai, vendor)
     ctrl = control_dir(worker, task["id"])
     if selected.access != "read-only":
         raise CoordinatorError("PR review lane requires read-only access")
-    write = False
     read_dirs = (str(ctrl.resolve()),)
-    if vendor == "openrouter":
-        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
-        if overlap is not None:
-            raise CoordinatorError(overlap)
+    overlap = credential_dir_overlap_error(
+        driver, selected.account.config_dir, worktree, read_dirs
+    )
+    if overlap is not None:
+        raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}-{head[:7]}.md"
     spec_text = f"# Role: {role}\n\n{prompt_prohibitions()}\n{spec_body}".strip()
     if len(spec_text) > PR_REVIEW_PROMPT_LIMIT:
@@ -3230,7 +3259,7 @@ def _prepare_pr_review_agent(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     try:
-        if vendor in OUTPUT_FILE_VENDORS:
+        if io.output_file:
             lane_output = str(
                 _reviewer_raw_output_path(
                     store, worker, str(task["id"]), aid
@@ -3238,18 +3267,19 @@ def _prepare_pr_review_agent(
             )
             Path(lane_output).parent.mkdir(parents=True, exist_ok=True)
         argv = [
-            *selected.env_prefix(),
-            *provider_argv(
-                vendor,
+            *selected.env_prefix(ai.drivers),
+            *lane_argv(
+                driver,
+                "read",
+                scrub=lane_scrub_env(ai.drivers),
                 spec_file=str(spec_path),
                 cwd=worktree,
-                write=write,
                 model=selected.model,
                 output_file=lane_output,
                 read_dirs=read_dirs,
             ),
         ]
-        stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
+        stdin_text = spec_text if io.stdin else None
         store.write(
             "agent",
             "insert",
@@ -3300,6 +3330,7 @@ def _prepare_pr_review_agent(
         ),
         "role": role,
         "vendor": vendor,
+        "io": io,
         "argv": argv,
         "stdin_text": stdin_text,
         "output_file": lane_output,
@@ -3328,6 +3359,7 @@ def _run_prepared(
     """Pure subprocess work for worker threads — no Store access."""
     leave_running = False
     try:
+        io: LaneIO = prepared["io"]
         argv = list(prepared["argv"])
         stdin_text = prepared["stdin_text"]
         worktree = prepared["worktree"]
@@ -3405,13 +3437,13 @@ def _run_prepared(
                     stderr=stderr,
                     exc=exc,
                     config_dir=prepared.get("config_dir"),
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
                 )
         finalized = finalize_lane_output(
-            str(prepared["vendor"]),
+            io,
             stdout,
             output_file_text,
             cwd=str(worktree),
-            stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
             config_dir=prepared.get("config_dir"),
         )
         status, model_result = parse_model_result(finalized.source_text, returncode)
@@ -3435,6 +3467,7 @@ def _run_prepared(
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
             protocol_result=model_result,
+            audit_stderr_when_empty=io.audit_stderr_when_empty,
         )
     except SystemExit as exc:
         if not isinstance(exc, StoreError):
@@ -3752,11 +3785,11 @@ def phase_pr_gates(
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
     model_second = second_stage and a38_model_second(c)
-    ordering_phase = "pr_gates_codex" if second_stage else "pr_gates_grok"
+    ordering_phase = "pr_gates_second" if second_stage else "pr_gates_first"
     if second_stage:
         next_phase = "a38_second_comment" if model_second else "ci"
     else:
-        next_phase = "a38_first_comment" if worker.a38 else "pr_gates_codex"
+        next_phase = "a38_first_comment" if worker.a38 else "pr_gates_second"
     first_vendor = _task_models(task).first
 
     def _ordering_unavailable(gate: dict[str, Any] | None) -> bool:
@@ -4247,7 +4280,7 @@ def phase_pr_gates(
     ]
     rejection_gate_ids: list[str] = []
     rejection_activity_ids: list[str] = []
-    incomplete_resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
+    incomplete_resume = "pr_gates_second" if second_stage else "pr_gates_first"
     incomplete_affected = ", ".join(
         str(prep["dimension"])
         for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
@@ -4546,23 +4579,23 @@ def _phase_pr_gates_slot(
     )
 
 
-def phase_pr_gates_grok(
+def phase_pr_gates_first(
     store: Store,
     worker: WorkerConfig,
     task: dict[str, Any],
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
-    """First PR pair (historical phase name; the provider is model slot ``first``)."""
+    """First PR pair; the provider is model slot ``first``."""
     return _phase_pr_gates_slot(store, worker, task, runner, lane_runner, "first")
 
 
-def phase_pr_gates_codex(
+def phase_pr_gates_second(
     store: Store,
     worker: WorkerConfig,
     task: dict[str, Any],
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
-    """Second PR pair (historical phase name; the provider is model slot ``second``)."""
+    """Second PR pair; the provider is model slot ``second``."""
     return _phase_pr_gates_slot(store, worker, task, runner, lane_runner, "second")

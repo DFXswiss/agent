@@ -527,7 +527,7 @@ def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:
 
 def _latest_agent(snapshot: dict[str, Any], role: str, slot: str | None) -> dict[str, Any] | None:
     """Newest agent row for this role, restricted to the slot's configured provider."""
-    # Recorded-row read: legacy tasks need their historical provider mapping.
+    # Recorded-row read: legacy tasks take their provider mapping from recorded_slots.
     vendor = models_from_snapshot(snapshot).for_slot(slot) if slot else None
     agents = list(snapshot.get("agents") or [])
     hit = None
@@ -558,8 +558,9 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
         return ""
     if step.role == "implementer":
         # A pinned task closes only with its configured implementer, like the start
-        # check. A task created before model slots carries no pin and may hold a
-        # codex implementer row; it closes with a row of either slot's provider.
+        # check. A task created before model slots carries no pin and may hold an
+        # implementer row of the second recorded slot's driver; it closes with a
+        # row of either slot's provider.
         # Recorded-row read: this closes only from agents already on the ledger.
         models = models_from_snapshot(snapshot)
         implementer = implementer_from_snapshot(snapshot)

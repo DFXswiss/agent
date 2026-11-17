@@ -17,25 +17,24 @@ from agent_cli.coordinator_common import (
     REDACTION_BOUND_MARGIN,
     redact as redact_shared,
 )
+from agent_cli.drivers import (
+    JUDGMENT_UNSUPPORTED,
+    OUTPUT_FILE_REQUIRED,
+    WRITE_READ_DIRS_REFUSED,
+    credential_wrapper,
+    lane_driver_ids,
+    lane_io,
+    lane_scrub_env,
+)
 from agent_cli.errors import redact as redact_error
 from agent_cli.lane import (
-    CODEX_CHECK_LANE_REFUSED,
     LANE_GITHUB_TOKEN_ENV,
-    LANE_STRIP_ENV,
-    LANE_VENDORS,
-    OPENROUTER_BASE_URL,
     LaneResult,
     LaneUsage,
-    _OPENROUTER_WRAPPER,
     _run_in_tmux,
-    claude_argv,
-    codex_argv,
     finalize_lane_output,
-    grok_argv,
     hide_config_dir,
-    judgment_argv,
     launch,
-    openrouter_argv,
     redact_diagnostic,
     redact_lane_text,
     record_lane_run,
@@ -50,113 +49,91 @@ from agent_cli.text_sanitize import (
     redact_terminal_string_controls,
     sanitize_terminal_text,
 )
-from test_coordinator_support import grok_messages_stream
+from driver_fixtures import (
+    accounts_document,
+    driver_specs,
+    provider_argv,
+    provider_judgment_argv as judgment_argv,
+    write_accounts as write_placeholder_accounts,
+    write_drivers,
+)
+from test_coordinator_support import event_stream_output
 
 pytestmark = pytest.mark.no_pg
 
-OPERATOR_GROK_MODEL = "operator-lane-grok-model"
-OPERATOR_CODEX_MODEL = "operator-lane-codex-model"
-OPERATOR_GROK_HOME = "/operator/path/grok-lane-a"
-OPERATOR_CODEX_HOME = "/operator/path/codex-lane-a"
-OPERATOR_CLAUDE_HOME = "/operator/path/claude-lane-a"
-OPERATOR_CLAUDE_MODEL = "operator-lane-claude-model"
-OPERATOR_OPENROUTER_HOME = "/operator/path/openrouter-lane-a"
-OPERATOR_OPENROUTER_MODEL = "deepseek/example"
-OPERATOR_GROK_HOME_B = "/operator/path/grok-lane-b"
-OPERATOR_GROK_MODEL_B = "operator-lane-grok-model-b"
+DRIVERS = driver_specs()
+# Every variable a lane clears under the placeholder drivers, in launch order.
+LANE_STRIP_ENV = lane_scrub_env(DRIVERS)
+LANE_VENDORS = lane_driver_ids(DRIVERS)
+DRIVER_D_BASE_URL = dict(DRIVERS["driver-d"].lane.env)["TOOL_C_BASE_URL"]
+_DRIVER_D_WRAPPER = credential_wrapper(DRIVERS["driver-d"])
+
+OPERATOR_MODEL_A = "operator-lane-driver-a-model"
+OPERATOR_MODEL_B = "operator-lane-driver-b-model"
+OPERATOR_HOME_A = "/operator/path/driver-a-lane-a"
+OPERATOR_HOME_B = "/operator/path/driver-b-lane-a"
+OPERATOR_HOME_C = "/operator/path/driver-c-lane-a"
+OPERATOR_MODEL_C = "operator-lane-driver-c-model"
+OPERATOR_HOME_D = "/operator/path/driver-d-lane-a"
+OPERATOR_MODEL_D = "vendor/example"
+OPERATOR_HOME_A2 = "/operator/path/driver-a-lane-b"
+OPERATOR_MODEL_A2 = "operator-lane-driver-a-model-b"
 DEFAULT_SESSION = "sess-1"
 ALT_SESSION = "sess-2"
 
 
-def test_judgment_argv_grok_denies_every_tool() -> None:
+def test_judgment_argv_uses_the_judgment_template() -> None:
     argv = judgment_argv(
-        "grok", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+        "driver-a", spec_file="/tmp/spec.md", cwd="/empty", model="m"
     )
-    assert argv[argv.index("grok") :] == [
-        "grok",
+    assert argv[argv.index("tool-a") :] == [
+        "tool-a",
         "--prompt-file",
         "/tmp/spec.md",
         "-m",
         "m",
-        "--deny",
-        "Read",
-        "--deny",
-        "Grep",
-        "--deny",
-        "Glob",
-        "--deny",
-        "Write",
-        "--deny",
-        "Edit",
-        "--deny",
-        "Bash",
-        "--no-subagents",
-        "--disable-web-search",
-        "--output-format",
-        "streaming-messages-json",
+        "--no-tools",
         "--cwd",
         "/empty",
     ]
-    assert "--allow" not in argv
-    assert argv[argv.index("--output-format") + 1] == "streaming-messages-json"
-    assert "plain" not in argv
+    assert "--read-only" not in argv
+    assert "--edit" not in argv
     for key in LANE_STRIP_ENV:
         assert argv[argv.index(key) - 1] == "-u"
 
 
-def test_judgment_argv_claude_has_no_tools() -> None:
+def test_judgment_argv_driver_c_has_no_tools() -> None:
     argv = judgment_argv(
-        "claude", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+        "driver-c", spec_file="/tmp/spec.md", cwd="/empty", model="m"
     )
     assert argv[argv.index("--tools") + 1] == ""
-    assert "--restricted" in argv
-    assert argv[argv.index("--permission-mode") + 1] == "default"
+    assert argv[argv.index("--mode") + 1] == "default"
     assert "--add-dir" not in argv
 
 
-def test_judgment_argv_openrouter_has_no_tools() -> None:
+def test_judgment_argv_driver_d_has_no_tools() -> None:
     argv = judgment_argv(
-        "openrouter",
+        "driver-d",
         spec_file="/tmp/spec.md",
         cwd="/empty",
         model="m",
         output_file="/tmp/out",
     )
     assert argv[argv.index("--tools") + 1] == ""
-    assert argv[argv.index(_OPENROUTER_WRAPPER) + 2] == "/tmp/out"
-    with pytest.raises(
-        SystemExit, match="openrouter lane requires an output file"
-    ):
+    assert argv[argv.index(_DRIVER_D_WRAPPER) + 2] == "/tmp/out"
+    with pytest.raises(SystemExit) as exc:
         judgment_argv(
-            "openrouter", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+            "driver-d", spec_file="/tmp/spec.md", cwd="/empty", model="m"
         )
+    assert str(exc.value) == OUTPUT_FILE_REQUIRED.format(driver="driver-d")
 
 
-def test_judgment_argv_refuses_codex_and_unknown_vendors() -> None:
-    with pytest.raises(SystemExit, match="codex cannot run a check lane") as exc:
+def test_judgment_argv_refuses_a_driver_without_a_judgment_template() -> None:
+    with pytest.raises(SystemExit, match="cannot run a check lane") as exc:
         judgment_argv(
-            "codex", spec_file="/tmp/spec.md", cwd="/empty", model="m"
+            "driver-b", spec_file="/tmp/spec.md", cwd="/empty", model="m"
         )
-    assert str(exc.value) == CODEX_CHECK_LANE_REFUSED
-    with pytest.raises(SystemExit, match="vendor must be"):
-        judgment_argv(
-            "gemini", spec_file="/tmp/spec.md", cwd="/empty", model="m"
-        )
-
-
-def test_tools_argument_replaces_the_tool_list() -> None:
-    claude = claude_argv(
-        cwd="/w", write=False, model="m", tools=("Read",)
-    )
-    assert claude[claude.index("--tools") + 1] == "Read"
-    openrouter = openrouter_argv(
-        cwd="/w",
-        write=False,
-        model="m",
-        output_file="/o",
-        tools=(),
-    )
-    assert openrouter[openrouter.index("--tools") + 1] == ""
+    assert str(exc.value) == JUDGMENT_UNSUPPORTED.format(driver="driver-b")
 
 
 def write_operator_ai_accounts(
@@ -171,60 +148,60 @@ def write_operator_ai_accounts(
     """
     data = {
         "lane_execution": {"mode": "this-device-is-lane-host"},
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
-            "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
-            "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
-            "claude-a": {"provider": "claude", "config_dir": OPERATOR_CLAUDE_HOME},
-            "grok-b": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME_B},
-            "openrouter-a": {
-                "provider": "openrouter", "config_dir": OPERATOR_OPENROUTER_HOME
+            "account-a": {"provider": "driver-a", "config_dir": OPERATOR_HOME_A},
+            "account-b": {"provider": "driver-b", "config_dir": OPERATOR_HOME_B},
+            "account-c": {"provider": "driver-c", "config_dir": OPERATOR_HOME_C},
+            "account-a2": {"provider": "driver-a", "config_dir": OPERATOR_HOME_A2},
+            "account-d": {
+                "provider": "driver-d", "config_dir": OPERATOR_HOME_D
             },
         },
         "roles": {
             "lane-builder": {
-                "account": "grok-a",
-                "model": OPERATOR_GROK_MODEL,
+                "account": "account-a",
+                "model": OPERATOR_MODEL_A,
                 "access": "workspace-write",
             },
             "lane-reader": {
-                "account": "grok-a",
-                "model": OPERATOR_GROK_MODEL,
+                "account": "account-a",
+                "model": OPERATOR_MODEL_A,
                 "access": "read-only",
             },
-            "codex-builder": {
-                "account": "codex-a",
-                "model": OPERATOR_CODEX_MODEL,
+            "driver-b-builder": {
+                "account": "account-b",
+                "model": OPERATOR_MODEL_B,
                 "access": "workspace-write",
             },
-            "codex-reader": {
-                "account": "codex-a",
-                "model": OPERATOR_CODEX_MODEL,
+            "driver-b-reader": {
+                "account": "account-b",
+                "model": OPERATOR_MODEL_B,
                 "access": "read-only",
             },
-            "claude-builder": {
-                "account": "claude-a",
-                "model": OPERATOR_CLAUDE_MODEL,
+            "driver-c-builder": {
+                "account": "account-c",
+                "model": OPERATOR_MODEL_C,
                 "access": "workspace-write",
             },
-            "claude-reader": {
-                "account": "claude-a",
-                "model": OPERATOR_CLAUDE_MODEL,
+            "driver-c-reader": {
+                "account": "account-c",
+                "model": OPERATOR_MODEL_C,
                 "access": "read-only",
             },
             "lane-builder-b": {
-                "account": "grok-b",
-                "model": OPERATOR_GROK_MODEL_B,
+                "account": "account-a2",
+                "model": OPERATOR_MODEL_A2,
                 "access": "workspace-write",
             },
-            "openrouter-builder": {
-                "account": "openrouter-a",
-                "model": OPERATOR_OPENROUTER_MODEL,
+            "driver-d-builder": {
+                "account": "account-d",
+                "model": OPERATOR_MODEL_D,
                 "access": "workspace-write",
             },
-            "openrouter-reader": {
-                "account": "openrouter-a",
-                "model": OPERATOR_OPENROUTER_MODEL,
+            "driver-d-reader": {
+                "account": "account-d",
+                "model": OPERATOR_MODEL_D,
                 "access": "read-only",
             },
         },
@@ -233,32 +210,33 @@ def write_operator_ai_accounts(
             DEFAULT_SESSION: {
                 "interactive": "lane-builder",
                 "lanes": {
-                    "grok:implementer": "lane-builder",
-                    "grok:reviewer": "lane-reader",
-                    "grok:pr-reviewer-quality": "lane-reader",
-                    "grok:pr-reviewer-logic": "lane-reader",
-                    "codex:implementer": "codex-builder",
-                    "codex:reviewer": "codex-reader",
-                    "codex:pr-reviewer-quality": "codex-reader",
-                    "codex:pr-reviewer-logic": "codex-reader",
-                    "claude:implementer": "claude-builder",
-                    "claude:reviewer": "claude-reader",
-                    "claude:pr-reviewer-quality": "claude-reader",
-                    "claude:pr-reviewer-logic": "claude-reader",
-                    "openrouter:implementer": "openrouter-builder",
-                    "openrouter:reviewer": "openrouter-reader",
-                    "openrouter:pr-reviewer-quality": "openrouter-reader",
-                    "openrouter:pr-reviewer-logic": "openrouter-reader",
+                    "driver-a:implementer": "lane-builder",
+                    "driver-a:reviewer": "lane-reader",
+                    "driver-a:pr-reviewer-quality": "lane-reader",
+                    "driver-a:pr-reviewer-logic": "lane-reader",
+                    "driver-b:implementer": "driver-b-builder",
+                    "driver-b:reviewer": "driver-b-reader",
+                    "driver-b:pr-reviewer-quality": "driver-b-reader",
+                    "driver-b:pr-reviewer-logic": "driver-b-reader",
+                    "driver-c:implementer": "driver-c-builder",
+                    "driver-c:reviewer": "driver-c-reader",
+                    "driver-c:pr-reviewer-quality": "driver-c-reader",
+                    "driver-c:pr-reviewer-logic": "driver-c-reader",
+                    "driver-d:implementer": "driver-d-builder",
+                    "driver-d:reviewer": "driver-d-reader",
+                    "driver-d:pr-reviewer-quality": "driver-d-reader",
+                    "driver-d:pr-reviewer-logic": "driver-d-reader",
                 },
             },
             ALT_SESSION: {
                 "interactive": "lane-builder-b",
                 "lanes": {
-                    "grok:implementer": "lane-builder-b",
+                    "driver-a:implementer": "lane-builder-b",
                 },
             },
         },
     }
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -279,7 +257,7 @@ def _assert_nested_role_env_prefix(
     # A tmux stream redirect wrapper may precede the provider command.
     inner = inner[inner.index("env") :]
     assert inner[0] == "env"
-    home_key = "GROK_HOME" if provider == "grok" else "CODEX_HOME"
+    home_key = DRIVERS[provider].home_env
     home_assignment = f"{home_key}={config_dir}"
     assert home_assignment in inner
     home_index = inner.index(home_assignment)
@@ -287,52 +265,42 @@ def _assert_nested_role_env_prefix(
         index for index, value in enumerate(inner[:home_index]) if value == "env"
     )
     for key in (
-        "XAI_API_KEY",
-        "GROK_API_KEY",
-        "OPENAI_API_KEY",
-        "CODEX_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "CLAUDECODE",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "GROK_HOME",
-        "CODEX_HOME",
+        "TOOL_A_API_KEY",
+        "TOOL_B_API_KEY",
+        "TOOL_C_API_KEY",
+        "TOOL_C_TOKEN",
+        "TOOL_D_API_KEY",
+        "TOOL_A_HOME",
+        "TOOL_B_HOME",
+        "TOOL_C_CONFIG",
     ):
         assert key in inner
         key_index = inner.index(key, role_env)
         assert inner[key_index - 1] == "-u"
     # Role env_prefix precedes the existing provider argv (which itself starts with env).
     provider_env = inner.index("env", home_index + 1)
-    provider_bin = "grok" if provider == "grok" else "codex"
+    provider_bin = DRIVERS[provider].lane.argv_read[0]
     assert provider_bin in inner[provider_env:]
 
 
-def test_grok_implementer_argv_requires_explicit_model() -> None:
-    argv = grok_argv(
-        spec_file="/tmp/spec.md", cwd="/work", write=True, model="explicit-grok-model"
+def test_driver_a_implementer_argv_requires_explicit_model() -> None:
+    argv = provider_argv(
+        "driver-a",
+        spec_file="/tmp/spec.md",
+        cwd="/work",
+        write=True,
+        model="explicit-model-a",
     )
-    assert "--session-id" not in argv
-    assert "--always-approve" not in argv
-    assert "reasoning-effort" not in argv
-    assert "grok-4.5" not in argv
-    assert "grok-4.6" not in argv
     assert argv[0] == "env"
     for key in LANE_STRIP_ENV:
-        assert "-u" in argv
-        assert key in argv
-    assert argv[argv.index("grok") :] == [
-        "grok",
+        assert argv[argv.index(key) - 1] == "-u"
+    assert argv[argv.index("tool-a") :] == [
+        "tool-a",
         "--prompt-file",
         "/tmp/spec.md",
         "-m",
-        "explicit-grok-model",
-        "--permission-mode",
-        "acceptEdits",
-        "--allow",
-        "Write",
-        "--allow",
-        "Edit",
-        "--output-format",
-        "streaming-messages-json",
+        "explicit-model-a",
+        "--edit",
         "--cwd",
         "/work",
     ]
@@ -340,56 +308,34 @@ def test_grok_implementer_argv_requires_explicit_model() -> None:
     assert strip_idx == sorted(strip_idx)
 
 
-def test_grok_reviewer_argv_requires_explicit_model() -> None:
-    argv = grok_argv(
-        spec_file="/tmp/spec.md", cwd="/work", write=False, model="explicit-readonly-model"
+def test_driver_a_reviewer_argv_requires_explicit_model() -> None:
+    argv = provider_argv(
+        "driver-a",
+        spec_file="/tmp/spec.md",
+        cwd="/work",
+        write=False,
+        model="explicit-readonly-model",
     )
-    assert "--permission-mode" not in argv
-    assert "acceptEdits" not in argv
-    assert "--always-approve" not in argv
-    assert "--session-id" not in argv
-    assert "reasoning-effort" not in argv
-    assert argv[argv.index("grok") :] == [
-        "grok",
+    assert "--edit" not in argv
+    assert argv[argv.index("tool-a") :] == [
+        "tool-a",
         "--prompt-file",
         "/tmp/spec.md",
         "-m",
         "explicit-readonly-model",
-        "--allow",
-        "Read",
-        "--allow",
-        "Grep",
-        "--allow",
-        "Glob",
-        "--deny",
-        "Write",
-        "--deny",
-        "Edit",
-        "--deny",
-        "Bash",
-        "--no-subagents",
-        "--disable-web-search",
-        "--output-format",
-        "streaming-messages-json",
+        "--read-only",
         "--cwd",
         "/work",
     ]
 
 
-@pytest.mark.parametrize("write", [False, True])
-def test_grok_argv_requests_the_streaming_messages_json_format(write: bool) -> None:
-    argv = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=write, model="m")
-    assert argv[argv.index("--output-format") + 1] == "streaming-messages-json"
-    assert "plain" not in argv
-
-
-def test_pr_reviewer_quality_uses_readonly_grok_argv(tmp_path: Path) -> None:
+def test_pr_reviewer_quality_uses_the_read_argv(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("review this\n", encoding="utf-8")
     result = launch(
         role="pr-reviewer-quality",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -397,50 +343,55 @@ def test_pr_reviewer_quality_uses_readonly_grok_argv(tmp_path: Path) -> None:
         config_home=tmp_path,
         session_id=DEFAULT_SESSION,
     )
-    assert "--deny" in result.argv
-    assert "Write" in result.argv
-    assert "acceptEdits" not in result.argv
-    assert "--permission-mode" not in result.argv
-    assert OPERATOR_GROK_MODEL in result.argv
+    assert "--read-only" in result.argv
+    assert "--edit" not in result.argv
+    assert OPERATOR_MODEL_A in result.argv
     _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
+        result.argv, config_dir=OPERATOR_HOME_A, provider="driver-a"
     )
 
 
-def test_codex_implementer_argv_requires_explicit_model() -> None:
-    argv = codex_argv(
-        cwd="/work", write=True, output_file="/tmp/out.txt", model="explicit-codex-model"
+def test_driver_b_implementer_argv_requires_explicit_model() -> None:
+    argv = provider_argv(
+        "driver-b",
+        cwd="/work",
+        write=True,
+        output_file="/tmp/out.txt",
+        model="explicit-model-b",
     )
     assert "workspace-write" in argv
-    assert "explicit-codex-model" in argv
-    assert "gpt-5.6-sol" not in argv
-    assert "reasoning-effort" not in argv
+    assert "read-only" not in argv
     assert argv[-1] == "-"
     assert argv[0] == "env"
     for key in LANE_STRIP_ENV:
         assert key in argv
-    assert argv[argv.index("--model") + 1] == "explicit-codex-model"
+    assert argv[argv.index("--model") + 1] == "explicit-model-b"
 
 
-def test_codex_argv_sets_reasoning_effort_high() -> None:
+def test_driver_b_argv_names_the_output_file() -> None:
     for write in (False, True):
-        argv = codex_argv(
+        argv = provider_argv(
+            "driver-b",
             cwd="/work",
             write=write,
             output_file="/tmp/out.txt",
-            model="explicit-codex-model",
+            model="explicit-model-b",
         )
-        assert argv[argv.index("exec") + 1] == "-c"
-        assert argv[argv.index("exec") + 2] == 'model_reasoning_effort="high"'
+        assert argv[argv.index("--last-message") + 1] == "/tmp/out.txt"
+        assert argv[argv.index("--cd") + 1] == "/work"
 
 
-def test_codex_reviewer_argv_requires_explicit_model() -> None:
-    argv = codex_argv(
-        cwd="/work", write=False, output_file="/tmp/out.txt", model="explicit-codex-ro"
+def test_driver_b_reviewer_argv_requires_explicit_model() -> None:
+    argv = provider_argv(
+        "driver-b",
+        cwd="/work",
+        write=False,
+        output_file="/tmp/out.txt",
+        model="explicit-model-b-ro",
     )
     assert "read-only" in argv
     assert "workspace-write" not in argv
-    assert argv[argv.index("--model") + 1] == "explicit-codex-ro"
+    assert argv[argv.index("--model") + 1] == "explicit-model-b-ro"
     assert argv[-1] == "-"
 
 
@@ -451,88 +402,90 @@ def _strip_prefix() -> list[str]:
     return prefix
 
 
-def test_claude_argv_is_exactly_restricted_to_file_tools() -> None:
-    assert claude_argv(
-        cwd="/work", write=True, model="model-a"
-    ) == [
+def test_driver_c_argv_is_exactly_the_configured_template() -> None:
+    assert provider_argv("driver-c", cwd="/work", write=True, model="model-a") == [
         *_strip_prefix(),
-        "claude", "--print", "--verbose", "--output-format", "stream-json",
-        "--model", "model-a", "--restricted", "--strict-mcp-config",
-        "--disable-slash-commands", "--tools", "Read,Grep,Glob,Edit,Write",
-        "--permission-mode", "acceptEdits",
+        "tool-c", "--print", "--model", "model-a", "--tools", "Read,Edit",
+        "--mode", "edit",
     ]
-    assert claude_argv(
-        cwd="/work", write=False, model="model-b", read_dirs=("/control", "/evidence")
-    ) == [
-        *_strip_prefix(),
-        "claude", "--print", "--verbose", "--output-format", "stream-json",
-        "--model", "model-b", "--restricted", "--strict-mcp-config",
-        "--disable-slash-commands", "--tools", "Read,Grep,Glob",
-        "--permission-mode", "default", "--add-dir", "/control",
-        "--add-dir", "/evidence",
-    ]
-    with pytest.raises(SystemExit, match="write lane takes no extra directories"):
-        claude_argv(cwd="/work", write=True, model="m", read_dirs=("/control",))
-
-
-def test_openrouter_argv_has_wrapper_and_never_has_key() -> None:
-    argv = openrouter_argv(
+    assert provider_argv(
+        "driver-c",
         cwd="/work",
         write=False,
-        model="deepseek/example",
+        model="model-b",
+        read_dirs=("/control", "/evidence"),
+    ) == [
+        *_strip_prefix(),
+        "tool-c", "--print", "--model", "model-b", "--tools", "Read",
+        "--mode", "default", "--add-dir", "/control", "--add-dir", "/evidence",
+    ]
+    with pytest.raises(SystemExit, match="write lane takes no extra directories"):
+        provider_argv(
+            "driver-c", cwd="/work", write=True, model="m", read_dirs=("/control",)
+        )
+
+
+def test_driver_d_argv_has_wrapper_and_never_has_key() -> None:
+    argv = provider_argv(
+        "driver-d",
+        cwd="/work",
+        write=False,
+        model="vendor/example",
         output_file="/tmp/output.jsonl",
         read_dirs=("/control",),
     )
     assert argv == [
         *_strip_prefix(),
-        f"ANTHROPIC_BASE_URL={OPENROUTER_BASE_URL}",
-        "ANTHROPIC_API_KEY=",
-        "sh", "-c", _OPENROUTER_WRAPPER, "sh", "/tmp/output.jsonl",
-        "claude", "--print", "--verbose", "--output-format", "stream-json",
-        "--model", "deepseek/example", "--restricted", "--strict-mcp-config",
-        "--disable-slash-commands", "--tools", "Read,Grep,Glob",
-        "--permission-mode", "default", "--add-dir", "/control",
+        f"TOOL_C_BASE_URL={DRIVER_D_BASE_URL}",
+        "TOOL_C_API_KEY=",
+        "sh", "-c", _DRIVER_D_WRAPPER, "sh", "/tmp/output.jsonl",
+        "tool-c", "--print", "--model", "vendor/example", "--tools", "Read",
+        "--mode", "default", "--add-dir", "/control",
     ]
     assert "secret-test-key" not in " ".join(argv)
 
 
-def test_openrouter_wrapper_missing_and_present_key(tmp_path: Path) -> None:
+def test_driver_d_wrapper_missing_and_present_key(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     record = tmp_path / "record.txt"
-    fake = bin_dir / "claude"
+    fake = bin_dir / "tool-c"
     fake.write_text(
         "#!/bin/sh\n"
-        "printf '%s|%s|%s\\n' \"${ANTHROPIC_AUTH_TOKEN:+set}\" \"$ANTHROPIC_BASE_URL\" \"$*\" > \"$FAKE_RECORD\"\n"
+        "printf '%s|%s|%s\\n' \"${TOOL_C_TOKEN:+set}\" \"$TOOL_C_BASE_URL\" \"$*\" > \"$FAKE_RECORD\"\n"
         "printf '%s\\n' '{\"type\":\"result\",\"result\":\"STATUS: complete\",\"usage\":{}}'\n",
         encoding="utf-8",
     )
     fake.chmod(0o755)
     output = tmp_path / "stream.jsonl"
-    argv = openrouter_argv(
-        cwd=str(tmp_path), write=False, model="vendor/model", output_file=str(output)
+    argv = provider_argv(
+        "driver-d",
+        cwd=str(tmp_path),
+        write=False,
+        model="vendor/model",
+        output_file=str(output),
     )
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["FAKE_RECORD"] = str(record)
-    env["CLAUDE_CONFIG_DIR"] = str(config)
+    env["TOOL_C_CONFIG"] = str(config)
     missing = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
     assert missing.returncode == 2
     assert missing.stdout == ""
     assert "STATUS: unavailable" in missing.stderr
-    assert "openrouter key missing" in missing.stderr
+    assert "driver-d key missing" in missing.stderr
     assert not output.exists()
 
     key = "secret-test-key"
-    (config / "openrouter-api-key").write_text(key, encoding="utf-8")
+    (config / "tool-d-key").write_text(key, encoding="utf-8")
     present = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
     assert present.returncode == 0
     assert present.stdout == ""
     assert '"type":"result"' in output.read_text(encoding="utf-8")
     recorded = record.read_text(encoding="utf-8")
-    assert recorded.startswith(f"set|{OPENROUTER_BASE_URL}|")
+    assert recorded.startswith(f"set|{DRIVER_D_BASE_URL}|")
     assert key not in recorded
     assert key not in " ".join(argv)
 
@@ -556,7 +509,7 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
          "modelUsage": {"vendor/model": {}}},
     ]
     stream = "\n".join(json.dumps(event) for event in events)
-    out = finalize_lane_output("claude", stream, "", cwd="/work")
+    out = finalize_lane_output(lane_io(DRIVERS["driver-c"], tmux=False), stream, "", cwd="/work")
     assert out.text == "done\nSTATUS: complete"
     assert out.usage is not None
     assert out.usage.model == "vendor/model"
@@ -579,30 +532,30 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
 def test_finalize_lane_output_drops_text_of_a_failed_result(result_fields) -> None:
     event = {"type": "result", "result": "partial work\nSTATUS: complete",
              "usage": {"input_tokens": 5, "output_tokens": 1}, **result_fields}
-    out = finalize_lane_output("claude", json.dumps(event), "", cwd="/work")
+    out = finalize_lane_output(lane_io(DRIVERS["driver-c"], tmux=False), json.dumps(event), "", cwd="/work")
     assert out.text == ""
     assert out.usage is not None and out.usage.input_tokens == 5
 
 
-@pytest.mark.parametrize("vendor", ["openrouter", "codex", "grok"])
+@pytest.mark.parametrize("vendor", ["driver-d", "driver-b", "driver-a"])
 def test_finalize_lane_output_hides_the_account_directory_in_the_final_text(vendor: str) -> None:
     text = "Unable to use /opt/profiles/router/settings.json\nSTATUS: complete"
-    if vendor == "openrouter":
+    if vendor == "driver-d":
         event = {"type": "result", "subtype": "success", "is_error": False, "result": text}
         out = finalize_lane_output(
-            vendor, "", json.dumps(event), cwd="/work", config_dir="/opt/profiles/router"
+            lane_io(DRIVERS[vendor], tmux=False), "", json.dumps(event), cwd="/work", config_dir="/opt/profiles/router"
         )
-    elif vendor == "grok":
+    elif vendor == "driver-a":
         out = finalize_lane_output(
-            vendor,
-            grok_messages_stream(text),
+            lane_io(DRIVERS[vendor], tmux=False),
+            event_stream_output(text),
             "",
             cwd="/work",
             config_dir="/opt/profiles/router",
         )
     else:
         out = finalize_lane_output(
-            vendor, text, "", cwd="/work", config_dir="/opt/profiles/router"
+            lane_io(DRIVERS[vendor], tmux=False), text, "", cwd="/work", config_dir="/opt/profiles/router"
         )
     assert out.text == "Unable to use <config_dir>/settings.json\nSTATUS: complete"
 
@@ -631,15 +584,15 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
     config_dir = "/opt/profiles/router"
     split_path = (
         f"/opt/profi{nested_terminal_string_control}"
-        "les/router/openrouter-api-key"
+        "les/router/tool-d-key"
     )
     raw = f"provider failed at {split_path}"
 
     assert hide_config_dir(raw, config_dir) == (
-        "provider failed at <config_dir>/openrouter-api-key"
+        "provider failed at <config_dir>/tool-d-key"
     )
     assert redact_diagnostic(raw, config_dir=config_dir) == (
-        "provider failed at <config_dir>/openrouter-api-key"
+        "provider failed at <config_dir>/tool-d-key"
     )
 
     event = {
@@ -649,13 +602,13 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
         "result": raw,
     }
     finalized = finalize_lane_output(
-        "openrouter",
+        lane_io(DRIVERS["driver-d"], tmux=False),
         "",
         json.dumps(event),
         cwd="/work",
         config_dir=config_dir,
     )
-    assert finalized.text == "provider failed at <config_dir>/openrouter-api-key"
+    assert finalized.text == "provider failed at <config_dir>/tool-d-key"
 
     class CaptureStore:
         row: dict | None = None
@@ -669,24 +622,25 @@ def test_config_dir_redaction_precedes_terminal_sanitization_for_lane_sinks(
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="openrouter",
+            vendor="driver-d",
             model="model",
             status="unavailable",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=2,
             stdout="",
             stderr=raw,
             config_dir=config_dir,
+            audit_stderr_when_empty=True,
         ),
     )
     assert store.row is not None
     assert store.row["payload"]["final_text"] == (
-        "provider failed at <config_dir>/openrouter-api-key"
+        "provider failed at <config_dir>/tool-d-key"
     )
 
 
 def test_controlled_line_config_dir_placeholder_exemption_is_exact() -> None:
-    placeholder = "<config_dir>/openrouter-api-key"
+    placeholder = "<config_dir>/tool-d-key"
     wrapped = "\x1b[31mordinary\x1b[0m"
 
     assert redact_lane_text(
@@ -975,7 +929,7 @@ def test_assignment_redaction_preserves_legacy_compact_token_shape() -> None:
 def test_lone_escape_redacts_tokens_across_lane_sinks(raw: str) -> None:
     assert redact_diagnostic(raw) == "[redacted]"
     finalized = finalize_lane_output(
-        "grok", grok_messages_stream(raw), "", cwd="/work"
+        lane_io(DRIVERS["driver-a"], tmux=False), event_stream_output(raw), "", cwd="/work"
     )
     assert finalized.text == "[redacted]"
 
@@ -991,10 +945,10 @@ def test_lone_escape_redacts_tokens_across_lane_sinks(raw: str) -> None:
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             model="model",
             status="partial",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout=raw,
             stderr="",
@@ -1710,14 +1664,14 @@ def test_bounded_lane_redaction_classifies_complete_controlled_line_before_cut(
 
 def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
     event = {"type": "result", "subtype": "success", "is_error": False, "result": "STATUS: complete"}
-    out = finalize_lane_output("openrouter", "", json.dumps(event), cwd="/work")
+    out = finalize_lane_output(lane_io(DRIVERS["driver-d"], tmux=False), "", json.dumps(event), cwd="/work")
     assert out.text == "STATUS: complete"
 
 
 def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     no_result = json.dumps({"type": "assistant", "message": {"content": []}})
-    assert finalize_lane_output("claude", no_result, "", cwd="/work").text == ""
-    assert finalize_lane_output("claude", "not json", "", cwd="/work").usage is None
+    assert finalize_lane_output(lane_io(DRIVERS["driver-c"], tmux=False), no_result, "", cwd="/work").text == ""
+    assert finalize_lane_output(lane_io(DRIVERS["driver-c"], tmux=False), "not json", "", cwd="/work").usage is None
     blocks = [
         {"type": "tool_use", "id": f"t-{i}", "name": "Read", "input": {"path": "x" * 500}}
         for i in range(201)
@@ -1731,19 +1685,19 @@ def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
         ]
     )
     out = finalize_lane_output(
-        "openrouter", "pane noise", stream, cwd="/work", stream_from_output_file=True
+        lane_io(DRIVERS["driver-d"], tmux=False), "pane noise", stream, cwd="/work"
     )
     assert len(out.tools) == 200
     assert out.tools_truncated is True
     assert len(out.tools[0]["target"]) <= 300
     assert out.usage is not None and out.usage.model == "fallback"
-    assert finalize_lane_output("codex", "stdout", "file", cwd="/work").text == "file"
-    # Grok is a Messages stream: plain stdout has no terminal result event.
-    assert finalize_lane_output("grok", "stdout", "file", cwd="/work").text == ""
+    assert finalize_lane_output(lane_io(DRIVERS["driver-b"], tmux=False), "stdout", "file", cwd="/work").text == "file"
+    # driver-a writes an event stream: plain stdout has no terminal result event.
+    assert finalize_lane_output(lane_io(DRIVERS["driver-a"], tmux=False), "stdout", "file", cwd="/work").text == ""
     assert (
         finalize_lane_output(
-            "grok",
-            grok_messages_stream("STATUS: complete"),
+            lane_io(DRIVERS["driver-a"], tmux=False),
+            event_stream_output("STATUS: complete"),
             "file",
             cwd="/work",
         ).text
@@ -1751,19 +1705,19 @@ def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     )
 
 
-def test_finalize_lane_output_grok_reads_only_the_final_assistant_message() -> None:
+def test_finalize_lane_output_driver_a_reads_only_the_final_assistant_message() -> None:
     from agent_cli.coordinator_common import parse_model_result
 
     progress = "Working on the diff artifact."
     final = "STATUS: complete\nRESULT: approved"
     events = [
-        {"type": "system", "subtype": "init", "model": "grok-model"},
+        {"type": "system", "subtype": "init", "model": "driver-a-model"},
         {
             "type": "assistant",
             "message": {
                 "content": [
                     {"type": "text", "text": progress},
-                    {"type": "tool_use", "id": "grok-tool-1", "name": "Read",
+                    {"type": "tool_use", "id": "driver-a-tool-1", "name": "Read",
                      "input": {"file_path": "/work/a.py"}},
                 ]
             },
@@ -1782,7 +1736,7 @@ def test_finalize_lane_output_grok_reads_only_the_final_assistant_message() -> N
     ]
     stream = "\n".join(json.dumps(event) for event in events)
 
-    out = finalize_lane_output("grok", stream, "", cwd="/work")
+    out = finalize_lane_output(lane_io(DRIVERS["driver-a"], tmux=False), stream, "", cwd="/work")
 
     assert out.text == final
     assert out.usage is not None and out.usage.input_tokens == 7
@@ -1799,7 +1753,7 @@ def test_finalize_lane_output_grok_reads_only_the_final_assistant_message() -> N
         {"is_error": False, "subtype": "error_max_turns"},
     ],
 )
-def test_finalize_lane_output_grok_drops_text_of_a_failed_result(
+def test_finalize_lane_output_driver_a_drops_text_of_a_failed_result(
     result_fields,
 ) -> None:
     event = {
@@ -1808,11 +1762,11 @@ def test_finalize_lane_output_grok_drops_text_of_a_failed_result(
         "usage": {},
         **result_fields,
     }
-    out = finalize_lane_output("grok", json.dumps(event), "", cwd="/work")
+    out = finalize_lane_output(lane_io(DRIVERS["driver-a"], tmux=False), json.dumps(event), "", cwd="/work")
     assert out.text == ""
 
 
-def test_finalize_lane_output_grok_requires_a_terminal_result_event() -> None:
+def test_finalize_lane_output_driver_a_requires_a_terminal_result_event() -> None:
     stream = "\n".join(
         [
             json.dumps({"type": "system", "subtype": "init"}),
@@ -1831,10 +1785,10 @@ def test_finalize_lane_output_grok_requires_a_terminal_result_event() -> None:
             ),
         ]
     )
-    assert finalize_lane_output("grok", stream, "", cwd="/work").text == ""
+    assert finalize_lane_output(lane_io(DRIVERS["driver-a"], tmux=False), stream, "", cwd="/work").text == ""
     assert (
         finalize_lane_output(
-            "grok", "STATUS: complete\nRESULT: approved", "", cwd="/work"
+            lane_io(DRIVERS["driver-a"], tmux=False), "STATUS: complete\nRESULT: approved", "", cwd="/work"
         ).text
         == ""
     )
@@ -1891,7 +1845,7 @@ def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
                         "type": "tool_use",
                         "id": "outside-other-prefix",
                         "name": "Read",
-                        "input": {"file_path": "/opt/openrouter-profile/openrouter-api-key"},
+                        "input": {"file_path": "/opt/driver-d-profile/tool-d-key"},
                     },
                     {
                         "type": "tool_use",
@@ -1905,7 +1859,7 @@ def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
         {"type": "result", "result": "STATUS: complete", "usage": {}},
     ]
     out = finalize_lane_output(
-        "claude",
+        lane_io(DRIVERS["driver-c"], tmux=False),
         "\n".join(json.dumps(event) for event in events),
         "",
         cwd=str(worktree),
@@ -1932,7 +1886,7 @@ def test_finalize_lane_output_redacts_paths_in_glob_and_grep_patterns(
                         "type": "tool_use",
                         "id": "glob-outside",
                         "name": "Glob",
-                        "input": {"pattern": "/opt/openrouter-profile/openrouter-api-key"},
+                        "input": {"pattern": "/opt/driver-d-profile/tool-d-key"},
                     },
                     {
                         "type": "tool_use",
@@ -1970,7 +1924,7 @@ def test_finalize_lane_output_redacts_paths_in_glob_and_grep_patterns(
         {"type": "result", "result": "STATUS: complete", "usage": {}},
     ]
     out = finalize_lane_output(
-        "claude",
+        lane_io(DRIVERS["driver-c"], tmux=False),
         "\n".join(json.dumps(event) for event in events),
         "",
         cwd=str(worktree),
@@ -1996,7 +1950,7 @@ def test_tool_target_redacts_escaping_path_fragments_in_grep_pattern(
     # so surrounding regex or prose cannot leak host details.
     assert (
         _tool_target(
-            "needle in /opt/openrouter-profile/key", str(worktree), "pattern"
+            "needle in /opt/driver-d-profile/key", str(worktree), "pattern"
         )
         == "[redacted]"
     )
@@ -2044,7 +1998,7 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
 
     assert (
         _tool_target(
-            "^/opt/profiles/router/openrouter-api-key$",
+            "^/opt/profiles/router/tool-d-key$",
             str(worktree),
             "pattern",
         )
@@ -2067,14 +2021,14 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
 @pytest.mark.parametrize(
     "pattern",
     [
-        "path=/opt/profiles/router/openrouter-api-key",
+        "path=/opt/profiles/router/tool-d-key",
         "source=/opt/company/private-repo/config.json",
         "source='/opt/company/private-repo/config.json'",
         'source="/opt/company/private-repo/config.json"',
         "source:/opt/company/private-repo/config.json",
-        "^path=/opt/profiles/router/openrouter-api-key$",
-        "(?:/opt/profiles/router/openrouter-api-key)",
-        r"path=\/opt/profiles/router/openrouter-api-key",
+        "^path=/opt/profiles/router/tool-d-key$",
+        "(?:/opt/profiles/router/tool-d-key)",
+        r"path=\/opt/profiles/router/tool-d-key",
         "path=~/private/config.json",
         r"path=C:Users\someone\config.json",
         r"C:Users\someone\config.json",
@@ -2294,7 +2248,7 @@ def test_percent_escaped_tool_targets_are_redacted_in_lane_run() -> None:
         {"type": "result", "result": "STATUS: complete", "usage": {}},
     ]
     finalized = finalize_lane_output(
-        "claude",
+        lane_io(DRIVERS["driver-c"], tmux=False),
         "\n".join(json.dumps(event) for event in events),
         "",
         cwd="/work",
@@ -2314,10 +2268,10 @@ def test_percent_escaped_tool_targets_are_redacted_in_lane_run() -> None:
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="claude",
+            vendor="driver-c",
             model="model",
             status="complete",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=0,
             stdout=finalized.text,
             stderr="",
@@ -2387,15 +2341,15 @@ def test_record_lane_run_bounds_and_redacts_both_models() -> None:
     long_model = "vendor/" + "m" * 500
     result = LaneResult(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         model=long_model,
         status="complete",
-        argv=["claude"],
+        argv=["tool-c"],
         returncode=0,
         stdout="STATUS: complete\n",
         stderr="",
         usage=LaneUsage(
-            model="vendor/sk-or-v1-abcdefghijklmnopqrstuvwxyz012345",
+            model="vendor/sk-test-v1-abcdefghijklmnopqrstuvwxyz012345",
             input_tokens=1,
             output_tokens=2,
             cache_read_input_tokens=0,
@@ -2409,7 +2363,7 @@ def test_record_lane_run_bounds_and_redacts_both_models() -> None:
     assert store.row is not None
     payload = store.row["payload"]
     assert len(payload["model"]) <= 200
-    assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345" not in payload["reported_model"]
+    assert "sk-test-v1-abcdefghijklmnopqrstuvwxyz012345" not in payload["reported_model"]
     assert len(payload["reported_model"]) <= 200
 
 
@@ -2420,17 +2374,17 @@ def test_record_lane_run_removes_escape_sequence_before_secret_redaction() -> No
         def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
             self.row = row
 
-    split_secret = "sk-or-\x1b[31mv1-abcdefghijklmnopqrstuvwxyz012345"
+    split_secret = "sk-test-\x1b[31mv1-abcdefghijklmnopqrstuvwxyz012345"
     store = CaptureStore()
     record_lane_run(
         store,
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="openrouter",
+            vendor="driver-d",
             model="model",
             status="complete",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=0,
             stdout=f"provider output {split_secret}\nSTATUS: complete",
             stderr="",
@@ -2439,7 +2393,7 @@ def test_record_lane_run_removes_escape_sequence_before_secret_redaction() -> No
 
     assert store.row is not None
     final_text = store.row["payload"]["final_text"]
-    assert "sk-or-" not in final_text
+    assert "sk-test-" not in final_text
     assert "[31m" not in final_text
     assert "[redacted]" in final_text
 
@@ -2463,10 +2417,10 @@ def test_raw_redaction_precedes_terminal_sanitization_for_diagnostics_and_lane_e
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="openrouter",
+            vendor="driver-d",
             model=split_token,
             status="complete",
-            argv=["claude"],
+            argv=["tool-c"],
             returncode=0,
             stdout=f"provider output {split_token}\nSTATUS: complete",
             stderr="",
@@ -2532,7 +2486,7 @@ def test_lane_diagnostic_redacts_sgr_wrapper_with_glued_suffix() -> None:
 
 
 @pytest.mark.parametrize("config_inside_worktree", [False, True])
-def test_launch_refuses_openrouter_config_and_worktree_overlap(
+def test_launch_refuses_driver_d_config_and_worktree_overlap(
     tmp_path: Path, config_inside_worktree: bool
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -2542,12 +2496,12 @@ def test_launch_refuses_openrouter_config_and_worktree_overlap(
     worktree.mkdir()
     config_dir = worktree / "config" if config_inside_worktree else tmp_path
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(SystemExit, match="overlaps"):
         launch(
             role="implementer",
-            vendor="openrouter",
+            vendor="driver-d",
             spec_file=str(spec),
             cwd=str(worktree),
             dry_run=True,
@@ -2557,7 +2511,7 @@ def test_launch_refuses_openrouter_config_and_worktree_overlap(
         )
 
 
-def test_launch_refuses_openrouter_read_directory_inside_config(tmp_path: Path) -> None:
+def test_launch_refuses_driver_d_read_directory_inside_config(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("review\n", encoding="utf-8")
@@ -2568,12 +2522,12 @@ def test_launch_refuses_openrouter_read_directory_inside_config(tmp_path: Path) 
     exposed = config_dir / "evidence"
     exposed.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(SystemExit, match="read directory overlaps"):
         launch(
             role="reviewer",
-            vendor="openrouter",
+            vendor="driver-d",
             spec_file=str(spec),
             cwd=str(worktree),
             read_dirs=(str(exposed),),
@@ -2584,20 +2538,20 @@ def test_launch_refuses_openrouter_read_directory_inside_config(tmp_path: Path) 
         )
 
 
-def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None:
+def test_launch_driver_d_reads_stream_from_output_file(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     config_dir = tmp_path / "router-config"
     config_dir.mkdir()
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
-        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        wrapper_index = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
         output_file = Path(argv[wrapper_index + 2])
         output_file.write_text(
             json.dumps(
@@ -2605,7 +2559,7 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
                     "type": "result",
                     "result": "STATUS: complete\nRESULT: done",
                     "usage": {"input_tokens": 7, "output_tokens": 2},
-                    "modelUsage": {OPERATOR_OPENROUTER_MODEL: {}},
+                    "modelUsage": {OPERATOR_MODEL_D: {}},
                 }
             )
             + "\n",
@@ -2616,7 +2570,7 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
 
     result = launch(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         spec_file=str(spec),
         cwd=str(worktree),
         runner=fake,
@@ -2627,11 +2581,11 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
     assert result.stdout == "STATUS: complete\nRESULT: done"
     assert result.status == "complete"
     assert result.usage is not None
-    assert result.usage.model == OPERATOR_OPENROUTER_MODEL
+    assert result.usage.model == OPERATOR_MODEL_D
     assert result.usage.input_tokens == 7
 
 
-def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
+def test_launch_driver_d_invalid_utf8_returns_unavailable_and_removes_output(
     tmp_path: Path,
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -2640,7 +2594,7 @@ def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
@@ -2648,7 +2602,7 @@ def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         output_file = Path(argv[wrapper_index + 2])
         output_paths.append(output_file)
@@ -2658,7 +2612,7 @@ def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
 
     result = launch(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         spec_file=str(spec),
         cwd=str(worktree),
         runner=fake,
@@ -2673,7 +2627,7 @@ def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
     assert output_paths and not output_paths[0].exists()
 
 
-def test_launch_openrouter_unreadable_output_returns_unavailable(
+def test_launch_driver_d_unreadable_output_returns_unavailable(
     tmp_path: Path,
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -2682,25 +2636,25 @@ def test_launch_openrouter_unreadable_output_returns_unavailable(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
 
     def deleted_output(argv: list[str], stdin_text: str | None) -> object:
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         Path(argv[wrapper_index + 2]).unlink()
         return SimpleNamespace(
             returncode=0,
             stdout="",
-            stderr="Authorization: Bearer sk-or-v1-abcdefghijklmnopqrstuvwxyz012345\n",
+            stderr="Authorization: Bearer sk-test-v1-abcdefghijklmnopqrstuvwxyz012345\n",
         )
 
     result = launch(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         spec_file=str(spec),
         cwd=str(worktree),
         runner=deleted_output,
@@ -2712,12 +2666,12 @@ def test_launch_openrouter_unreadable_output_returns_unavailable(
     assert result.status == "unavailable"
     assert result.stdout == ""
     assert "lane output file is unavailable" in result.stderr
-    assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345" not in result.stderr
-    assert "Bearer sk-or" not in result.stderr
+    assert "sk-test-v1-abcdefghijklmnopqrstuvwxyz012345" not in result.stderr
+    assert "Bearer sk-test" not in result.stderr
     assert len(result.stderr) <= 4000
 
 
-def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
+def test_launch_driver_d_in_tmux_keeps_pane_diagnostic_as_stderr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -2726,11 +2680,11 @@ def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
-    reason = "STATUS: unavailable\nopenrouter key missing\n"
+    reason = "STATUS: unavailable\ndriver-d key missing\n"
     monkeypatch.setattr(
         "agent_cli.lane._run_in_tmux",
         lambda *_args, **_kwargs: SimpleNamespace(returncode=2, stdout=reason, stderr=""),
@@ -2738,7 +2692,7 @@ def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
 
     result = launch(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         spec_file=str(spec),
         cwd=str(worktree),
         tmux=True,
@@ -2748,30 +2702,30 @@ def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
 
     assert result.status == "unavailable"
     assert result.stdout == ""
-    assert "openrouter key missing" in result.stderr
+    assert "driver-d key missing" in result.stderr
 
 
-def test_launch_openrouter_missing_key_records_stderr_reason(tmp_path: Path) -> None:
+def test_launch_driver_d_missing_key_records_stderr_reason(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     config_dir = tmp_path / "router-config"
     config_dir.mkdir()
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
-    reason = "STATUS: unavailable\nopenrouter key missing\n"
+    reason = "STATUS: unavailable\ndriver-d key missing\n"
 
     def missing_key(argv: list[str], stdin_text: str | None) -> object:
-        assert any("openrouter-api-key" in value for value in argv)
+        assert any("tool-d-key" in value for value in argv)
         assert stdin_text == "implement\n"
         return SimpleNamespace(returncode=2, stdout="", stderr=reason)
 
     result = launch(
         role="implementer",
-        vendor="openrouter",
+        vendor="driver-d",
         spec_file=str(spec),
         cwd=str(worktree),
         runner=missing_key,
@@ -2811,7 +2765,7 @@ def test_launch_requires_config_home_and_session_id(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="explicit session and AI configuration home"):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -2821,7 +2775,7 @@ def test_launch_requires_config_home_and_session_id(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="explicit session and AI configuration home"):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -2833,7 +2787,7 @@ def test_launch_requires_config_home_and_session_id(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="explicit session and AI configuration home"):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -2861,7 +2815,7 @@ def test_launch_unconfigured_lane_fails_before_runner(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match=re.escape(LANE_EXECUTION_ERROR)):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -2886,7 +2840,7 @@ def test_launch_dry_run_does_not_require_lane_execution(tmp_path: Path) -> None:
 
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=boom,
@@ -2896,7 +2850,7 @@ def test_launch_dry_run_does_not_require_lane_execution(tmp_path: Path) -> None:
         session_id=DEFAULT_SESSION,
     )
     assert result.returncode == 0
-    assert OPERATOR_GROK_MODEL in result.argv
+    assert OPERATOR_MODEL_A in result.argv
 
 
 def test_launch_unconfigured_models_fail_before_runner(tmp_path: Path) -> None:
@@ -2915,7 +2869,7 @@ def test_launch_unconfigured_models_fail_before_runner(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match=re.escape(MODELS_NOT_CONFIGURED)):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -2931,18 +2885,18 @@ def test_launch_missing_binding_precedes_missing_models(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
     raw.pop("models")
-    raw["sessions"][DEFAULT_SESSION]["lanes"].pop("grok:implementer")
+    raw["sessions"][DEFAULT_SESSION]["lanes"].pop("driver-a:implementer")
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("do the thing\n", encoding="utf-8")
 
     with pytest.raises(
         AccountError,
-        match=f"No AI lane configured for session {DEFAULT_SESSION} slot grok:implementer",
+        match=f"No AI lane configured for session {DEFAULT_SESSION} slot driver-a:implementer",
     ):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
@@ -2957,7 +2911,7 @@ def test_launch_provider_mismatch_refused_before_runner(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
     raw["sessions"] = {
-        DEFAULT_SESSION: {"lanes": {"grok:implementer": "codex-builder"}},
+        DEFAULT_SESSION: {"lanes": {"driver-a:implementer": "driver-b-builder"}},
     }
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
@@ -2971,7 +2925,7 @@ def test_launch_provider_mismatch_refused_before_runner(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match="provider does not match"):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -3010,7 +2964,7 @@ def test_launch_invalid_lane_execution_fails_closed(
     with pytest.raises(AccountError, match=re.escape(LANE_EXECUTION_ERROR)):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
@@ -3036,7 +2990,7 @@ def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match="remote.*not supported"):
         launch(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=runner,
@@ -3050,7 +3004,7 @@ def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
 def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
-    raw["sessions"][DEFAULT_SESSION]["lanes"]["grok:reviewer"] = "lane-builder"
+    raw["sessions"][DEFAULT_SESSION]["lanes"]["driver-a:reviewer"] = "lane-builder"
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("review\n", encoding="utf-8")
@@ -3063,7 +3017,7 @@ def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) 
     with pytest.raises(AccountError, match="requires read-only access"):
         launch(
             role="reviewer",
-            vendor="grok",
+            vendor="driver-a",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
@@ -3080,14 +3034,14 @@ def test_two_sessions_select_different_config_homes_and_models(
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
-    monkeypatch.setenv("XAI_API_KEY", "ambient-xai-token")
-    monkeypatch.setenv("GROK_API_KEY", "ambient-grok-token")
-    monkeypatch.setenv("GROK_HOME", "/ambient/should-not-leak")
-    monkeypatch.setenv("OPENAI_API_KEY", "ambient-openai")
+    monkeypatch.setenv("TOOL_A_API_KEY", "ambient-tool-a-token")
+    monkeypatch.setenv("TOOL_C_TOKEN", "ambient-tool-c-token")
+    monkeypatch.setenv("TOOL_A_HOME", "/ambient/should-not-leak")
+    monkeypatch.setenv("TOOL_B_API_KEY", "ambient-tool-b-token")
 
     result_a = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -3097,7 +3051,7 @@ def test_two_sessions_select_different_config_homes_and_models(
     )
     result_b = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -3106,23 +3060,23 @@ def test_two_sessions_select_different_config_homes_and_models(
         session_id=ALT_SESSION,
     )
 
-    assert OPERATOR_GROK_MODEL in result_a.argv
-    assert OPERATOR_GROK_MODEL_B in result_b.argv
-    assert OPERATOR_GROK_MODEL_B not in result_a.argv
-    assert OPERATOR_GROK_MODEL not in result_b.argv
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in result_a.argv
-    assert f"GROK_HOME={OPERATOR_GROK_HOME_B}" in result_b.argv
+    assert OPERATOR_MODEL_A in result_a.argv
+    assert OPERATOR_MODEL_A2 in result_b.argv
+    assert OPERATOR_MODEL_A2 not in result_a.argv
+    assert OPERATOR_MODEL_A not in result_b.argv
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in result_a.argv
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A2}" in result_b.argv
     assert "/ambient/should-not-leak" not in result_a.argv
     assert "/ambient/should-not-leak" not in result_b.argv
-    assert "ambient-xai-token" not in " ".join(result_a.argv)
-    assert "ambient-grok-token" not in " ".join(result_b.argv)
-    assert os.environ["XAI_API_KEY"] == "ambient-xai-token"
-    assert os.environ["GROK_HOME"] == "/ambient/should-not-leak"
+    assert "ambient-tool-a-token" not in " ".join(result_a.argv)
+    assert "ambient-tool-c-token" not in " ".join(result_b.argv)
+    assert os.environ["TOOL_A_API_KEY"] == "ambient-tool-a-token"
+    assert os.environ["TOOL_A_HOME"] == "/ambient/should-not-leak"
     _assert_nested_role_env_prefix(
-        result_a.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
+        result_a.argv, config_dir=OPERATOR_HOME_A, provider="driver-a"
     )
     _assert_nested_role_env_prefix(
-        result_b.argv, config_dir=OPERATOR_GROK_HOME_B, provider="grok"
+        result_b.argv, config_dir=OPERATOR_HOME_A2, provider="driver-a"
     )
 
 
@@ -3136,7 +3090,7 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
 
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=boom,
@@ -3147,21 +3101,21 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
     )
     assert result.status == ""
     assert result.returncode == 0
-    assert result.model == OPERATOR_GROK_MODEL
-    assert OPERATOR_GROK_MODEL in result.argv
+    assert result.model == OPERATOR_MODEL_A
+    assert OPERATOR_MODEL_A in result.argv
     _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
+        result.argv, config_dir=OPERATOR_HOME_A, provider="driver-a"
     )
 
 
 @pytest.mark.parametrize("vendor", LANE_VENDORS)
-def test_every_provider_unsets_ambient_openrouter_api_key(
+def test_every_provider_unsets_ambient_driver_d_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
 ) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-openrouter-token")
+    monkeypatch.setenv("TOOL_D_API_KEY", "ambient-driver-d-token")
 
     result = launch(
         role="implementer",
@@ -3174,10 +3128,10 @@ def test_every_provider_unsets_ambient_openrouter_api_key(
         session_id=DEFAULT_SESSION,
     )
 
-    key_index = result.argv.index("OPENROUTER_API_KEY")
+    key_index = result.argv.index("TOOL_D_API_KEY")
     assert result.argv[key_index - 1] == "-u"
-    assert "ambient-openrouter-token" not in result.argv
-    assert os.environ["OPENROUTER_API_KEY"] == "ambient-openrouter-token"
+    assert "ambient-driver-d-token" not in result.argv
+    assert os.environ["TOOL_D_API_KEY"] == "ambient-driver-d-token"
 
 
 _PROXY_AND_CA_VARS = (
@@ -3239,12 +3193,12 @@ def test_every_provider_unsets_proxy_and_ca_environment(
     assert ca not in result.argv
 
 
-def test_launch_codex_dry_run_skips_mkstemp(
+def test_launch_driver_b_dry_run_skips_mkstemp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    spec.write_text("codex dry run\n", encoding="utf-8")
+    spec.write_text("driver-b dry run\n", encoding="utf-8")
 
     def boom_mkstemp(*_args: object, **_kwargs: object) -> tuple[int, str]:
         raise AssertionError("tempfile.mkstemp must not be called on dry_run")
@@ -3252,7 +3206,7 @@ def test_launch_codex_dry_run_skips_mkstemp(
     monkeypatch.setattr("agent_cli.lane.tempfile.mkstemp", boom_mkstemp)
     result = launch(
         role="implementer",
-        vendor="codex",
+        vendor="driver-b",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -3260,24 +3214,24 @@ def test_launch_codex_dry_run_skips_mkstemp(
         config_home=tmp_path,
         session_id=DEFAULT_SESSION,
     )
-    assert "--output-last-message" in result.argv
-    assert OPERATOR_CODEX_MODEL in result.argv
+    assert "--last-message" in result.argv
+    assert OPERATOR_MODEL_B in result.argv
     _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_CODEX_HOME, provider="codex"
+        result.argv, config_dir=OPERATOR_HOME_B, provider="driver-b"
     )
 
 
-def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
+def test_launch_fake_runner_driver_b_stdin(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    contents = "codex please implement\n"
+    contents = "driver-b please implement\n"
     spec.write_text(contents, encoding="utf-8")
     seen: list[tuple[list[str], str | None]] = []
     output_paths: list[str] = []
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append((argv, stdin_text))
-        out_path = argv[argv.index("--output-last-message") + 1]
+        out_path = argv[argv.index("--last-message") + 1]
         output_paths.append(out_path)
         Path(out_path).write_text(
             "STATUS: complete\nRESULT: done\n", encoding="utf-8"
@@ -3286,7 +3240,7 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
 
     result = launch(
         role="implementer",
-        vendor="codex",
+        vendor="driver-b",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
@@ -3296,15 +3250,15 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     )
     assert len(seen) == 1
     assert seen[0][1] == contents
-    assert "codex" in seen[0][0]
-    assert OPERATOR_CODEX_MODEL in seen[0][0]
+    assert "tool-b" in seen[0][0]
+    assert OPERATOR_MODEL_B in seen[0][0]
     assert result.status == "complete"
     assert result.returncode == 0
     assert output_paths
     assert not Path(output_paths[0]).exists()
 
 
-@pytest.mark.parametrize("vendor", ["codex", "claude"])
+@pytest.mark.parametrize("vendor", ["driver-b", "driver-c"])
 @pytest.mark.parametrize("tmux", [False, True])
 def test_launch_sanitizes_github_environment_for_injected_runner(
     tmp_path: Path,
@@ -3335,8 +3289,8 @@ def test_launch_sanitizes_github_environment_for_injected_runner(
                 for index in range(len(argv) - 1)
             )
         assert "/ambient/github-profile" not in argv
-        if vendor == "codex":
-            output = Path(argv[argv.index("--output-last-message") + 1])
+        if vendor == "driver-b":
+            output = Path(argv[argv.index("--last-message") + 1])
             output.write_text(
                 "STATUS: complete\nRESULT: done\n", encoding="utf-8"
             )
@@ -3386,14 +3340,14 @@ def test_launch_sanitizes_github_environment_for_default_runner(
                 argv[index : index + 2] == ["-u", key]
                 for index in range(len(argv) - 1)
             )
-        output = Path(argv[argv.index("--output-last-message") + 1])
+        output = Path(argv[argv.index("--last-message") + 1])
         output.write_text("STATUS: complete\nRESULT: done\n", encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("agent_cli.lane._default_runner", fake_default)
     launch(
         role="implementer",
-        vendor="codex",
+        vendor="driver-b",
         spec_file=str(spec),
         cwd=str(tmp_path),
         tmux=False,
@@ -3405,10 +3359,10 @@ def test_launch_sanitizes_github_environment_for_default_runner(
     assert not profiles[0].exists()
 
 
-def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> None:
+def test_launch_no_tmux_driver_c_keeps_stream_json_on_stdout(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    contents = "claude please review\n"
+    contents = "driver-c please review\n"
     spec.write_text(contents, encoding="utf-8")
     stream = json.dumps(
         {
@@ -3425,7 +3379,7 @@ def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> No
 
     result = launch(
         role="reviewer",
-        vendor="claude",
+        vendor="driver-c",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
@@ -3438,24 +3392,24 @@ def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> No
     assert result.stdout == "reviewed\nSTATUS: complete\nRESULT: approved"
 
 
-def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
+def test_launch_driver_b_unreadable_output_returns_unavailable_not_empty(
     tmp_path: Path,
 ) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    spec.write_text("codex please implement\n", encoding="utf-8")
+    spec.write_text("driver-b please implement\n", encoding="utf-8")
 
     deleted_paths: list[Path] = []
 
     def deletes_output(argv: list[str], stdin_text: str | None) -> object:
-        output_path = Path(argv[argv.index("--output-last-message") + 1])
+        output_path = Path(argv[argv.index("--last-message") + 1])
         deleted_paths.append(output_path)
         output_path.unlink()
-        return SimpleNamespace(returncode=0, stdout="", stderr="codex wrote nothing\n")
+        return SimpleNamespace(returncode=0, stdout="", stderr="driver-b wrote nothing\n")
 
     result = launch(
         role="implementer",
-        vendor="codex",
+        vendor="driver-b",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=deletes_output,
@@ -3466,29 +3420,29 @@ def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
 
     assert result.status == "unavailable"
     assert result.stdout == ""
-    assert "codex wrote nothing" in result.stderr
+    assert "driver-b wrote nothing" in result.stderr
     assert "lane output file is unavailable" in result.stderr
     assert deleted_paths
     assert str(deleted_paths[0]) not in result.stderr
     assert "FileNotFoundError" not in result.stderr
 
 
-def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
+def test_launch_driver_b_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    spec.write_text("codex please fail\n", encoding="utf-8")
+    spec.write_text("driver-b please fail\n", encoding="utf-8")
     out_path: str | None = None
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         nonlocal out_path
-        out_path = argv[argv.index("--output-last-message") + 1]
+        out_path = argv[argv.index("--last-message") + 1]
         Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
-        raise RuntimeError("codex runner failed")
+        raise RuntimeError("driver-b runner failed")
 
-    with pytest.raises(RuntimeError, match="codex runner failed"):
+    with pytest.raises(RuntimeError, match="driver-b runner failed"):
         launch(
             role="implementer",
-            vendor="codex",
+            vendor="driver-b",
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=fake,
@@ -3500,10 +3454,10 @@ def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) ->
     assert not Path(out_path).exists()
 
 
-def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
+def test_launch_fake_runner_driver_a_stdin_none_or_empty(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
-    spec.write_text("grok please implement\n", encoding="utf-8")
+    spec.write_text("driver-a please implement\n", encoding="utf-8")
     seen: list[str | None] = []
 
     @dataclass
@@ -3515,12 +3469,12 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append(stdin_text)
         return FakeDone(
-            0, grok_messages_stream("STATUS: complete\nRESULT: done\n"), ""
+            0, event_stream_output("STATUS: complete\nRESULT: done\n"), ""
         )
 
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
@@ -3533,14 +3487,14 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
 
 
 def test_tmux_wrap_argv_shape() -> None:
-    inner = ["env", "-u", "ANTHROPIC_API_KEY", "grok", "--prompt-file", "s"]
-    argv = tmux_wrap_argv(inner, name="agent-lane-grok-implementer", cwd="/work")
+    inner = ["env", "-u", "TOOL_C_API_KEY", "tool-a", "--prompt-file", "s"]
+    argv = tmux_wrap_argv(inner, name="agent-lane-driver-a-implementer", cwd="/work")
     assert argv[:6] == [
         "tmux",
         "new-session",
         "-d",
         "-s",
-        "agent-lane-grok-implementer",
+        "agent-lane-driver-a-implementer",
         "-c",
     ]
     assert argv[6] == "/work"
@@ -3554,7 +3508,7 @@ def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
     spec.write_text("implement me\n", encoding="utf-8")
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -3564,19 +3518,19 @@ def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
     assert result.argv[:3] == ["tmux", "new-session", "-d"]
     assert "-s" in result.argv
     assert result.tmux_session is not None
-    assert result.tmux_session.startswith("agent-lane-grok-implementer")
+    assert result.tmux_session.startswith("agent-lane-driver-a-implementer")
     assert "--" in result.argv
-    assert OPERATOR_GROK_MODEL in result.argv
+    assert OPERATOR_MODEL_A in result.argv
     inner = result.argv[result.argv.index("--") + 1 :]
     # The tmux pane redirects the message stream to a temp file, then runs env.
     assert inner[0] == "sh"
     assert inner[1] == "-c"
     assert inner[3] == "sh"
-    assert Path(inner[4]).name.startswith("agent-lane-grok-")
+    assert Path(inner[4]).name.startswith("agent-lane-driver-a-")
     assert inner[4].endswith(".txt")
     assert inner[5] == "env"
     _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
+        result.argv, config_dir=OPERATOR_HOME_A, provider="driver-a"
     )
 
 
@@ -3586,7 +3540,7 @@ def test_launch_no_tmux_starts_with_env(tmp_path: Path) -> None:
     spec.write_text("implement me\n", encoding="utf-8")
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
@@ -3597,7 +3551,7 @@ def test_launch_no_tmux_starts_with_env(tmp_path: Path) -> None:
     assert result.argv[0] == "env"
     assert "tmux" not in result.argv
     assert result.tmux_session is None
-    assert OPERATOR_GROK_MODEL in result.argv
+    assert OPERATOR_MODEL_A in result.argv
 
 
 def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
@@ -3612,17 +3566,17 @@ def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
             Path(value)
             for value in argv
             if value.endswith(".txt")
-            and Path(value).name.startswith("agent-lane-grok-")
+            and Path(value).name.startswith("agent-lane-driver-a-")
         )
         output.write_text(
-            grok_messages_stream("STATUS: complete\nRESULT: done\n"),
+            event_stream_output("STATUS: complete\nRESULT: done\n"),
             encoding="utf-8",
         )
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
@@ -3662,7 +3616,7 @@ def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok", "--prompt-file", "s"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    result = _run_in_tmux(["tool-a", "--prompt-file", "s"], name="agent-lane-t", cwd="/w", stdin_text=None)
     assert result.returncode == 0
     assert "STATUS: complete" in result.stdout
     assert calls[0][:3] == ["tmux", "new-session", "-d"]
@@ -3678,7 +3632,7 @@ def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
         def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
             self.row = row
 
-    token = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
+    token = "sk-test-v1-abcdefghijklmnopqrstuvwxyz012345"
 
     def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
         if argv[-1] == "#{pane_dead}":
@@ -3694,7 +3648,7 @@ def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
 
     captured = _run_in_tmux(
-        ["grok"], name="agent-lane-t", cwd="/w", stdin_text=None
+        ["tool-a"], name="agent-lane-t", cwd="/w", stdin_text=None
     )
     diagnostic = redact_diagnostic(captured.stdout)
     store = CaptureStore()
@@ -3703,7 +3657,7 @@ def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
         session_id=DEFAULT_SESSION,
         result=LaneResult(
             role="implementer",
-            vendor="grok",
+            vendor="driver-a",
             model="model",
             status="unavailable",
             argv=list(captured.args),
@@ -3716,18 +3670,18 @@ def test_run_in_tmux_joins_soft_wrapped_secret_before_lane_redaction(
     capture_call = next(call for call in calls if "capture-pane" in call)
     assert "-J" in capture_call
     assert token not in diagnostic
-    assert "sk-or-v1-" not in diagnostic
+    assert "sk-test-v1-" not in diagnostic
     assert "qrstuvwxyz012345" not in diagnostic
     assert "[redacted]" in diagnostic
     assert store.row is not None
     evidence = store.row["payload"]["final_text"]
     assert token not in evidence
-    assert "sk-or-v1-" not in evidence
+    assert "sk-test-v1-" not in evidence
     assert "qrstuvwxyz012345" not in evidence
     assert "[redacted]" in evidence
 
 
-@pytest.mark.parametrize("vendor", ["claude", "openrouter", "grok"])
+@pytest.mark.parametrize("vendor", ["driver-c", "driver-d", "driver-a"])
 def test_launch_tmux_stream_json_uses_output_file_not_pane_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
 ) -> None:
@@ -3788,7 +3742,7 @@ def test_run_in_tmux_pane_dead_status_is_returncode(monkeypatch: pytest.MonkeyPa
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    result = _run_in_tmux(["tool-a"], name="agent-lane-t", cwd="/w", stdin_text=None)
     assert result.returncode == 42
     assert any("kill-session" in c for c in calls)
 
@@ -3805,7 +3759,7 @@ def test_run_in_tmux_empty_pane_dead_status_is_fail_closed(monkeypatch: pytest.M
 
     fake, _calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    result = _run_in_tmux(["tool-a"], name="agent-lane-t", cwd="/w", stdin_text=None)
     assert result.returncode == 1
 
 
@@ -3817,7 +3771,7 @@ def test_run_in_tmux_kills_on_remain_fail(monkeypatch: pytest.MonkeyPatch) -> No
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    result = _run_in_tmux(["tool-a"], name="agent-lane-t", cwd="/w", stdin_text=None)
     assert result.returncode == 1
     assert any("kill-session" in c for c in calls)
 
@@ -3830,7 +3784,7 @@ def test_run_in_tmux_kills_on_pane_dead_query_fail(monkeypatch: pytest.MonkeyPat
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    result = _run_in_tmux(["tool-a"], name="agent-lane-t", cwd="/w", stdin_text=None)
     assert result.returncode == 2
     assert any("kill-session" in c for c in calls)
 
@@ -3847,7 +3801,7 @@ def test_run_in_tmux_send_keys_adds_trailing_newline(monkeypatch: pytest.MonkeyP
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="no-newline")
+    _run_in_tmux(["tool-b"], name="agent-lane-t", cwd="/w", stdin_text="no-newline")
     typed = [c for c in calls if "send-keys" in c and "-l" in c]
     assert typed
     assert typed[0][-1].endswith("\n")
@@ -3864,7 +3818,7 @@ def test_launch_tmux_passes_absolute_spec_file(
     work.mkdir()
     result = launch(
         role="implementer",
-        vendor="grok",
+        vendor="driver-a",
         spec_file="spec.md",
         cwd=str(work),
         dry_run=True,
@@ -3888,7 +3842,7 @@ def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) ->
 
     fake, calls = _tmux_script(handler)
     monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
+    result = _run_in_tmux(["tool-b"], name="agent-lane-t", cwd="/w", stdin_text="spec")
     assert result.returncode == 3
     assert any("kill-session" in c for c in calls)
 
@@ -3906,10 +3860,10 @@ def test_cli_lane_run_prints_vendor_stdout(
         seen.update(kwargs)
         return LaneResult(
             role="pr-reviewer-quality",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="complete",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=0,
             stdout="no quality findings, distinctive-marker-abc123\nSTATUS: complete\n",
             stderr="",
@@ -3923,7 +3877,7 @@ def test_cli_lane_run_prints_vendor_stdout(
             "--role",
             "pr-reviewer-quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--session",
             DEFAULT_SESSION,
             "--spec-file",
@@ -3952,13 +3906,13 @@ def test_cli_lane_run_prints_vendor_stderr(
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         return LaneResult(
             role="pr-reviewer-quality",
-            vendor="grok",
-            model=OPERATOR_GROK_MODEL,
+            vendor="driver-a",
+            model=OPERATOR_MODEL_A,
             status="unavailable",
-            argv=["grok"],
+            argv=["tool-a"],
             returncode=1,
             stdout="",
-            stderr="grok: rate limited, distinctive-marker-xyz789",
+            stderr="driver-a: rate limited, distinctive-marker-xyz789",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)
@@ -3970,7 +3924,7 @@ def test_cli_lane_run_prints_vendor_stderr(
                 "--role",
                 "pr-reviewer-quality",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--session",
                 DEFAULT_SESSION,
                 "--spec-file",
@@ -3984,7 +3938,7 @@ def test_cli_lane_run_prints_vendor_stderr(
     assert "distinctive-marker-xyz789" in err
 
 
-def test_cli_lane_run_invalid_openrouter_output_is_a_controlled_failure(
+def test_cli_lane_run_invalid_driver_d_output_is_a_controlled_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -3997,7 +3951,7 @@ def test_cli_lane_run_invalid_openrouter_output_is_a_controlled_failure(
         argv: list[str], stdin_text: str | None, cwd: str | None = None
     ) -> object:
         wrapper_index = next(
-            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+            i for i, value in enumerate(argv) if "tool-d-key" in value
         )
         output_file = Path(argv[wrapper_index + 2])
         output_paths.append(output_file)
@@ -4024,7 +3978,7 @@ def test_cli_lane_run_invalid_openrouter_output_is_a_controlled_failure(
                 "--role",
                 "implementer",
                 "--vendor",
-                "openrouter",
+                "driver-d",
                 "--session",
                 DEFAULT_SESSION,
                 "--spec-file",
@@ -4097,7 +4051,7 @@ def test_sanitize_terminal_text_removes_unterminated_string_control_to_end(
     assert sanitize_terminal_text(f"before{introducer}private payload") == "before"
 
 
-def test_cli_dry_run_implementer_grok(
+def test_cli_dry_run_implementer_driver_a(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_ai_accounts(tmp_path)
@@ -4111,7 +4065,7 @@ def test_cli_dry_run_implementer_grok(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--session",
             DEFAULT_SESSION,
             "--spec-file",
@@ -4124,8 +4078,8 @@ def test_cli_dry_run_implementer_grok(
     out = capsys.readouterr().out.strip()
     assert "tmux" in out
     assert "new-session" in out
-    assert OPERATOR_GROK_MODEL in out
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in out
+    assert OPERATOR_MODEL_A in out
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in out
     assert "STATUS=" not in out
 
 
@@ -4143,7 +4097,7 @@ def test_cli_no_tmux_dry_run(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--session",
             DEFAULT_SESSION,
             "--spec-file",
@@ -4157,8 +4111,8 @@ def test_cli_no_tmux_dry_run(
     out = capsys.readouterr().out.strip()
     assert out.startswith("env ")
     assert "new-session" not in out
-    assert OPERATOR_GROK_MODEL in out
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in out
+    assert OPERATOR_MODEL_A in out
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in out
 
 
 def test_cli_missing_session_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4173,7 +4127,7 @@ def test_cli_missing_session_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--spec-file",
                 str(spec),
             ]
@@ -4191,7 +4145,7 @@ def test_cli_missing_spec_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--session",
                 DEFAULT_SESSION,
                 "--spec-file",
@@ -4202,9 +4156,10 @@ def test_cli_missing_spec_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 def test_cli_unknown_vendor_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    write_drivers(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("x\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="vendor"):
+    with pytest.raises(SystemExit, match="vendor must be driver-a"):
         run(
             [
                 "lane",
@@ -4250,7 +4205,7 @@ def test_cli_unconfigured_lane_dies_before_launch(
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--session",
                 DEFAULT_SESSION,
                 "--spec-file",
@@ -4290,7 +4245,7 @@ def test_cli_unconfigured_models_die_before_launch(
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--session",
                 DEFAULT_SESSION,
                 "--spec-file",
@@ -4301,3 +4256,133 @@ def test_cli_unconfigured_models_die_before_launch(
             ]
         )
     assert called["n"] == 0
+
+
+# --- placeholder drivers ---------------------------------------------------------
+
+PLACEHOLDER_SESSION = "session-a"
+
+
+def _placeholder_home(tmp_path: Path, *, accounts: dict | None = None) -> Path:
+    write_drivers(tmp_path)
+    write_placeholder_accounts(tmp_path, accounts)
+    spec = tmp_path / "spec.md"
+    spec.write_text("Implement the change.\n", encoding="utf-8")
+    return spec
+
+
+def _placeholder_launch(tmp_path: Path, spec: Path, driver: str, **kwargs) -> LaneResult:
+    options = {
+        "role": "implementer",
+        "cwd": str(tmp_path),
+        "config_home": tmp_path,
+        "session_id": PLACEHOLDER_SESSION,
+        **kwargs,
+    }
+    return launch(vendor=driver, spec_file=str(spec), **options)
+
+
+def test_launch_builds_the_argv_from_the_driver_template(tmp_path: Path) -> None:
+    spec = _placeholder_home(tmp_path)
+    result = _placeholder_launch(tmp_path, spec, "driver-a", dry_run=True, tmux=False)
+    inner = result.argv[result.argv.index("tool-a") :]
+    assert inner == [
+        "tool-a", "--prompt-file", str(spec.resolve()), "-m", "driver-a-model",
+        "--edit", "--cwd", str(tmp_path.resolve()),
+    ]
+    lane_env = result.argv.index("env", result.argv.index("TOOL_A_HOME=/operator/path/tool-a"))
+    for key in ("TOOL_A_API_KEY", "TOOL_B_API_KEY", "TOOL_D_API_KEY", "HTTP_PROXY"):
+        assert result.argv[result.argv.index(key, lane_env) - 1] == "-u"
+    assert result.audit_stderr_when_empty is False
+
+
+@pytest.mark.parametrize(
+    ("driver", "redirect"),
+    [
+        ("driver-a", ["sh", "-c", 'out=$1; shift; exec "$@" > "$out"', "sh", "OUT"]),
+        ("driver-b", []),
+        (
+            "driver-c",
+            ["sh", "-c", 'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"', "sh", "SPEC", "OUT"],
+        ),
+        ("driver-d", ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", "SPEC"]),
+    ],
+)
+def test_tmux_lane_redirects_follow_the_driver_io(
+    tmp_path: Path, driver: str, redirect: list[str]
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    result = _placeholder_launch(tmp_path, spec, driver, dry_run=True, tmux=True)
+    inner = result.argv[result.argv.index("--") + 1 :]
+    names = {"SPEC": str(spec.resolve()), "OUT": f"/tmp/agent-lane-{driver}-dry-run.txt"}
+    assert inner[: len(redirect)] == [names.get(item, item) for item in redirect]
+    assert inner[len(redirect)] == "env"
+
+
+def test_launch_refuses_unconfigured_and_record_only_drivers(tmp_path: Path) -> None:
+    spec = _placeholder_home(tmp_path)
+    refusal = (
+        "vendor must be driver-a|driver-b|driver-c|driver-d "
+        "(see drivers.json, docs/ai-accounts.md#drivers)"
+    )
+    for driver in ("driver-x", "driver-e"):
+        with pytest.raises(SystemExit) as excinfo:
+            _placeholder_launch(tmp_path, spec, driver, dry_run=True)
+        assert str(excinfo.value) == refusal
+
+
+def test_launch_without_drivers_json_fails_loudly(tmp_path: Path) -> None:
+    write_placeholder_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("Implement.\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="drivers.json"):
+        _placeholder_launch(tmp_path, spec, "driver-a", dry_run=True)
+
+
+def test_write_lane_with_read_directories_is_refused_for_a_read_dir_driver(
+    tmp_path: Path,
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    with pytest.raises(SystemExit, match=WRITE_READ_DIRS_REFUSED):
+        _placeholder_launch(
+            tmp_path, spec, "driver-c", dry_run=True, read_dirs=(str(tmp_path),)
+        )
+
+
+def test_launch_refuses_a_worktree_inside_the_key_directory(tmp_path: Path) -> None:
+    accounts = accounts_document()
+    accounts["accounts"]["driver-d-account"]["config_dir"] = str(tmp_path)
+    spec = _placeholder_home(tmp_path, accounts=accounts)
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    with pytest.raises(SystemExit, match="driver-d worktree overlaps account config_dir"):
+        _placeholder_launch(tmp_path, spec, "driver-d", cwd=str(worktree), dry_run=True)
+
+
+@pytest.mark.parametrize(("driver", "fallback"), [("driver-a", False), ("driver-c", True)])
+def test_audit_text_falls_back_to_stderr_only_when_configured(
+    tmp_path: Path, driver: str, fallback: bool
+) -> None:
+    spec = _placeholder_home(tmp_path)
+    result = _placeholder_launch(
+        tmp_path,
+        spec,
+        driver,
+        tmux=False,
+        runner=lambda _argv, _stdin: SimpleNamespace(
+            returncode=2, stdout="", stderr="driver failed before output"
+        ),
+    )
+
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    store = CaptureStore()
+    record_lane_run(store, session_id=PLACEHOLDER_SESSION, result=result)
+    assert store.row is not None
+    assert store.row["payload"]["final_text"] == (
+        "driver failed before output" if fallback else ""
+    )

@@ -40,6 +40,10 @@ from agent_cli.a38 import (  # noqa: E402
     report_table_lines,
 )
 from agent_cli.a38_review import render_review_record  # noqa: E402
+from a38_attribution_support import (  # noqa: E402
+    ATTRIBUTION_PATTERNS,
+    ATTRIBUTION_PATTERNS_JSON,
+)
 from agent_cli.local_ci import parse_comment  # noqa: E402
 from agent_cli.readme_only import GUARD_WORKFLOW_PATH  # noqa: E402
 from agent_cli.a38_guard import (  # noqa: E402
@@ -58,6 +62,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     fetch_pull,
     find_tool_attribution,
     list_workflow_paths,
+    parse_attribution_patterns,
     load_ready_timeline,
     looks_like_report,
     main,
@@ -86,12 +91,14 @@ OUTSIDER_ID = 2002
 APP_BOT_ID = 51515151
 APP_SLUG = "example-app"
 APP_LOGIN = "example-app[bot]"
+# Placeholder tool names; tests/conftest.py configures them for every test.
+PATTERNS = parse_attribution_patterns(ATTRIBUTION_PATTERNS_JSON)
 AI_COMMIT_MESSAGE = (
-    "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n"
-    "Claude-Session: https://claude.ai/code/session_01ELTd6i5zDSC7RzsVV8DsxK"
+    "Co-Authored-By: Tool-A Agent 5 <noreply@tool-a.example>\n"
+    "Tool-A-Session: https://tool-a.example/code/session_01ELTd6i5zDSC7RzsVV8DsxK"
 )
 GENERATED_WITH_BANNER = (
-    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    "🤖 Generated with [Tool-A Code](https://tool-a.example/code)"
 )
 
 
@@ -916,93 +923,179 @@ class A38GuardUnitTests(unittest.TestCase):
         self.assertNotEqual(status_context_enforce("develop"), status_context_enforce("main"))
 
     def test_find_tool_attribution_coauthor_and_session(self) -> None:
-        reasons = find_tool_attribution(AI_COMMIT_MESSAGE, source="commit abcdef0 message")
+        reasons = find_tool_attribution(
+            AI_COMMIT_MESSAGE, source="commit abcdef0 message", patterns=PATTERNS
+        )
         self.assertTrue(any("AI co-author trailer" in r for r in reasons))
         self.assertTrue(any("AI session header" in r for r in reasons))
         self.assertTrue(any("commit abcdef0 message" in r for r in reasons))
         self.assertFalse(any("session_01ELTd6i5zDSC7RzsVV8DsxK" in r for r in reasons))
-        self.assertFalse(any("https://claude.ai" in r for r in reasons))
+        self.assertFalse(any("https://tool-a.example" in r for r in reasons))
 
     def test_find_tool_attribution_generated_with_banner(self) -> None:
-        reasons = find_tool_attribution(GENERATED_WITH_BANNER, source="PR body")
+        reasons = find_tool_attribution(
+            GENERATED_WITH_BANNER, source="PR body", patterns=PATTERNS
+        )
         self.assertTrue(any("generated-with banner" in r for r in reasons))
         self.assertTrue(any(r.startswith("PR body:") for r in reasons))
 
     def test_find_tool_attribution_generated_with_token_no_brackets(self) -> None:
-        reasons = find_tool_attribution("generated with Claude", source="PR body")
+        reasons = find_tool_attribution(
+            "generated with Tool-A", source="PR body", patterns=PATTERNS
+        )
         self.assertTrue(any("generated-with banner" in r for r in reasons))
 
     def test_find_tool_attribution_human_coauthor_clean(self) -> None:
         text = (
-            "Co-authored-by: TaprootFreakAI "
-            "<315477232+TaprootFreakAI@users.noreply.github.com>"
-        )
-        self.assertEqual(find_tool_attribution(text, source="commit abcdef0 message"), [])
-        human_vendor = (
-            "Co-authored-by: Alice <alice@openai.com>"
-        )
-        self.assertEqual(
-            find_tool_attribution(human_vendor, source="commit abcdef0 message"), []
+            "Co-authored-by: Human Author "
+            "<1001+human@users.noreply.github.com>"
         )
         self.assertEqual(
             find_tool_attribution(
-                "Co-authored-by: alice@openai.com",
+                text, source="commit abcdef0 message", patterns=PATTERNS
+            ),
+            [],
+        )
+        human_vendor = (
+            "Co-authored-by: Alice <alice@tool-b.example>"
+        )
+        self.assertEqual(
+            find_tool_attribution(
+                human_vendor, source="commit abcdef0 message", patterns=PATTERNS
+            ),
+            [],
+        )
+        self.assertEqual(
+            find_tool_attribution(
+                "Co-authored-by: alice@tool-b.example",
                 source="commit abcdef0 message",
+                patterns=PATTERNS,
             ),
             [],
         )
 
     def test_find_tool_attribution_prose_negatives(self) -> None:
-        self.assertEqual(
-            find_tool_attribution("generated files", source="PR body"), []
+        for text in (
+            "generated files",
+            "generated with a unique id",
+            "generated with [our makefile]",
+            "regenerated without Tool-A",
+            "this change does not mention vendors",
+            "contact noreply@tool-a.example",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    find_tool_attribution(text, source="PR body", patterns=PATTERNS),
+                    [],
+                )
+
+    def test_find_tool_attribution_identity_surfaces(self) -> None:
+        reasons = find_tool_attribution(
+            "tool-a", source="commit abcdef0 author", patterns=PATTERNS
         )
-        self.assertEqual(
-            find_tool_attribution("generated with a unique id", source="PR body"), []
+        self.assertTrue(any("AI author identity" in r for r in reasons))
+        reasons = find_tool_attribution(
+            "noreply@tool-a.example",
+            source="commit abcdef0 committer",
+            patterns=PATTERNS,
         )
-        self.assertEqual(
-            find_tool_attribution("generated with [our makefile]", source="PR body"),
-            [],
-        )
+        self.assertTrue(any("AI author identity" in r for r in reasons))
         self.assertEqual(
             find_tool_attribution(
-                "regenerated without Claude", source="PR body"
+                "alice@tool-b.example", source="commit abcdef0 author", patterns=PATTERNS
             ),
             [],
         )
+        reasons = find_tool_attribution(
+            "Tool-A @ DFX", source="commit abcdef0 author", patterns=PATTERNS
+        )
+        self.assertTrue(any("AI author identity" in r for r in reasons))
         self.assertEqual(
             find_tool_attribution(
-                "this change does not mention vendors", source="PR body"
+                "notnoreply@tool-a.example",
+                source="commit abcdef0 author",
+                patterns=PATTERNS,
             ),
-            [],
-        )
-        self.assertEqual(
-            find_tool_attribution("contact noreply@anthropic.com", source="PR body"),
             [],
         )
 
-    def test_find_tool_attribution_identity_surfaces(self) -> None:
-        reasons = find_tool_attribution("claude", source="commit abcdef0 author")
-        self.assertTrue(any("AI author identity" in r for r in reasons))
-        reasons = find_tool_attribution(
-            "noreply@anthropic.com", source="commit abcdef0 committer"
+    def test_attribution_patterns_are_literals_matched_as_configured(self) -> None:
+        patterns = parse_attribution_patterns(json.dumps({
+            "tool_tokens": ["tool.a", "B2"],
+            "session_headers": ["X-Run+Id"],
+            "noreply_emails": ["bot+noreply@tool.example"],
+        }))
+
+        def scan(text: str, source: str = "PR body") -> list[str]:
+            return find_tool_attribution(text, source=source, patterns=patterns)
+
+        # Escaped literals: "." and "+" match only themselves.
+        self.assertTrue(scan("Co-Authored-By: TOOL.A <x@example.com>"))
+        self.assertEqual(scan("Co-Authored-By: toolxa <x@example.com>"), [])
+        self.assertTrue(scan("generated with b2"))
+        self.assertEqual(scan("generated with b22"), [])
+        self.assertTrue(scan("  x-run+id: 7"))
+        self.assertEqual(scan("x-runnid: 7"), [])
+        self.assertEqual(scan("text x-run+id: 7"), [])
+        self.assertTrue(
+            scan("BOT+NOREPLY@TOOL.EXAMPLE", source="commit abcdef0 author")
         )
-        self.assertTrue(any("AI author identity" in r for r in reasons))
         self.assertEqual(
-            find_tool_attribution(
-                "alice@openai.com", source="commit abcdef0 author"
-            ),
-            [],
+            scan("botxnoreply@tool.example", source="commit abcdef0 author"), []
         )
-        reasons = find_tool_attribution(
-            "Claude @ DFX", source="commit abcdef0 author"
-        )
-        self.assertTrue(any("AI author identity" in r for r in reasons))
-        self.assertEqual(
-            find_tool_attribution(
-                "notnoreply@anthropic.com", source="commit abcdef0 author"
-            ),
-            [],
-        )
+        # The suite's placeholder names are not built in.
+        self.assertEqual(scan("generated with Tool-A"), [])
+
+    def test_parse_attribution_patterns_missing_value(self) -> None:
+        for raw in (None, "", "   \n"):
+            with self.subTest(raw=raw):
+                with self.assertRaises(a38_guard.AttributionPatternsError) as caught:
+                    parse_attribution_patterns(raw)
+                self.assertEqual(
+                    str(caught.exception),
+                    "AI attribution patterns are not configured: "
+                    "set the dfx pr guard input attribution_patterns",
+                )
+
+    def test_parse_attribution_patterns_rejects_invalid_values(self) -> None:
+        def with_(**changes: Any) -> str:
+            value: dict[str, Any] = dict(ATTRIBUTION_PATTERNS)
+            value.update(changes)
+            return json.dumps(value)
+
+        without_headers = dict(ATTRIBUTION_PATTERNS)
+        del without_headers["session_headers"]
+        cases = {
+            "{": "not valid JSON",
+            "[]": "must be a JSON object",
+            with_(extra=["x"]): "unknown key 'extra'",
+            json.dumps(without_headers): "missing key 'session_headers'",
+            with_(tool_tokens=[]): "tool_tokens must be a non-empty list of strings",
+            with_(noreply_emails="noreply@tool-a.example"):
+                "noreply_emails must be a non-empty list of strings",
+            with_(tool_tokens=[f"tool{i}" for i in range(51)]):
+                "tool_tokens has more than 50 entries",
+            with_(tool_tokens=["tool-a", 7]): "tool_tokens[1] must be a non-empty string",
+            with_(session_headers=[""]): "session_headers[0] must be a non-empty string",
+            with_(tool_tokens=["t" * 101]): "tool_tokens[0] is longer than 100 characters",
+            with_(tool_tokens=["tool a"]): "tool_tokens[0] contains whitespace",
+            with_(session_headers=["Tool-A-Session\nX"]):
+                "session_headers[0] contains whitespace",
+            with_(tool_tokens=["-tool"]):
+                "tool_tokens[0] must start and end with a letter, digit or underscore",
+            with_(session_headers=["Tool-A-Session:"]):
+                "session_headers[0] must not contain ':'",
+            with_(noreply_emails=["noreply.tool-a.example"]):
+                "noreply_emails[0] must contain '@'",
+        }
+        for raw, detail in cases.items():
+            with self.subTest(detail=detail):
+                with self.assertRaises(a38_guard.AttributionPatternsError) as caught:
+                    parse_attribution_patterns(raw)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"AI attribution patterns are invalid: {detail}",
+                )
 
     def test_load_ready_timeline_newest_first_skips_older_pages(self) -> None:
         """A long timeline only GETs page 1 (to find last) and the last page."""
@@ -1811,7 +1904,7 @@ class A38GuardE2ETests(unittest.TestCase):
             HEAD,
             BASE,
             draft=True,
-            title="Generated with [Claude Code]",
+            title="Generated with [Tool-A Code]",
             body="clean summary",
         )
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
@@ -2051,7 +2144,7 @@ class A38GuardE2ETests(unittest.TestCase):
     def test_ai_author_identity_hard_fails(self) -> None:
         fake = FakeAPI()
         fake.commits = [
-            _clean_commit(message="feat: ok\n", login="claude")
+            _clean_commit(message="feat: ok\n", login="tool-a")
         ]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertTrue(result.hard_fail)
@@ -2064,7 +2157,7 @@ class A38GuardE2ETests(unittest.TestCase):
             _clean_commit(
                 message="feat: ok\n",
                 author_name="Alice",
-                author_email="alice@openai.com",
+                author_email="alice@tool-b.example",
             )
         ]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
@@ -2082,7 +2175,7 @@ class A38GuardE2ETests(unittest.TestCase):
 
     def test_ready_blank_message_and_attribution_comment(self) -> None:
         fake = FakeAPI()
-        fake.commits = [_clean_commit(message="", login="claude")]
+        fake.commits = [_clean_commit(message="", login="tool-a")]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertTrue(result.hard_fail)
         body = result.comment_body
@@ -2809,6 +2902,152 @@ class A38GuardYamlTests(unittest.TestCase):
         self.assertTrue(any("unchanged" in w for w in second.writes))
         # No additional create/update mutations beyond the first publish.
         self.assertEqual(fake.writes, writes_after_first)
+
+
+class A38AttributionPatternsTests(unittest.TestCase):
+    """Missing or invalid patterns replace the attribution scan with a hard fail."""
+
+    MISSING = (
+        "AI attribution patterns are not configured: "
+        "set the dfx pr guard input attribution_patterns"
+    )
+
+    def _reconcile_without_patterns(self, fake: FakeAPI) -> Assessment:
+        with mock.patch.dict(os.environ):
+            del os.environ["A38_ATTRIBUTION_PATTERNS"]
+            return reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+
+    def test_missing_patterns_hard_fail_an_otherwise_passing_pull(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=75
+        )
+        self.assertTrue(reconcile_pull(fake.api(), REPO, 1, dry_run=True).ok)
+        result = self._reconcile_without_patterns(fake)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.report_gate_ok)
+        self.assertEqual(result.status, "fail")
+        self.assertEqual(result.reasons[0], self.MISSING)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertEqual(
+            matching[0]["description"],
+            a38_guard.truncate_desc(f"hard_fail: {self.MISSING}"),
+        )
+        body = result.comment_body
+        self.assertIn(
+            "dfx pr guard cannot scan for tool-attribution because its attribution "
+            "patterns are missing or invalid.",
+            body,
+        )
+        self.assertIn(
+            "dfx pr guard kann nicht auf Tool-Attribution prüfen, weil die "
+            "Attribution-Muster fehlen oder ungültig sind.",
+            body,
+        )
+        self.assertIn("A38_ATTRIBUTION_PATTERNS", body)
+        self.assertNotIn("Remove those attribution markers", body)
+
+    def test_missing_patterns_hard_fail_a_draft(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        result = self._reconcile_without_patterns(fake)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(result.reasons[0], self.MISSING)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+
+    def test_invalid_patterns_replace_the_scan(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        with mock.patch.dict(
+            os.environ, {"A38_ATTRIBUTION_PATTERNS": '{"tool_tokens": ["tool-a"]}'}
+        ):
+            result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(
+            result.reasons[0],
+            "AI attribution patterns are invalid: missing key 'session_headers'",
+        )
+        self.assertFalse(any("AI co-author trailer" in r for r in result.reasons))
+        self.assertIn("Attribution-Muster", result.comment_body)
+
+    def test_missing_patterns_in_observe_mode_are_advisory_and_exit_one(self) -> None:
+        fake = FakeAPI()
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(mode="observe")
+        ).encode()
+        result = self._reconcile_without_patterns(fake)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(result.reasons[0], self.MISSING)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        contexts = [s["context"] for s in fake.statuses]
+        self.assertTrue(any("observe:" in c for c in contexts))
+        self.assertFalse(any(c == status_context_enforce("develop") for c in contexts))
+
+    def test_excluded_target_is_not_scanned_without_patterns(self) -> None:
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        fake.pull["base"]["repo"]["default_branch"] = "develop"
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=["develop"], exclude=["main"], default="enforce")
+        )
+        result = self._reconcile_without_patterns(fake)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "not_applicable")
+        self.assertFalse(result.hard_fail)
+
+    def test_run_prints_one_error_annotation_without_patterns(self) -> None:
+        fake = FakeAPI()
+        fake.open_pulls = [1, 2]
+        real_reconcile = a38_guard.reconcile_pull
+
+        def reconcile_first(
+            client: GitHubApi, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            # The fake serves one pull request; the sweep still assesses twice.
+            return real_reconcile(client, repo, 1, **kwargs)
+
+        with mock.patch.dict(os.environ), mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=reconcile_first
+        ):
+            del os.environ["A38_ATTRIBUTION_PATTERNS"]
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--dry-run", "--json"],
+                fake.api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        annotations = [
+            line for line in stderr.splitlines() if line.startswith("::error")
+        ]
+        self.assertEqual(
+            annotations, [f"::error title=dfx pr guard::{self.MISSING}"]
+        )
+        results = json.loads(stdout)["results"]
+        self.assertEqual(
+            [r["reasons"][0] for r in results], [self.MISSING, self.MISSING]
+        )
+
+    def test_run_prints_no_annotation_with_patterns(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=76
+        )
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1", "--dry-run", "--json"],
+            fake.api(),
+            env={"GH_TOKEN": "fake"},
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("::error", stderr)
+        self.assertTrue(json.loads(stdout)["ok"])
 
 
 class A38PrGuardConfigScopeTests(unittest.TestCase):

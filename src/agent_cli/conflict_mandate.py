@@ -99,13 +99,14 @@ from .coordinator_common import (
     LaneRunner,
     Runner,
     account_for,
-    harden_grok_write_argv,
+    harden_write_argv,
     prompt_prohibitions,
     redact,
 )
 from .coordinator_exec import process_scope, run_bounded
 from .github_accounts import Account, AccountError
-from .lane import LANE_VENDORS, launch as launch_lane_process
+from .drivers import DriverSpec
+from .lane import launch as launch_lane_process
 from .lane import record_lane_run
 from .runtime import run_argv as default_run_argv
 from .skills import has_skill
@@ -191,6 +192,8 @@ class _Runtime:
     vendor: str
     binding: Any
     request: _RequestRuntime
+    # The implementer's configured driver; its write hardening applies.
+    driver: DriverSpec
 
 
 def _request_git_runner(runner: Runner) -> Runner:
@@ -260,14 +263,15 @@ def _preflight(
     try:
         ai = load_ai_accounts(store.home)
         _slots, vendor = load_model_configuration(store.home)
-        if vendor == "codex":
+        driver = ai.driver(vendor)
+        if driver.lane is not None and driver.lane.may_run_commands:
             raise ConflictsError(
-                "codex is refused as implementer provider because it can run commands"
+                f"{vendor} is refused as implementer provider because it can run commands"
             )
-        if vendor not in LANE_VENDORS:
+        if driver.lane is None:
             raise ConflictsError(
                 f"implementer provider {vendor} is not supported by the lane launcher; "
-                f"expected one of: {', '.join(LANE_VENDORS)}"
+                f"expected one of: {', '.join(ai.lane_drivers())}"
             )
         binding = ai.for_lane(
             worker.session_id, "implementer", vendor, require_execution=False
@@ -301,6 +305,7 @@ def _preflight(
         vendor=vendor,
         binding=binding,
         request=_RequestRuntime(git=account_runner, github=account_runner),
+        driver=driver,
     )
 
 
@@ -712,11 +717,12 @@ def _hardened_lane_runner(
     worker: ConflictWorker,
     worktree: Path,
     lane_runner: LaneRunner | None,
+    driver: DriverSpec,
 ) -> LaneRunner:
     bounded = lane_runner or _bounded_lane_runner(worker, worktree)
 
     def hardened(argv: list[str], stdin_text: str | None) -> Any:
-        return bounded(harden_grok_write_argv(argv), stdin_text)
+        return bounded(harden_write_argv(argv, driver), stdin_text)
 
     return hardened
 
@@ -868,7 +874,9 @@ def _run_lane_attempt(
         ),
     )
     atomic_write(spec_path, f"# Role: implementer\n\n{spec}")
-    selected_runner = _hardened_lane_runner(ctx.worker, ctx.worktree, lane_runner)
+    selected_runner = _hardened_lane_runner(
+        ctx.worker, ctx.worktree, lane_runner, runtime.driver
+    )
     git_runner = ctx.git_runner or runtime.request.git
     _verify_metadata(ctx, expected_git_file)
     index_before = index_fingerprint(git_runner, str(ctx.worktree))

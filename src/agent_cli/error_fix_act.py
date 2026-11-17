@@ -38,16 +38,25 @@ def _device_model_pins(store: Store) -> dict[str, Any]:
     return model_pins(models, implementer)
 
 
-def _model_configuration_fingerprint(home: Path) -> str:
-    from .ai_accounts import CONFIG_FILE
-
-    path = home / CONFIG_FILE
+def _file_fingerprint_material(path: Path) -> bytes:
     try:
-        material = b"present\0" + path.read_bytes()
+        return b"present\0" + path.read_bytes()
     except FileNotFoundError:
-        material = b"missing"
+        return b"missing"
     except OSError as exc:
-        material = f"unreadable\0{type(exc).__name__}\0{exc.errno}".encode()
+        return f"unreadable\0{type(exc).__name__}\0{exc.errno}".encode()
+
+
+def _model_configuration_fingerprint(home: Path) -> str:
+    """Fingerprint of the files the model configuration is read from."""
+    from .ai_accounts import CONFIG_FILE
+    from .drivers import DRIVERS_FILE
+
+    material = _file_fingerprint_material(home / CONFIG_FILE)
+    drivers = home / DRIVERS_FILE
+    if drivers.exists():
+        # Model selections name drivers, so a driver change can resolve the error.
+        material += b"\0drivers\0" + _file_fingerprint_material(drivers)
     return hashlib.sha256(material).hexdigest()
 
 

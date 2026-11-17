@@ -71,15 +71,21 @@ LOCAL_CI_HINT_RE = re.compile(r"DFX-LOCAL-CI", re.IGNORECASE)
 HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 WORKFLOW_FILE_RE = re.compile(r"^\.github/workflows/[^/]+\.(yml|yaml)$")
-_AI_TOOL_TOKEN = r"claude|anthropic|copilot|cursor|chatgpt|openai|gemini|grok|codex"
 _COAUTHOR_LINE_RE = re.compile(r"(?im)^[ \t]*Co-Authored-By:\s*(.+?)\s*$")
 _TRAILER_EMAIL_RE = re.compile(r"<([^>]+)>")
-_SESSION_HEADER_RE = re.compile(r"(?im)^[ \t]*Claude-Session:")
-_GENERATED_WITH_TOKEN_RE = re.compile(
-    rf"(?i)(?<![A-Za-z0-9_])generated[ \t]+with\b[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
+# AI tool-attribution patterns come only from the adopter's configuration: the
+# action input attribution_patterns, passed to the guard in this variable.
+ATTRIBUTION_PATTERNS_ENV = "A38_ATTRIBUTION_PATTERNS"
+_ATTRIBUTION_PATTERN_KEYS = ("tool_tokens", "session_headers", "noreply_emails")
+_MAX_ATTRIBUTION_ENTRIES = 50
+_MAX_ATTRIBUTION_ENTRY_CHARS = 100
+# Tokens are matched as whole words, so both ends must be word characters.
+_ATTRIBUTION_TOKEN_SHAPE_RE = re.compile(r"\w(?:\S*\w)?")
+_ATTRIBUTION_PATTERNS_REASON = "AI attribution patterns are "
+ATTRIBUTION_PATTERNS_MISSING = (
+    _ATTRIBUTION_PATTERNS_REASON
+    + "not configured: set the dfx pr guard input attribution_patterns"
 )
-_ANTHROPIC_EMAIL_RE = re.compile(r"(?i)noreply@anthropic\.com\Z")
-_AI_TOOL_WORD_RE = re.compile(rf"(?i)\b(?:{_AI_TOOL_TOKEN})\b")
 GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
 GITHUB_ACTIONS_BOT_ID = 41898282
@@ -484,8 +490,95 @@ def looks_like_report(body: str | None) -> bool:
     return LOCAL_CI_HINT_RE.search(body) is not None
 
 
-def _coauthor_line_is_ai(text: str) -> bool:
-    """True when a Co-Authored-By line names an AI tool or the Anthropic noreply mail.
+class AttributionPatternsError(ValueError):
+    """The attribution patterns are missing or invalid; the message is the hard-fail reason."""
+
+
+@dataclass(frozen=True)
+class AttributionPatterns:
+    """Compiled AI tool-attribution matchers built from configured literals."""
+
+    tool_word: re.Pattern[str]
+    generated_with: re.Pattern[str]
+    session_header: re.Pattern[str]
+    noreply_email: re.Pattern[str]
+
+
+def _invalid_attribution_patterns(detail: str) -> AttributionPatternsError:
+    return AttributionPatternsError(f"{_ATTRIBUTION_PATTERNS_REASON}invalid: {detail}")
+
+
+def _attribution_entries(raw: Mapping[str, Any], key: str) -> list[str]:
+    values = raw[key]
+    if not isinstance(values, list) or not values:
+        raise _invalid_attribution_patterns(f"{key} must be a non-empty list of strings")
+    if len(values) > _MAX_ATTRIBUTION_ENTRIES:
+        raise _invalid_attribution_patterns(
+            f"{key} has more than {_MAX_ATTRIBUTION_ENTRIES} entries"
+        )
+    for index, value in enumerate(values):
+        label = f"{key}[{index}]"
+        if not isinstance(value, str) or not value:
+            raise _invalid_attribution_patterns(f"{label} must be a non-empty string")
+        if len(value) > _MAX_ATTRIBUTION_ENTRY_CHARS:
+            raise _invalid_attribution_patterns(
+                f"{label} is longer than {_MAX_ATTRIBUTION_ENTRY_CHARS} characters"
+            )
+        if re.search(r"\s", value):
+            raise _invalid_attribution_patterns(f"{label} contains whitespace")
+        if key == "tool_tokens" and not _ATTRIBUTION_TOKEN_SHAPE_RE.fullmatch(value):
+            raise _invalid_attribution_patterns(
+                f"{label} must start and end with a letter, digit or underscore"
+            )
+        if key == "session_headers" and ":" in value:
+            raise _invalid_attribution_patterns(f"{label} must not contain ':'")
+        if key == "noreply_emails" and "@" not in value:
+            raise _invalid_attribution_patterns(f"{label} must contain '@'")
+    return values
+
+
+def parse_attribution_patterns(raw: str | None) -> AttributionPatterns:
+    """Validate the JSON value of the ``attribution_patterns`` input and compile it.
+
+    Entries are literals, never regular expressions. An empty value means the
+    input is not configured. Raises ``AttributionPatternsError``.
+    """
+    if raw is None or not raw.strip():
+        raise AttributionPatternsError(ATTRIBUTION_PATTERNS_MISSING)
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        raise _invalid_attribution_patterns("not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise _invalid_attribution_patterns("must be a JSON object")
+    for key in data:
+        if key not in _ATTRIBUTION_PATTERN_KEYS:
+            raise _invalid_attribution_patterns(f"unknown key {key[:40]!r}")
+    for key in _ATTRIBUTION_PATTERN_KEYS:
+        if key not in data:
+            raise _invalid_attribution_patterns(f"missing key {key!r}")
+    tokens, headers, emails = (
+        "|".join(re.escape(entry) for entry in _attribution_entries(data, key))
+        for key in _ATTRIBUTION_PATTERN_KEYS
+    )
+    return AttributionPatterns(
+        tool_word=re.compile(rf"(?i)\b(?:{tokens})\b"),
+        generated_with=re.compile(
+            rf"(?i)(?<![A-Za-z0-9_])generated[ \t]+with\b[^\n]*\b(?:{tokens})\b"
+        ),
+        session_header=re.compile(rf"(?im)^[ \t]*(?:{headers}):"),
+        noreply_email=re.compile(rf"(?i)(?:{emails})"),
+    )
+
+
+def attribution_patterns_from_env() -> AttributionPatterns:
+    """Patterns from ``A38_ATTRIBUTION_PATTERNS``, like ``A38_ACTOR_APP_SLUG`` read
+    from the process environment."""
+    return parse_attribution_patterns(os.environ.get(ATTRIBUTION_PATTERNS_ENV))
+
+
+def _coauthor_line_is_ai(text: str, patterns: AttributionPatterns) -> bool:
+    """True when a Co-Authored-By line names a configured tool or noreply address.
 
     Tool tokens are matched in the display-name portion only, not in mailbox domains.
     """
@@ -500,28 +593,30 @@ def _coauthor_line_is_ai(text: str) -> bool:
             looks_like_email = "@" in stripped and " " not in stripped
             email = stripped if looks_like_email else ""
             name = "" if looks_like_email else stripped
-        if email and _ANTHROPIC_EMAIL_RE.fullmatch(email):
+        if email and patterns.noreply_email.fullmatch(email):
             return True
-        if name and _AI_TOOL_WORD_RE.search(name):
+        if name and patterns.tool_word.search(name):
             return True
     return False
 
 
-def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
+def find_tool_attribution(
+    text: str | None, *, source: str, patterns: AttributionPatterns
+) -> list[str]:
     """Return reason strings for AI tool-attribution markers in ``text``.
 
     Pure: no I/O. Empty when ``text`` is missing or clean. ``source`` is a short
     location label included in each reason (e.g. ``PR body``, ``commit abcdef0
-    message``).
+    message``). ``patterns`` are the configured matchers.
     """
     if not isinstance(text, str):
         return []
     reasons: list[str] = []
-    if _coauthor_line_is_ai(text):
+    if _coauthor_line_is_ai(text, patterns):
         reasons.append(f"{source}: AI co-author trailer")
-    if _SESSION_HEADER_RE.search(text):
+    if patterns.session_header.search(text):
         reasons.append(f"{source}: AI session header")
-    if _GENERATED_WITH_TOKEN_RE.search(text):
+    if patterns.generated_with.search(text):
         reasons.append(f"{source}: generated-with banner")
     source_l = source.lower()
     is_identity = "author" in source_l or "committer" in source_l
@@ -529,9 +624,9 @@ def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
         stripped = text.strip()
         looks_like_email = "@" in stripped and " " not in stripped and "<" not in stripped
         if looks_like_email:
-            if _ANTHROPIC_EMAIL_RE.fullmatch(stripped):
+            if patterns.noreply_email.fullmatch(stripped):
                 reasons.append(f"{source}: AI author identity")
-        elif _AI_TOOL_WORD_RE.search(text):
+        elif patterns.tool_word.search(text):
             reasons.append(f"{source}: AI author identity")
     return reasons
 
@@ -1460,7 +1555,9 @@ def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str,
     return commits
 
 
-def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
+def _commit_attribution_reasons(
+    commit: Mapping[str, Any], patterns: AttributionPatterns
+) -> list[str]:
     """Collect tool-attribution reasons from one commits-API payload item."""
     sha_raw = commit.get("sha")
     sha7 = sha_raw[:7] if isinstance(sha_raw, str) and sha_raw else "unknown"
@@ -1473,7 +1570,9 @@ def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
         inner_dict = inner if isinstance(inner, dict) else None
     else:
         reasons.extend(
-            find_tool_attribution(message, source=f"commit {sha7} message")
+            find_tool_attribution(
+                message, source=f"commit {sha7} message", patterns=patterns
+            )
         )
         inner_dict = inner
     if isinstance(inner_dict, Mapping):
@@ -1484,11 +1583,15 @@ def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
                 email = person.get("email") if isinstance(person.get("email"), str) else ""
                 if name:
                     reasons.extend(
-                        find_tool_attribution(name, source=f"commit {sha7} {role}")
+                        find_tool_attribution(
+                            name, source=f"commit {sha7} {role}", patterns=patterns
+                        )
                     )
                 if email:
                     reasons.extend(
-                        find_tool_attribution(email, source=f"commit {sha7} {role}")
+                        find_tool_attribution(
+                            email, source=f"commit {sha7} {role}", patterns=patterns
+                        )
                     )
     for role in ("author", "committer"):
         person = commit.get(role)
@@ -1496,7 +1599,9 @@ def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
             login = person.get("login")
             if isinstance(login, str):
                 reasons.extend(
-                    find_tool_attribution(login, source=f"commit {sha7} {role}")
+                    find_tool_attribution(
+                        login, source=f"commit {sha7} {role}", patterns=patterns
+                    )
                 )
     return reasons
 
@@ -2128,7 +2233,23 @@ def _hard_fail_texts(assessment: Assessment) -> tuple[str, str]:
         or "AI author identity" in r
         for r in assessment.reasons
     )
-    if assessment.hard_fail and missing_msg and attr_hit:
+    patterns_problem = any(
+        r.startswith(_ATTRIBUTION_PATTERNS_REASON) for r in assessment.reasons
+    )
+    if assessment.hard_fail and patterns_problem:
+        hard_fail_en = (
+            "dfx pr guard cannot scan for tool-attribution because its attribution "
+            "patterns are missing or invalid. A maintainer sets the Actions variable "
+            "A38_ATTRIBUTION_PATTERNS for the guard input attribution_patterns, as the "
+            "guard docs describe under Attribution patterns."
+        )
+        hard_fail_de = (
+            "dfx pr guard kann nicht auf Tool-Attribution prüfen, weil die "
+            "Attribution-Muster fehlen oder ungültig sind. Ein Maintainer setzt die "
+            "Actions-Variable A38_ATTRIBUTION_PATTERNS für den Guard-Input "
+            "attribution_patterns, wie die Guard-Doku unter Attribution patterns beschreibt."
+        )
+    elif assessment.hard_fail and missing_msg and attr_hit:
         hard_fail_en = (
             "Tool-attribution or an unscannable commit message fails dfx pr guard. "
             "Remove those attribution markers or supply a non-empty commit message."
@@ -3320,10 +3441,20 @@ def assess_pull(
     _attach_trusted_config(assessment, trusted)
     commits = fetch_pull_commits(api, snap.repo, snap.number)
     attribution: list[str] = []
-    attribution.extend(find_tool_attribution(snap.title, source="PR title"))
-    attribution.extend(find_tool_attribution(snap.body, source="PR body"))
-    for commit in commits:
-        attribution.extend(_commit_attribution_reasons(commit))
+    try:
+        patterns = attribution_patterns_from_env()
+    except AttributionPatternsError as exc:
+        # Without patterns the scan cannot run: a hard fail, never a pass.
+        attribution.append(str(exc))
+    else:
+        attribution.extend(
+            find_tool_attribution(snap.title, source="PR title", patterns=patterns)
+        )
+        attribution.extend(
+            find_tool_attribution(snap.body, source="PR body", patterns=patterns)
+        )
+        for commit in commits:
+            attribution.extend(_commit_attribution_reasons(commit, patterns))
     if attribution:
         assessment.ok = False
         assessment.status = "fail"
@@ -4448,7 +4579,8 @@ def _emit_rate_limited(exc: BaseException, args: argparse.Namespace) -> None:
 
 
 def _assessment_exit_code(assessment: Assessment) -> int:
-    """Closed no-ops exit 0. Attribution and unscannable-message hard-fails exit 1
+    """Closed no-ops exit 0. Attribution, missing or invalid attribution patterns
+    and unscannable-message hard-fails exit 1
     even on draft/observe and post a failing PR-head status in enforce. Missing
     draft reports still omit that status and exit 0. Ready enforce failure
     exits 1."""
@@ -4512,11 +4644,27 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
         _print_api_cost(client)
 
 
+def _annotate_attribution_patterns() -> None:
+    """One Actions error annotation per run when the attribution scan cannot run.
+
+    Each assessed pull request still gets its own hard-fail reason; the exit
+    code is unchanged. Written to stderr so stdout stays JSON.
+    """
+    try:
+        attribution_patterns_from_env()
+    except AttributionPatternsError as exc:
+        message = (
+            str(exc).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        )
+        print(f"::error title=dfx pr guard::{message}", file=sys.stderr, flush=True)
+
+
 def _run(
     args: argparse.Namespace,
     environ: MutableMapping[str, str],
     client: GitHubApi,
 ) -> int:
+    _annotate_attribution_patterns()
     try:
         if args.command == "reconcile":
             dry = bool(args.dry_run or args.no_publish)

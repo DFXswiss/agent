@@ -639,7 +639,7 @@ def test_fork_full_name_is_pinned_through_accept_remote_and_draft(
         "state": "open",
         "title": "Pin the publication fork",
         "repo": "Example/name",
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "payload": {"coordinator": {
             "phase": "accept",
             "source": {"repo": "Example/name", "number": 7, "owner_scoped": True},
@@ -2048,7 +2048,7 @@ def _patch_current_models(monkeypatch, models):
 
 @pytest.mark.parametrize(
     ("current_models", "a38"),
-    [({"first": "codex", "second": "grok"}, False), ({"first": "grok", "second": "codex"}, True)],
+    [({"first": "driver-b", "second": "driver-a"}, False), ({"first": "driver-a", "second": "driver-b"}, True)],
 )
 def test_owner_scoped_accept_refuses_models_changed_since_task_creation(
     monkeypatch, tmp_path, current_models, a38
@@ -2075,7 +2075,7 @@ def test_owner_scoped_accept_refuses_models_changed_since_task_creation(
         lambda *a, **_k: binding_calls.append(a) or "pinned-binding",
     )
     task = _accept_task()
-    task["models"] = {"first": "grok", "second": "codex"}
+    task["models"] = {"first": "driver-a", "second": "driver-b"}
     task["payload"]["coordinator"]["source"].update(
         repo="Example/owned", owner_scoped=True
     )
@@ -2106,7 +2106,7 @@ def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_
         "agent_cli.coordinator_runtime.execution_binding",
         lambda *_a, **_k: "pinned-binding",
     )
-    _patch_current_models(monkeypatch, {"first": "grok", "second": "codex"})
+    _patch_current_models(monkeypatch, {"first": "driver-a", "second": "driver-b"})
     monkeypatch.setattr("agent_cli.coordinator_github.queue_activity", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_cli.coordinator_github.execute_github", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_cli.coordinator_github.set_checklist", lambda *_a, **_k: None)
@@ -2119,7 +2119,7 @@ def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_
             return {"execution_status": "done"}
 
     task = _accept_task()
-    task["models"] = {"first": "grok", "second": "codex"}
+    task["models"] = {"first": "driver-a", "second": "driver-b"}
     task["payload"]["coordinator"]["source"].update(
         repo="Example/owned", owner_scoped=True
     )
@@ -2161,7 +2161,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         "state": "pr-review",
         "repo": "Example/owned",
         "ref": "42",
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "payload": {"coordinator": {
             "phase": "readiness",
             "head_sha": head,
@@ -2262,7 +2262,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                 "task_id": task_id,
                 "stage": "review-1",
                 "dimension": dimension,
-                "vendor": "grok",
+                "vendor": "driver-a",
                 "verdict": "approved",
                 "head_sha": head,
                 "recorded_at": "2026-01-01T00:00:00Z",
@@ -2513,7 +2513,7 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
         "state": "pr-review",
         "repo": "Example/owned",
         "ref": "42",
-        "models": {"first": "grok", "second": None},
+        "models": {"first": "driver-a", "second": None},
         "change_summary_en": "The early merge retains trusted readiness evidence.",
         "change_summary_de": "Der frühe Merge behält vertrauenswürdige Readiness-Evidenz.",
         "payload": {"coordinator": {
@@ -2586,7 +2586,7 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
                 "task_id": task_id,
                 "stage": "review-1",
                 "dimension": dimension,
-                "vendor": "grok",
+                "vendor": "driver-a",
                 "verdict": "approved",
                 "head_sha": head,
                 "recorded_at": "2026-01-01T00:00:00Z",

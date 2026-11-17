@@ -167,7 +167,7 @@ def _comment(body: str, *, cid: int, user: int, created: str = "2026-09-01T00:00
 
 
 def _thread(*bodies: str, resolved: bool = False, bot: bool = False) -> dict:
-    author = {"login": "copilot[bot]", "__typename": "Bot"} if bot else {
+    author = {"login": "review-helper[bot]", "__typename": "Bot"} if bot else {
         "login": "ada",
         "__typename": "User",
     }
@@ -1115,9 +1115,9 @@ def test_v2_original_holds_the_lane_record() -> None:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": prompt,
     }
     payload = {
@@ -1156,9 +1156,9 @@ def test_render_skips_the_reminder_when_rules_are_not_bound() -> None:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": "Confirm the added file is valid JSON and is not imported.",
     }
     payload = {
@@ -1184,9 +1184,9 @@ def test_render_rejects_a_prompt_that_skips_the_repo_rules() -> None:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": "Confirm the added file is valid JSON and is not imported.",
     }
     payload = {
@@ -1209,9 +1209,9 @@ def test_short_machine_prompt_is_missing_not_malformed() -> None:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": "too short",
     }
     payload = {
@@ -1256,9 +1256,9 @@ def test_pass_prompt_must_check_the_repo_rules() -> None:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": "Confirm the added file is valid JSON and is not imported.",
     }
     payload = {
@@ -1278,9 +1278,9 @@ def _shaped_prompt_payload() -> dict:
         "id": "conformity-a",
         "result": "pass",
         "status": "complete",
-        "provider": "xAI",
-        "model": "Grok",
-        "model_number": "grok-4.7",
+        "provider": "Vendor A",
+        "model": "Model A",
+        "model_number": "model-a-4.7",
         "prompt": "Confirm the added file is valid JSON and is not imported.",
     }
     return {
@@ -1556,12 +1556,12 @@ def test_select_rejects_a_first_review_without_the_title_model() -> None:
 
 
 def test_select_accepts_a_model_name_it_does_not_judge() -> None:
-    body = _body(_pass_payload(lanes=_run("a"))).replace(_RECORD_MODEL, "Grok 4.7")
+    body = _body(_pass_payload(lanes=_run("a"))).replace(_RECORD_MODEL, "Model A 4.7")
     chosen, reasons = _select([_comment(body, cid=1, user=10)])
     assert reasons == []
     assert chosen is not None
-    codex = _body(_pass_payload(lanes=_run("b"))).replace(_RECORD_MODEL, "Codex Astra 6")
-    assert validate_visible(codex, 2) == []
+    second_body = _body(_pass_payload(lanes=_run("b"))).replace(_RECORD_MODEL, "Model B Astra 6")
+    assert validate_visible(second_body, 2) == []
 
 
 def test_select_a_sloppy_second_run_does_not_hide_the_first_runs_missing_model() -> None:
@@ -1601,7 +1601,7 @@ def test_a_placeholder_title_is_not_a_model() -> None:
 def test_titles_that_name_different_models_are_missing() -> None:
     body = _body(_pass_payload(lanes=_run("a"))).replace(
         f"Erster Review mit {_RECORD_MODEL}",
-        "Erster Review mit Codex Astra 6",
+        "Erster Review mit Model B Astra 6",
         1,
     )
     assert validate_visible(body, 2) == [

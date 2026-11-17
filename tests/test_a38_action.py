@@ -85,6 +85,33 @@ def test_composite_passes_immutable_action_revision_via_environment() -> None:
     assert "github.sha" not in str(guard_step)
 
 
+def test_composite_passes_attribution_patterns_only_via_environment() -> None:
+    action = yaml.safe_load((ROOT / ".github/actions/a38-guard/action.yml").read_text())
+    declared = action["inputs"]["attribution_patterns"]
+    assert declared["default"] == ""
+    guard_step = action["runs"]["steps"][2]
+    assert (
+        guard_step["env"]["A38_ATTRIBUTION_PATTERNS"]
+        == "${{ inputs.attribution_patterns }}"
+    )
+    # The JSON value never reaches the shell text of the step.
+    assert "attribution_patterns" not in guard_step["run"]
+
+
+def test_example_binds_attribution_patterns_to_the_actions_variable() -> None:
+    example = yaml.safe_load(
+        (ROOT / "examples/a38-guard.yml").read_text(encoding="utf-8")
+    )
+    guard_with = next(
+        step
+        for step in example["jobs"]["guard"]["steps"]
+        if str(step.get("uses", "")).startswith(
+            "DFXswiss/agent/.github/actions/a38-guard@"
+        )
+    )["with"]
+    assert guard_with["attribution_patterns"] == "${{ vars.A38_ATTRIBUTION_PATTERNS }}"
+
+
 def test_repository_guard_workflow_matches_the_example_on_the_default_token() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/a38-guard.yml").read_text(encoding="utf-8")

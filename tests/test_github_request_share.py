@@ -23,6 +23,7 @@ from agent_cli.github_request_share import (
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from agent_cli.watch import scan_merged
+from driver_fixtures import write_drivers
 from github_support import configure_accounts
 from test_coordinator_support import make_session, make_worker
 
@@ -46,6 +47,7 @@ def _repositories() -> dict[str, RepositoryConfig]:
 
 
 def _write_device_accounts(home: Path, session_ids: list[str]) -> None:
+    write_drivers(home)
     (home / "github-accounts.json").write_text(
         json.dumps(
             {
@@ -70,28 +72,28 @@ def _write_device_accounts(home: Path, session_ids: list[str]) -> None:
         json.dumps(
             {
                 "lane_execution": {"mode": "this-device-is-lane-host"},
-                "models": {"first": "grok", "second": None},
+                "models": {"first": "driver-a", "second": None},
                 "accounts": {
-                    "grok-w": {"provider": "grok", "config_dir": "/test/grok"},
+                    "driver-a-w": {"provider": "driver-a", "config_dir": "/test/driver-a"},
                 },
                 "roles": {
                     "impl": {
-                        "account": "grok-w",
-                        "model": "grok-model",
+                        "account": "driver-a-w",
+                        "model": "driver-a-model",
                         "access": "workspace-write",
                     },
                     "rev": {
-                        "account": "grok-w",
-                        "model": "grok-model",
+                        "account": "driver-a-w",
+                        "model": "driver-a-model",
                         "access": "read-only",
                     },
                 },
                 "lanes": {
-                    "grok:implementer": "impl",
-                    "grok:reviewer": "rev",
-                    "grok:pr-reviewer-quality": "rev",
-                    "grok:pr-reviewer-logic": "rev",
-                    "grok:check": "rev",
+                    "driver-a:implementer": "impl",
+                    "driver-a:reviewer": "rev",
+                    "driver-a:pr-reviewer-quality": "rev",
+                    "driver-a:pr-reviewer-logic": "rev",
+                    "driver-a:check": "rev",
                 },
                 "sessions": {
                     session_id: {"interactive": "impl"} for session_id in session_ids

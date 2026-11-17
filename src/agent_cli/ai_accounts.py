@@ -1,22 +1,47 @@
 """Device-local AI account, role, and session bindings for static executors.
 
-Operators supply ``$AGENT_HOME/ai-accounts.json``. Installation creates no
-accounts, roles, or selections. Credentials stay in each account's provider CLI
-configuration directory; this manifest stores only directory paths. Static
-launch sites resolve these bindings before invoking a provider.
+Operators supply ``$AGENT_HOME/ai-accounts.json`` and, next to it,
+``$AGENT_HOME/drivers.json``, which describes every driver the accounts,
+models, implementer, lanes and usage selections name. Installation creates no
+accounts, roles, selections or drivers. Credentials stay in each account's
+driver configuration directory; this manifest stores only directory paths.
+Static launch sites resolve these bindings before invoking a driver.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .lane import LANE_STRIP_ENV
+from .drivers import (
+    DRIVERS_DOC,
+    DRIVERS_FILE,
+    DRIVERS_HINT,
+    DRIVERS_NOT_CONFIGURED,
+    NO_DRIVER_CONFIGURATION,
+    PANE_UNCLASSIFIED,
+    DriverConfigError,
+    DriverConfiguration,
+    DriverSpec,
+    InteractiveSpec,
+    PaneMarkers,
+    RecordedNames,
+    UsageSpec,
+    declared_driver_ids,
+    driver_refusal,
+    interactive_driver_ids,
+    is_home_default_dir,
+    lane_driver_ids,
+    parse_driver_document,
+    parse_recorded_slots,
+    require_interactive,
+    role_clear_env,
+)
 from .model_slots import (
-    SUPPORTED_PROVIDERS,
     ModelSlots,
     ModelSlotsError,
     parse_implementer,
@@ -27,8 +52,6 @@ from .store import StoreError
 CONFIG_FILE = "ai-accounts.json"
 # Optional device-local inventory of known AI subscriptions (no logins needed).
 SUBSCRIPTIONS_FILE = "ai-subscriptions.json"
-# Providers whose account usage can be polled through ``usage_accounts``.
-USAGE_ACCOUNT_PROVIDERS = frozenset({"openrouter", "claude"})
 _SUBSCRIPTION_PROVIDER = re.compile(r"[a-z0-9-]+")
 _SUBSCRIPTION_FIELDS = frozenset({"provider", "account", "label", "status", "note"})
 TOP_LEVEL_KEYS = frozenset(
@@ -52,28 +75,11 @@ LANE_EXECUTION_ERROR = (
 REMOTE_LANE_EXECUTION_ERROR = (
     f'{LANE_EXECUTION_ERROR}; lane_execution mode "remote" is not supported'
 )
-# Provider CLI configuration-directory variable per supported provider.
-PROVIDER_HOME_ENV = {
-    "grok": "GROK_HOME",
-    "codex": "CODEX_HOME",
-    "claude": "CLAUDE_CONFIG_DIR",
-    "openrouter": "CLAUDE_CONFIG_DIR",
-}
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
 READ_ONLY_WORKFLOW_KINDS = frozenset(
     {"check", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic"}
-)
-_CLEAR_ENV = (
-    "XAI_API_KEY",
-    "GROK_API_KEY",
-    "OPENAI_API_KEY",
-    "CODEX_API_KEY",
-    *LANE_STRIP_ENV,
-    "GROK_HOME",
-    "CODEX_HOME",
-    "CLAUDE_CONFIG_DIR",
 )
 
 
@@ -81,13 +87,101 @@ class AccountError(StoreError):
     """Configuration does not authorize this AI account or role selection."""
 
 
-def _model_configuration(raw: dict[str, Any]) -> tuple[ModelSlots, str]:
-    """Translate model-selection errors into the configuration error channel."""
+def _read_driver_document(home: Path) -> dict[str, Any] | None:
+    """The ``drivers.json`` object, or ``None`` only when the file is absent.
+
+    A file that exists must hold an object; any other document, ``null``
+    included, fails instead of reading as an absent file.
+    """
+    path = home / DRIVERS_FILE
+    if not path.exists():
+        return None
     try:
-        models = parse_model_slots(raw.get("models"))
-        return models, parse_implementer(raw.get("implementer"), models)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise AccountError(f"Cannot read {DRIVERS_FILE} ({DRIVERS_DOC})") from exc
+    if not isinstance(raw, dict):
+        raise AccountError(f"{DRIVERS_FILE} must be an object ({DRIVERS_HINT})")
+    return raw
+
+
+def load_driver_configuration(home: Path) -> DriverConfiguration:
+    """Read and strictly validate ``drivers.json``; absent means no driver."""
+    raw = _read_driver_document(home)
+    if raw is None:
+        return NO_DRIVER_CONFIGURATION
+    try:
+        return parse_driver_document(raw)
+    except DriverConfigError as exc:
+        raise AccountError(f"{exc} ({DRIVERS_HINT})") from exc
+
+
+def load_recorded_names(home: Path) -> RecordedNames | None:
+    """Read only ``recorded_slots`` of ``drivers.json``; absent means none.
+
+    Stored names must stay readable whatever else the document holds, so no
+    other key is validated here; a driver is validated where it is used.
+    """
+    raw = _read_driver_document(home)
+    if raw is None:
+        return None
+    try:
+        return parse_recorded_slots(raw.get("recorded_slots"))
+    except DriverConfigError as exc:
+        raise AccountError(f"{exc} ({DRIVERS_HINT})") from exc
+
+
+def _require_drivers(config: DriverConfiguration) -> None:
+    """Something names a driver, so drivers.json must exist."""
+    if not config.present:
+        raise AccountError(DRIVERS_NOT_CONFIGURED)
+
+
+def _model_configuration(
+    raw: dict[str, Any], config: DriverConfiguration
+) -> tuple[ModelSlots, str]:
+    """Translate model-selection errors into the configuration error channel."""
+    if raw.get("models") is not None or raw.get("implementer") is not None:
+        _require_drivers(config)
+    try:
+        models = parse_model_slots(raw.get("models"), lane_driver_ids(config.drivers))
+        return models, parse_implementer(
+            raw.get("implementer"), models, declared_driver_ids(config.drivers)
+        )
     except ModelSlotsError as exc:
         raise AccountError(str(exc)) from exc
+
+
+def _account_driver(
+    config: DriverConfiguration, account: str, provider: str
+) -> DriverSpec:
+    _require_drivers(config)
+    spec = config.drivers.get(provider)
+    if spec is None:
+        raise AccountError(
+            f"Unsupported provider for account {account}: {DRIVERS_FILE} "
+            f"configures no such driver ({DRIVERS_DOC})"
+        )
+    if spec.home_env is None:
+        raise AccountError(
+            f"Unsupported provider for account {account}: driver {provider} has "
+            f"no home_env in {DRIVERS_FILE} ({DRIVERS_DOC})"
+        )
+    return spec
+
+
+def _lane_slot(config: DriverConfiguration, slot: Any) -> str:
+    """A lane slot ``<driver>:<kind>`` must name a driver with a lane section."""
+    text = _text(slot, "lane slot")
+    _require_drivers(config)
+    driver, separator, kind = text.partition(":")
+    spec = config.drivers.get(driver)
+    if not separator or not kind or spec is None or spec.lane is None:
+        raise AccountError(
+            f"Lane slot {text} must name a driver with a lane section in "
+            f"{DRIVERS_FILE} ({DRIVERS_DOC})"
+        )
+    return text
 
 
 def _text(value: Any, field: str) -> str:
@@ -112,14 +206,6 @@ def _config_dir(value: Any, field: str) -> str:
     return text
 
 
-def _is_default_claude_dir(config_dir: str) -> bool:
-    """True when ``config_dir`` is Claude Code's default profile directory ``~/.claude``."""
-    try:
-        return Path(config_dir).expanduser().resolve() == (Path.home() / ".claude").resolve()
-    except OSError:
-        return False
-
-
 @dataclass(frozen=True)
 class AIAccount:
     name: str
@@ -134,31 +220,32 @@ class AIRole:
     model: str
     access: str
 
-    def env_prefix(self) -> list[str]:
-        """Return an ``env`` argv prefix that isolates provider configuration.
+    def env_prefix(self, drivers: Mapping[str, DriverSpec]) -> list[str]:
+        """Return an ``env`` argv prefix that isolates driver configuration.
 
-        Clears ambient provider tokens and home variables for the child process
-        only, then sets the provider's configuration-directory variable
-        (``GROK_HOME``, ``CODEX_HOME`` or ``CLAUDE_CONFIG_DIR``) to this role's
-        account ``config_dir``. Does not mutate ``os.environ``. This is process
-        configuration isolation, not a sandbox or a claim that the provider CLI
+        Clears every configured credential variable, the network and
+        certificate overrides, and every configured home variable for the child
+        process only, then sets this driver's ``home_env`` to the account's
+        ``config_dir``. Does not mutate ``os.environ``. This is process
+        configuration isolation, not a sandbox or a claim that the driver CLI
         is already authenticated.
         """
         argv = ["env"]
-        for key in _CLEAR_ENV:
+        for key in role_clear_env(drivers):
             argv.extend(["-u", key])
-        home_var = PROVIDER_HOME_ENV.get(self.account.provider)
-        if home_var is None:
-            raise AccountError(f"Unsupported provider for role {self.name}")
-        if self.account.provider == "claude" and _is_default_claude_dir(self.account.config_dir):
-            # Claude Code keeps the login of its default profile outside that
-            # directory (``~/.claude.json`` and the keychain entry of the default
-            # profile). Pointing CLAUDE_CONFIG_DIR at ``~/.claude`` would start an
+        spec = drivers.get(self.account.provider)
+        if spec is None or spec.home_env is None:
+            raise AccountError(
+                f"Unsupported provider for role {self.name} ({DRIVERS_HINT})"
+            )
+        if is_home_default_dir(spec, self.account.config_dir):
+            # Some driver CLIs keep the login of their default profile outside
+            # that directory, so pointing the variable at it would start an
             # empty, logged-out profile. The default profile is selected by
             # leaving the variable unset; any other directory is a named profile
             # the operator logged in with that variable set.
             return argv
-        argv.append(f"{home_var}={self.account.config_dir}")
+        argv.append(f"{spec.home_env}={self.account.config_dir}")
         return argv
 
 
@@ -189,8 +276,53 @@ class AIAccounts:
     lane_execution: LaneExecution | None = None
     lane_execution_error: str = LANE_EXECUTION_ERROR
     model_configuration_error: str | None = None
-    # OpenRouter and Claude accounts whose usage is polled. Empty is unconfigured.
+    # Spend accounts and window-usage accounts. Empty is unconfigured.
     usage_accounts: tuple[str, ...] = ()
+    # The validated drivers.json of the same load.
+    driver_configuration: DriverConfiguration = NO_DRIVER_CONFIGURATION
+
+    @property
+    def drivers(self) -> Mapping[str, DriverSpec]:
+        return self.driver_configuration.drivers
+
+    @property
+    def recorded_slots(self) -> RecordedNames | None:
+        return self.driver_configuration.recorded_slots
+
+    @property
+    def pane_driver(self) -> str | None:
+        return self.driver_configuration.pane_driver
+
+    def lane_drivers(self) -> tuple[str, ...]:
+        """Configured drivers that may fill a model slot or run a lane."""
+        return lane_driver_ids(self.drivers)
+
+    def declared_drivers(self) -> tuple[str, ...]:
+        """Every configured driver, including record-only implementers."""
+        return declared_driver_ids(self.drivers)
+
+    def driver(self, driver_id: str, *, lane: bool = False) -> DriverSpec:
+        """The configured driver, refused like an unknown ``--vendor``.
+
+        ``lane`` also requires a lane section.
+        """
+        choices = self.lane_drivers() if lane else self.declared_drivers()
+        refused = driver_refusal(self.driver_configuration, driver_id, choices)
+        if refused is not None:
+            raise AccountError(refused)
+        return self.drivers[driver_id]
+
+    def interactive(self, driver_id: str) -> InteractiveSpec:
+        """The driver's interactive section, refused like an unknown ``--provider``."""
+        refused = driver_refusal(
+            self.driver_configuration,
+            driver_id,
+            interactive_driver_ids(self.drivers),
+            name="provider",
+        )
+        if refused is not None:
+            raise AccountError(refused)
+        return require_interactive(self.drivers[driver_id])
 
     def require_model_configuration(self) -> tuple[ModelSlots, str]:
         """Return the explicit slot selection or its deferred configuration error."""
@@ -257,16 +389,40 @@ class AIAccounts:
             raise AccountError(f"No interactive AI role configured for session {session_id}")
         return self.roles[binding.interactive]
 
+    def usage_adapter(self, driver: str, snapshot: str, selection: str) -> UsageSpec:
+        """The validated usage adapter of a selected driver."""
+        return _require_usage(self.driver_configuration, driver, snapshot, selection)
+
+    def pane_markers(self, session_id: str) -> PaneMarkers:
+        """Markers that classify a session's tmux pane.
+
+        The driver of the session's interactive role paints that pane. A session
+        whose role has no interactive driver, or that has no interactive role, is
+        classified with ``pane_driver``; without one the pane cannot be read.
+        """
+        binding = self.sessions.get(session_id)
+        if binding is not None and binding.interactive is not None:
+            spec = self.drivers.get(self.roles[binding.interactive].account.provider)
+            if spec is not None and spec.interactive is not None:
+                return spec.interactive.pane
+        pane_driver = self.pane_driver
+        if pane_driver is not None:
+            interactive = self.drivers[pane_driver].interactive
+            if interactive is not None:
+                return interactive.pane
+        raise AccountError(PANE_UNCLASSIFIED.format(session=session_id))
+
 
 def load_ai_accounts(
     home: Path, *, defer_model_configuration: bool = False
 ) -> AIAccounts:
     path = home / CONFIG_FILE
+    driver_configuration = load_driver_configuration(home)
     if not path.exists():
         # Device configuration has no built-in model assignment.
         model_configuration_error: str | None = None
         try:
-            _model_configuration({})
+            _model_configuration({}, driver_configuration)
         except AccountError as exc:
             if not defer_model_configuration:
                 raise
@@ -278,6 +434,7 @@ def load_ai_accounts(
             None,
             None,
             model_configuration_error=model_configuration_error,
+            driver_configuration=driver_configuration,
         )
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -312,8 +469,7 @@ def load_ai_accounts(
         if not isinstance(entry, dict) or set(entry) - {"provider", "config_dir"}:
             raise AccountError(f"Invalid account fields for {name}")
         provider = _text(entry.get("provider"), "provider")
-        if provider not in SUPPORTED_PROVIDERS:
-            raise AccountError(f"Unsupported provider for account {name}")
+        _account_driver(driver_configuration, name, provider)
         config_dir = _config_dir(entry.get("config_dir"), "config_dir")
         accounts[name] = AIAccount(name, provider, config_dir)
 
@@ -338,7 +494,7 @@ def load_ai_accounts(
         raise AccountError("lanes must be an object or null")
     device_lanes: dict[str, str] = {}
     for slot, role_name in device_lanes_raw.items():
-        _text(slot, "lane slot")
+        _lane_slot(driver_configuration, slot)
         bound = _text(role_name, "lane role")
         if bound not in roles:
             raise AccountError(f"Device lane {slot} references an unknown role")
@@ -365,7 +521,7 @@ def load_ai_accounts(
             raise AccountError(f"Session {session_id} lanes must be an object or null")
         lanes: dict[str, str] = {}
         for slot, role_name in lanes_raw.items():
-            _text(slot, "lane slot")
+            _lane_slot(driver_configuration, slot)
             bound = _text(role_name, "lane role")
             if bound not in roles:
                 raise AccountError(
@@ -380,8 +536,7 @@ def load_ai_accounts(
         if usage_session not in sessions or sessions[usage_session].interactive is None:
             raise AccountError("usage_session requires a configured interactive session")
         selected = roles[sessions[usage_session].interactive]
-        if selected.account.provider != "grok":
-            raise AccountError("usage_session currently supports the Grok billing adapter only")
+        _require_usage(driver_configuration, selected.account.provider, "period", "usage_session")
     models: ModelSlots | None = None
     implementer: str | None = None
     model_configuration_error: str | None = None
@@ -389,7 +544,7 @@ def load_ai_accounts(
         # New model checks follow the manifest's established account, role, and
         # session preconditions. Interactive launchers may defer this check
         # until their older launch preconditions have run.
-        models, implementer = _model_configuration(raw)
+        models, implementer = _model_configuration(raw, driver_configuration)
     except AccountError as exc:
         if not defer_model_configuration:
             raise
@@ -405,10 +560,18 @@ def load_ai_accounts(
         account = accounts.get(account_name)
         if account is None:
             raise AccountError(f"usage_accounts references unknown account {account_name}")
-        if account.provider not in USAGE_ACCOUNT_PROVIDERS:
-            raise AccountError(
-                f"usage_accounts account {account_name} must use provider openrouter or claude"
-            )
+        configured = driver_configuration.drivers.get(account.provider)
+        snapshot = (
+            configured.usage.snapshot
+            if configured is not None and configured.usage is not None
+            else None
+        )
+        _require_usage(
+            driver_configuration,
+            account.provider,
+            "windows" if snapshot == "windows" else "spend",
+            f"usage_accounts account {account_name}",
+        )
         if account_name in usage_accounts:
             raise AccountError(f"usage_accounts contains duplicate account {account_name}")
         usage_accounts.append(account_name)
@@ -424,7 +587,21 @@ def load_ai_accounts(
         lane_execution_error=_lane_execution_error(lane_execution_raw),
         model_configuration_error=model_configuration_error,
         usage_accounts=tuple(usage_accounts),
+        driver_configuration=driver_configuration,
     )
+
+
+def _require_usage(
+    config: DriverConfiguration, driver: str, snapshot: str, selection: str
+) -> UsageSpec:
+    """A usage selection needs its driver's usage adapter of the right shape."""
+    spec = config.drivers.get(driver)
+    if spec is None or spec.usage is None or spec.usage.snapshot != snapshot:
+        raise AccountError(
+            f"{selection} uses driver {driver}, which has no {snapshot} usage "
+            f"section in {DRIVERS_FILE} ({DRIVERS_DOC})"
+        )
+    return spec.usage
 
 
 def _parse_lane_execution(value: Any) -> LaneExecution | None:
@@ -451,9 +628,10 @@ def _lane_execution_error(value: Any) -> str:
 def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
     """The device's review slots and effective implementer selection."""
     path = home / CONFIG_FILE
+    driver_configuration = load_driver_configuration(home)
     if not path.exists():
         # Use the central fail-closed error for an unconfigured device.
-        return _model_configuration({})
+        return _model_configuration({}, driver_configuration)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
@@ -464,17 +642,17 @@ def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
             "usage_accounts, models, implementer, lanes, and lane_execution"
         )
     # Device-configuration read: task creation never supplies a built-in assignment.
-    return _model_configuration(raw)
+    return _model_configuration(raw, driver_configuration)
 
 
 def load_model_slots(home: Path) -> ModelSlots:
     """The device's explicitly configured model slots.
 
     Checks the file is readable JSON with known top-level keys and validates the
-    ``models`` and ``implementer`` selections; errors inside ``accounts``,
-    ``roles``, ``sessions``, ``lanes``, ``lane_execution`` or ``usage_accounts``
-    do not stop task
-    creation. Launches still validate the whole file.
+    ``models`` and ``implementer`` selections against ``drivers.json``; errors
+    inside ``accounts``, ``roles``, ``sessions``, ``lanes``, ``lane_execution``
+    or ``usage_accounts`` do not stop task creation. Launches still validate
+    the whole file.
     """
     return load_model_configuration(home)[0]
 

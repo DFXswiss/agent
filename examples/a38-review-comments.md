@@ -12,12 +12,12 @@ This is the comment Ready reads. Post it only when that run found no defects. `N
 
 ````
 EN:
-First review with Grok 4.7
+First review with Model A 4.7
 Ready after 2 review passes.
 The payment amount is checked against the invoice before it is sent.
 
 DE:
-Erster Review mit Grok 4.7
+Erster Review mit Model A 4.7
 Bereit nach 2 Review-Durchläufen.
 Der Zahlungsbetrag wird vor dem Senden gegen die Rechnung geprüft.
 
@@ -27,18 +27,18 @@ Der Zahlungsbetrag wird vor dem Senden gegen die Rechnung geprüft.
 Head: `0123456789abcdef0123456789abcdef01234567`
 Runs: `conformity-a` with `logic-a`. Two reviews are required.
 Lane `conformity-a`:
-Provider: xAI
-Model: Grok 4.7
-Model number: grok-4.7
+Provider: Vendor A
+Model: Model A 4.7
+Model number: model-a-4.7
 Result: pass
 Prompt:
 ```text
 Review the complete PR diff for conformity with CONTRIBUTING.md.
 ```
 Lane `logic-a`:
-Provider: xAI
-Model: Grok 4.7
-Model number: grok-4.7
+Provider: Vendor A
+Model: Model A 4.7
+Model number: model-a-4.7
 Result: pass
 Prompt:
 ```text
@@ -49,7 +49,7 @@ Set aside: none.
 
 <!-- A38-REVIEW:v1 -->
 ```json
-{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":2,"defects":0,"set_aside":"none","lanes":[{"id":"conformity-a","result":"pass","status":"complete","provider":"xAI","model":"Grok 4.7","model_number":"grok-4.7","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-a","result":"pass","status":"complete","provider":"xAI","model":"Grok 4.7","model_number":"grok-4.7","prompt":"Review the complete PR diff for logical correctness."}]}
+{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":2,"defects":0,"set_aside":"none","lanes":[{"id":"conformity-a","result":"pass","status":"complete","provider":"Vendor A","model":"Model A 4.7","model_number":"model-a-4.7","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-a","result":"pass","status":"complete","provider":"Vendor A","model":"Model A 4.7","model_number":"model-a-4.7","prompt":"Review the complete PR diff for logical correctness."}]}
 ```
 <!-- /A38-REVIEW:v1 -->
 
@@ -62,11 +62,11 @@ A later comment. Ready requires it together with the first review. One review is
 
 ````
 EN:
-Second review with Codex Astra 6
+Second review with Model B 6
 No defects.
 
 DE:
-Zweiter Review mit Codex Astra 6
+Zweiter Review mit Model B 6
 Keine Mängel.
 
 <details>
@@ -79,18 +79,18 @@ Der Zahlungsbetrag wird vor dem Senden gegen die Rechnung geprüft.
 Head: `0123456789abcdef0123456789abcdef01234567`
 Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
 Review the complete PR diff for conformity with CONTRIBUTING.md.
 ```
 Lane `logic-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
@@ -101,7 +101,7 @@ Set aside: none.
 
 <!-- A38-REVIEW:v1 -->
 ```json
-{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":0,"set_aside":"none","blocks_merge":false,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for logical correctness."}]}
+{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":0,"set_aside":"none","blocks_merge":false,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for logical correctness."}]}
 ```
 <!-- /A38-REVIEW:v1 -->
 
@@ -114,11 +114,11 @@ One sentence. `blocks_merge` is false and `defects` is an integer >= 1. Each def
 
 ````
 EN:
-Second review with Codex Astra 6
+Second review with Model B 6
 There are defects that do not block the merge.
 
 DE:
-Zweiter Review mit Codex Astra 6
+Zweiter Review mit Model B 6
 Es gibt Mängel, die den Merge nicht blockieren.
 
 <details>
@@ -131,18 +131,18 @@ Der Betrag kommt aus dem Request, der Aufrufer kann zu wenig zahlen. Das blockie
 Head: `0123456789abcdef0123456789abcdef01234567`
 Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
 Review the complete PR diff for conformity with CONTRIBUTING.md.
 ```
 Lane `logic-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
@@ -153,7 +153,7 @@ Set aside: none.
 
 <!-- A38-REVIEW:v1 -->
 ```json
-{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":2,"set_aside":"none","blocks_merge":false,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for logical correctness."}]}
+{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":2,"set_aside":"none","blocks_merge":false,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for logical correctness."}]}
 ```
 <!-- /A38-REVIEW:v1 -->
 
@@ -166,11 +166,11 @@ One sentence. `blocks_merge` is true and `defects` is an integer >= 1. The guard
 
 ````
 EN:
-Second review with Codex Astra 6
+Second review with Model B 6
 There are defects that must be fixed.
 
 DE:
-Zweiter Review mit Codex Astra 6
+Zweiter Review mit Model B 6
 Es gibt Mängel, die behoben werden müssen.
 
 <details>
@@ -183,18 +183,18 @@ Der Betrag kommt aus dem Request, der Aufrufer kann zu wenig zahlen. Das muss vo
 Head: `0123456789abcdef0123456789abcdef01234567`
 Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
 Review the complete PR diff for conformity with CONTRIBUTING.md.
 ```
 Lane `logic-b`:
-Provider: OpenAI
-Model: Codex Astra 6
-Model number: codex-astra-6
+Provider: Vendor B
+Model: Model B 6
+Model number: model-b-6
 Result: pass
 Prompt:
 ```text
@@ -205,7 +205,7 @@ Set aside: none.
 
 <!-- A38-REVIEW:v1 -->
 ```json
-{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":1,"set_aside":"none","blocks_merge":true,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"OpenAI","model":"Codex Astra 6","model_number":"codex-astra-6","prompt":"Review the complete PR diff for logical correctness."}]}
+{"schema":"a38-review/v2","head":"0123456789abcdef0123456789abcdef01234567","passes":1,"defects":1,"set_aside":"none","blocks_merge":true,"lanes":[{"id":"conformity-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for conformity with CONTRIBUTING.md."},{"id":"logic-b","result":"pass","status":"complete","provider":"Vendor B","model":"Model B 6","model_number":"model-b-6","prompt":"Review the complete PR diff for logical correctness."}]}
 ```
 <!-- /A38-REVIEW:v1 -->
 
@@ -229,7 +229,7 @@ The pass-count lines are not the second review. Neither is a mixed pair, nor the
 
 ```
 EN:
-Second review with Codex Astra 6
+Second review with Model B 6
 There are defects.
 They do not block the merge.
 ```
@@ -243,7 +243,7 @@ No defects, and nothing in this review blocks the merge.
 
 ```
 EN:
-Second review with Codex Astra 6
+Second review with Model B 6
 No defects.
 Nothing in this review blocks the merge.
 ```

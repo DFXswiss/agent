@@ -753,7 +753,7 @@ def test_knock_daemon_tick_skips_pr_merged_without_die(
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan_usage)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan_usage)
     monkeypatch.setattr("agent_cli.main.scan_merged", fake_scan_merged)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
@@ -806,7 +806,7 @@ def test_knock_tick_with_hub_url_and_device_token(
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan_usage)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan_usage)
     monkeypatch.setattr("agent_cli.main.scan_merged", fake_scan_merged)
     monkeypatch.setattr("agent_cli.pending.scan_pending", fake_scan_pending)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)

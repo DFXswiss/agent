@@ -53,9 +53,9 @@ PHASES = (
     "publish_draft",
     "inner_review",
     "tests",
-    "pr_gates_grok",
+    "pr_gates_first",
     "a38_first_comment",
-    "pr_gates_codex",
+    "pr_gates_second",
     "a38_second_comment",
     "await_second_review",
     "ci",
@@ -192,14 +192,14 @@ _CHECKS = (
     Check(
         "review_1_quality",
         "gate",
-        on_pending="route:pr_gates_grok",
+        on_pending="route:pr_gates_first",
         on_no="route:implement",
         head_bound=True,
     ),
     Check(
         "review_1_logic",
         "gate",
-        on_pending="route:pr_gates_grok",
+        on_pending="route:pr_gates_first",
         on_no="route:implement",
         head_bound=True,
     ),
@@ -228,7 +228,7 @@ _CHECKS = (
     Check(
         "review_2_recorded",
         "gate",
-        on_pending="route:pr_gates_codex",
+        on_pending="route:pr_gates_second",
         head_bound=True,
     ),
     Check(
@@ -361,7 +361,7 @@ _ACTIONS = (
     ),
     Action(
         "first_review",
-        ("pr_gates_grok",),
+        ("pr_gates_first",),
         (
             R("order_active"),
             R("tests_green"),
@@ -384,15 +384,15 @@ _ACTIONS = (
     ),
     Action(
         "second_review",
-        ("pr_gates_codex", "await_second_review"),
+        ("pr_gates_second", "await_second_review"),
         (
             R("order_active"),
             R("review_1_quality"),
             R("review_1_logic"),
             R("first_comment_posted", when="a38"),
-            R("head_signed_clean", when="phase:pr_gates_codex"),
-            R("checkout_owned", when="phase:pr_gates_codex"),
-            R("no_live_lane", OI, when="phase:pr_gates_codex"),
+            R("head_signed_clean", when="phase:pr_gates_second"),
+            R("checkout_owned", when="phase:pr_gates_second"),
+            R("no_live_lane", OI, when="phase:pr_gates_second"),
         ),
         waived_by="review_2",
         waived_route="ci",

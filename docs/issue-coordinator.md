@@ -18,7 +18,7 @@ The same coordinator runs local orders under the rules of
 | Orders, precondition registry, check lanes, dashboard order routes | Implemented in this repository. A worker accepts orders only with `"orders": true`. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude and OpenRouter use Claude Code restricted mode with only worktree file tools, disabled slash commands and strict MCP configuration; Codex is refused as slot `first`. That is process argv hardening only. |
+| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv is the first-slot driver's `lane.argv.write` template from `drivers.json` plus its `lane.write_hardening` groups; a driver configured with `lane.may_run_commands: true` is refused as slot `first`. That is process argv hardening only. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -279,8 +279,12 @@ for worker in workers.values():
   second slot is not external. This includes an A38 worker with
   `a38_second_review: "model"`. A worker with `orders` also requires
   `<first>:check`. The coordinator
-  pins `models` on each task it accepts and refuses `models.first = codex`,
-  because a codex implementer can run commands. It requires `implementer` to
+  pins `models` on each task it accepts and refuses a `models.first` driver
+  that `drivers.json` configures with `lane.may_run_commands: true`, because
+  such an implementer can run commands (`COMMAND_DRIVER_FIRST_REFUSED`: `models.first
+  = <driver> is not supported by the coordinator: driver <driver> is configured
+  with may_run_commands, so its implementer lane cannot be restricted from
+  running commands`). It requires `implementer` to
   be absent or equal to `models.first`; a separate implementer is refused at
   preflight, task creation and launch with `SEPARATE_IMPLEMENTER_REFUSED`. A
   required `models` block and `lane_execution` are part of the execution
@@ -288,8 +292,10 @@ for worker in workers.values():
   configuration changed" until it is restored. A task accepted under the
   preceding hash formula accepts that legacy hash once and is immediately
   repinned when its only formula differences are the newly added
-  `lane_execution` field and the old omission of the historical `grok`/`codex`
-  `models` value. Other configuration changes still stop the task.
+  `lane_execution` field and the old omission of a `models` value equal to the
+  slots of `recorded_slots` in `drivers.json`. Other configuration changes still
+  stop the task. Driver descriptions in `drivers.json` are not part of the
+  execution binding.
   `lane_execution` accepts only `this-device-is-lane-host`: the local harness's
   lane starter starts the coordinator on the external lane host. The Agent
   coordinator does not SSH, mirror, or copy a lane from a work device.
@@ -314,14 +320,14 @@ for worker in workers.values():
   argv lists run via a Python bounded subprocess (process-group kill on
   timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
   (absent on stock macOS). Tests inject fakes. The implementer argv
-  is hardened per first-slot provider: Grok with `--deny Bash`,
-  `--no-subagents`, and `--disable-web-search`; Claude and OpenRouter through
-  Claude Code `--restricted`, `--strict-mcp-config`, disabled slash commands,
-  and only `Read,Grep,Glob,Edit,Write` for the worktree. Read-only review lanes
-  get only `Read,Grep,Glob` plus the coordinator control directory as an
-  explicit read directory. OpenRouter account configuration must not overlap
-  either readable root. Codex is refused as slot `first`. This is process argv
-  hardening, **not** universal sandbox enforcement.
+  is the first-slot driver's `lane.argv.write` template, and every
+  `lane.write_hardening` group of that driver that the argv does not already
+  contain is appended. Read-only review lanes use `lane.argv.read` and, when
+  the driver configures `lane.read_dir_args`, get the coordinator control
+  directory as an explicit read directory. The `config_dir` of an account whose
+  driver has `lane.credential_file` must not overlap either readable root. A
+  driver with `lane.may_run_commands: true` is refused as slot `first`. This is
+  process argv hardening, **not** universal sandbox enforcement.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
   `AGENT_COORDINATOR_HEAD`, `AGENT_COORDINATOR_BASE`, `AGENT_COORDINATOR_REPO`,
@@ -357,9 +363,9 @@ One head follows this order:
 | 1 | implementation; signed commit; push | `implement` | one implementer lane, slot `first` |
 | 2 | inner review of the worktree | `inner_review` | one reviewer lane, slot `first`; for an order the same model as the implementer |
 | 3 | local checks; A38 report comment | `tests` | none |
-| 4 | first review pair on the checked head | `pr_gates_grok` | quality and logic, slot `first` |
+| 4 | first review pair on the checked head | `pr_gates_first` | quality and logic, slot `first` |
 | 5 | first review comment (A38) | `a38_first_comment` | none |
-| 6 | second review pair | `pr_gates_codex` | quality and logic, slot `second` |
+| 6 | second review pair | `pr_gates_second` | quality and logic, slot `second` |
 | 7 | second review comment (A38 model route) | `a38_second_comment` | none |
 | 8 | CI, readiness, Ready | `ci` … | none |
 
@@ -545,13 +551,18 @@ pair.
    independent invocations; agent rows prepared on the main thread, subprocesses
    in threads, results persisted on the main thread), then model slot `second`
    quality+logic the same way only after both first-slot dimensions are approved
-   on that head. The persisted phase names `pr_gates_grok` and
-   `pr_gates_codex` select stages `review-1` and `review-2`, respectively. Author
+   on that head. The phase names `pr_gates_first` and
+   `pr_gates_second` select stages `review-1` and `review-2`, respectively.
+   A task whose stored phases an earlier version named after the slot's driver
+   is rewritten to these names when the coordinator next advances it, if `recorded_slots` in
+   `drivers.json` names those drivers
+   ([docs/ai-accounts.md#recorded-slot-names](ai-accounts.md#recorded-slot-names));
+   without it the old name fails as an unknown coordinator phase. Author
    session does not sit those reviews. Incomplete/unavailable vendor output
    records an `unavailable` gate and attempts to close the matching checklist
    key as `unavailable` with bounded evidence for every affected dimension when
    `close_allowed` permits it, then publishes a GitHub-visible blocker with
-   `resume_phase` of `pr_gates_grok` / `pr_gates_codex` and a pinned
+   `resume_phase` of `pr_gates_first` / `pr_gates_second` and a pinned
    `question_activity_id` — not a rejected complete gate and not an implementer
    fix loop. The blocker names `status` and `result` of every affected
    dimension. After `Not a code rejection.` it adds `Lane output:` with one
@@ -1202,9 +1213,9 @@ Except for `close_draft`, every row below also starts with `order_active`:
 | `commit_push` | inside `implement`; `publish_draft` | `implementer_outcome` in implement; `checkout_owned` |
 | `inner_review` | `inner_review` | `draft_open`, `implementer_done`, `checkout_owned`, `no_live_lane` |
 | `tests` | `tests` | `reviewer_approved`, `head_signed_clean`, `checkout_owned` |
-| `first_review` | `pr_gates_grok` | `tests_green`, `head_published`, `report_posted` for A38, `head_signed_clean`, `checkout_owned`, `no_live_lane` |
+| `first_review` | `pr_gates_first` | `tests_green`, `head_published`, `report_posted` for A38, `head_signed_clean`, `checkout_owned`, `no_live_lane` |
 | `first_review_comment` | `a38_first_comment` | `review_1_quality`, `review_1_logic`, `report_posted` |
-| `second_review` | `pr_gates_codex`, `await_second_review` | `review_1_quality`, `review_1_logic`, `first_comment_posted` for A38; in `pr_gates_codex`, `head_signed_clean`, `checkout_owned`, `no_live_lane`; waived by `review_2` |
+| `second_review` | `pr_gates_second`, `await_second_review` | `review_1_quality`, `review_1_logic`, `first_comment_posted` for A38; in `pr_gates_second`, `head_signed_clean`, `checkout_owned`, `no_live_lane`; waived by `review_2` |
 | `second_review_comment` | `a38_second_comment` | `first_comment_posted`, `review_2_recorded`; waived by `review_2` |
 | `ci` | `ci` | `draft_open`, `review_2` |
 | `readiness` | `readiness` | `tests_green`, `ci_green`, `review_1_quality`, `review_1_logic`, `review_2`, `head_signed_clean`, `pr_mergeable` |
@@ -1221,8 +1232,8 @@ records actor and reason on the fact, is final, is not head-bound, and prevents
 another resolver run.
 
 For order tasks the table covers the full flow. For issue tasks the registry
-checks `no_live_lane` before `implement`, `inner_review`, `pr_gates_grok`, and
-`pr_gates_codex`; `round_budget` before `implement`; and `pr_mergeable` before
+checks `no_live_lane` before `implement`, `inner_review`, `pr_gates_first`, and
+`pr_gates_second`; `round_budget` before `implement`; and `pr_mergeable` before
 `readiness` and `leave_draft`. Other issue preconditions remain in phase
 handlers.
 
@@ -1252,7 +1263,9 @@ script validates. The script never interprets free text. This is process argv
 hardening, not a sandbox.
 
 The lane uses model slot `first` through `<first>:check`, bound to a read-only
-role. `codex` cannot run it. It has no `STATUS` line; each check defines its
+role. A driver without `lane.argv.judgment` in `drivers.json` cannot run it
+(`driver <driver> has no lane.argv.judgment; it cannot run a check lane`). It
+has no `STATUS` line; each check defines its
 grammar.
 
 `duplicates_checked` is required before opening an order draft. The script
@@ -1677,7 +1690,8 @@ GitHub login. Optional
 configured repositories; owner-scoped repositories may omit
 `owner_readiness_argv` only with the explicit hub deviation statement described
 above. The device's
-models must pin a non-Codex first provider. The external route pins
+models must pin a first provider whose driver is not configured with
+`lane.may_run_commands: true`. The external route pins
 `"second": null`. With `a38_second_review: "model"`, model slot `second` must be
 set and `second_reviewers` is not required. A null second slot is refused for
 every non-A38 worker. The task pins the A38 second-review mode at creation. The
@@ -1706,7 +1720,11 @@ validates the trusted-base A38 policy, runs the complete A38 suite in
 report, and posts that report unchanged with the worker GitHub account. A
 failure returns bounded findings to the implementer. The first-slot quality and
 logic gates then run as usual. Their approved result is rendered and validated
-as the `conformity-a` / `logic-a` author comment.
+as the `conformity-a` / `logic-a` author comment. The `provider` of each lane in
+that record, and in a model-route second comment, is the `display_name` that
+`drivers.json` gives the driver recorded on the stage; a recorded driver without
+one stops the comment with `driver <driver> recorded on <stage> has no
+display_name (see drivers.json, docs/ai-accounts.md#drivers)`.
 
 On the external route, the coordinator does not launch model slot `second`. It sends one
 `review-request` person ping to every configured reviewer. A reviewer returns a
@@ -1725,7 +1743,7 @@ strict result through session mail without calling GitHub:
     "lanes": [
       {
         "id": "conformity-b",
-        "provider": "OpenAI",
+        "provider": "Vendor B",
         "model": "Reviewer Model 2",
         "model_number": "reviewer-model-2",
         "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
@@ -1734,7 +1752,7 @@ strict result through session mail without calling GitHub:
       },
       {
         "id": "logic-b",
-        "provider": "OpenAI",
+        "provider": "Vendor B",
         "model": "Reviewer Model 2",
         "model_number": "reviewer-model-2",
         "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
@@ -1772,9 +1790,13 @@ the newest passing review is recorded and a pass after a block on the same head
 (also after the merge) closes them. It continues accepting
 unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
-The old stages `grok-pr` and `codex-pr` and old keys `grok_pr_*` and
-`codex_pr_*` are legacy aliases: CLI input accepts and warns about them, and
-stored rows remain readable without a database rewrite.
+Stage and key names that an earlier version derived from the driver of each
+slot (`<driver>-pr`, `<driver>_pr_*`) are legacy aliases when `recorded_slots`
+in `drivers.json` names those drivers: CLI input accepts and warns about them,
+and stored rows remain readable without a database rewrite. Without that entry
+the coordinator does not advance a task whose checklist holds such a key and
+reports it as blocked
+([docs/ai-accounts.md#recorded-slot-names](ai-accounts.md#recorded-slot-names)).
 Each tick takes in all queued unread mail for the head, ordered by the mail
 row's replica change time (`updated_at`, equal times by row id), and the newest
 review decides. A review older than one already posted for the head is
@@ -1799,11 +1821,11 @@ Every saved first-comment body is parsed and checked against the declaration,
 visible record, and machine block before checkpointing, publication, or result
 reconciliation; its declared head and pass count must equal the checkpoint.
 
-The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
+The A38 phase route is `publish_draft` → `tests` → `pr_gates_first` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
 With `a38_second_review: "model"`, the route after the first comment is
-`pr_gates_codex` → `a38_second_comment` → `ci` → `readiness` → `await_ready`.
+`pr_gates_second` → `a38_second_comment` → `ci` → `readiness` → `await_ready`.
 The script runs the second-slot quality and logic lanes, renders their comment
 through the same guard renderer without a reviewer line, and posts it as the
 pull-request author. A rejected pair posts a blocking second comment with

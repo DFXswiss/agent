@@ -36,8 +36,10 @@ from agent_cli.coordinator_checks import (
 from agent_cli.coordinator_common import CoordinatorError, coord, save_task, task_text_path
 from agent_cli.coordinator_lanes import record_gate
 from agent_cli.coordinator_runtime import _ensure_checklist_rows, _ensure_round
+from agent_cli.model_slots import UnrecordedSlotsError
 from agent_cli.preconditions import CHECKS, REGISTRY_KEYS
 from agent_cli.store import Store, StoreError
+from driver_fixtures import install_recorded_slots
 from test_coordinator import patch_execute_github, seed_task
 from test_coordinator_support import (
     FakeGh,
@@ -67,7 +69,7 @@ def _task(phase: str = "accept", **checkpoint) -> dict:
         "workflow": "implement",
         "payload": {"coordinator": c},
         "state": "open",
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
     }
 
 
@@ -130,7 +132,7 @@ def _issue(store: Store, worker, *, phase: str, state: str = "open", **checkpoin
             "payload": {"coordinator": c},
             "state": state,
             "current_round": 0,
-            "models": {"first": "grok", "second": "codex"},
+            "models": {"first": "driver-a", "second": "driver-b"},
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
             "change_summary_en": None,
@@ -181,12 +183,19 @@ def test_applies_predicates():
 
 @pytest.mark.no_pg
 def test_route_phase_alias():
-    assert route_phase("second_review", _task()) == "pr_gates_codex"
+    assert route_phase("second_review", _task()) == "pr_gates_second"
     historical = _task()
     historical.pop("models")
-    assert route_phase("second_review", historical) == "pr_gates_codex"
+    # Without recorded_slots an unpinned task is not routed as an external
+    # second review; the missing configuration is reported.
+    with pytest.raises(UnrecordedSlotsError, match="configure recorded_slots"):
+        route_phase("second_review", historical)
+    # An unpinned task reads the recorded slots, as a store opened on a home
+    # with drivers.json reads them.
+    install_recorded_slots()
+    assert route_phase("second_review", historical) == "pr_gates_second"
     external = _task()
-    external["models"] = {"first": "grok", "second": None}
+    external["models"] = {"first": "driver-a", "second": None}
     assert route_phase("second_review", external) == "await_second_review"
     assert route_phase("tests", external) == "tests"
 
@@ -254,7 +263,7 @@ def test_existing_fact_readers(tmp_path, monkeypatch):
     task = _order(
         store,
         worker,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         checklist=True,
         head_sha=H,
         pr_number=42,
@@ -379,7 +388,7 @@ def test_existing_fact_readers(tmp_path, monkeypatch):
         task,
         stage="review-1",
         dimension="quality",
-        vendor="grok",
+        vendor="driver-a",
         verdict="approved",
         head=H,
         agent_id="agent-1",
@@ -392,7 +401,7 @@ def test_existing_fact_readers(tmp_path, monkeypatch):
         task,
         stage="review-1",
         dimension="quality",
-        vendor="grok",
+        vendor="driver-a",
         verdict="rejected",
         head=H,
         agent_id="agent-1",
@@ -406,7 +415,7 @@ def test_existing_fact_readers(tmp_path, monkeypatch):
         task,
         stage="review-1",
         dimension="quality",
-        vendor="grok",
+        vendor="driver-a",
         verdict="approved",
         head=B,
         agent_id="agent-1",
@@ -655,7 +664,7 @@ def test_route_to_publish_draft_sets_resume_phase(tmp_path, monkeypatch):
     task = _order(
         store,
         worker,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         head_sha=H,
         published_head=B,
         evidence={"tests_pass": True, "tests_head": H},
@@ -663,7 +672,7 @@ def test_route_to_publish_draft_sets_resume_phase(tmp_path, monkeypatch):
     lines = evaluate_action(store, worker, task, fake, None, action="first_review")
     assert lines == ["check head_published is pending; routing to publish_draft"]
     assert coord(task)["phase"] == "publish_draft"
-    assert coord(task)["resume_phase"] == "pr_gates_grok"
+    assert coord(task)["resume_phase"] == "pr_gates_first"
     assert coord(task)["gate_route"]["count"] == 1
 
 
@@ -672,17 +681,17 @@ def test_route_loop_blocks(tmp_path, monkeypatch):
     task = _order(
         store,
         worker,
-        phase="pr_gates_grok",
+        phase="pr_gates_first",
         head_sha=H,
         published_head=B,
         evidence={"tests_pass": True, "tests_head": H},
     )
     for _ in range(3):
-        coord(task)["phase"] = "pr_gates_grok"
+        coord(task)["phase"] = "pr_gates_first"
         lines = evaluate_action(store, worker, task, fake, None, action="first_review")
     assert lines is not None
     assert coord(task)["phase"] == "blocked"
-    assert coord(task)["resume_phase"] == "pr_gates_grok"
+    assert coord(task)["resume_phase"] == "pr_gates_first"
     assert coord(task)["blocker"] == (
         "Check head_published stays pending after its resolver phase publish_draft ran."
     )
@@ -700,14 +709,14 @@ def test_gate_route_is_cleared_when_its_action_passes(tmp_path, monkeypatch):
     )
     assert evaluate_action(
         store, worker, task, fake, None, action="first_review_comment"
-    ) == ["check review_1_quality is pending; routing to pr_gates_grok"]
+    ) == ["check review_1_quality is pending; routing to pr_gates_first"]
     for dimension in ("quality", "logic"):
         record_gate(
             store,
             task,
             stage="review-1",
             dimension=dimension,
-            vendor="grok",
+            vendor="driver-a",
             verdict="approved",
             head=H,
             agent_id="agent-1",
@@ -966,7 +975,7 @@ def test_commit_push_gate_blocks_an_order_without_checkout(tmp_path, monkeypatch
             "task_id": ORDER_ID,
             "round": 0,
             "role": "implementer",
-            "vendor": "grok",
+            "vendor": "driver-a",
             "status": "done",
         },
     )

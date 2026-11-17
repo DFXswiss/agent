@@ -38,19 +38,21 @@ from .coordinator_common import (
 )
 from .coordinator_exec import run_bounded
 from .coordinator_lanes import (
+    _coordinator_lane_driver,
     _coordinator_path_replacements,
     _record_lane_audit,
     _redact_coordinator_lane_text,
 )
+from .drivers import (
+    JUDGMENT_UNSUPPORTED,
+    credential_dir_overlap_error,
+    judgment_argv,
+    lane_scrub_env,
+)
 from .lane import (
-    CODEX_CHECK_LANE_REFUSED,
     LANE_MODEL_LIMIT,
-    OUTPUT_FILE_VENDORS,
-    SPEC_VIA_STDIN,
     LaneResult,
     finalize_lane_output,
-    judgment_argv,
-    openrouter_path_error,
     output_read_failure,
     redact_lane_text,
     sanitized_lane_argv,
@@ -135,11 +137,15 @@ def run_check_lane(
         vendor = models_for_new_record(task).first
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if vendor == "codex":
-        raise CoordinatorError(CODEX_CHECK_LANE_REFUSED)
 
     try:
         ai = load_ai_accounts(store.home)
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    driver, io = _coordinator_lane_driver(ai, vendor)
+    if driver.lane is None or driver.lane.argv_judgment is None:
+        raise CoordinatorError(JUDGMENT_UNSUPPORTED.format(driver=vendor))
+    try:
         selected = ai.for_lane(
             worker.session_id, "check", vendor, require_execution=False
         )
@@ -160,10 +166,11 @@ def run_check_lane(
     except OSError as exc:
         raise CoordinatorError("cannot create a fresh check lane directory") from exc
 
-    if vendor == "openrouter":
-        overlap = openrouter_path_error(selected.account.config_dir, str(cwd))
-        if overlap is not None:
-            raise CoordinatorError(overlap)
+    overlap = credential_dir_overlap_error(
+        driver, selected.account.config_dir, str(cwd)
+    )
+    if overlap is not None:
+        raise CoordinatorError(overlap)
 
     for row in store.rows("agent"):
         if (
@@ -183,7 +190,7 @@ def run_check_lane(
     replacements = _coordinator_path_replacements(store, worker, task)
     lane_output: str | None = None
     try:
-        if vendor in OUTPUT_FILE_VENDORS:
+        if io.output_file:
             try:
                 fd, lane_output = tempfile.mkstemp(
                     prefix=f"agent-check-{vendor}-", suffix=".txt"
@@ -194,16 +201,17 @@ def run_check_lane(
                     "cannot create a check lane output file"
                 ) from exc
         argv = [
-            *selected.env_prefix(),
+            *selected.env_prefix(ai.drivers),
             *judgment_argv(
-                vendor,
+                driver,
+                scrub=lane_scrub_env(ai.drivers),
                 spec_file=str(spec_path),
                 cwd=str(cwd),
                 model=selected.model,
                 output_file=lane_output,
             ),
         ]
-        stdin_text = prompt if vendor in SPEC_VIA_STDIN else None
+        stdin_text = prompt if io.stdin else None
         store.write(
             "agent",
             "insert",
@@ -286,14 +294,14 @@ def run_check_lane(
                         stderr=stderr,
                         exc=exc,
                         config_dir=config_dir,
+                        audit_stderr_when_empty=io.audit_stderr_when_empty,
                     )
                 else:
                     finalized = finalize_lane_output(
-                        vendor,
+                        io,
                         stdout,
                         output_text,
                         cwd=str(cwd),
-                        stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
                         config_dir=config_dir,
                     )
                     safe_text = _redact_coordinator_lane_text(
@@ -339,6 +347,7 @@ def run_check_lane(
                     tools_truncated=(
                         finalized.tools_truncated if finalized is not None else False
                     ),
+                    audit_stderr_when_empty=io.audit_stderr_when_empty,
                 )
             row = store.row("agent", aid)
             if row is not None and row.get("status") == "working":

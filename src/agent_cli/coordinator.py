@@ -33,8 +33,8 @@ LaneRunner = Callable[[list[str], str | None], Any]
 
 LOCK_PREFIX = "coordinator-worker:"
 _LOGIN_ARGV_TAIL = ["gh", "api", "user", "--jq", ".login"]
-# Reuse of one successful gh api user check on this device. This is not
-# CLAUDE_USAGE_POLL_SECONDS, which only spaces Claude subscription usage reads.
+# Reuse of one successful gh api user check on this device. The bound is
+# independent of any usage adapter's poll interval.
 LOGIN_REUSE_SECONDS = 15 * 60
 
 

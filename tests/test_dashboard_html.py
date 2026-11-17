@@ -50,14 +50,14 @@ def test_dashboard_html_contains_usage_table() -> None:
     assert ".reverse(" not in html
 
 
-def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> None:
+def test_dashboard_usage_rows_separate_spend_accounts_and_show_usd() -> None:
     snapshots = [
         {
             "type": "usage.snapshot",
             "payload": {
-                "vendor": "openrouter",
-                "provider": "openrouter",
-                "account": "router-a",
+                "vendor": "driver-d",
+                "provider": "driver-d",
+                "account": "spend-a",
                 "usage_usd": 1.25,
                 "limit_usd": 10.0,
                 "limit_reset": "2026-12-01T00:00:00Z",
@@ -66,9 +66,9 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
         {
             "type": "usage.snapshot",
             "payload": {
-                "vendor": "openrouter",
-                "provider": "openrouter",
-                "account": "router-b",
+                "vendor": "driver-d",
+                "provider": "driver-d",
+                "account": "spend-b",
                 "usage_usd": 2.5,
                 "limit_usd": 20.0,
                 "limit_reset": "2026-12-02T00:00:00Z",
@@ -78,7 +78,7 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
 
     rows = _usage_dashboard_rows(snapshots)
 
-    assert [row["payload"]["account"] for row in rows] == ["router-a", "router-b"]
+    assert [row["payload"]["account"] for row in rows] == ["spend-a", "spend-b"]
     assert [row["payload"]["usage_usd"] for row in rows] == [1.25, 2.5]
     assert [row["payload"]["limit_usd"] for row in rows] == [10.0, 20.0]
     assert [row["payload"]["limit_reset"] for row in rows] == [
@@ -86,20 +86,20 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
         "2026-12-02T00:00:00Z",
     ]
 
-    grok = {
+    period = {
         "type": "usage.snapshot",
-        "payload": {"provider": "grok", "account_email": "user@example.com"},
+        "payload": {"provider": "driver-a", "account_email": "user@example.com"},
     }
-    assert _usage_dashboard_rows([grok, grok]) == [grok]
+    assert _usage_dashboard_rows([period, period]) == [period]
 
     legacy = {
         "type": "usage.snapshot",
-        "payload": {"vendor": "openrouter", "account": "router-c"},
+        "payload": {"vendor": "driver-d", "account": "spend-c"},
     }
     assert _usage_dashboard_rows([legacy]) == [legacy]
 
     html = SECTION_PAGE.read_text(encoding="utf-8")
-    assert 'if (provider === "openrouter") {' in html
+    assert "const spend = p.account !== undefined;" in html
     assert 'typeof p.usage_usd === "number"' in html
     assert 'typeof p.limit_usd === "number"' in html
     assert "reset: idOrText(p.limit_reset)," in html
@@ -110,13 +110,35 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
     ) in html
 
 
-def test_dashboard_usage_rows_separate_openrouter_alias_per_device() -> None:
+def test_dashboard_usage_rows_tell_the_shapes_apart_by_fields_not_driver() -> None:
+    # The same driver id may record both shapes; the fields decide the identity.
+    spend = {
+        "type": "usage.snapshot",
+        "_origin_device_id": "device-a",
+        "payload": {"provider": "driver-x", "account": "user@example.com", "usage_usd": 1.0},
+    }
+    period = {
+        "type": "usage.snapshot",
+        "_origin_device_id": "device-b",
+        "payload": {"provider": "driver-x", "account_email": "user@example.com"},
+    }
+    other_device_spend = {**spend, "_origin_device_id": "device-c"}
+
+    rows = _usage_dashboard_rows([spend, period, other_device_spend])
+
+    assert rows == [spend, period, other_device_spend]
+    assert _usage_dashboard_rows([{"type": "usage.snapshot", "payload": "broken"}]) == [
+        {"type": "usage.snapshot", "payload": "broken"}
+    ]
+
+
+def test_dashboard_usage_rows_separate_spend_alias_per_device() -> None:
     def snapshot(device: str, usage_usd: float) -> dict:
         return {
             "type": "usage.snapshot",
             "_origin_device_id": device,
             "payload": {
-                "provider": "openrouter",
+                "provider": "driver-d",
                 "account": "shared-alias",
                 "usage_usd": usage_usd,
             },
@@ -130,13 +152,13 @@ def test_dashboard_usage_rows_separate_openrouter_alias_per_device() -> None:
     assert rows == [device_a, device_b]
 
 
-def test_dashboard_usage_rows_keep_newest_openrouter_snapshot_per_device_alias() -> None:
+def test_dashboard_usage_rows_keep_newest_spend_snapshot_per_device_alias() -> None:
     def snapshot(usage_usd: float) -> dict:
         return {
             "type": "usage.snapshot",
             "_origin_device_id": "device-a",
             "payload": {
-                "provider": "openrouter",
+                "provider": "driver-d",
                 "account": "shared-alias",
                 "usage_usd": usage_usd,
             },
@@ -151,7 +173,7 @@ def test_dashboard_usage_rows_keep_newest_openrouter_snapshot_per_device_alias()
 
 
 def _snapshot(provider: str, account: str, device: str = "device-a", **extra: object) -> dict:
-    key = "account" if provider == "openrouter" else "account_email"
+    key = "account" if provider == "driver-d" else "account_email"
     return {
         "type": "usage.snapshot",
         "_origin_device_id": device,
@@ -160,30 +182,30 @@ def _snapshot(provider: str, account: str, device: str = "device-a", **extra: ob
 
 
 def test_subscription_rows_join_inventory_with_newest_usage() -> None:
-    claude = _snapshot("claude", "Seat-1@Example.com", tier="max_20x")
-    grok = _snapshot("grok", "grok@example.com")
-    router_a = _snapshot("openrouter", "router-a", "device-a")
-    router_b = _snapshot("openrouter", "router-a", "device-b")
-    stray = _snapshot("claude", "unlisted@example.com")
-    usage = _usage_dashboard_rows([claude, grok, router_a, router_b, stray])
+    windowed = _snapshot("driver-a", "Seat-1@Example.com", tier="max_20x")
+    period = _snapshot("driver-b", "login@example.com")
+    spend_a = _snapshot("driver-d", "router-a", "device-a")
+    spend_b = _snapshot("driver-d", "router-a", "device-b")
+    stray = _snapshot("driver-a", "unlisted@example.com")
+    usage = _usage_dashboard_rows([windowed, period, spend_a, spend_b, stray])
     inventory = (
-        AISubscription("claude", "seat-1@example.com", "Team seat 1", "active", "free text"),
-        AISubscription("claude", "seat-2@example.com", "Team seat 2"),
-        AISubscription("openrouter", "ROUTER-A"),
-        AISubscription("grok", "grok@example.com", status="paused"),
-        AISubscription("chatgpt", "seat-1@example.com"),
+        AISubscription("driver-a", "seat-1@example.com", "Team seat 1", "active", "free text"),
+        AISubscription("driver-a", "seat-2@example.com", "Team seat 2"),
+        AISubscription("driver-d", "ROUTER-A"),
+        AISubscription("driver-b", "login@example.com", status="paused"),
+        AISubscription("driver-c", "seat-1@example.com"),
     )
 
     rows = _subscription_dashboard_rows(inventory, usage)
 
     assert [(row["provider"], row["account"], row["listed"], row["usage"]) for row in rows] == [
-        ("claude", "seat-1@example.com", True, claude),
-        ("claude", "seat-2@example.com", True, None),
-        ("openrouter", "ROUTER-A", True, router_a),
-        ("openrouter", "ROUTER-A", True, router_b),
-        ("grok", "grok@example.com", True, grok),
-        ("chatgpt", "seat-1@example.com", True, None),
-        ("claude", "unlisted@example.com", False, stray),
+        ("driver-a", "seat-1@example.com", True, windowed),
+        ("driver-a", "seat-2@example.com", True, None),
+        ("driver-d", "ROUTER-A", True, spend_a),
+        ("driver-d", "ROUTER-A", True, spend_b),
+        ("driver-b", "login@example.com", True, period),
+        ("driver-c", "seat-1@example.com", True, None),
+        ("driver-a", "unlisted@example.com", False, stray),
     ]
     assert rows[0]["label"] == "Team seat 1"
     assert rows[0]["status"] == "active"
@@ -192,33 +214,33 @@ def test_subscription_rows_join_inventory_with_newest_usage() -> None:
 
 
 def test_subscription_rows_without_inventory_keep_every_snapshot() -> None:
-    grok = _snapshot("grok", "grok@example.com")
-    legacy = {"type": "usage.snapshot", "payload": {"vendor": "grok", "account_email": "old@example.com"}}
-    rows = _subscription_dashboard_rows((), [grok, legacy])
+    snapshot = _snapshot("driver-a", "login@example.com")
+    legacy = {"type": "usage.snapshot", "payload": {"vendor": "driver-a", "account_email": "old@example.com"}}
+    rows = _subscription_dashboard_rows((), [snapshot, legacy])
     assert [(row["provider"], row["account"], row["listed"]) for row in rows] == [
-        ("grok", "grok@example.com", False),
-        ("grok", "old@example.com", False),
+        ("driver-a", "login@example.com", False),
+        ("driver-a", "old@example.com", False),
     ]
 
 
 def test_subscriptions_dashboard_reports_file_state_as_data(tmp_path: Path) -> None:
-    grok = _snapshot("grok", "grok@example.com")
-    assert _subscriptions_dashboard(tmp_path, [grok]) == {
+    snapshot = _snapshot("driver-a", "login@example.com")
+    assert _subscriptions_dashboard(tmp_path, [snapshot]) == {
         "configured": False,
         "error": None,
-        "rows": _subscription_dashboard_rows((), [grok]),
+        "rows": _subscription_dashboard_rows((), [snapshot]),
     }
     path = tmp_path / "ai-subscriptions.json"
     path.write_text(
-        json.dumps({"subscriptions": [{"provider": "grok", "account": "grok@example.com"}]}),
+        json.dumps({"subscriptions": [{"provider": "driver-a", "account": "login@example.com"}]}),
         encoding="utf-8",
     )
-    state = _subscriptions_dashboard(tmp_path, [grok])
+    state = _subscriptions_dashboard(tmp_path, [snapshot])
     assert state["configured"] is True and state["error"] is None
-    assert state["rows"][0]["listed"] is True and state["rows"][0]["usage"] == grok
+    assert state["rows"][0]["listed"] is True and state["rows"][0]["usage"] == snapshot
 
-    path.write_text(json.dumps({"subscriptions": [{"provider": "Grok"}]}), encoding="utf-8")
-    state = _subscriptions_dashboard(tmp_path, [grok])
+    path.write_text(json.dumps({"subscriptions": [{"provider": "Driver-A"}]}), encoding="utf-8")
+    state = _subscriptions_dashboard(tmp_path, [snapshot])
     assert state["configured"] is False
     assert "provider must be a lowercase token" in state["error"]
     assert [row["listed"] for row in state["rows"]] == [False]
@@ -260,7 +282,7 @@ def test_subscription_rows_render_in_node() -> None:
         section_function(html, name)
         for name in (
             "percentText",
-            "claudeWindows",
+            "windowLines",
             "usageCells",
             "subscriptionRowHtml",
             "subscriptionsEmptyHtml",
@@ -270,22 +292,22 @@ def test_subscription_rows_render_in_node() -> None:
     # The shared block brings idOrText, stateIcon and stateCellAttributes.
     shared = "const document = { addEventListener() {} };\n" + common_block(html)
     harness = helpers + "\n" + shared + "\n" + functions + """
-const claude = {
-  provider: "claude", account: "seat-1@example.com", label: "Seat <1>", status: "active", note: "a & b", listed: true,
+const windowed = {
+  provider: "driver-a", account: "seat-1@example.com", label: "Seat <1>", status: "active", note: "a & b", listed: true,
   usage: { _origin_device_id: "device-a", payload: {
-    provider: "claude", vendor: "claude", account_email: "seat-1@example.com", tier: "max_20x", fetched_at: "2026-11-16T12:00:00Z",
+    provider: "driver-a", vendor: "driver-a", account_email: "seat-1@example.com", tier: "max_20x", fetched_at: "2026-11-16T12:00:00Z",
     windows: {
       five_hour: null,
       weekly: { used_percent: 14.0, resets_at: "2026-11-23T10:00:00+00:00" },
-      weekly_models: [{ model: "<b>Fable</b>", used_percent: 21.5, resets_at: null }],
+      weekly_models: [{ model: "<b>Model B</b>", used_percent: 21.5, resets_at: null }],
     },
   } },
 };
-const missing = { provider: "claude", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, usage: null };
-const stray = { provider: "openrouter", account: "router-a", listed: false,
-  usage: { _origin_device_id: "device-b", payload: { provider: "openrouter", account: "router-a", usage_usd: 1.25, limit_usd: null, limit_reset: "monthly" } } };
+const missing = { provider: "driver-a", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, usage: null };
+const stray = { provider: "driver-d", account: "router-a", listed: false,
+  usage: { _origin_device_id: "device-b", payload: { provider: "driver-d", account: "router-a", usage_usd: 1.25, limit_usd: null, limit_reset: "monthly" } } };
 console.log(JSON.stringify({
-  claude: subscriptionRowHtml(claude),
+  windowed: subscriptionRowHtml(windowed),
   missing: subscriptionRowHtml(missing),
   stray: subscriptionRowHtml(stray),
   unknownStatus: subscriptionRowHtml({ ...missing, status: "on-hold" }),
@@ -301,24 +323,24 @@ console.log(JSON.stringify({
     )
     assert completed.returncode == 0, completed.stderr
     out = json.loads(completed.stdout)
-    claude = out["claude"]
-    assert "<td>Seat &lt;1&gt;</td>" in claude
-    assert "<td>a &amp; b</td>" in claude
-    assert "<td>listed</td>" in claude
+    windowed = out["windowed"]
+    assert "<td>Seat &lt;1&gt;</td>" in windowed
+    assert "<td>a &amp; b</td>" in windowed
+    assert "<td>listed</td>" in windowed
     active = state_icons(html)["active"]
     assert (
         '<td title="active" aria-label="active"><span class="state-icon" role="img" '
         f'aria-label="active">{active}&#xFE0E;</span></td>'
-    ) in claude
+    ) in windowed
     assert (
         '<td title="on-hold" aria-label="on-hold"><span class="state-icon state-unknown" '
         'role="img" aria-label="on-hold">◌&#xFE0E;</span></td>'
     ) in out["unknownStatus"]
     assert "<td>—</td>" in out["missing"]
-    assert "<td>max_20x</td>" in claude
-    assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Fable&lt;/b&gt;: 21.5%</td>" in claude
-    assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Fable&lt;/b&gt;: —</td>" in claude
-    assert "<b>" not in claude
+    assert "<td>max_20x</td>" in windowed
+    assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Model B&lt;/b&gt;: 21.5%</td>" in windowed
+    assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Model B&lt;/b&gt;: —</td>" in windowed
+    assert "<b>" not in windowed
     assert out["missing"].count("<td>") == 11
     assert "<td>No usage: no paired device polls this login</td>" in out["missing"]
     assert "0%" not in out["missing"]
@@ -695,6 +717,16 @@ def test_uuid_shows_its_first_8_characters_on_a_copy_button() -> None:
     assert 'if (typeof value === "object") return jsonHtml(value);' in cell
     assert 'setHtml(document.getElementById("od-id"), idOrText(id));' in code
     assert '"order " + idOrText(result.order_id)' in static_page("orders_new.html")
+
+
+def test_session_controls_start_the_interactive_driver_of_the_session() -> None:
+    section = static_page("section.html")
+    assert '<button type="button" id="ctl-start-ai">Start AI session</button>' in section
+    assert (
+        'postControl(s.id, { action: "start", payload: { interactive: true } })'
+        in section
+    )
+    assert "provider:" not in section
 
 
 def test_the_full_value_stays_the_key_for_lookups_and_calls() -> None:

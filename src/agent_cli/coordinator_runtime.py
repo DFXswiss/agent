@@ -22,7 +22,6 @@ from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
 from .model_slots import (
-    LEGACY_RECORDED_SLOTS,
     SLOT_STAGES,
     ModelSlotsError,
     canonical_key,
@@ -30,6 +29,8 @@ from .model_slots import (
     implementer_for_new_record,
     model_pins,
     models_for_new_record,
+    recorded_model_slots,
+    unrecorded_name_hint,
 )
 from .coordinator_checks import TaskFacts, checks_satisfied, evaluate_action
 from .allow import CHECKLIST_KEYS
@@ -59,7 +60,7 @@ from .coordinator_common import (
     coord,
     coordinator_env,
     gh_json,
-    harden_grok_write_argv,
+    harden_write_argv,
     infra_failure,
     is_order,
     order_id,
@@ -80,6 +81,7 @@ from .coordinator_common import (
     strip_row,
     task_text_path,
     task_text_reference,
+    upgrade_recorded_phases,
     write_task_text,
 )
 from .github_request_share import shared_assigned_issues
@@ -136,8 +138,8 @@ from .coordinator_lanes import (
     gate_ordering_unavailable,
     launch_lane,
     lane_retry,
-    phase_pr_gates_codex,
-    phase_pr_gates_grok,
+    phase_pr_gates_first,
+    phase_pr_gates_second,
     reconcile_rejection_review_intents,
     recover_working_lanes,
     reviewer_replay_outcomes,
@@ -166,7 +168,7 @@ __all__ = [
     "CoordinatorError",
     "advance_one",
     "discover_assignments",
-    "harden_grok_write_argv",
+    "harden_write_argv",
     "parse_model_result",
     "preflight_worker",
     "require_single_first_model",
@@ -212,7 +214,7 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
-        _refuse_codex_first(ai.models.first, ai.implementer)
+        _refuse_command_driver_first(ai.models.first, ai.implementer, ai)
         _require_second_for_worker(
             ai.models.second, worker.a38, worker.a38_second_review
         )
@@ -352,7 +354,8 @@ def _legacy_execution_binding(
     """Reproduce the pre-lane-execution hash for accepted-task migration only.
 
     The old formula omitted ``lane_execution`` and omitted ``models`` when the
-    historical grok/codex mapping was selected. All other fields remain pinned.
+    selection equalled the slots of ``recorded_slots``, the mapping that
+    version implied. All other fields remain pinned.
     """
     selected = _execution_binding_fields(
         store,
@@ -364,7 +367,8 @@ def _legacy_execution_binding(
         require_owner=require_owner,
     )
     selected.pop("lane_execution")
-    if ai.models == LEGACY_RECORDED_SLOTS:
+    recorded = ai.recorded_slots
+    if recorded is not None and ai.models == recorded_model_slots(recorded):
         selected.pop("models")
     encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
@@ -409,9 +413,10 @@ def refresh_execution_binding(
     save_task(store, task)
 
 
-CODEX_FIRST_REFUSED = (
-    "models.first = codex is not supported by the coordinator: the codex "
-    "implementer lane cannot be restricted from running commands"
+COMMAND_DRIVER_FIRST_REFUSED = (
+    "models.first = {driver} is not supported by the coordinator: driver {driver} "
+    "is configured with may_run_commands, so its implementer lane cannot be "
+    "restricted from running commands"
 )
 SEPARATE_IMPLEMENTER_REFUSED = (
     "a separate implementer is not supported by the coordinator: implementer must equal "
@@ -419,13 +424,30 @@ SEPARATE_IMPLEMENTER_REFUSED = (
 )
 
 
-def _refuse_codex_first(first: str, implementer: str | None = None) -> None:
-    """codex exec --sandbox workspace-write can run shell commands; the coordinator's
-    implementer must not execute software. Used by preflight, task creation and launch."""
-    if first == "codex":
-        raise CoordinatorError(CODEX_FIRST_REFUSED)
+def _refuse_command_driver_first(
+    first: str, implementer: str | None, ai: AIAccounts
+) -> None:
+    """Refuse a first slot whose driver may run shell commands in its write sandbox.
+
+    The coordinator's implementer must not execute software. Used by preflight,
+    task creation and launch.
+    """
+    try:
+        lane = ai.driver(first).lane
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    if lane is not None and lane.may_run_commands:
+        raise CoordinatorError(COMMAND_DRIVER_FIRST_REFUSED.format(driver=first))
     if implementer is not None and implementer != first:
         raise CoordinatorError(SEPARATE_IMPLEMENTER_REFUSED)
+
+
+def _lane_accounts(store: Store) -> AIAccounts:
+    """The device's AI configuration, read for a driver lookup at a lane start."""
+    try:
+        return load_ai_accounts(store.home, defer_model_configuration=True)
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
 
 
 def _require_second_for_worker(
@@ -472,7 +494,7 @@ def require_single_first_model(ai: AIAccounts, worker: WorkerConfig) -> str:
     return implementer
 
 
-def _first_slot_vendor(task: dict[str, Any]) -> str:
+def _first_slot_vendor(task: dict[str, Any], ai: AIAccounts) -> str:
     """Provider of model slot ``first``, pinned on the task when it was created."""
     try:
         # Lane start: an old task without a pin must be recreated before new work.
@@ -480,7 +502,7 @@ def _first_slot_vendor(task: dict[str, Any]) -> str:
         implementer = implementer_for_new_record(task)
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_codex_first(first, implementer)
+    _refuse_command_driver_first(first, implementer, ai)
     return first
 
 
@@ -522,12 +544,25 @@ def _find_task_for_issue_device_wide(
 
 
 def _ensure_checklist_rows(store: Store, task: dict[str, Any], session: dict[str, Any]) -> None:
-    """Reconcile checklist after partial crash — never leave keys missing forever."""
-    existing = {
-        canonical_key(str(item.get("key")))
+    """Reconcile checklist after partial crash — never leave keys missing forever.
+
+    Without ``recorded_slots`` a key that an earlier version wrote is unknown.
+    A neutral row added beside it would hide its recorded value for good, even
+    after the entry is configured, so such a task gets no row and the refusal
+    names the missing entry.
+    """
+    stored = sorted(
+        str(item.get("key"))
         for item in store.rows("checklist_item")
         if item.get("task_id") == task["id"]
-    }
+    )
+    for key in stored:
+        hint = unrecorded_name_hint(key)
+        if hint:
+            raise CoordinatorError(
+                f"task {task['id']} holds unknown checklist key {key}{hint}"
+            )
+    existing = {canonical_key(key) for key in stored}
     source = "runner" if session.get("kind") == "runner" else "human"
     for key in CHECKLIST_KEYS["implement"]:
         if key in existing:
@@ -589,7 +624,7 @@ def _create_implement_task(
         ai = load_ai_accounts(store.home)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_codex_first(ai.models.first, ai.implementer)
+    _refuse_command_driver_first(ai.models.first, ai.implementer, ai)
     _require_second_for_worker(
         ai.models.second, worker.a38, worker.a38_second_review
     )
@@ -1891,7 +1926,7 @@ def phase_implement(
             draft_lines=[],
         )
 
-    first_vendor = _first_slot_vendor(task)
+    first_vendor = _first_slot_vendor(task, _lane_accounts(store))
     base_instruction = _implementer_instruction(store, worker, task, runner)
     instruction = base_instruction
     task_text = read_task_text(worker, task)
@@ -2254,10 +2289,11 @@ def phase_inner_review(
         save_task(store, task)
         return ["inner review deferred: implementer not done"]
     head = str(c.get("head_sha") or "")
+    first_vendor = _first_slot_vendor(task, _lane_accounts(store))
     replay = reviewer_replay_outcomes(
         store,
         task,
-        vendor=_first_slot_vendor(task),
+        vendor=first_vendor,
         round_num=round_num,
         head=head,
         stage="inner-review",
@@ -2298,7 +2334,7 @@ def phase_inner_review(
         worker,
         task,
         role="reviewer",
-        vendor=_first_slot_vendor(task),
+        vendor=first_vendor,
         round_num=round_num,
         spec_body=_spec_context(
             c,
@@ -2316,7 +2352,7 @@ def phase_inner_review(
     replay = reviewer_replay_outcomes(
         store,
         task,
-        vendor=_first_slot_vendor(task),
+        vendor=first_vendor,
         round_num=round_num,
         head=head,
         stage="inner-review",
@@ -2342,7 +2378,7 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
         evidence = {}
         c["evidence"] = evidence
     if evidence.get("tests_pass") and evidence.get("tests_head") == head:
-        c["phase"] = "pr_gates_grok"
+        c["phase"] = "pr_gates_first"
         task["state"] = "pr-review"
         save_task(store, task)
         return [f"tests already green on {head[:7]}"]
@@ -2413,13 +2449,22 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
             )
         except CoordinatorError:
             pass
-    c["phase"] = "pr_gates_grok"
+    c["phase"] = "pr_gates_first"
     task["state"] = "pr-review"
     save_task(store, task)
     return [f"tests passed on {head[:7]}"] + draft_lines
 
 
-def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
+def _open_tasks(
+    store: Store, session_id: str, blocked: dict[str, str]
+) -> list[dict[str, Any]]:
+    """The session's open coordinator tasks, oldest first, with checklists reconciled.
+
+    A task whose checklist cannot be reconciled stays in the list, so the queue
+    still counts it, and its refusal goes to ``blocked`` under the task id. The
+    tick reports that refusal instead of advancing the task; other tasks
+    advance.
+    """
     origin = store.device_id()
     tasks = []
     for row in store.rows("task"):
@@ -2435,7 +2480,10 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
         # Reconcile checklist if a prior crash left keys missing.
         session = store.row("session", session_id)
         if session is not None:
-            _ensure_checklist_rows(store, row, session)
+            try:
+                _ensure_checklist_rows(store, row, session)
+            except CoordinatorError as exc:
+                blocked[str(row["id"])] = f"blocked: {redact(str(exc))}"
         tasks.append(row)
     tasks.sort(key=lambda r: str(r.get("created_at") or ""))
     return tasks
@@ -2521,7 +2569,7 @@ def _a38_pr_left_open(
 
 A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
 A38_PUBLISHED_RERUN_PHASES = frozenset(
-    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment", "a38_second_comment"}
+    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_first", "pr_gates_second", "a38_first_comment", "a38_second_comment"}
 )
 NON_REPEATABLE_REJECTION_CHECKPOINT_ERRORS = frozenset(
     {
@@ -2598,8 +2646,8 @@ def phase_handlers(
         "inner_review": lambda: phase_inner_review(store, worker, task, runner, lane_runner),
         "tests": lambda: phase_tests(store, worker, task, runner),
         "publish_draft": lambda: phase_publish_draft(store, worker, task, runner),
-        "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
-        "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
+        "pr_gates_first": lambda: phase_pr_gates_first(store, worker, task, runner, lane_runner),
+        "pr_gates_second": lambda: phase_pr_gates_second(store, worker, task, runner, lane_runner),
         "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
         "a38_second_comment": lambda: phase_a38_second_comment(
             store, worker, task, runner
@@ -2617,7 +2665,7 @@ def phase_handlers(
     }
 
 
-_LANE_PHASES = ("implement", "inner_review", "pr_gates_grok", "pr_gates_codex")
+_LANE_PHASES = ("implement", "inner_review", "pr_gates_first", "pr_gates_second")
 
 
 def _phase_of_newest_lane(store: Store, task: dict[str, Any]) -> str:
@@ -2642,9 +2690,9 @@ def _phase_of_newest_lane(store: Store, task: dict[str, Any]) -> str:
         return "inner_review"
     stage = canonical_stage(str(row.get("stage") or ""))
     return (
-        "pr_gates_codex"
+        "pr_gates_second"
         if stage == SLOT_STAGES["second"]
-        else "pr_gates_grok"
+        else "pr_gates_first"
     )
 
 
@@ -2986,7 +3034,9 @@ def _advance_task(
     handlers = phase_handlers(store, worker, task, runner, lane_runner)
     handler = handlers.get(phase)
     if handler is None:
-        raise CoordinatorError(f"unknown coordinator phase {phase}")
+        raise CoordinatorError(
+            f"unknown coordinator phase {phase}{unrecorded_name_hint(phase)}"
+        )
     try:
         intake_lines: list[str] | None = None
         if worker.a38 and phase in {
@@ -3281,6 +3331,12 @@ def _advance_guarded(
     intents_only: bool = False,
 ) -> list[str]:
     """Visit one task; an error of this task must not stop the tick."""
+    try:
+        # Phase names of an earlier version become neutral before any read.
+        if upgrade_recorded_phases(coord(task)):
+            save_task(store, task)
+    except StoreError as exc:
+        return [f"store error: {redact(str(exc))}"]
     before = str(coord(task).get("phase") or "accept")
     try:
         if intents or intents_only:
@@ -3320,7 +3376,18 @@ def advance_one(
     lane_runner: LaneRunner | None,
 ) -> list[str]:
     lines: list[str] = []
-    tasks = _open_tasks(store, worker.session_id)
+    blocked: dict[str, str] = {}
+    tasks = _open_tasks(store, worker.session_id, blocked)
+
+    def visit(task: dict[str, Any], **kwargs: Any) -> list[str]:
+        # A task whose checklist could not be reconciled reports why instead.
+        refusal = blocked.get(str(task["id"]))
+        if refusal is not None:
+            return [refusal]
+        return _advance_guarded(
+            store, worker, task, runner=runner, lane_runner=lane_runner, **kwargs
+        )
+
     orders_active = worker.orders or any(is_order(candidate) for candidate in tasks)
     if orders_active:
         lines.extend(sweep_terminal_orders(store, worker))
@@ -3332,15 +3399,7 @@ def advance_one(
         if not parked(task, worker):
             if task_intents:
                 lines.extend(
-                    _advance_guarded(
-                        store,
-                        worker,
-                        task,
-                        runner=runner,
-                        lane_runner=lane_runner,
-                        intents=task_intents,
-                        intents_only=True,
-                    )
+                    visit(task, intents=task_intents, intents_only=True)
                 )
                 if any(
                     intent["payload"].get("kind") in ("cancel", "done")
@@ -3358,17 +3417,7 @@ def advance_one(
             store, task, worker, has_intent=bool(task_intents)
         ):
             continue
-        lines.extend(
-            _advance_guarded(
-                store,
-                worker,
-                task,
-                runner=runner,
-                lane_runner=lane_runner,
-                intents=task_intents,
-                intents_only=idle,
-            )
-        )
+        lines.extend(visit(task, intents=task_intents, intents_only=idle))
         mark_observed(store, task, worker)
         touched.add(tid)
     for leftover_order, leftover in intents.items():  # answers of ended orders
@@ -3379,17 +3428,7 @@ def advance_one(
             or ended.get("session_id") != worker.session_id
         ):
             continue
-        lines.extend(
-            _advance_guarded(
-                store,
-                worker,
-                ended,
-                runner=runner,
-                lane_runner=lane_runner,
-                intents=leftover,
-                intents_only=True,
-            )
-        )
+        lines.extend(visit(ended, intents=leftover, intents_only=True))
 
     runnable = [t for t in tasks if not _terminal(t) and not parked(t, worker)]
     if not runnable:
@@ -3404,13 +3443,5 @@ def advance_one(
             runnable = [queued[0]]
     candidates = [t for t in runnable if str(t["id"]) not in touched]
     if candidates:  # 2. one phase of the oldest runnable task
-        lines.extend(
-            _advance_guarded(
-                store,
-                worker,
-                candidates[0],
-                runner=runner,
-                lane_runner=lane_runner,
-            )
-        )
+        lines.extend(visit(candidates[0]))
     return lines

@@ -554,7 +554,7 @@ def test_submit_list_show_round_trip(device) -> None:
     assert result["round_limit"] == {
         "max_rounds": 3,
         "origin": "submit",
-        "model": "grok-model",
+        "model": "driver-a-model",
         "limit": 3,
     }
     assert len(result["skipped_checks"]) == 1

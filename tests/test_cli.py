@@ -14,18 +14,27 @@ from agent_cli.main import (
     main,
 )
 from agent_cli.store import Store, StoreError, utcnow
-from agent_cli.usage import AuthStale, ClaudeUsageError, OpenRouterUsageError
+from agent_cli.usage import AccountUsageError, AuthStale
+from driver_fixtures import install_recorded_slots, write_drivers
+
+
+@pytest.fixture(autouse=True)
+def _recorded_slots() -> None:
+    """Stored names of earlier versions read with the placeholder ``recorded_slots``."""
+    install_recorded_slots()
 
 
 def run(home: Path, argv: list[str]) -> None:
     import os
 
-    # The local harness supplies the device model assignment before task creation.
+    # The local harness supplies the device drivers and model assignment before
+    # task creation.
     if argv[:2] == ["task", "create"] and not (home / "ai-accounts.json").exists():
+        write_drivers(home)
         (home / "ai-accounts.json").write_text(
             json.dumps(
                 {
-                    "models": {"first": "grok", "second": "codex"},
+                    "models": {"first": "driver-a", "second": "driver-b"},
                     "lane_execution": {"mode": "this-device-is-lane-host"},
                 }
             ),
@@ -50,12 +59,12 @@ def test_dashboard_snapshot_canonicalizes_legacy_names() -> None:
     # Keep legacy names here to verify snapshot alias compatibility.
     snapshot = {
         "agents": [
-            {"stage": "grok-pr"},
-            {"stage": "codex-pr"},
+            {"stage": "driver-a-pr"},
+            {"stage": "driver-b-pr"},
             {"stage": None},
         ],
-        "gates": [{"stage": "grok-pr"}, {"stage": "review-2"}],
-        "checklist": [{"key": "codex_pr_logic"}, {"key": "review_1_quality"}],
+        "gates": [{"stage": "driver-a-pr"}, {"stage": "review-2"}],
+        "checklist": [{"key": "driver-b_pr_logic"}, {"key": "review_1_quality"}],
     }
 
     _canonicalize_snapshot_names(snapshot)
@@ -189,6 +198,7 @@ def test_claim_done_reads_the_live_exception(
     tid = _last_task_id(capsys.readouterr().out)
     snap = _ready_task(session_id="sess-1")
     snap["id"] = tid
+    snap["models"] = {"first": "driver-a", "second": "driver-b"}
     snap["checklist"]["review_2_quality"] = "n_a"
     snap["checklist"]["review_2_logic"] = "n_a"
     snap["checklist_evidence"] = {
@@ -706,9 +716,9 @@ def _close_from_pr_fixture(
                 "--command", "pytest", "--result", "pass",
             ],
         )
-    stages = [("review-1", "grok")]
+    stages = [("review-1", "driver-a")]
     if review_2:
-        stages.append(("review-2", "codex"))
+        stages.append(("review-2", "driver-b"))
     for stage, vendor in stages:
         dimensions = first_dimensions if stage == "review-1" else ("quality", "logic")
         for dimension in dimensions:
@@ -1193,7 +1203,7 @@ def test_task_close_from_pr_wrong_first_vendor_writes_nothing(
     store = Store(tmp_path)
     try:
         gate = next(row for row in store.rows("review_gate") if row.get("task_id") == tid and row.get("stage") == "review-1")
-        gate["vendor"] = "codex"
+        gate["vendor"] = "driver-b"
         store.write("review_gate", "update", gate["id"], gate)
     finally:
         store.close()
@@ -1374,8 +1384,9 @@ def test_task_pr_refuses_error_fix_task(
 
     error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     _seed_cli_error_seen_for_conclusion(tmp_path)
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     store = Store(tmp_path)
@@ -1485,7 +1496,7 @@ def test_happy_path_round_agent_check_work(tmp_path: Path, capsys: pytest.Captur
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -1510,7 +1521,7 @@ def test_happy_path_round_agent_check_work(tmp_path: Path, capsys: pytest.Captur
             "--role",
             "reviewer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -1773,7 +1784,7 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
             "--role",
             "pr-reviewer-quality",
             "--vendor",
-            "grok",
+            "driver-a",
         ],
     )
     agent_id = _last_agent_id(capsys.readouterr().out)
@@ -1792,7 +1803,7 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "approved",
             "--head",
@@ -1807,8 +1818,8 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
 @pytest.mark.parametrize(
     ("legacy_stage", "canonical", "vendor"),
     [
-        ("grok-pr", "review-1", "grok"),
-        ("codex-pr", "review-2", "codex"),
+        ("driver-a-pr", "review-1", "driver-a"),
+        ("driver-b-pr", "review-2", "driver-b"),
     ],
 )
 def test_gate_record_accepts_stored_legacy_agent_stage(
@@ -1833,9 +1844,9 @@ def test_gate_record_accepts_stored_legacy_agent_stage(
                     {
                         "id": gate_id,
                         "task_id": tid,
-                        "stage": "grok-pr",
+                        "stage": "driver-a-pr",
                         "dimension": dimension,
-                        "vendor": "grok",
+                        "vendor": "driver-a",
                         "verdict": "approved",
                         "evidence": None,
                         "head_sha": head,
@@ -1912,7 +1923,7 @@ def test_gate_record_review_2_before_review_1_dies(
                 "task_id": tid,
                 "round": None,
                 "role": "pr-reviewer-quality",
-                "vendor": "codex",
+                "vendor": "driver-b",
                 "stage": "review-2",
                 "status": "done",
                 "started_at": utcnow(),
@@ -1936,7 +1947,7 @@ def test_gate_record_review_2_before_review_1_dies(
                 "--dimension",
                 "quality",
                 "--vendor",
-                "codex",
+                "driver-b",
                 "--verdict",
                 "approved",
                 "--head",
@@ -1952,7 +1963,7 @@ def test_legacy_stage_alias_writes_canonical_stage_and_warns(
 ) -> None:
     tid = _spine_session_task(tmp_path, capsys)
     aid = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a"
     )
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
     capsys.readouterr()
@@ -1966,11 +1977,11 @@ def test_legacy_stage_alias_writes_canonical_stage_and_warns(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "driver-a-pr",
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "approved",
             "--head",
@@ -1980,7 +1991,7 @@ def test_legacy_stage_alias_writes_canonical_stage_and_warns(
         ],
     )
     captured = capsys.readouterr()
-    assert captured.err == "deprecated stage/key name grok-pr; use review-1\n"
+    assert captured.err == "deprecated stage/key name driver-a-pr; use review-1\n"
     assert "gate review-1/quality=approved" in captured.out
 
     store = Store(tmp_path)
@@ -2009,7 +2020,7 @@ def test_legacy_checklist_key_alias_writes_canonical_key_and_warns(
             "--task",
             tid,
             "--key",
-            "grok_pr_quality",
+            "driver-a_pr_quality",
             "--status",
             "pending",
             "--source",
@@ -2018,7 +2029,7 @@ def test_legacy_checklist_key_alias_writes_canonical_key_and_warns(
     )
     captured = capsys.readouterr()
     assert captured.err == (
-        "deprecated stage/key name grok_pr_quality; use review_1_quality\n"
+        "deprecated stage/key name driver-a_pr_quality; use review_1_quality\n"
     )
     assert captured.out == "checklist review_1_quality=pending\n"
 
@@ -2032,7 +2043,7 @@ def test_legacy_checklist_key_alias_writes_canonical_key_and_warns(
     finally:
         store.close()
     assert "review_1_quality" in keys
-    assert "grok_pr_quality" not in keys
+    assert "driver-a_pr_quality" not in keys
 
 
 def test_stored_legacy_checklist_rows_open_canonical_second_review_steps(
@@ -2049,8 +2060,8 @@ def test_stored_legacy_checklist_rows_open_canonical_second_review_steps(
     }
     # Keep legacy keys here to verify stored-row compatibility.
     legacy_names = {
-        "review_1_quality": "grok_pr_quality",
-        "review_1_logic": "grok_pr_logic",
+        "review_1_quality": "driver-a_pr_quality",
+        "review_1_logic": "driver-a_pr_logic",
     }
     store = Store(tmp_path)
     try:
@@ -2102,7 +2113,7 @@ def test_reviewer_start_before_implementer_done_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2121,7 +2132,7 @@ def test_reviewer_start_before_implementer_done_dies(
                 "--role",
                 "reviewer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--round",
                 "1",
             ],
@@ -2154,7 +2165,7 @@ def test_implementer_start_requires_the_first_slot(
     run(tmp_path, ["round", "start", "--task", tid])
     capsys.readouterr()
     # Without a separate pin, the task resolves its implementer to slot first.
-    with pytest.raises(SystemExit, match=r"implementer requires --vendor grok \(configured implementer\)"):
+    with pytest.raises(SystemExit, match=r"implementer requires --vendor driver-a \(configured implementer\)"):
         run(
             tmp_path,
             [
@@ -2167,7 +2178,7 @@ def test_implementer_start_requires_the_first_slot(
                 "--role",
                 "implementer",
                 "--vendor",
-                "codex",
+                "driver-b",
                 "--round",
                 "1",
             ],
@@ -2184,7 +2195,7 @@ def test_implementer_start_requires_the_first_slot(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2194,12 +2205,12 @@ def test_implementer_start_requires_the_first_slot(
     try:
         rows = [a for a in store.rows("agent") if a.get("id") == aid]
         assert len(rows) == 1
-        assert rows[0]["vendor"] == "grok"
+        assert rows[0]["vendor"] == "driver-a"
     finally:
         store.close()
 
 
-def test_implementer_start_still_accepts_grok(
+def test_implementer_start_accepts_the_first_slot_driver(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
@@ -2236,7 +2247,7 @@ def test_implementer_start_still_accepts_grok(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2246,14 +2257,15 @@ def test_implementer_start_still_accepts_grok(
     try:
         rows = [a for a in store.rows("agent") if a.get("id") == aid]
         assert len(rows) == 1
-        assert rows[0]["vendor"] == "grok"
+        assert rows[0]["vendor"] == "driver-a"
     finally:
         store.close()
 
 
-def test_reviewer_start_rejects_codex_vendor(tmp_path: Path) -> None:
+def test_reviewer_start_rejects_the_second_slot_driver(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    with pytest.raises(SystemExit, match="reviewer requires --vendor grok"):
+    write_drivers(tmp_path)
+    with pytest.raises(SystemExit, match="reviewer requires --vendor driver-a"):
         run(
             tmp_path,
             [
@@ -2266,7 +2278,7 @@ def test_reviewer_start_rejects_codex_vendor(tmp_path: Path) -> None:
                 "--role",
                 "reviewer",
                 "--vendor",
-                "codex",
+                "driver-b",
                 "--round",
                 "1",
             ],
@@ -2275,6 +2287,7 @@ def test_reviewer_start_rejects_codex_vendor(tmp_path: Path) -> None:
 
 def test_implementer_and_reviewer_require_round(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
+    write_drivers(tmp_path)
     with pytest.raises(SystemExit, match="implementer requires --round"):
         run(
             tmp_path,
@@ -2288,7 +2301,7 @@ def test_implementer_and_reviewer_require_round(tmp_path: Path) -> None:
                 "--role",
                 "implementer",
                 "--vendor",
-                "codex",
+                "driver-b",
             ],
         )
     with pytest.raises(SystemExit, match="reviewer requires --round"):
@@ -2304,7 +2317,7 @@ def test_implementer_and_reviewer_require_round(tmp_path: Path) -> None:
                 "--role",
                 "reviewer",
                 "--vendor",
-                "grok",
+                "driver-a",
             ],
         )
 
@@ -2331,7 +2344,7 @@ def test_implementer_finish_blocked_sets_failed(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2399,6 +2412,7 @@ def _seed_foreign_implement_task(tmp_path: Path) -> None:
 
 def test_agent_start_on_foreign_task_dies(tmp_path: Path) -> None:
     _seed_foreign_implement_task(tmp_path)
+    write_drivers(tmp_path)
     with pytest.raises(SystemExit, match="another device"):
         run(
             tmp_path,
@@ -2412,7 +2426,7 @@ def test_agent_start_on_foreign_task_dies(tmp_path: Path) -> None:
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--round",
                 "1",
             ],
@@ -2494,7 +2508,7 @@ def test_implementer_blocked_sets_round_finished_at(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2538,7 +2552,7 @@ def test_reviewer_finish_rejected_sets_implementing(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2559,7 +2573,7 @@ def test_reviewer_finish_rejected_sets_implementing(
             "--role",
             "reviewer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2595,7 +2609,7 @@ def test_implementer_finish_on_pr_review_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2630,7 +2644,7 @@ def test_second_implementer_finish_same_round_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2663,7 +2677,7 @@ def test_second_implementer_finish_same_round_dies(
                 "task_id": tid,
                 "round": 1,
                 "role": "implementer",
-                "vendor": "grok",
+                "vendor": "driver-a",
                 "status": "working",
                 "started_at": utcnow(),
                 "finished_at": None,
@@ -2699,7 +2713,7 @@ def test_round_start_with_working_agent_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2732,7 +2746,7 @@ def test_round_start_with_working_pr_reviewer_dies(
             "--role",
             "pr-reviewer-quality",
             "--vendor",
-            "grok",
+            "driver-a",
         ],
     )
     capsys.readouterr()
@@ -2763,7 +2777,7 @@ def test_round_start_awaiting_reviewer_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2788,7 +2802,7 @@ def test_round_start_awaiting_reviewer_dies(
             "--role",
             "reviewer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2818,7 +2832,7 @@ def test_round_start_after_blocked_implementer_succeeds(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2853,7 +2867,7 @@ def test_round_start_after_rejected_reviewer_succeeds(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2874,7 +2888,7 @@ def test_round_start_after_rejected_reviewer_succeeds(
             "--role",
             "reviewer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2934,7 +2948,7 @@ def test_round_start_after_failed_check_succeeds(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2971,7 +2985,7 @@ def test_round_start_after_rejected_gate_succeeds(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -2992,7 +3006,7 @@ def test_round_start_after_rejected_gate_succeeds(
             "--role",
             "pr-reviewer-quality",
             "--vendor",
-            "grok",
+            "driver-a",
         ],
     )
     reviewer_id = _last_agent_id(capsys.readouterr().out)
@@ -3006,11 +3020,11 @@ def test_round_start_after_rejected_gate_succeeds(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "driver-a-pr",
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "rejected",
             "--head",
@@ -3049,7 +3063,7 @@ def test_round_start_with_duplicate_round_rows_succeeds(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -3105,7 +3119,7 @@ def test_implementer_finish_after_session_closed_dies(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -3156,7 +3170,7 @@ def test_agent_finish_on_foreign_agent_dies(
                     "task_id": tid,
                     "round": 1,
                     "role": "implementer",
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "status": "working",
                     "started_at": utcnow(),
                     "finished_at": None,
@@ -3176,76 +3190,76 @@ def test_agent_finish_on_foreign_agent_dies(
     assert task["state"] == "implementing"
 
 
-def test_watch_grok_usage_prints_snapshot_or_none(
+def test_watch_session_usage_prints_snapshot_or_none(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     monkeypatch.setattr(
-        "agent_cli.main.scan_usage",
+        "agent_cli.main.scan_session_usage",
         lambda store: "11111111-1111-1111-1111-111111111111",
     )
-    run(tmp_path, ["watch", "grok-usage"])
+    run(tmp_path, ["watch", "session-usage"])
     assert "usage.snapshot 11111111-1111-1111-1111-111111111111" in capsys.readouterr().out
 
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda store: None)
-    run(tmp_path, ["watch", "grok-usage"])
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda store: None)
+    run(tmp_path, ["watch", "session-usage"])
     assert "usage.snapshot none" in capsys.readouterr().out
 
 
-def test_watch_grok_usage_auth_stale_prints_skipped(
+def test_watch_session_usage_auth_stale_prints_skipped(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     capsys.readouterr()
 
     def fake_scan(_store: object) -> str:
-        raise AuthStale("grok auth token expired; run grok login")
+        raise AuthStale("driver-a credential expired; log in again")
 
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
-    run(tmp_path, ["watch", "grok-usage"])
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan)
+    run(tmp_path, ["watch", "session-usage"])
     captured = capsys.readouterr()
     assert captured.out.strip() == "usage.snapshot skipped"
     assert "error" not in captured.out.lower()
     assert "error" not in captured.err.lower()
 
 
-def test_watch_openrouter_usage_changed_unchanged_and_error(
+def test_watch_account_usage_changed_unchanged_and_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     capsys.readouterr()
 
     monkeypatch.setattr(
-        "agent_cli.main.scan_openrouter_usage",
+        "agent_cli.main.scan_account_usage",
         lambda _store: ["11111111-1111-1111-1111-111111111111"],
     )
-    run(tmp_path, ["watch", "openrouter-usage"])
+    run(tmp_path, ["watch", "account-usage"])
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot 11111111-1111-1111-1111-111111111111\n"
     assert captured.err == ""
 
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", lambda _store: [])
-    run(tmp_path, ["watch", "openrouter-usage"])
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", lambda _store: [])
+    run(tmp_path, ["watch", "account-usage"])
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot none\n"
     assert captured.err == ""
 
     def fail_scan(_store: object) -> list[str]:
-        raise OpenRouterUsageError(
+        raise AccountUsageError(
             ["router-a: unavailable"],
             ["22222222-2222-2222-2222-222222222222"],
         )
 
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fail_scan)
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", fail_scan)
     with pytest.raises(SystemExit) as info:
-        run(tmp_path, ["watch", "openrouter-usage"])
+        run(tmp_path, ["watch", "account-usage"])
     assert info.value.code == 1
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot 22222222-2222-2222-2222-222222222222\n"
     assert captured.err == "usage.snapshot error: router-a: unavailable\n"
 
 
-def test_watch_claude_usage_changed_unchanged_skipped_and_error(
+def test_watch_window_usage_changed_unchanged_skipped_and_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
@@ -3259,47 +3273,47 @@ def test_watch_claude_usage_changed_unchanged_skipped_and_error(
         return fake
 
     monkeypatch.setattr(
-        "agent_cli.main.scan_claude_usage",
+        "agent_cli.main.scan_window_usage",
         scan(["11111111-1111-1111-1111-111111111111"], []),
     )
-    run(tmp_path, ["watch", "claude-usage"])
+    run(tmp_path, ["watch", "window-usage"])
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot 11111111-1111-1111-1111-111111111111\n"
     assert captured.err == ""
 
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", scan([], []))
-    run(tmp_path, ["watch", "claude-usage"])
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", scan([], []))
+    run(tmp_path, ["watch", "window-usage"])
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot none\n"
     assert captured.err == ""
 
     monkeypatch.setattr(
-        "agent_cli.main.scan_claude_usage",
-        scan([], ["seat: claude login token expired; start claude to renew it"]),
+        "agent_cli.main.scan_window_usage",
+        scan([], ["seat: login token expired; start login-tool to renew it"]),
     )
-    run(tmp_path, ["watch", "claude-usage"])
+    run(tmp_path, ["watch", "window-usage"])
     captured = capsys.readouterr()
     assert captured.out == (
-        "usage.snapshot skipped seat: claude login token expired; start claude to renew it\n"
+        "usage.snapshot skipped seat: login token expired; start login-tool to renew it\n"
     )
     assert captured.err == ""
 
     def fail_scan(_store: object, *, skipped: list[str]) -> list[str]:
-        raise ClaudeUsageError(
-            ["seat: Claude usage returned HTTP 401"],
+        raise AccountUsageError(
+            ["seat: Login usage returned HTTP 401"],
             ["22222222-2222-2222-2222-222222222222"],
         )
 
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", fail_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", fail_scan)
     with pytest.raises(SystemExit) as info:
-        run(tmp_path, ["watch", "claude-usage"])
+        run(tmp_path, ["watch", "window-usage"])
     assert info.value.code == 1
     captured = capsys.readouterr()
     assert captured.out == "usage.snapshot 22222222-2222-2222-2222-222222222222\n"
-    assert captured.err == "usage.snapshot error: seat: Claude usage returned HTTP 401\n"
+    assert captured.err == "usage.snapshot error: seat: Login usage returned HTTP 401\n"
 
 
-def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
+def test_knock_daemon_polls_window_usage_on_the_usage_clock(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
@@ -3308,20 +3322,20 @@ def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
     due_calls: list[object] = []
 
     class Accounts:
-        usage_accounts = ("router-a", "seat")
+        usage_accounts = ("spend-a", "seat")
 
-    def fake_openrouter(_store: object) -> list[str]:
-        order.append("openrouter")
-        raise OpenRouterUsageError(["router-a: unavailable"], [])
+    def fake_account(_store: object) -> list[str]:
+        order.append("account")
+        raise AccountUsageError(["spend-a: unavailable"], [])
 
     paces: list[object] = []
     listens: list[int] = []
 
-    def fake_claude(_store: object, *, pace: dict[str, float]) -> list[str]:
-        order.append("claude")
+    def fake_window(_store: object, *, pace: dict[str, float]) -> list[str]:
+        order.append("window")
         paces.append(pace)
-        raise ClaudeUsageError(
-            ["seat: Claude usage returned HTTP 500"],
+        raise AccountUsageError(
+            ["seat: Login usage returned HTTP 500"],
             ["66666666-6666-6666-6666-666666666666"],
         )
 
@@ -3335,12 +3349,12 @@ def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
         return True
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_openrouter)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", fake_claude)
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", fake_account)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", fake_window)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3350,15 +3364,15 @@ def test_knock_daemon_polls_claude_usage_on_the_usage_clock(
     with pytest.raises(SystemExit, match="stop"):
         run(tmp_path, ["knock"])
 
-    assert order == ["openrouter", "claude", "openrouter", "claude"]
+    assert order == ["account", "window", "account", "window"]
     assert len(due_calls) == 2
     # One pacing map lives across ticks; the 60-second tick stays the only clock.
     assert len(paces) == 2 and paces[0] is paces[1]
     assert isinstance(paces[0], dict)
     captured = capsys.readouterr()
     assert "usage.snapshot 66666666-6666-6666-6666-666666666666" in captured.out
-    assert "usage.snapshot error: router-a: unavailable" in captured.err
-    assert "usage.snapshot error: seat: Claude usage returned HTTP 500" in captured.err
+    assert "usage.snapshot error: spend-a: unavailable" in captured.err
+    assert "usage.snapshot error: seat: Login usage returned HTTP 500" in captured.err
 
 
 def test_watch_errors_empty_scan_prints_nothing(
@@ -3404,7 +3418,7 @@ def test_knock_once_does_not_poll_usage(
     def fake_scan(store: object) -> None:
         calls.append(store)
 
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan)
     run(tmp_path, ["knock", "--once"])
     assert calls == []
 
@@ -3433,7 +3447,7 @@ def test_knock_daemon_polls_usage(
         return None
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
         run(tmp_path, ["knock"])
@@ -3446,8 +3460,9 @@ def test_knock_daemon_auth_stale_is_silent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
-        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        json.dumps({"models": {"first": "driver-a", "second": "driver-b"}}),
         encoding="utf-8",
     )
     capsys.readouterr()
@@ -3457,14 +3472,14 @@ def test_knock_daemon_auth_stale_is_silent(
         return True
 
     def fake_scan(_store: object) -> str:
-        raise AuthStale("grok auth token expired; run grok login")
+        raise AuthStale("driver-a credential expired; log in again")
 
     def fake_listen(*_args: object, **_kwargs: object) -> None:
         listen_calls["n"] += 1
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", fake_scan)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
         run(tmp_path, ["knock"])
@@ -3473,7 +3488,7 @@ def test_knock_daemon_auth_stale_is_silent(
     assert "usage.snapshot" not in captured.out
 
 
-def test_knock_daemon_scans_configured_openrouter_usage(
+def test_knock_daemon_scans_configured_account_usage(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
@@ -3491,12 +3506,12 @@ def test_knock_daemon_scans_configured_openrouter_usage(
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store, **_kwargs: [])
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", lambda _store, **_kwargs: [])
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3510,7 +3525,7 @@ def test_knock_daemon_scans_configured_openrouter_usage(
     assert "usage.snapshot 33333333-3333-3333-3333-333333333333" in capsys.readouterr().out
 
 
-def test_knock_daemon_skips_openrouter_without_usage_accounts(
+def test_knock_daemon_skips_account_usage_without_usage_accounts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
@@ -3519,18 +3534,18 @@ def test_knock_daemon_skips_openrouter_without_usage_accounts(
         usage_accounts: tuple[str, ...] = ()
 
     def forbidden_scan(_store: object, **_kwargs: object) -> list[str]:
-        raise AssertionError("OpenRouter scan must be skipped")
+        raise AssertionError("account usage scan must be skipped")
 
     def stop_listen(*_args: object, **_kwargs: object) -> None:
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", forbidden_scan)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3557,13 +3572,13 @@ def test_knock_daemon_usage_precheck_ignores_missing_models(
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
 
     def forbidden_scan(_store: object, **_kwargs: object) -> list[str]:
-        raise AssertionError("OpenRouter scan must be skipped without usage_accounts")
+        raise AssertionError("account usage scan must be skipped without usage_accounts")
 
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", forbidden_scan)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3575,7 +3590,7 @@ def test_knock_daemon_usage_precheck_ignores_missing_models(
     assert capsys.readouterr().err == ""
 
 
-def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
+def test_knock_daemon_reports_account_usage_errors_and_keeps_looping(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
@@ -3589,7 +3604,7 @@ def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
     def fake_scan(_store: object) -> list[str]:
         scan_calls["n"] += 1
         if scan_calls["n"] == 1:
-            raise OpenRouterUsageError(
+            raise AccountUsageError(
                 ["router-a: unavailable"],
                 ["44444444-4444-4444-4444-444444444444"],
             )
@@ -3602,12 +3617,12 @@ def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
         return None
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr(
         "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
     )
-    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
-    monkeypatch.setattr("agent_cli.main.scan_claude_usage", lambda _store, **_kwargs: [])
+    monkeypatch.setattr("agent_cli.main.scan_account_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_window_usage", lambda _store, **_kwargs: [])
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
     monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
@@ -3683,7 +3698,7 @@ def test_knock_daemon_polls_errors(
         return None
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr("agent_cli.errors.scan_errors", fake_scan)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
@@ -3718,7 +3733,7 @@ def test_knock_daemon_calls_scan_error_fix(
         return None
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", fake_scan)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
@@ -3744,7 +3759,7 @@ def test_knock_daemon_skips_errors_without_config(
         raise SystemExit("stop")
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
-    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.scan_session_usage", lambda _store: None)
     monkeypatch.setattr("agent_cli.errors.scan_errors", fake_scan)
     monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
     with pytest.raises(SystemExit, match="stop"):
@@ -4472,7 +4487,7 @@ def test_review_loop_and_pr_review_skills_required(
                 "--role",
                 "implementer",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--round",
                 "1",
             ],
@@ -4490,7 +4505,7 @@ def test_review_loop_and_pr_review_skills_required(
                 "--dimension",
                 "quality",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--verdict",
                 "approved",
                 "--head",
@@ -4512,7 +4527,7 @@ def test_review_loop_and_pr_review_skills_required(
                 "--role",
                 "pr-reviewer-quality",
                 "--vendor",
-                "grok",
+                "driver-a",
             ],
         )
     run(tmp_path, ["session", "skill", "attach", "--id", "s", "--skill", "review-loop"])
@@ -4528,10 +4543,10 @@ def test_knock_and_watch_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "pr.merged none" in out
 
 
-def test_watch_usage_mentions_grok_usage() -> None:
-    with pytest.raises(SystemExit, match="grok-usage"):
+def test_watch_usage_mentions_the_usage_commands() -> None:
+    with pytest.raises(SystemExit, match="session-usage"):
         main(["watch"])
-    with pytest.raises(SystemExit, match="grok-usage"):
+    with pytest.raises(SystemExit, match="account-usage"):
         main(["watch", "nope"])
 
 
@@ -4551,7 +4566,7 @@ def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
 
 def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    with pytest.raises(SystemExit, match=r"assigned \[--follow\]\|grok-usage"):
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]\|session-usage\|account-usage"):
         run(tmp_path, ["watch"])
 
 
@@ -4717,8 +4732,8 @@ def test_next_implementer_prints_the_first_slot_vendor(
     run(tmp_path, ["next", "--task", tid])
     out = capsys.readouterr().out
     assert "implementer_done" in out
-    assert "vendor=grok" in out
-    assert "vendor=grok|codex" not in out
+    assert "vendor=driver-a" in out
+    assert "vendor=driver-a|driver-b" not in out
     assert "vendor=None" not in out
 
 
@@ -4742,7 +4757,7 @@ def _seed_pr_review_gate(
         create += ["--ref", ref]
     run(tmp_path, create)
     tid = _last_task_id(capsys.readouterr().out)
-    run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
+    run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "driver-a"])
     aid = _last_agent_id(capsys.readouterr().out)
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", verdict])
     capsys.readouterr()
@@ -4752,7 +4767,7 @@ def _seed_pr_review_gate(
 def _gate_argv(tid: str, aid: str, verdict: str, *extra: str, head: str = _GATE_HEAD) -> list[str]:
     return [
         "gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality",
-        "--vendor", "grok", "--verdict", verdict, "--head", head, "--agent", aid, *extra,
+        "--vendor", "driver-a", "--verdict", verdict, "--head", head, "--agent", aid, *extra,
     ]
 
 
@@ -5131,14 +5146,14 @@ def test_pr_reviewer_start_validates_stage_vendor_and_order(
     tid = _spine_session_task(tmp_path, capsys)
     with pytest.raises(
         SystemExit,
-        match=r"stage review-2 requires --vendor codex",
+        match=r"stage review-2 requires --vendor driver-b",
     ):
         run(
             tmp_path,
             [
                 "agent", "start", "--session", "s", "--task", tid,
                 "--role", "pr-reviewer-quality", "--stage", "review-2",
-                "--vendor", "grok",
+                "--vendor", "driver-a",
             ],
         )
     with pytest.raises(
@@ -5150,7 +5165,7 @@ def test_pr_reviewer_start_validates_stage_vendor_and_order(
             [
                 "agent", "start", "--session", "s", "--task", tid,
                 "--role", "pr-reviewer-quality", "--stage", "review-2",
-                "--vendor", "codex",
+                "--vendor", "driver-b",
             ],
         )
 
@@ -5159,7 +5174,7 @@ def test_pr_reviewer_start_validates_stage_vendor_and_order(
         [
             "agent", "start", "--session", "s", "--task", tid,
             "--role", "pr-reviewer-quality", "--stage", "review-1",
-            "--vendor", "grok",
+            "--vendor", "driver-a",
         ],
     )
     aid = _last_agent_id(capsys.readouterr().out)
@@ -5187,7 +5202,7 @@ def test_pr_reviewer_start_refuses_first_stage_gates_on_different_heads(
                     "task_id": tid,
                     "stage": "review-1",
                     "dimension": dimension,
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "verdict": "approved",
                     "evidence": None,
                     "head_sha": head,
@@ -5207,7 +5222,7 @@ def test_pr_reviewer_start_refuses_first_stage_gates_on_different_heads(
             [
                 "agent", "start", "--session", "s", "--task", tid,
                 "--role", "pr-reviewer-quality", "--stage", "review-2",
-                "--vendor", "codex",
+                "--vendor", "driver-b",
             ],
         )
 
@@ -5221,14 +5236,15 @@ def test_pr_reviewer_start_refuses_first_stage_gates_on_different_heads(
         store.close()
 
 
-def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
+def test_agent_start_allows_a_record_only_driver_only_for_the_pinned_implementer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    write_drivers(tmp_path)
     (tmp_path / "ai-accounts.json").write_text(
         json.dumps(
             {
-                "models": {"first": "grok", "second": "codex"},
-                "implementer": "deepseek",
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "implementer": "driver-e",
                 "lane_execution": {"mode": "this-device-is-lane-host"},
             }
         ),
@@ -5241,19 +5257,19 @@ def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
         tmp_path,
         [
             "agent", "start", "--session", "s", "--task", tid,
-            "--role", "implementer", "--vendor", "deepseek", "--round", "1",
+            "--role", "implementer", "--vendor", "driver-e", "--round", "1",
         ],
     )
     implementer_id = _last_agent_id(capsys.readouterr().out)
     with pytest.raises(
         SystemExit,
-        match="implementer requires --vendor deepseek \\(configured implementer\\)",
+        match="implementer requires --vendor driver-e \\(configured implementer\\)",
     ):
         run(
             tmp_path,
             [
                 "agent", "start", "--session", "s", "--task", tid,
-                "--role", "implementer", "--vendor", "grok", "--round", "1",
+                "--role", "implementer", "--vendor", "driver-a", "--round", "1",
             ],
         )
     run(tmp_path, ["agent", "finish", "--id", implementer_id, "--verdict", "done"])
@@ -5262,24 +5278,24 @@ def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
         tmp_path,
         [
             "agent", "start", "--session", "s", "--task", tid,
-            "--role", "reviewer", "--vendor", "grok", "--round", "1",
+            "--role", "reviewer", "--vendor", "driver-a", "--round", "1",
         ],
     )
     assert _last_agent_id(capsys.readouterr().out)
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be driver-a\\|driver-b\\|driver-c\\|driver-d"):
         run(
             tmp_path,
             [
                 "agent", "start", "--session", "s", "--task", tid,
-                "--role", "reviewer", "--vendor", "deepseek", "--round", "1",
+                "--role", "reviewer", "--vendor", "driver-e", "--round", "1",
             ],
         )
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be driver-a\\|driver-b\\|driver-c\\|driver-d"):
         run(
             tmp_path,
             [
                 "gate", "record", "--task", tid, "--stage", "review-1",
-                "--dimension", "quality", "--vendor", "deepseek",
+                "--dimension", "quality", "--vendor", "driver-e",
                 "--verdict", "approved", "--head", "abcdef0", "--agent", "missing",
             ],
         )
@@ -5300,7 +5316,7 @@ def test_agent_start_uses_task_pins_after_device_models_are_removed(
         tmp_path,
         [
             "agent", "start", "--session", "s", "--task", tid,
-            "--role", "implementer", "--vendor", "grok", "--round", "1",
+            "--role", "implementer", "--vendor", "driver-a", "--round", "1",
         ],
     )
     agent_id = _last_agent_id(capsys.readouterr().out)
@@ -5310,7 +5326,7 @@ def test_agent_start_uses_task_pins_after_device_models_are_removed(
         agent = store.row("agent", agent_id)
         assert agent is not None
         assert agent["task_id"] == tid
-        assert agent["vendor"] == "grok"
+        assert agent["vendor"] == "driver-a"
     finally:
         store.close()
 
@@ -5401,7 +5417,7 @@ def test_close_step_unavailable_after_gate_record(
             ],
         )
     aid = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a"
     )
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
     capsys.readouterr()
@@ -5417,7 +5433,7 @@ def test_close_step_unavailable_after_gate_record(
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "unavailable",
             "--head",
@@ -5527,7 +5543,7 @@ def test_round_start_refuses_unavailable_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tid = _spine_session_task(tmp_path, capsys)
-    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok")
+    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a")
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
     capsys.readouterr()
     run(
@@ -5542,7 +5558,7 @@ def test_round_start_refuses_unavailable_gate(
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "unavailable",
             "--head",
@@ -5564,7 +5580,7 @@ def test_cli_gate_readers_fail_closed_on_ambiguous_legacy_rows() -> None:
         "task_id": "task-1",
         "stage": "review-1",
         "dimension": "quality",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "verdict": "approved",
         "head_sha": "abcdef0",
         "recorded_at": recorded_at,
@@ -5609,9 +5625,9 @@ def test_allow_command_denies_ambiguous_legacy_gate_rows(
     ready = _ready_task(tid="task-1", session_id="sess-1")
     common = {
         "task_id": "task-1",
-        "stage": "grok-pr",
+        "stage": "driver-a-pr",
         "dimension": "quality",
-        "vendor": "grok",
+        "vendor": "driver-a",
         "head_sha": "a" * 40,
         "recorded_at": "2026-01-01T00:00:00Z",
     }
@@ -5664,7 +5680,7 @@ def test_allow_command_denies_ambiguous_legacy_gate_rows(
 
     monkeypatch.setattr("agent_cli.main.open_store", lambda: GateStore())
     with pytest.raises(SystemExit) as exc:
-        main(["allow", "--action", "task-done", "--task", "task-1"])
+        main(["allow", "--action", "task-done", "--task", "task-1", "--session", "sess-1"])
 
     assert exc.value.code == 2
     output = capsys.readouterr()
@@ -5689,9 +5705,9 @@ def test_new_second_stage_accepts_stored_legacy_first_stage_gates(
                 {
                     "id": gate_id,
                     "task_id": tid,
-                    "stage": "grok-pr",
+                    "stage": "driver-a-pr",
                     "dimension": dimension,
-                    "vendor": "grok",
+                    "vendor": "driver-a",
                     "verdict": "approved",
                     "evidence": None,
                     "head_sha": head,
@@ -5703,7 +5719,7 @@ def test_new_second_stage_accepts_stored_legacy_first_stage_gates(
         store.close()
 
     aid = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-b"
     )
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
     capsys.readouterr()
@@ -5719,7 +5735,7 @@ def test_new_second_stage_accepts_stored_legacy_first_stage_gates(
             "--dimension",
             "quality",
             "--vendor",
-            "codex",
+            "driver-b",
             "--verdict",
             "approved",
             "--head",
@@ -5737,7 +5753,7 @@ def test_gate_record_recorded_at_has_six_fractional_digits(
 ) -> None:
     tid = _spine_session_task(tmp_path, capsys)
     aid = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a"
     )
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
     capsys.readouterr()
@@ -5753,7 +5769,7 @@ def test_gate_record_recorded_at_has_six_fractional_digits(
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "approved",
             "--head",
@@ -5788,15 +5804,15 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
     run(tmp_path, ["task", "state", tid, "pr-review"])
     capsys.readouterr()
     agents = {
-        ("quality", "grok"): _start_pr_reviewer(
-            tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+        ("quality", "driver-a"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a"
         ),
-        ("logic", "grok"): _start_pr_reviewer(
-            tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="grok"
+        ("logic", "driver-a"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="driver-a"
         ),
     }
-    grok_q = agents[("quality", "grok")]
-    run(tmp_path, ["agent", "finish", "--id", grok_q, "--verdict", "unavailable"])
+    first_q = agents[("quality", "driver-a")]
+    run(tmp_path, ["agent", "finish", "--id", first_q, "--verdict", "unavailable"])
     capsys.readouterr()
     run(tmp_path, ["task", "show", tid])
     assert json.loads(capsys.readouterr().out)["state"] == "pr-review"
@@ -5812,13 +5828,13 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "unavailable",
             "--head",
             "abcdef0",
             "--agent",
-            grok_q,
+            first_q,
             "--evidence",
             "vendor HTTP 402",
         ],
@@ -5830,7 +5846,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
     assert json.loads(capsys.readouterr().out)["state"] == "gate-blocked"
 
     for (dim, vendor), aid in agents.items():
-        if aid != grok_q:
+        if aid != first_q:
             run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
             capsys.readouterr()
     head = "abcdef0"
@@ -5846,13 +5862,13 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--dimension",
             "quality",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "approved",
             "--head",
             head,
             "--agent",
-            grok_q,
+            first_q,
         ],
     )
     capsys.readouterr()
@@ -5870,23 +5886,23 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--dimension",
             "logic",
             "--vendor",
-            "grok",
+            "driver-a",
             "--verdict",
             "approved",
             "--head",
             head,
             "--agent",
-            agents[("logic", "grok")],
+            agents[("logic", "driver-a")],
         ],
     )
     capsys.readouterr()
-    agents[("quality", "codex")] = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
+    agents[("quality", "driver-b")] = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-b"
     )
-    agents[("logic", "codex")] = _start_pr_reviewer(
-        tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="codex"
+    agents[("logic", "driver-b")] = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="driver-b"
     )
-    for key in (("quality", "codex"), ("logic", "codex")):
+    for key in (("quality", "driver-b"), ("logic", "driver-b")):
         run(tmp_path, ["agent", "finish", "--id", agents[key], "--verdict", "approved"])
         capsys.readouterr()
     run(
@@ -5901,13 +5917,13 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--dimension",
             "quality",
             "--vendor",
-            "codex",
+            "driver-b",
             "--verdict",
             "approved",
             "--head",
             head,
             "--agent",
-            agents[("quality", "codex")],
+            agents[("quality", "driver-b")],
         ],
     )
     capsys.readouterr()
@@ -5923,13 +5939,13 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--dimension",
             "logic",
             "--vendor",
-            "codex",
+            "driver-b",
             "--verdict",
             "approved",
             "--head",
             head,
             "--agent",
-            agents[("logic", "codex")],
+            agents[("logic", "driver-b")],
         ],
     )
     capsys.readouterr()
@@ -5941,7 +5957,7 @@ def test_gate_record_unavailable_without_evidence_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tid = _spine_session_task(tmp_path, capsys)
-    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok")
+    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="driver-a")
     run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
     capsys.readouterr()
     with pytest.raises(SystemExit, match="--evidence is required when --verdict is unavailable"):
@@ -5957,7 +5973,7 @@ def test_gate_record_unavailable_without_evidence_dies(
                 "--dimension",
                 "quality",
                 "--vendor",
-                "grok",
+                "driver-a",
                 "--verdict",
                 "unavailable",
                 "--head",
@@ -6176,7 +6192,7 @@ def test_first_slot_implementer_closes_implementer_done(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -6195,7 +6211,7 @@ def test_first_slot_implementer_closes_implementer_done(
             "--source",
             "script",
             "--evidence",
-            "grok implementer finished",
+            "driver-a implementer finished",
         ],
     )
     assert "checklist implementer_done=ja" in capsys.readouterr().out
@@ -6233,7 +6249,7 @@ def test_first_slot_implementer_closes_conflicts_resolved(
             "--role",
             "implementer",
             "--vendor",
-            "grok",
+            "driver-a",
             "--round",
             "1",
         ],
@@ -6252,14 +6268,14 @@ def test_first_slot_implementer_closes_conflicts_resolved(
             "--source",
             "script",
             "--evidence",
-            "grok implementer finished",
+            "driver-a implementer finished",
         ],
     )
     assert "checklist conflicts_resolved=ja" in capsys.readouterr().out
 
 
-def _codex_implementer_done(tmp_path: Path, capsys: pytest.CaptureFixture[str], *, unpin: bool) -> str:
-    """Task whose only finished implementer row is codex, as develop could record it."""
+def _second_slot_implementer_done(tmp_path: Path, capsys: pytest.CaptureFixture[str], *, unpin: bool) -> str:
+    """Task whose only finished implementer row is driver-b, as develop could record it."""
     tid = _spine_session_task(tmp_path, capsys)
     for key, source, evidence in (
         ("session_registered", "script", "session register"),
@@ -6270,13 +6286,13 @@ def _codex_implementer_done(tmp_path: Path, capsys: pytest.CaptureFixture[str], 
     capsys.readouterr()
     run(
         tmp_path,
-        ["agent", "start", "--session", "s", "--task", tid, "--role", "implementer", "--vendor", "grok", "--round", "1"],
+        ["agent", "start", "--session", "s", "--task", tid, "--role", "implementer", "--vendor", "driver-a", "--round", "1"],
     )
     impl_id = _last_agent_id(capsys.readouterr().out)
     store = Store(tmp_path)
     try:
         agent = {k: v for k, v in (store.row("agent", impl_id) or {}).items() if not k.startswith("_")}
-        store.write("agent", "update", impl_id, {**agent, "vendor": "codex"})
+        store.write("agent", "update", impl_id, {**agent, "vendor": "driver-b"})
         if unpin:
             task = {k: v for k, v in (store.row("task", tid) or {}).items() if not k.startswith("_")}
             task.pop("models", None)
@@ -6288,24 +6304,24 @@ def _codex_implementer_done(tmp_path: Path, capsys: pytest.CaptureFixture[str], 
     return tid
 
 
-def test_pinned_task_does_not_close_implementer_done_with_a_codex_row(
+def test_pinned_task_does_not_close_implementer_done_with_a_second_slot_row(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    tid = _codex_implementer_done(tmp_path, capsys, unpin=False)
+    tid = _second_slot_implementer_done(tmp_path, capsys, unpin=False)
     with pytest.raises(SystemExit, match="no finished implementer agent"):
         run(
             tmp_path,
-            ["close-step", "--task", tid, "--key", "implementer_done", "--source", "script", "--evidence", "codex row"],
+            ["close-step", "--task", tid, "--key", "implementer_done", "--source", "script", "--evidence", "driver-b row"],
         )
 
 
-def test_task_without_models_pin_closes_implementer_done_with_a_codex_row(
+def test_task_without_models_pin_closes_implementer_done_with_a_second_slot_row(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    tid = _codex_implementer_done(tmp_path, capsys, unpin=True)
+    tid = _second_slot_implementer_done(tmp_path, capsys, unpin=True)
     run(
         tmp_path,
-        ["close-step", "--task", tid, "--key", "implementer_done", "--source", "script", "--evidence", "codex row"],
+        ["close-step", "--task", tid, "--key", "implementer_done", "--source", "script", "--evidence", "driver-b row"],
     )
     assert "checklist implementer_done=ja" in capsys.readouterr().out
 
@@ -6379,8 +6395,8 @@ def test_activity_add_validates_and_writes_second_review_session_mail(
         "blocks_merge": False,
         "findings": "",
         "lanes": [
-            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
-            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+            {"id": "conformity-b", "provider": "Vendor B", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "Vendor B", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
         ],
     }
     mail = {"to_session": "worker", "payload": result}

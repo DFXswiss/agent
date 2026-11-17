@@ -10,14 +10,28 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli import main as main_mod
+from agent_cli.drivers import (
+    DRIVERS_NOT_CONFIGURED,
+    SESSION_ENV_NOT_CONFIGURED,
+    lane_scrub_env,
+    role_clear_env,
+)
 from agent_cli.main import apply_control, main, should_sync_on_ws
 from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store, StoreError
+from driver_fixtures import (
+    CONFIG_DIRS,
+    accounts_document,
+    driver_document,
+    driver_specs,
+    write_accounts,
+    write_drivers,
+)
 
 OPERATOR_INTERACTIVE_MODEL = "operator-interactive-model"
 OPERATOR_INTERACTIVE_MODEL_B = "operator-interactive-model-b"
-OPERATOR_GROK_HOME = "/operator/path/interactive-grok-a"
-OPERATOR_GROK_HOME_B = "/operator/path/interactive-grok-b"
+OPERATOR_HOME_A = "/operator/path/interactive-a"
+OPERATOR_HOME_B = "/operator/path/interactive-b"
 SESSION_A = "sess-1"
 SESSION_B = "sess-2"
 
@@ -27,28 +41,28 @@ def write_operator_interactive_ai_accounts(
     *,
     sessions: dict | None = None,
     model: str = OPERATOR_INTERACTIVE_MODEL,
-    config_dir: str = OPERATOR_GROK_HOME,
-    account_name: str = "interactive-grok",
+    config_dir: str = OPERATOR_HOME_A,
+    account_name: str = "interactive-account-a",
     role_name: str = "interactive-builder",
     access: str = "workspace-write",
 ) -> None:
     """Write operator-supplied ai-accounts.json for positive interactive starts.
 
-    Not installed by default. Call explicitly for positive grok provider cases;
+    Not installed by default. Call explicitly for positive interactive provider cases;
     raw-shell starts (provider=None) must not rely on this helper.
     """
     data = {
         "lane_execution": {"mode": "this-device-is-lane-host"},
-        "models": {"first": "grok", "second": "codex"},
+        "models": {"first": "driver-a", "second": "driver-b"},
         "accounts": {
-            account_name: {"provider": "grok", "config_dir": config_dir},
-            "interactive-grok-b": {
-                "provider": "grok",
-                "config_dir": OPERATOR_GROK_HOME_B,
+            account_name: {"provider": "driver-a", "config_dir": config_dir},
+            "interactive-account-b": {
+                "provider": "driver-a",
+                "config_dir": OPERATOR_HOME_B,
             },
-            "interactive-codex": {
-                "provider": "codex",
-                "config_dir": "/operator/path/interactive-codex",
+            "interactive-driver-b": {
+                "provider": "driver-b",
+                "config_dir": "/operator/path/interactive-driver-b",
             },
         },
         "roles": {
@@ -58,13 +72,13 @@ def write_operator_interactive_ai_accounts(
                 "access": access,
             },
             "interactive-builder-b": {
-                "account": "interactive-grok-b",
+                "account": "interactive-account-b",
                 "model": OPERATOR_INTERACTIVE_MODEL_B,
                 "access": "workspace-write",
             },
-            "interactive-codex-role": {
-                "account": "interactive-codex",
-                "model": "operator-codex-model",
+            "interactive-driver-b-role": {
+                "account": "interactive-driver-b",
+                "model": "operator-driver-b-model",
                 "access": "workspace-write",
             },
             "interactive-reader": {
@@ -80,21 +94,22 @@ def write_operator_interactive_ai_accounts(
             "s1": {"interactive": role_name, "lanes": {}},
         },
     }
+    write_drivers(home)
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def expected_ai_binding(
     *,
     role: str = "interactive-builder",
-    account: str = "interactive-grok",
+    account: str = "interactive-account-a",
     model: str = OPERATOR_INTERACTIVE_MODEL,
-    config_dir: str = OPERATOR_GROK_HOME,
+    config_dir: str = OPERATOR_HOME_A,
     access: str = "workspace-write",
 ) -> dict:
     return {
         "role": role,
         "account": account,
-        "provider": "grok",
+        "provider": "driver-a",
         "model": model,
         "access": access,
         "configuration": hashlib.sha256(config_dir.encode()).hexdigest(),
@@ -110,9 +125,9 @@ def bind_interactive_runtime(home: Path, session_id: str) -> None:
             "control": "attached",
             "tmux_session": f"agent-{session_id}",
             "tmux_pane": f"agent-{session_id}:0.0",
-            "provider": "grok",
+            "provider": "driver-a",
             "model": OPERATOR_INTERACTIVE_MODEL,
-            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "interactive_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "ai_binding": expected_ai_binding(),
         }
         store.write(
@@ -160,7 +175,7 @@ def _fake_runtime_factory(calls: list[list[str]] | None = None):
     return factory, log
 
 
-def test_cli_start_provider_grok_mints_uuid_and_resumes(
+def test_cli_start_provider_mints_uuid_and_resumes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -181,54 +196,54 @@ def test_cli_start_provider_grok_mints_uuid_and_resumes(
     monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     out = capsys.readouterr().out
     store = Store(tmp_path)
     try:
         row = store.row("session", SESSION_A)
         assert row is not None
-        gid = row["runtime"]["grok_session_id"]
+        gid = row["runtime"]["interactive_session_id"]
         assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", gid)
-        assert f"grok={gid}" in out
+        assert f"interactive={gid}" in out
         assert row["runtime"]["ai_binding"] == expected_ai_binding()
         assert row["runtime"]["model"] == OPERATOR_INTERACTIVE_MODEL
-        assert "grok_start_pending" not in row["runtime"]
+        assert "interactive_start_pending" not in row["runtime"]
         first = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
         assert "env" in first
-        assert "ANTHROPIC_API_KEY" in first
-        assert "XAI_API_KEY" in first
-        assert f"GROK_HOME={OPERATOR_GROK_HOME}" in first
+        assert "TOOL_C_API_KEY" in first
+        assert "TOOL_A_API_KEY" in first
+        assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in first
         assert "--session-id" in first
         assert gid in first
         assert "--model" in first and OPERATOR_INTERACTIVE_MODEL in first
-        assert "grok-4.6" not in first
+        assert first[first.index("--model") + 1] == OPERATOR_INTERACTIVE_MODEL
         assert first[first.index("--session-id") + 1] != SESSION_A
-        # Nested role env_prefix precedes the existing grok_tmux_command_argv env strip.
+        # Nested role env_prefix precedes the existing interactive_command_argv env strip.
         assert first[first.index("--") + 1] == "env"
         second_env = first.index("env", first.index("--") + 2)
-        assert second_env > first.index(f"GROK_HOME={OPERATOR_GROK_HOME}")
+        assert second_env > first.index(f"TOOL_A_HOME={OPERATOR_HOME_A}")
     finally:
         store.close()
 
     run(tmp_path, ["session", "stop", "--id", SESSION_A])
     calls.clear()
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     resume = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
     assert "--resume" in resume
     assert "--session-id" not in resume
     assert OPERATOR_INTERACTIVE_MODEL in resume
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in resume
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in resume
     store = Store(tmp_path)
     try:
         row = store.row("session", SESSION_A)
         assert row is not None
-        assert resume[resume.index("--resume") + 1] == row["runtime"]["grok_session_id"]
+        assert resume[resume.index("--resume") + 1] == row["runtime"]["interactive_session_id"]
         assert row["runtime"]["ai_binding"] == expected_ai_binding()
     finally:
         store.close()
 
 
-def test_cli_start_grok_replaces_bare_tmux(
+def test_cli_start_provider_replaces_bare_tmux(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -249,16 +264,16 @@ def test_cli_start_grok_replaces_bare_tmux(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
     # Raw-shell start: provider=None must not require AI accounts.
     run(tmp_path, ["session", "start", "--id", SESSION_A])
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert any(c[:2] == ["tmux", "kill-session"] for c in calls)
-    grok_news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "grok" in c]
-    assert len(grok_news) == 1
-    assert "--session-id" in grok_news[0]
-    assert OPERATOR_INTERACTIVE_MODEL in grok_news[0]
+    interactive_news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "tool-a" in c]
+    assert len(interactive_news) == 1
+    assert "--session-id" in interactive_news[0]
+    assert OPERATOR_INTERACTIVE_MODEL in interactive_news[0]
     store = Store(tmp_path)
     try:
-        gid = store.row("session", SESSION_A)["runtime"]["grok_session_id"]
-        assert gid in grok_news[0]
+        gid = store.row("session", SESSION_A)["runtime"]["interactive_session_id"]
+        assert gid in interactive_news[0]
         assert store.row("session", SESSION_A)["runtime"]["ai_binding"] == expected_ai_binding()
     finally:
         store.close()
@@ -273,7 +288,7 @@ def test_cli_provider_and_cmd_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit, match="cannot be used together"):
         run(
             tmp_path,
-            ["session", "start", "--id", SESSION_A, "--provider", "grok", "--cmd", "bash"],
+            ["session", "start", "--id", SESSION_A, "--provider", "driver-a", "--cmd", "bash"],
         )
 
 
@@ -295,7 +310,7 @@ def test_cli_start_owned_writes_runtime(tmp_path: Path, monkeypatch: pytest.Monk
         assert rt["cols"] == 80
         assert rt["rows"] == 24
         assert "ai_binding" not in rt
-        assert "grok_session_id" not in rt
+        assert "interactive_session_id" not in rt
     finally:
         store.close()
 
@@ -351,24 +366,24 @@ def test_apply_control_start_stop_input(tmp_path: Path) -> None:
                 "type": "control",
                 "session_id": "s1",
                 "action": "start",
-                "payload": {"provider": "grok", "cols": 80, "rows": 24},
+                "payload": {"provider": "driver-a", "cols": 80, "rows": 24},
             },
         )
         assert ack["ok"] is True
         row = store.row("session", "s1")
         assert row is not None
-        assert row["runtime"]["provider"] == "grok"
+        assert row["runtime"]["provider"] == "driver-a"
         assert row["runtime"]["model"] == OPERATOR_INTERACTIVE_MODEL
         assert row["runtime"]["ai_binding"] == expected_ai_binding()
         assert re.fullmatch(
             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-            row["runtime"]["grok_session_id"],
+            row["runtime"]["interactive_session_id"],
         )
-        grok_new = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
-        assert "--session-id" in grok_new
-        assert OPERATOR_INTERACTIVE_MODEL in grok_new
-        assert f"GROK_HOME={OPERATOR_GROK_HOME}" in grok_new
-        assert "grok-4.6" not in grok_new
+        interactive_new = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
+        assert "--session-id" in interactive_new
+        assert OPERATOR_INTERACTIVE_MODEL in interactive_new
+        assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in interactive_new
+        assert interactive_new[interactive_new.index("--model") + 1] == OPERATOR_INTERACTIVE_MODEL
 
         # Non-provider restart keeps the existing attached session (raw resize path).
         ack = apply_control(
@@ -420,7 +435,7 @@ def test_apply_control_provider_and_command_not_ok(tmp_path: Path) -> None:
                 "type": "control",
                 "session_id": "s1",
                 "action": "start",
-                "payload": {"provider": "grok", "command": "bash"},
+                "payload": {"provider": "driver-a", "command": "bash"},
             },
         )
         assert ack["ok"] is False
@@ -481,7 +496,7 @@ def test_should_sync_on_ws_false_for_control_messages() -> None:
 def test_missing_interactive_account_refuses_before_process_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Genuinely empty AI config: provider=grok must not start tmux/grok."""
+    """Genuinely empty AI config: a provider start must not start tmux or the driver."""
     calls: list[list[str]] = []
 
     def runner(argv: list[str]) -> Completed:
@@ -493,8 +508,11 @@ def test_missing_interactive_account_refuses_before_process_start(
     monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    with pytest.raises(SystemExit, match="drivers is not configured: drivers.json"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
+    write_drivers(tmp_path)
     with pytest.raises(SystemExit, match="No AI session configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
@@ -519,7 +537,7 @@ def test_missing_models_refuses_after_interactive_binding_before_process_start(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match="models is not configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
@@ -542,7 +560,7 @@ def test_missing_lane_execution_refuses_interactive_process_start(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match="lane_execution is not configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
@@ -574,13 +592,13 @@ def test_interactive_configuration_is_checked_before_runtime_target_probes(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match=f"{missing} is not configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     assert calls == []
 
 
 @pytest.mark.parametrize("missing", ["models", "lane_execution"])
-def test_fresh_grok_start_rechecks_configuration_between_runtime_probes(
+def test_fresh_interactive_start_rechecks_configuration_between_runtime_probes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -598,13 +616,13 @@ def test_fresh_grok_start_rechecks_configuration_between_runtime_probes(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match=f"{missing} is not configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     assert calls == [["tmux", "-V"]]
 
 
 @pytest.mark.parametrize("missing", ["models", "lane_execution"])
-def test_fresh_grok_start_rechecks_configuration_before_new_session(
+def test_fresh_interactive_start_rechecks_configuration_before_new_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -628,13 +646,13 @@ def test_fresh_grok_start_rechecks_configuration_before_new_session(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match=f"{missing} is not configured"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     assert has_session_calls == 2
     assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
 
 
-def test_fresh_grok_start_keeps_metadata_when_session_appears_between_probes(
+def test_fresh_interactive_start_keeps_metadata_when_session_appears_between_probes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -679,9 +697,9 @@ def test_fresh_grok_start_keeps_metadata_when_session_appears_between_probes(
 
     with pytest.raises(
         SystemExit,
-        match="tmux session already exists; Grok was not started",
+        match="tmux session already exists; the interactive driver was not started",
     ):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     store = Store(tmp_path)
     try:
@@ -695,7 +713,7 @@ def test_fresh_grok_start_keeps_metadata_when_session_appears_between_probes(
     assert not any(argv[:2] == ["tmux", "resize-window"] for argv in calls)
 
 
-def test_failed_grok_start_marker_write_does_not_start_or_change_metadata(
+def test_failed_interactive_start_marker_write_does_not_start_or_change_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -739,7 +757,7 @@ def test_failed_grok_start_marker_write_does_not_start_or_change_metadata(
             and op == "update"
             and row_id == SESSION_A
             and isinstance(runtime, dict)
-            and runtime.get("grok_start_pending") is True
+            and runtime.get("interactive_start_pending") is True
         ):
             raise StoreError("start marker write failed")
         return original_write(self, table, op, row_id, payload)
@@ -747,7 +765,7 @@ def test_failed_grok_start_marker_write_does_not_start_or_change_metadata(
     monkeypatch.setattr(Store, "write", fail_start_marker_write)
 
     with pytest.raises(SystemExit, match="start marker write failed"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     assert calls == []
     store = Store(tmp_path)
@@ -759,7 +777,7 @@ def test_failed_grok_start_marker_write_does_not_start_or_change_metadata(
         store.close()
 
 
-def test_failed_grok_new_session_restores_original_metadata(
+def test_failed_interactive_new_session_restores_original_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -798,7 +816,7 @@ def test_failed_grok_new_session_restores_original_metadata(
         store.close()
 
     with pytest.raises(SystemExit, match="new-session failed"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     assert any(argv[:2] == ["tmux", "new-session"] for argv in calls)
     store = Store(tmp_path)
@@ -810,7 +828,7 @@ def test_failed_grok_new_session_restores_original_metadata(
         store.close()
 
 
-def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
+def test_failed_final_interactive_metadata_write_keeps_binding_and_rejects_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -835,8 +853,8 @@ def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
             and op == "update"
             and row_id == SESSION_A
             and isinstance(runtime, dict)
-            and runtime.get("provider") == "grok"
-            and runtime.get("grok_start_pending") is not True
+            and runtime.get("provider") == "driver-a"
+            and runtime.get("interactive_start_pending") is not True
             and any(argv[:2] == ["tmux", "new-session"] for argv in calls)
         ):
             raise StoreError("final metadata write failed")
@@ -848,15 +866,15 @@ def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match="final metadata write failed"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     store = Store(tmp_path)
     try:
         row = store.row("session", SESSION_A)
         assert row is not None
-        assert row["runtime"]["grok_start_pending"] is True
+        assert row["runtime"]["interactive_start_pending"] is True
         assert row["runtime"]["ai_binding"] == expected_ai_binding()
-        assert "grok_session_id" not in row["runtime"]
+        assert "interactive_session_id" not in row["runtime"]
     finally:
         store.close()
 
@@ -869,7 +887,7 @@ def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
     assert calls == []
 
 
-def test_providerless_start_preflights_existing_grok_binding(
+def test_providerless_start_preflights_existing_interactive_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -892,7 +910,7 @@ def test_providerless_start_preflights_existing_grok_binding(
     assert calls == []
 
 
-def test_control_resize_preflights_existing_grok_binding(
+def test_control_resize_preflights_existing_interactive_binding(
     tmp_path: Path,
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -925,7 +943,7 @@ def test_control_resize_preflights_existing_grok_binding(
 
 
 @pytest.mark.parametrize("missing", ["models", "lane_execution"])
-def test_session_input_preflights_before_grok_runtime_input(
+def test_session_input_preflights_before_interactive_runtime_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -983,7 +1001,7 @@ def test_raw_session_input_still_does_not_require_ai_configuration(
     ]
 
 
-def test_authorized_grok_input_preserves_runtime_target(
+def test_authorized_interactive_input_preserves_runtime_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -1089,7 +1107,7 @@ def test_keep_working_rechecks_preflight_before_each_iteration(
 
 
 @pytest.mark.parametrize("missing", ["models", "lane_execution"])
-def test_knock_once_preflights_before_grok_runtime_probe(
+def test_knock_once_preflights_before_interactive_runtime_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -1156,7 +1174,7 @@ def test_assignment_starters_preflight_before_attached_runtime_reuse(
         row["runtime"] = {
             "control": "attached",
             "tmux_session": "agent-sess-1",
-            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "interactive_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "ai_binding": expected_ai_binding(),
         }
         store.write(
@@ -1214,7 +1232,7 @@ def test_assignment_starters_preflight_before_attached_runtime_reuse(
     assert calls == []
 
 
-def test_supervise_preflights_fresh_grok_session_before_runtime_probe(
+def test_supervise_preflights_fresh_interactive_session_before_runtime_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -1243,6 +1261,9 @@ def test_supervise_raw_terminal_still_does_not_require_ai_configuration(
     import agent_cli.telegram_act as telegram_mod
 
     monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    # No ai-accounts.json: drivers.json only names the pane_driver that reads
+    # the raw pane.
+    write_drivers(tmp_path)
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "runner"])
     store = Store(tmp_path)
@@ -1299,6 +1320,8 @@ def test_assignment_knocks_use_preflight_runtime_in_deliver(
     delivered: list[str] = []
 
     monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    # The assigned session has no interactive role; pane_driver reads its pane.
+    write_drivers(tmp_path)
     monkeypatch.setattr(main_mod, "open_store", lambda: store)
     monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
     monkeypatch.setattr(main_mod, "_interactive_preflight", lambda *_a, **_k: None)
@@ -1368,6 +1391,8 @@ def test_assignment_starters_forward_the_workspace_cwd(
     store = SimpleNamespace(home=tmp_path, close=lambda: None)
     runtime = Runtime(runner=lambda _argv: Completed(1, "", ""))
     starts: list[tuple[str, str | None]] = []
+    # The assigned session has no interactive role; pane_driver reads its pane.
+    write_drivers(tmp_path)
 
     def session_start(
         _store: object,
@@ -1452,7 +1477,7 @@ def test_remote_interactive_mode_is_rejected_before_process_start(
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
 
     with pytest.raises(SystemExit, match="remote.*not supported"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
@@ -1474,15 +1499,15 @@ def test_two_sessions_use_different_interactive_accounts_and_models(
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
     run(tmp_path, ["session", "register", "--id", SESSION_B, "--kind", "human"])
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
-    run(tmp_path, ["session", "start", "--id", SESSION_B, "--provider", "grok"])
-    news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "grok" in c]
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
+    run(tmp_path, ["session", "start", "--id", SESSION_B, "--provider", "driver-a"])
+    news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "tool-a" in c]
     assert len(news) == 2
     argv_a, argv_b = news
     assert OPERATOR_INTERACTIVE_MODEL in argv_a
     assert OPERATOR_INTERACTIVE_MODEL_B in argv_b
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in argv_a
-    assert f"GROK_HOME={OPERATOR_GROK_HOME_B}" in argv_b
+    assert f"TOOL_A_HOME={OPERATOR_HOME_A}" in argv_a
+    assert f"TOOL_A_HOME={OPERATOR_HOME_B}" in argv_b
     assert OPERATOR_INTERACTIVE_MODEL_B not in argv_a
     assert OPERATOR_INTERACTIVE_MODEL not in argv_b
     store = Store(tmp_path)
@@ -1490,9 +1515,9 @@ def test_two_sessions_use_different_interactive_accounts_and_models(
         assert store.row("session", SESSION_A)["runtime"]["ai_binding"] == expected_ai_binding()
         assert store.row("session", SESSION_B)["runtime"]["ai_binding"] == expected_ai_binding(
             role="interactive-builder-b",
-            account="interactive-grok-b",
+            account="interactive-account-b",
             model=OPERATOR_INTERACTIVE_MODEL_B,
-            config_dir=OPERATOR_GROK_HOME_B,
+            config_dir=OPERATOR_HOME_B,
         )
     finally:
         store.close()
@@ -1528,7 +1553,7 @@ def test_resume_refuses_account_config_role_or_model_change_before_process_start
     monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     run(tmp_path, ["session", "stop", "--id", SESSION_A])
     before = len([c for c in calls if c[:2] == ["tmux", "new-session"]])
 
@@ -1536,12 +1561,12 @@ def test_resume_refuses_account_config_role_or_model_change_before_process_start
     if mutate == "model":
         raw["roles"]["interactive-builder"]["model"] = "changed-after-first-start"
     elif mutate == "config_dir":
-        raw["accounts"]["interactive-grok"]["config_dir"] = "/operator/path/interactive-changed"
+        raw["accounts"]["interactive-account-a"]["config_dir"] = "/operator/path/interactive-changed"
     elif mutate == "account":
-        raw["roles"]["interactive-builder"]["account"] = "interactive-grok-b"
+        raw["roles"]["interactive-builder"]["account"] = "interactive-account-b"
     else:
         raw["roles"]["interactive-builder-alt"] = {
-            "account": "interactive-grok",
+            "account": "interactive-account-a",
             "model": OPERATOR_INTERACTIVE_MODEL,
             "access": "workspace-write",
         }
@@ -1549,7 +1574,7 @@ def test_resume_refuses_account_config_role_or_model_change_before_process_start
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="interactive AI binding changed"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     after = len([c for c in calls if c[:2] == ["tmux", "new-session"]])
     assert after == before
 
@@ -1588,7 +1613,7 @@ def test_resume_accepts_legacy_binding_with_lane_execution(
         return Completed(0, "", "")
 
     monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
-    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
 
     store = Store(tmp_path)
     try:
@@ -1599,10 +1624,10 @@ def test_resume_accepts_legacy_binding_with_lane_execution(
         store.close()
 
 
-def test_legacy_grok_session_without_ai_binding_refuses_resume(
+def test_legacy_interactive_session_without_ai_binding_refuses_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Legacy sessions with grok_session_id but no ai_binding must not silently resume."""
+    """Legacy sessions with a session id but no ai_binding must not silently resume."""
     write_operator_interactive_ai_accounts(tmp_path)
     calls: list[list[str]] = []
 
@@ -1622,9 +1647,9 @@ def test_legacy_grok_session_without_ai_binding_refuses_resume(
         row = store.row("session", SESSION_A)
         assert row is not None
         row["runtime"] = {
-            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            "provider": "grok",
-            "model": "grok-4.6",
+            "interactive_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "provider": "driver-a",
+            "model": "legacy-interactive-model",
             "tmux_session": "agent-sess-1",
             "control": "stopped",
         }
@@ -1638,7 +1663,7 @@ def test_legacy_grok_session_without_ai_binding_refuses_resume(
         store.close()
 
     with pytest.raises(SystemExit, match="interactive AI binding changed"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
@@ -1669,7 +1694,7 @@ def test_cli_model_flag_must_match_configured_interactive_role(
                 "--id",
                 SESSION_A,
                 "--provider",
-                "grok",
+                "driver-a",
                 "--model",
                 "some-other-model",
             ],
@@ -1684,7 +1709,7 @@ def test_cli_model_flag_must_match_configured_interactive_role(
             "--id",
             SESSION_A,
             "--provider",
-            "grok",
+            "driver-a",
             "--model",
             OPERATOR_INTERACTIVE_MODEL,
         ],
@@ -1692,12 +1717,12 @@ def test_cli_model_flag_must_match_configured_interactive_role(
     assert any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
-def test_cli_interactive_codex_role_refused(
+def test_cli_interactive_role_of_another_driver_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(
         tmp_path,
-        sessions={SESSION_A: {"interactive": "interactive-codex-role", "lanes": {}}},
+        sessions={SESSION_A: {"interactive": "interactive-driver-b-role", "lanes": {}}},
     )
     calls: list[list[str]] = []
 
@@ -1711,5 +1736,312 @@ def test_cli_interactive_codex_role_refused(
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
     with pytest.raises(SystemExit, match="does not match the requested provider"):
-        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+# --- placeholder interactive drivers ------------------------------------------
+
+LEGACY_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+
+
+def write_placeholder_interactive(home: Path, *, role: str = "driver-a-writer") -> None:
+    write_drivers(home)
+    data = accounts_document()
+    data["sessions"] = {SESSION_A: {"interactive": role}}
+    write_accounts(home, data)
+
+
+def placeholder_binding(role: str = "driver-a-writer") -> dict:
+    driver = role.rsplit("-", 1)[0]
+    return {
+        "role": role,
+        "account": f"{driver}-account",
+        "provider": driver,
+        "model": f"{driver}-model",
+        "access": "read-only" if role.endswith("-reader") else "workspace-write",
+        "configuration": hashlib.sha256(CONFIG_DIRS[driver].encode()).hexdigest(),
+    }
+
+
+def _tmux_runner(calls: list[list[str]]) -> Callable[[list[str]], Completed]:
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "has-session"]:
+            created = [c for c in calls[:-1] if c[:2] == ["tmux", "new-session"]]
+            killed = [c for c in calls[:-1] if c[:2] == ["tmux", "kill-session"]]
+            return Completed(0 if len(created) > len(killed) else 1, "", "")
+        return Completed(0, "", "")
+
+    return runner
+
+
+def _pane_command(calls: list[list[str]]) -> list[str]:
+    created = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
+    return created[created.index("--") + 1 :]
+
+
+def _session_runtime(home: Path) -> dict:
+    store = Store(home)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        return dict(row["runtime"])
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("role", "access_args"),
+    [("driver-a-writer", []), ("driver-a-reader", ["--deny", "Edit"])],
+)
+def test_interactive_start_builds_the_pane_from_driver_templates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    role: str,
+    access_args: list[str],
+) -> None:
+    write_placeholder_interactive(tmp_path, role=role)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod, "Runtime", lambda *a, **k: Runtime(runner=_tmux_runner(calls))
+    )
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
+
+    runtime = _session_runtime(tmp_path)
+    session = runtime["interactive_session_id"]
+    assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", session)
+    assert f"interactive={session}" in capsys.readouterr().out
+    assert runtime["provider"] == "driver-a"
+    assert runtime["ai_binding"] == placeholder_binding(role)
+    assert "interactive_start_pending" not in runtime
+    drivers = driver_specs()
+    role_prefix = ["env", *[p for key in role_clear_env(drivers) for p in ("-u", key)]]
+    scrub_prefix = ["env", *[p for key in lane_scrub_env(drivers) for p in ("-u", key)]]
+    tail = [*access_args, "--deny", "Shell"]
+    assert _pane_command(calls) == [
+        *role_prefix,
+        "TOOL_A_HOME=/operator/path/tool-a",
+        *scrub_prefix,
+        "tool-a", "--session-id", session, "--model", "driver-a-model",
+        *tail,
+    ]
+
+    run(tmp_path, ["session", "stop", "--id", SESSION_A])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
+    resumed = _pane_command(calls)
+    assert resumed[resumed.index("tool-a") :] == [
+        "tool-a", "--resume", session, "--model", "driver-a-model", *tail,
+    ]
+    assert _session_runtime(tmp_path)["interactive_session_id"] == session
+
+
+def test_control_start_interactive_starts_the_driver_of_the_role(tmp_path: Path) -> None:
+    write_placeholder_interactive(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    calls: list[list[str]] = []
+    store = Store(tmp_path)
+    try:
+        ack = apply_control(
+            store,
+            Runtime(runner=_tmux_runner(calls)),
+            {
+                "type": "control",
+                "session_id": SESSION_A,
+                "action": "start",
+                "payload": {"interactive": True, "cols": 80, "rows": 24},
+            },
+        )
+    finally:
+        store.close()
+    assert ack["ok"] is True, ack
+    runtime = _session_runtime(tmp_path)
+    assert runtime["provider"] == "driver-a"
+    assert runtime["ai_binding"] == placeholder_binding()
+    command = _pane_command(calls)
+    assert command[command.index("tool-a") :][:3] == [
+        "tool-a", "--session-id", runtime["interactive_session_id"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("role", "payload", "error"),
+    [
+        (
+            "driver-c-writer",
+            {"interactive": True},
+            "provider must be driver-a (see drivers.json, docs/ai-accounts.md#drivers)",
+        ),
+        (
+            "driver-c-writer",
+            {"provider": "driver-c"},
+            "provider must be driver-a (see drivers.json, docs/ai-accounts.md#drivers)",
+        ),
+        (
+            "driver-c-writer",
+            {"provider": "driver-a"},
+            "configured interactive role does not match the requested provider",
+        ),
+        (
+            "driver-a-writer",
+            {"provider": "driver-x"},
+            "provider must be driver-a (see drivers.json, docs/ai-accounts.md#drivers)",
+        ),
+        ("driver-a-writer", {"interactive": "yes"}, "interactive must be a boolean"),
+        ("driver-a-writer", {"model": "driver-a-model"}, "--model requires --provider"),
+    ],
+)
+def test_interactive_start_refusals_start_no_process(
+    tmp_path: Path, role: str, payload: dict, error: str
+) -> None:
+    write_placeholder_interactive(tmp_path, role=role)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    calls: list[list[str]] = []
+    store = Store(tmp_path)
+    try:
+        ack = apply_control(
+            store,
+            Runtime(runner=_tmux_runner(calls)),
+            {"type": "control", "session_id": SESSION_A, "action": "start", "payload": payload},
+        )
+    finally:
+        store.close()
+    assert ack["ok"] is False
+    assert ack["error"] == error
+    assert calls == []
+
+
+@pytest.mark.parametrize("provider", [None, "driver-a"])
+def test_runtime_keys_named_after_the_driver_read_as_neutral_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    provider: str | None,
+) -> None:
+    write_placeholder_interactive(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = {
+            "control": "stopped",
+            "tmux_session": f"agent-{SESSION_A}",
+            "provider": "driver-a",
+            "model": "driver-a-model",
+            "driver-a_session_id": LEGACY_ID,
+            "ai_binding": placeholder_binding(),
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod, "Runtime", lambda *a, **k: Runtime(runner=_tmux_runner(calls))
+    )
+    argv = ["session", "start", "--id", SESSION_A]
+    if provider is not None:
+        argv.extend(["--provider", provider])
+    capsys.readouterr()
+    run(tmp_path, argv)
+
+    assert f"interactive={LEGACY_ID}" in capsys.readouterr().out
+    runtime = _session_runtime(tmp_path)
+    assert runtime["interactive_session_id"] == LEGACY_ID
+    assert "driver-a_session_id" not in runtime
+    if provider is not None:
+        command = _pane_command(calls)
+        assert command[command.index("tool-a") :][:3] == ["tool-a", "--resume", LEGACY_ID]
+
+
+def test_allow_reads_the_session_from_the_configured_session_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = "sess-from-driver"
+    not_configured = re.escape(DRIVERS_NOT_CONFIGURED)
+    monkeypatch.setenv("TOOL_A_SESSION_ID", session)
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        ["session", "register", "--id", session, "--kind", "human", "--skill", "spine"],
+    )
+
+    # Without drivers.json the session variable is unknown: fail, never allow.
+    with pytest.raises(SystemExit, match=not_configured):
+        main_mod._driver_session_env(tmp_path)
+    for action in ("claim-done", "pr-ready", "pr-create", "task-done"):
+        with pytest.raises(SystemExit, match=not_configured):
+            run(tmp_path, ["allow", "--action", action])
+    capsys.readouterr()
+    run(tmp_path, ["allow", "--action", "claim-done", "--session", session])
+    assert f"allow action=claim-done session={session}" in capsys.readouterr().out
+
+    write_drivers(tmp_path)
+    write_accounts(
+        tmp_path,
+        {
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "lane_execution": {"mode": "this-device-is-lane-host"},
+        },
+    )
+    assert main_mod._driver_session_env(tmp_path) == session
+    run(
+        tmp_path,
+        ["task", "create", "--session", session, "--workflow", "implement", "--title", "Ship"],
+    )
+    out = capsys.readouterr().out
+    tid = [line for line in out.splitlines() if line.startswith("task ")][-1].split()[1]
+    with pytest.raises(SystemExit) as denied:
+        run(tmp_path, ["allow", "--action", "claim-done"])
+    assert denied.value.code == 2
+    out = capsys.readouterr().out
+    assert "deny action=claim-done reason=open tasks are not ready_for_done" in out
+
+    # A variable exported empty counts as set: the empty session id selects no
+    # task, so task-done does not fall back to the task's own session.
+    monkeypatch.setenv("TOOL_A_SESSION_ID", "")
+    assert main_mod._driver_session_env(tmp_path) == ""
+    with pytest.raises(SystemExit) as empty:
+        run(tmp_path, ["allow", "--action", "task-done", "--task", tid])
+    assert empty.value.code == 2
+    assert f"reason=task {tid} not found in this session" in capsys.readouterr().out
+    run(tmp_path, ["allow", "--action", "pr-create", "--draft", "true", "--json"])
+    assert json.loads(capsys.readouterr().out)["session"] == ""
+    monkeypatch.delenv("TOOL_A_SESSION_ID")
+    assert main_mod._driver_session_env(tmp_path) is None
+    monkeypatch.setenv("TOOL_A_SESSION_ID", "sess-unknown")
+    with pytest.raises(SystemExit, match="unknown session: sess-unknown"):
+        run(tmp_path, ["allow", "--action", "pr-ready"])
+
+    # A drivers.json in which no driver configures interactive.session_env
+    # cannot name the variable either: fail, never allow without the session,
+    # even while the driver exports it.
+    monkeypatch.setenv("TOOL_A_SESSION_ID", session)
+    no_session_env = re.escape(SESSION_ENV_NOT_CONFIGURED)
+    without = driver_document()
+    del without["drivers"]["driver-a"]["interactive"]["session_env"]
+    for document in (without, {}):
+        write_drivers(tmp_path, document)
+        with pytest.raises(SystemExit, match=no_session_env):
+            main_mod._driver_session_env(tmp_path)
+        for action in ("claim-done", "pr-ready", "pr-create", "task-done"):
+            with pytest.raises(SystemExit, match=no_session_env):
+                run(tmp_path, ["allow", "--action", action])
+    write_drivers(tmp_path, without)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as explicit:
+        run(tmp_path, ["allow", "--action", "claim-done", "--session", session])
+    assert explicit.value.code == 2
+    out = capsys.readouterr().out
+    assert "deny action=claim-done reason=open tasks are not ready_for_done" in out
