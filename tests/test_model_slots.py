@@ -487,6 +487,23 @@ def test_coordinator_slot_helpers() -> None:
         "driver-a:pr-reviewer-quality",
         "driver-a:pr-reviewer-logic",
     )
+    # An absent or equal implementer keeps the historical slot order.
+    assert required_lane_slots(models, None) == required_lane_slots(models, "driver-c")
+    # A separate implementer binds its own lane; slot first keeps its read-only kinds.
+    assert required_lane_slots(models, "driver-d") == (
+        "driver-d:implementer",
+        "driver-c:reviewer",
+        "driver-c:pr-reviewer-quality",
+        "driver-c:pr-reviewer-logic",
+        "driver-b:pr-reviewer-quality",
+        "driver-b:pr-reviewer-logic",
+    )
+    assert required_lane_slots(ModelSlots("driver-a", None), "driver-d") == (
+        "driver-d:implementer",
+        "driver-a:reviewer",
+        "driver-a:pr-reviewer-quality",
+        "driver-a:pr-reviewer-logic",
+    )
 
 
 @pytest.mark.no_pg

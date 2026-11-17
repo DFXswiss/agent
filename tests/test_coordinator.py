@@ -7109,6 +7109,39 @@ def test_execution_binding_includes_explicit_models_block(tmp_path: Path) -> Non
         execution_binding(store, worker, repo)
 
 
+def test_execution_binding_pins_a_separate_implementer(tmp_path: Path) -> None:
+    """The binding adds ``implementer`` only when it differs from ``models.first``."""
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    absent = execution_binding(store, worker, repo)
+
+    data["implementer"] = "driver-a"
+    path.write_text(json.dumps(data))
+    assert execution_binding(store, worker, repo) == absent
+
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data))
+    assert execution_binding(store, worker, repo) != absent
+
+
 @pytest.mark.parametrize("nondefault_models", [False, True])
 def test_accepted_legacy_execution_binding_is_repinned_once(
     tmp_path: Path, nondefault_models: bool
@@ -7250,7 +7283,7 @@ def test_preflight_refuses_remote_lane_execution(
     assert fake.launched == []
 
 
-def test_preflight_refuses_a_separate_implementer(
+def test_preflight_refuses_a_record_only_implementer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = Store(tmp_path)
@@ -7264,11 +7297,128 @@ def test_preflight_refuses_a_separate_implementer(
     worker = make_worker(tmp_path)
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
-    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
+    with pytest.raises(
+        CoordinatorError,
+        match="implementer provider driver-e is not supported by the lane launcher",
+    ):
         preflight_worker(store, worker, fake)
 
 
-def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) -> None:
+def test_preflight_accepts_a_separate_implementer_beside_a_command_capable_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "driver-b", "second": "driver-a"}
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    lanes = data["sessions"]["worker-session"]["lanes"]
+    lanes["driver-b:reviewer"] = "driver-b-rev"
+    lanes["driver-c:implementer"] = "driver-c-impl"
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    preflight_worker(store, worker, fake)
+
+
+def test_preflight_refuses_a_command_capable_separate_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_runtime import COMMAND_DRIVER_IMPLEMENTER_REFUSED
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "driver-a", "second": "driver-c"}
+    data["implementer"] = "driver-b"
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    with pytest.raises(CoordinatorError) as exc:
+        preflight_worker(store, worker, fake)
+    assert str(exc.value) == COMMAND_DRIVER_IMPLEMENTER_REFUSED.format(
+        driver="driver-b"
+    )
+
+
+def test_require_single_first_model_allows_a_separate_implementer(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_runtime import require_single_first_model
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data))
+
+    assert (
+        require_single_first_model(load_ai_accounts(store.home), worker)
+        == "driver-c-model"
+    )
+
+    data["roles"]["rev-logic"] = {
+        "account": "driver-a-w",
+        "model": "other-model",
+        "access": "read-only",
+    }
+    data["sessions"]["worker-session"]["lanes"][
+        "driver-a:pr-reviewer-logic"
+    ] = "rev-logic"
+    path.write_text(json.dumps(data))
+    with pytest.raises(CoordinatorError) as exc:
+        require_single_first_model(load_ai_accounts(store.home), worker)
+    assert str(exc.value) == (
+        "order workers require one model for the first review: "
+        "driver-a:pr-reviewer-logic uses other-model, "
+        "driver-a:reviewer uses driver-a-model"
+    )
+
+    data["implementer"] = "driver-a"
+    path.write_text(json.dumps(data))
+    with pytest.raises(CoordinatorError) as exc:
+        require_single_first_model(load_ai_accounts(store.home), worker)
+    assert str(exc.value) == (
+        "order workers require one model for the implementer and the first review: "
+        "driver-a:pr-reviewer-logic uses other-model, "
+        "driver-a:implementer uses driver-a-model"
+    )
+
+
+def test_create_implement_task_refuses_a_record_only_implementer(tmp_path: Path) -> None:
     from agent_cli.coordinator_runtime import _create_implement_task
 
     store = Store(tmp_path)
@@ -7280,7 +7430,10 @@ def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) ->
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
     worker = make_worker(tmp_path)
 
-    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
+    with pytest.raises(
+        CoordinatorError,
+        match="implementer provider driver-e is not supported by the lane launcher",
+    ):
         _create_implement_task(
             store,
             worker,
@@ -7292,6 +7445,83 @@ def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) ->
             body="Please fix",
         )
     assert store.rows("task") == []
+
+
+def test_implementer_model_id_uses_the_separate_implementer(tmp_path: Path) -> None:
+    from agent_cli.coordinator_lanes import implementer_model_id
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data))
+    worker = make_worker(tmp_path)
+    models = {"first": "driver-a", "second": "driver-b"}
+
+    assert (
+        implementer_model_id(
+            store, worker, {"models": models, "implementer": "driver-c"}
+        )
+        == "driver-c-model"
+    )
+    assert implementer_model_id(store, worker, {"models": models}) == "driver-a-model"
+
+
+def test_create_implement_task_accepts_a_separate_implementer(tmp_path: Path) -> None:
+    from agent_cli.coordinator_runtime import _create_implement_task, execution_binding
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    repository_config = worker.repositories["example/project"]
+
+    task = _create_implement_task(
+        store,
+        worker,
+        repo="example/project",
+        number=7,
+        title="Fix widget",
+        assigned_id="assigned-7",
+        repository_config=repository_config,
+        body="Please fix",
+    )
+
+    assert task is not None
+    assert task["models"] == {"first": "driver-a", "second": "driver-b"}
+    assert task["implementer"] == "driver-c"
+    assert task["payload"]["coordinator"]["execution_binding"] == execution_binding(
+        store, worker, "example/project", repository_config=repository_config
+    )
 
 
 def test_create_implement_task_refuses_external_second_for_non_a38_worker(
@@ -16699,7 +16929,6 @@ def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkey
     assert seen == [("driver-c", "review-1"), ("driver-b", "review-2")]
 
 
-
 def test_readiness_uses_the_providers_pinned_on_the_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -16721,39 +16950,104 @@ def test_readiness_uses_the_providers_pinned_on_the_task(
         phase_readiness(store, worker, task, fake)
 
 
-
-
 @pytest.mark.no_pg
-def test_first_slot_refuses_a_driver_that_may_run_commands(tmp_path: Path) -> None:
+def test_refuses_a_command_driver_implementer(tmp_path: Path) -> None:
     from agent_cli.coordinator_runtime import (
         COMMAND_DRIVER_FIRST_REFUSED,
-        SEPARATE_IMPLEMENTER_REFUSED,
+        COMMAND_DRIVER_IMPLEMENTER_REFUSED,
         _first_slot_vendor,
-        _refuse_command_driver_first,
+        _implementer_vendor,
+        _refuse_unlaunchable_implementer,
     )
 
     write_drivers(tmp_path)
     ai = load_ai_accounts(tmp_path, defer_model_configuration=True)
-    assert _first_slot_vendor({"models": {"first": "driver-a", "second": "driver-b"}}, ai) == "driver-a"
+
+    # The effective implementer is first when no separate implementer is configured.
+    assert _first_slot_vendor(
+        {"models": {"first": "driver-a", "second": "driver-b"}}, ai
+    ) == "driver-a"
     with pytest.raises(CoordinatorError) as exc:
-        _first_slot_vendor({"models": {"first": "driver-b", "second": "driver-a"}}, ai)
+        _refuse_unlaunchable_implementer("driver-b", None, ai)
     assert str(exc.value) == COMMAND_DRIVER_FIRST_REFUSED.format(driver="driver-b")
     with pytest.raises(CoordinatorError) as exc:
-        _refuse_command_driver_first("driver-a", "driver-e", ai)
-    assert str(exc.value) == SEPARATE_IMPLEMENTER_REFUSED
-    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
         _first_slot_vendor(
+            {"models": {"first": "driver-b", "second": "driver-a"}}, ai
+        )
+    assert str(exc.value) == COMMAND_DRIVER_FIRST_REFUSED.format(driver="driver-b")
+
+    # A command-capable first slot runs only read-only lanes beside a separate implementer.
+    _refuse_unlaunchable_implementer("driver-b", "driver-c", ai)
+    assert _first_slot_vendor(
+        {
+            "models": {"first": "driver-b", "second": "driver-a"},
+            "implementer": "driver-c",
+        },
+        ai,
+    ) == "driver-b"
+    assert _implementer_vendor(
+        {
+            "models": {"first": "driver-b", "second": "driver-a"},
+            "implementer": "driver-c",
+        },
+        ai,
+    ) == "driver-c"
+
+    # A command-capable separate implementer is refused by name.
+    with pytest.raises(CoordinatorError) as exc:
+        _refuse_unlaunchable_implementer("driver-a", "driver-b", ai)
+    assert str(exc.value) == COMMAND_DRIVER_IMPLEMENTER_REFUSED.format(
+        driver="driver-b"
+    )
+    with pytest.raises(CoordinatorError) as exc:
+        _implementer_vendor(
+            {
+                "models": {"first": "driver-a", "second": "driver-d"},
+                "implementer": "driver-b",
+            },
+            ai,
+        )
+    assert str(exc.value) == COMMAND_DRIVER_IMPLEMENTER_REFUSED.format(
+        driver="driver-b"
+    )
+
+    # A separate implementer without a lane cannot be launched.
+    with pytest.raises(CoordinatorError) as exc:
+        _refuse_unlaunchable_implementer("driver-a", "driver-e", ai)
+    assert str(exc.value) == (
+        "implementer provider driver-e is not supported by the lane launcher; "
+        f"expected one of: {', '.join(ai.lane_drivers())}"
+    )
+    with pytest.raises(CoordinatorError) as exc:
+        _implementer_vendor(
             {
                 "models": {"first": "driver-a", "second": "driver-b"},
                 "implementer": "driver-e",
             },
             ai,
         )
+    assert str(exc.value) == (
+        "implementer provider driver-e is not supported by the lane launcher; "
+        f"expected one of: {', '.join(ai.lane_drivers())}"
+    )
+
+    # An implementer equal to first keeps today's behaviour, including a
+    # record-only first slot that fails later at the lane binding.
+    _refuse_unlaunchable_implementer("driver-a", "driver-a", ai)
+    assert _implementer_vendor(
+        {
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "implementer": "driver-a",
+        },
+        ai,
+    ) == "driver-a"
+    _refuse_unlaunchable_implementer("driver-e", "driver-e", ai)
+
     with pytest.raises(CoordinatorError, match="task models is not configured"):
         _first_slot_vendor({}, ai)
     # A pin of a driver that drivers.json no longer configures fails loudly.
     with pytest.raises(CoordinatorError) as exc:
-        _refuse_command_driver_first("driver-x", None, ai)
+        _refuse_unlaunchable_implementer("driver-x", None, ai)
     assert str(exc.value) == (
         "vendor must be driver-a|driver-b|driver-c|driver-d|driver-e "
         "(see drivers.json, docs/ai-accounts.md#drivers)"
@@ -18932,6 +19226,7 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
         "state": "implementing",
         "current_round": 1,
         "models": {"first": "driver-a", "second": "driver-b"},
+        "implementer": "driver-c",
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -18965,10 +19260,14 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
         "added_lines": ["`src/safe.py:1` add file"],
     }
 
-    def launch(_store: Store, _worker: Any, live: dict[str, Any], **_kwargs: Any):
+    launched_vendors: list[str] = []
+
+    def launch(_store: Store, _worker: Any, live: dict[str, Any], **kwargs: Any):
+        vendor = kwargs["vendor"]
+        launched_vendors.append(vendor)
         live["payload"]["coordinator"]["lane_outcome"] = {
             "role": "implementer",
-            "vendor": "driver-a",
+            "vendor": vendor,
             "round": 1,
             "agent_id": "implementer-agent",
             "status": "complete",
@@ -18982,7 +19281,7 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
             {"id": "implementer-agent"},
             LaneResult(
                 role="implementer",
-                vendor="driver-a",
+                vendor=vendor,
                 model="model",
                 status="complete",
                 argv=[],
@@ -19023,10 +19322,72 @@ def test_phase_implement_uses_matching_structured_checkpoint_without_reparse(
     )
 
     assert lines == ["applied"]
+    assert launched_vendors == ["driver-c"]
     assert {key: applied["replay"][key] for key in structured} == structured
     saved = store.row("task", tid)
     assert saved["reused_lines"] == structured["reused_lines"]
     assert saved["added_lines"] == structured["added_lines"]
+
+
+def test_inner_review_uses_first_slot_with_a_separate_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-00000000020a"
+    head = "a" * 40
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "driver-a", "second": "driver-b"},
+        "implementer": "driver-c",
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "pr_number": 42,
+                "head_sha": head,
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        f"{tid}-round",
+        {
+            "id": f"{tid}-round",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": "done",
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    launched_vendors: list[str] = []
+
+    def launch(_store: Store, _worker: Any, _task: dict[str, Any], **kwargs: Any):
+        launched_vendors.append(kwargs["vendor"])
+        return {"id": "reviewer-agent", "status": "working"}, None
+
+    monkeypatch.setattr(coordinator_runtime, "launch_lane", launch)
+    lines = coordinator_runtime.phase_inner_review(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda _argv: Completed(0, "", ""),
+        None,
+    )
+
+    assert lines == ["inner reviewer finished; database checkpoint will be retried"]
+    assert launched_vendors == ["driver-a"]
 
 
 def test_a38_base_invalidation_retires_report_intent_atomically(

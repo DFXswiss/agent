@@ -83,6 +83,7 @@ from .model_slots import (
     canonical_checklist,
     canonical_key,
     canonical_stage,
+    implementer_for_new_record,
     implementer_from_snapshot,
     models_for_new_record,
     models_from_snapshot,
@@ -1943,7 +1944,7 @@ def implementer_model_id(
     """The configured model identifier of the implementer role of this worker."""
     try:
         ai = load_ai_accounts(store.home)
-        vendor = models_for_new_record(task).first
+        vendor = implementer_for_new_record(task)
         return ai.for_lane(
             worker.session_id, "implementer", vendor, require_execution=False
         ).model

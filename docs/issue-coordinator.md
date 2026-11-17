@@ -18,7 +18,7 @@ The same coordinator runs local orders under the rules of
 | Orders, precondition registry, check lanes, dashboard order routes | Implemented in this repository. A worker accepts orders only with `"orders": true`. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv is the first-slot driver's `lane.argv.write` template from `drivers.json` plus its `lane.write_hardening` groups; a driver configured with `lane.may_run_commands: true` is refused as slot `first`. That is process argv hardening only. |
+| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv is the effective implementer driver's `lane.argv.write` template from `drivers.json` plus its `lane.write_hardening` groups; the effective implementer is the task's `implementer` pin when present, otherwise `models.first`. A driver configured with `lane.may_run_commands: true` is refused as that implementer. That is process argv hardening only. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -264,8 +264,10 @@ for worker in workers.values():
   authenticated worker and review GitHub accounts bound to **different** logins.
   A38 workers with the external second review require the worker account plus
   `second_reviewers` that exclude its login. A worker with `orders` also needs
-  a read-only `<first>:check` binding and one model across the implementer,
-  inner reviewer, and first quality and logic review roles. The worker account has git
+  a read-only `<first>:check` binding. Without a separate implementer, the
+  implementer, inner reviewer, and first quality and logic review roles name one
+  model; with a separate implementer, the first review roles name one model
+  among themselves and the implementer may use another. The worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
   provider. A missing `models` block reuses the shared error and is reported as
   `preflight blocked: models is not configured: the device's ai-accounts.json
@@ -273,23 +275,33 @@ for worker in workers.values():
   outer `coordinate --follow` loop remains active and retries later ticks after
   configuration is repaired.
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
-  model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
-  `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
-  plus `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic` when the
+  model slots (`ai-accounts.json` → `models`) and `<implementer>` the effective
+  implementer (`implementer` when present, otherwise `<first>`):
+  `<implementer>:implementer`, `<first>:reviewer`,
+  `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`, plus
+  `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic` when the
   second slot is not external. This includes an A38 worker with
   `a38_second_review: "model"`. A worker with `orders` also requires
-  `<first>:check`. The coordinator
-  pins `models` on each task it accepts and refuses a `models.first` driver
-  that `drivers.json` configures with `lane.may_run_commands: true`, because
-  such an implementer can run commands (`COMMAND_DRIVER_FIRST_REFUSED`: `models.first
-  = <driver> is not supported by the coordinator: driver <driver> is configured
+  `<first>:check`. The coordinator pins `models` and, when it differs from
+  `models.first`, `implementer` on each task it accepts. It refuses an
+  implementer driver that `drivers.json` configures with
+  `lane.may_run_commands: true`, because such an implementer can run commands.
+  When the effective implementer is `models.first` the error is
+  `COMMAND_DRIVER_FIRST_REFUSED` (`models.first = <driver> is not supported by
+  the coordinator: driver <driver> is configured with may_run_commands, so its
+  implementer lane cannot be restricted from running commands`); a separate
+  implementer reports `COMMAND_DRIVER_IMPLEMENTER_REFUSED` (`implementer =
+  <driver> is not supported by the coordinator: driver <driver> is configured
   with may_run_commands, so its implementer lane cannot be restricted from
-  running commands`). It requires `implementer` to
-  be absent or equal to `models.first`; a separate implementer is refused at
-  preflight, task creation and launch with `SEPARATE_IMPLEMENTER_REFUSED`. A
-  required `models` block and `lane_execution` are part of the execution
-  binding, so changing either stops accepted tasks with "task execution
-  configuration changed" until it is restored. A task accepted under the
+  running commands`). It also refuses an implementer driver without a `lane`
+  section, with `implementer provider <driver> is not supported by the lane
+  launcher; expected one of: <drivers>`. `models.first` may name a
+  command-capable driver when a separate implementer is configured, because
+  slot `first` only runs read-only lanes. A required `models` block, the
+  `implementer` selection when it differs from `models.first`, and
+  `lane_execution` are part of the execution binding, so changing any of them
+  stops accepted tasks with "task execution configuration changed" until it is
+  restored. A task accepted under the
   preceding hash formula accepts that legacy hash once and is immediately
   repinned when its only formula differences are the newly added
   `lane_execution` field and the old omission of a `models` value equal to the
@@ -320,14 +332,15 @@ for worker in workers.values():
   argv lists run via a Python bounded subprocess (process-group kill on
   timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
   (absent on stock macOS). Tests inject fakes. The implementer argv
-  is the first-slot driver's `lane.argv.write` template, and every
+  is the effective implementer driver's `lane.argv.write` template, and every
   `lane.write_hardening` group of that driver that the argv does not already
   contain is appended. Read-only review lanes use `lane.argv.read` and, when
   the driver configures `lane.read_dir_args`, get the coordinator control
   directory as an explicit read directory. The `config_dir` of an account whose
   driver has `lane.credential_file` must not overlap either readable root. A
-  driver with `lane.may_run_commands: true` is refused as slot `first`. This is
-  process argv hardening, **not** universal sandbox enforcement.
+  driver with `lane.may_run_commands: true` is refused as the effective
+  implementer. This is process argv hardening, **not** universal sandbox
+  enforcement.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
   `AGENT_COORDINATOR_HEAD`, `AGENT_COORDINATOR_BASE`, `AGENT_COORDINATOR_REPO`,
@@ -360,8 +373,8 @@ One head follows this order:
 
 | # | Step | Phase | Lanes |
 |---|---|---|---|
-| 1 | implementation; signed commit; push | `implement` | one implementer lane, slot `first` |
-| 2 | inner review of the worktree | `inner_review` | one reviewer lane, slot `first`; for an order the same model as the implementer |
+| 1 | implementation; signed commit; push | `implement` | one implementer lane, effective implementer |
+| 2 | inner review of the worktree | `inner_review` | one reviewer lane, slot `first`; for an order with a separate implementer the first-review roles share one model and the implementer may use another |
 | 3 | local checks; A38 report comment | `tests` | none |
 | 4 | first review pair on the checked head | `pr_gates_first` | quality and logic, slot `first` |
 | 5 | first review comment (A38) | `a38_first_comment` | none |
@@ -1238,9 +1251,11 @@ checks `no_live_lane` before `implement`, `inner_review`, `pr_gates_first`, and
 handlers.
 
 Every order pull request gets review 1 and review 2. The roles bound to
-`<first>:implementer`, `<first>:reviewer`, `<first>:pr-reviewer-quality`, and
-`<first>:pr-reviewer-logic` must name one model. Review 2 uses model slot
-`second`. `review_2` means that the current-head second review has no findings,
+`<implementer>:implementer`, where `<implementer>` is the effective implementer,
+and to `<first>:reviewer`, `<first>:pr-reviewer-quality`, and
+`<first>:pr-reviewer-logic` must name one model. With a separate implementer,
+only the three first-review roles must name one model among themselves, and the
+implementer may use another. Review 2 uses model slot `second`. `review_2` means that the current-head second review has no findings,
 or a human waived it for this order. CI and readiness require it.
 
 Only `agent order override --id UUID --check review_2 --reason TEXT` waives it,
@@ -1689,9 +1704,10 @@ GitHub login. Optional
 `check_argv` may be empty, while `readiness_argv` remains required for
 configured repositories; owner-scoped repositories may omit
 `owner_readiness_argv` only with the explicit hub deviation statement described
-above. The device's
-models must pin a first provider whose driver is not configured with
-`lane.may_run_commands: true`. The external route pins
+above. The device's effective implementer must name a driver that is not
+configured with `lane.may_run_commands: true` and that has a `lane` section;
+`models.first` may be command-capable when a separate implementer is configured,
+because slot `first` only runs read-only lanes. The external route pins
 `"second": null`. With `a38_second_review: "model"`, model slot `second` must be
 set and `second_reviewers` is not required. A null second slot is refused for
 every non-A38 worker. The task pins the A38 second-review mode at creation. The

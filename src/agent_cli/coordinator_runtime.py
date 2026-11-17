@@ -214,11 +214,11 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
-        _refuse_command_driver_first(ai.models.first, ai.implementer, ai)
+        _refuse_unlaunchable_implementer(ai.models.first, ai.implementer, ai)
         _require_second_for_worker(
             ai.models.second, worker.a38, worker.a38_second_review
         )
-        for slot in required_lane_slots(ai.models):
+        for slot in required_lane_slots(ai.models, ai.implementer):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(
                 worker.session_id, role, vendor, require_execution=False
@@ -307,7 +307,7 @@ def _execution_binding_fields(
                 require_execution=False,
             )
         )
-        for slot in required_lane_slots(ai.models)
+        for slot in required_lane_slots(ai.models, ai.implementer)
     ]
     selected = {
         "repository": asdict(cfg),
@@ -328,6 +328,8 @@ def _execution_binding_fields(
         "lane_execution": asdict(ai.require_lane_execution()),
         "lanes": lanes,
     }
+    if ai.implementer != ai.models.first:
+        selected["implementer"] = ai.implementer
     if worker.a38:
         selected["a38"] = {
             "enabled": True,
@@ -418,28 +420,41 @@ COMMAND_DRIVER_FIRST_REFUSED = (
     "is configured with may_run_commands, so its implementer lane cannot be "
     "restricted from running commands"
 )
-SEPARATE_IMPLEMENTER_REFUSED = (
-    "a separate implementer is not supported by the coordinator: implementer must equal "
-    "models.first"
+COMMAND_DRIVER_IMPLEMENTER_REFUSED = (
+    "implementer = {driver} is not supported by the coordinator: driver {driver} "
+    "is configured with may_run_commands, so its implementer lane cannot be "
+    "restricted from running commands"
 )
 
 
-def _refuse_command_driver_first(
+def _refuse_unlaunchable_implementer(
     first: str, implementer: str | None, ai: AIAccounts
 ) -> None:
-    """Refuse a first slot whose driver may run shell commands in its write sandbox.
+    """Refuse an effective implementer the coordinator cannot launch safely.
 
-    The coordinator's implementer must not execute software. Used by preflight,
-    task creation and launch.
+    The coordinator's implementer must not execute software, and a separate
+    implementer must also have a lane. The effective implementer is
+    ``implementer`` or, when absent, ``first``. Used by preflight, task creation
+    and launch.
     """
+    effective = implementer or first
     try:
-        lane = ai.driver(first).lane
+        lane = ai.driver(effective).lane
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     if lane is not None and lane.may_run_commands:
-        raise CoordinatorError(COMMAND_DRIVER_FIRST_REFUSED.format(driver=first))
-    if implementer is not None and implementer != first:
-        raise CoordinatorError(SEPARATE_IMPLEMENTER_REFUSED)
+        if effective == first:
+            raise CoordinatorError(
+                COMMAND_DRIVER_FIRST_REFUSED.format(driver=first)
+            )
+        raise CoordinatorError(
+            COMMAND_DRIVER_IMPLEMENTER_REFUSED.format(driver=effective)
+        )
+    if lane is None and effective != first:
+        raise CoordinatorError(
+            f"implementer provider {effective} is not supported by the lane launcher; "
+            f"expected one of: {', '.join(ai.lane_drivers())}"
+        )
 
 
 def _lane_accounts(store: Store) -> AIAccounts:
@@ -467,31 +482,54 @@ def _require_second_for_worker(
 
 
 def require_single_first_model(ai: AIAccounts, worker: WorkerConfig) -> str:
-    """The one model identifier of the implementer and the first-review lanes of an order worker."""
+    """The model of the implementer lane of an order worker.
+
+    Without a separate implementer, the implementer and every first-slot review
+    lane name one model. With a separate implementer, only the first-slot review
+    kinds name one model among themselves, and the implementer may use another.
+    """
     first = ai.models.first
     try:
-        implementer = ai.for_lane(
+        implementer_model = ai.for_lane(
             worker.session_id,
             "implementer",
-            first,
+            ai.implementer,
             require_execution=False,
         ).model
-        for kind in SLOT_LANE_KINDS["first"]:
-            model = ai.for_lane(
-                worker.session_id,
-                kind,
-                first,
-                require_execution=False,
-            ).model
-            if model != implementer:
-                raise CoordinatorError(
-                    "order workers require one model for the implementer and the "
-                    f"first review: {first}:{kind} uses {model}, "
-                    f"{first}:implementer uses {implementer}"
-                )
+        if ai.implementer == first:
+            for kind in SLOT_LANE_KINDS["first"]:
+                model = ai.for_lane(
+                    worker.session_id,
+                    kind,
+                    first,
+                    require_execution=False,
+                ).model
+                if model != implementer_model:
+                    raise CoordinatorError(
+                        "order workers require one model for the implementer and the "
+                        f"first review: {first}:{kind} uses {model}, "
+                        f"{first}:implementer uses {implementer_model}"
+                    )
+        else:
+            reference: str | None = None
+            for kind in ("reviewer", "pr-reviewer-quality", "pr-reviewer-logic"):
+                model = ai.for_lane(
+                    worker.session_id,
+                    kind,
+                    first,
+                    require_execution=False,
+                ).model
+                if reference is None:
+                    reference = model
+                elif model != reference:
+                    raise CoordinatorError(
+                        "order workers require one model for the first review: "
+                        f"{first}:{kind} uses {model}, "
+                        f"{first}:reviewer uses {reference}"
+                    )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    return implementer
+    return implementer_model
 
 
 def _first_slot_vendor(task: dict[str, Any], ai: AIAccounts) -> str:
@@ -502,8 +540,20 @@ def _first_slot_vendor(task: dict[str, Any], ai: AIAccounts) -> str:
         implementer = implementer_for_new_record(task)
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_command_driver_first(first, implementer, ai)
+    _refuse_unlaunchable_implementer(first, implementer, ai)
     return first
+
+
+def _implementer_vendor(task: dict[str, Any], ai: AIAccounts) -> str:
+    """Provider of the task's effective implementer: its pin, else slot ``first``."""
+    try:
+        # Lane start: an old task without a pin must be recreated before new work.
+        first = models_for_new_record(task).first
+        implementer = implementer_for_new_record(task)
+    except ModelSlotsError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    _refuse_unlaunchable_implementer(first, implementer, ai)
+    return implementer
 
 
 def _terminal(task: dict[str, Any]) -> bool:
@@ -624,7 +674,7 @@ def _create_implement_task(
         ai = load_ai_accounts(store.home)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_command_driver_first(ai.models.first, ai.implementer, ai)
+    _refuse_unlaunchable_implementer(ai.models.first, ai.implementer, ai)
     _require_second_for_worker(
         ai.models.second, worker.a38, worker.a38_second_review
     )
@@ -632,7 +682,7 @@ def _create_implement_task(
         implementer_model = ai.for_lane(
             worker.session_id,
             "implementer",
-            ai.models.first,
+            ai.implementer,
             require_execution=False,
         ).model
     except AIAccountError as exc:
@@ -1926,7 +1976,7 @@ def phase_implement(
             draft_lines=[],
         )
 
-    first_vendor = _first_slot_vendor(task, _lane_accounts(store))
+    implementer_vendor = _implementer_vendor(task, _lane_accounts(store))
     base_instruction = _implementer_instruction(store, worker, task, runner)
     instruction = base_instruction
     task_text = read_task_text(worker, task)
@@ -1956,7 +2006,7 @@ def phase_implement(
                 worker,
                 task,
                 role="implementer",
-                vendor=first_vendor,
+                vendor=implementer_vendor,
                 round_num=round_num,
                 spec_body=_spec_context(c, instruction, text=task_text),
                 record_spec_body=record_body,
@@ -1998,7 +2048,7 @@ def phase_implement(
         checkpoint.get(key) != expected
         for key, expected in (
             ("role", "implementer"),
-            ("vendor", first_vendor),
+            ("vendor", implementer_vendor),
             ("round", round_num),
             ("agent_id", agent["id"]),
         )
@@ -2019,7 +2069,7 @@ def phase_implement(
     checkpoint.update(
         {
             "role": "implementer",
-            "vendor": first_vendor,
+            "vendor": implementer_vendor,
             "round": round_num,
             "agent_id": agent["id"],
             "status": status,
