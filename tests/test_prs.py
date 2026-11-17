@@ -138,22 +138,30 @@ def test_prs_survive_new_hub(cfg, github: FakeGitHub) -> None:
             "url": "https://github.com/acme/app/pull/7",
         }
     ]
-    store = Store(cfg.database)
-    first = TestClient(create_app(cfg, github=github, store=store))
-    sign_in(first, "code-alice")
-    assert first.get("/api/prs").json()["source"] == "github"
-    store.close()
-    second = TestClient(create_app(cfg, github=github, store=Store(cfg.database)))
-    second.cookies.update(first.cookies)
-    body = second.get("/api/prs").json()
-    assert body["source"] == "github"
-    assert [p["number"] for p in body["prs"]] == [7]
+    first_store = Store(cfg.database)
+    try:
+        with TestClient(create_app(cfg, github=github, store=first_store)) as first:
+            sign_in(first, "code-alice")
+            assert first.get("/api/prs").json()["source"] == "github"
+            cookies = dict(first.cookies)
+    finally:
+        first_store.close()
+
+    second_store = Store(cfg.database)
+    try:
+        with TestClient(create_app(cfg, github=github, store=second_store)) as second:
+            second.cookies.update(cookies)
+            body = second.get("/api/prs").json()
+            assert body["source"] == "github"
+            assert [p["number"] for p in body["prs"]] == [7]
+    finally:
+        second_store.close()
 
 
 def test_auth_me_has_no_token(hub, cfg) -> None:
     sign_in(hub, "code-alice")
     me = hub.get("/auth/me").json()
-    assert set(me) == {"login", "visible", "teams"}
+    assert set(me) == {"login", "visible", "teams", "owned_agents"}
     assert "token" not in me and "github_token" not in me
     raw = hub.cookies["session"]
     data = TimestampSigner(cfg.session_secret).unsign(
@@ -161,11 +169,10 @@ def test_auth_me_has_no_token(hub, cfg) -> None:
     )
     payload = json.loads(b64decode(data))
     assert payload == {"login": "alice"}
-    store = Store(cfg.database)
-    assert store.get_oauth_token("alice") == "tok-alice"
+    assert hub.app.state.hub.store.get_oauth_token("alice") == "tok-alice"
 
 
-def test_logout_drops_token(hub, github: FakeGitHub, cfg) -> None:
+def test_logout_drops_token(hub, github: FakeGitHub) -> None:
     github._prs = [
         {
             "author": "alice",
@@ -181,8 +188,7 @@ def test_logout_drops_token(hub, github: FakeGitHub, cfg) -> None:
     assert hub.get("/api/prs").json()["source"] == "github"
     hub.post("/auth/logout")
     assert hub.get("/api/prs").status_code == 401
-    store = Store(cfg.database)
-    assert store.get_oauth_token("alice") == ""
+    assert hub.app.state.hub.store.get_oauth_token("alice") == ""
 
 
 def test_expired_github_token_asks_reauth(hub, github: FakeGitHub) -> None:
@@ -195,14 +201,13 @@ def test_expired_github_token_asks_reauth(hub, github: FakeGitHub) -> None:
     assert hub.get("/api/prs").json()["source"] == "none"
 
 
-def test_rate_limit_does_not_drop_token(hub, github: FakeGitHub, cfg) -> None:
+def test_rate_limit_does_not_drop_token(hub, github: FakeGitHub) -> None:
     sign_in(hub, "code-alice")
     github.search_status = 403
     res = hub.get("/api/prs")
     assert res.status_code == 502
     assert "HTTP 403" in res.json()["detail"]
-    store = Store(cfg.database)
-    assert store.get_oauth_token("alice") == "tok-alice"
+    assert hub.app.state.hub.store.get_oauth_token("alice") == "tok-alice"
 
 
 def test_malformed_search_items_is_502(hub, cfg, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -219,8 +224,7 @@ def test_malformed_search_items_is_502(hub, cfg, monkeypatch: pytest.MonkeyPatch
     res = hub.get("/api/prs")
     assert res.status_code == 502
     assert "HTTP 200" in res.json()["detail"]
-    store = Store(cfg.database)
-    assert store.get_oauth_token("alice") == "tok-alice"
+    assert hub.app.state.hub.store.get_oauth_token("alice") == "tok-alice"
     with pytest.raises(GitHubError, match="HTTP 200"):
         RealGitHub(cfg).search_open_prs("tok-alice", ["alice"])
 
@@ -290,6 +294,74 @@ def test_index_lists_pr_columns() -> None:
     assert "No open PRs for visible people." in html
     assert 'id="usage"' in html
     assert 'id="k-usage"' in html
+    assert "Total tokens (input + output + cache read + cache create)" in html
+    state_tick = html.split("function kickState()", 1)[1].split(
+        "function kickUsage()", 1
+    )[0]
+    assert "kickUsage();" in state_tick
+
+
+def test_index_agent_render_preserves_forms_and_handles_fetch_lifecycle() -> None:
+    html = (
+        Path(__file__).resolve().parents[1] / "src" / "agent_core" / "static" / "index.html"
+    ).read_text(encoding="utf-8")
+    # renderAgents delegates painting to renderAgentCards; check both together.
+    render_agents = html.split("async function renderAgents", 1)[1].split(
+        "function repaintAgents", 1
+    )[0] + html.split("function renderAgentCards", 1)[1].split("async function renderAgents", 1)[0]
+    submit_handler = html.split('document.addEventListener("submit"', 1)[1].split(
+        'document.addEventListener("click"', 1
+    )[0]
+    assign_handler = submit_handler.split('form.classList.contains("assign-form")', 1)[
+        1
+    ].split('form.classList.contains("reply-form")', 1)[0]
+    reply_handler = submit_handler.split('form.classList.contains("reply-form")', 1)[1]
+    abort_fn = html.split("function abortHubFetches()", 1)[1].split(
+        "function abortAssignmentLoads()", 1
+    )[0]
+    clear_fn = html.split("function clearHubTables()", 1)[1].split("function jsonGet", 1)[0]
+
+    assert "section.contains(document.activeElement)" not in render_agents
+    assert "captureAgentDrafts()" in render_agents
+    assert "restoreAgentFormState(drafts)" in render_agents
+    assert "captureAgentDraft(" in html  # behaviour is executed in tests/test_index_page_js.py
+    assert "if (values.__requestId) form.dataset.requestId = values.__requestId;" in html
+    assert "new AbortController()" not in render_agents
+    assert "abortAssignmentLoads()" not in render_agents
+    assert "captureAgentFocus()" in render_agents
+    assert "restoreAgentFocus(focus)" in render_agents
+    assert "selectionStart" in html
+    assert "selectionEnd" in html
+    assert "setSelectionRange" in html
+    assert "assignmentLoads" not in abort_fn
+    assert html.count("abortAssignmentLoads();") == 3
+    assert "assignmentOwnerSetKey(user.owned_agents || [])" in html
+    assert "assignmentOwnersKey !== nextOwnerKey" in html
+    assert "return [user.login].concat(user.owned_agents || []);" in html
+    assert 'fillPairSelect(document.getElementById("pair-as"), user);' in html
+    assert "++agentRenderGen" in clear_fn
+    assert "++agentSessionEpoch" in clear_fn
+    assert html.count("++agentSessionEpoch") == 1
+    assert "agentPostControllers.forEach(ctl => ctl.abort())" in clear_fn
+    assert "agentPostControllers.clear()" in clear_fn
+    assert "agentFormsInFlight.clear()" in clear_fn
+    assert 'JSON.stringify(["reply", form.dataset.agent || "", form.dataset.repo || "", form.dataset.number || ""])' in html
+    assert 'class="reply-form" data-agent="${esc(agent)}"' in render_agents
+    for handler in (assign_handler, reply_handler):
+        assert "const sessionEpoch = agentSessionEpoch" in handler
+        assert "const generation = agentRenderGen" not in handler
+        assert "const login = window.__login" in handler
+        before_success = handler.split("succeeded = true", 1)[0].rsplit("}", 1)[1]
+        assert "sessionEpoch !== agentSessionEpoch" in before_success
+        assert "login !== window.__login" in before_success
+        finally_block = handler.split("finally", 1)[1].split("if (succeeded)", 1)[0]
+        assert "sessionEpoch === agentSessionEpoch" in finally_block
+        assert "login === window.__login" in finally_block
+        before_repaint = handler.split("if (succeeded)", 1)[1].split(
+            "await repaintAgents()", 1
+        )[0]
+        assert "sessionEpoch !== agentSessionEpoch" in before_repaint
+        assert "login !== window.__login" in before_repaint
 
 
 def test_oauth_scope_is_read_user_repo(cfg) -> None:

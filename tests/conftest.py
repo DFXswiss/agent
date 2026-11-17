@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -52,8 +53,107 @@ def github() -> FakeGitHub:
 
 @pytest.fixture
 def hub(cfg: Config, github: FakeGitHub) -> TestClient:
-    app = create_app(cfg, github=github, store=Store(cfg.database))
-    return TestClient(app)
+    store = Store(cfg.database)
+    try:
+        app = create_app(cfg, github=github, store=store)
+        with TestClient(app) as client:
+            yield client
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def agent_hub(cfg: Config, tmp_path: Path) -> TestClient:
+    roster_path = tmp_path / "agents-teams.yaml"
+    roster_path.write_text(
+        yaml.safe_dump(
+            {
+                "teams": {"dfx": {"members": ["alice", "bob", "helperbot"]}},
+                "agents": {"helperbot": {"owners": ["alice"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent_cfg = replace(cfg, teams_path=roster_path, database=str(tmp_path / "agent-hub.sqlite"))
+    github = FakeGitHub(
+        {
+            "code-alice": "alice",
+            "code-bob": "bob",
+            "code-dave": "dave",
+            "code-helperbot": "helperbot",
+        }
+    )
+    store = Store(agent_cfg.database)
+    try:
+        app = create_app(agent_cfg, github=github, store=store)
+        with TestClient(app) as client:
+            yield client
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def two_agent_hub(cfg: Config, tmp_path: Path) -> TestClient:
+    roster_path = tmp_path / "two-agent-teams.yaml"
+    roster_path.write_text(
+        yaml.safe_dump(
+            {
+                "teams": {
+                    "dfx": {
+                        "members": ["alice", "helperbot", "secondbot"],
+                    }
+                },
+                "agents": {
+                    "helperbot": {"owners": ["alice"]},
+                    "secondbot": {"owners": ["alice"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent_cfg = replace(
+        cfg,
+        teams_path=roster_path,
+        database=str(tmp_path / "two-agent-hub.sqlite"),
+    )
+    github = FakeGitHub({"code-alice": "alice"})
+    store = Store(agent_cfg.database)
+    try:
+        app = create_app(agent_cfg, github=github, store=store)
+        with TestClient(app) as client:
+            yield client
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def mixed_owner_hub(cfg: Config, tmp_path: Path) -> TestClient:
+    roster_path = tmp_path / "mixed-owner-teams.yaml"
+    roster_path.write_text(
+        yaml.safe_dump(
+            {
+                "teams": {"dfx": {"members": ["alice", "bob", "helperbot", "secondbot"]}},
+                "agents": {
+                    "helperbot": {"owners": ["alice"]},
+                    "secondbot": {"owners": ["bob"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent_cfg = replace(
+        cfg,
+        teams_path=roster_path,
+        database=str(tmp_path / "mixed-owner-hub.sqlite"),
+    )
+    github = FakeGitHub({"code-alice": "alice", "code-bob": "bob"})
+    store = Store(agent_cfg.database)
+    try:
+        app = create_app(agent_cfg, github=github, store=store)
+        with TestClient(app) as client:
+            yield client
+    finally:
+        store.close()
 
 
 def sign_in(client: TestClient, code: str) -> None:

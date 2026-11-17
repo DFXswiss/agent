@@ -82,6 +82,18 @@ def test_foreign_origin_rejected(hub: TestClient) -> None:
     assert r.status_code == 403
 
 
+def test_device_push_rejects_reserved_web_origin(hub: TestClient) -> None:
+    device_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa40"
+    token = pair_device(hub, "code-alice", device_id)
+    pushed = hub.post(
+        "/sync/push",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"events": [event("WeB:alice", 1)]},
+    )
+    assert pushed.status_code == 403
+    assert pushed.json()["detail"] == "web: origins are reserved"
+
+
 def test_gap_rejected_idempotent_ok(hub: TestClient) -> None:
     dev = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02"
     token = pair_device(hub, "code-alice", dev)
@@ -130,6 +142,11 @@ def test_ping_team_only(hub: TestClient) -> None:
     assert ok.status_code == 200, ok.text
     denied = sign_alice.post("/api/pings", json={"to": "dave", "kind": "ping"})
     assert denied.status_code == 403
+    replica = hub.app.state.hub.store.query_one(
+        "SELECT origin_device_id FROM row_replica WHERE table_name = 'ping' AND row_id = ?",
+        (ok.json()["id"],),
+    )
+    assert replica["origin_device_id"] == "web:alice"
 
     sign_in(sign_alice, "code-bob")
     ping_id = ok.json()["id"]

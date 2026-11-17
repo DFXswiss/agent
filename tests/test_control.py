@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import pair_device, sign_in
@@ -61,6 +62,46 @@ def _wait_terminal_chunks(client: TestClient, session_id: str, *, min_chunks: in
         if len(last.get("chunks") or []) >= min_chunks:
             return last
     raise AssertionError(f"terminal chunks did not appear: {last}")
+
+
+@pytest.mark.parametrize("session_id", ["a/b", "..", "x y"])
+def test_query_session_routes_preserve_path_unsafe_ids(
+    hub: TestClient, session_id: str
+) -> None:
+    device_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaa000"
+    token = pair_device(hub, "code-alice", device_id)
+    pushed = hub.post(
+        "/sync/push",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"events": [session_event(device_id, 1, session_id)]},
+    )
+    assert pushed.status_code == 200, pushed.text
+    sign_in(hub, "code-alice")
+
+    detail = hub.get("/api/session", params={"id": session_id})
+    terminal = hub.get("/api/session/terminal", params={"id": session_id})
+    control = hub.post(
+        "/api/session/control", params={"id": session_id}, json={"action": "stop"}
+    )
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == session_id
+    assert terminal.status_code == 200, terminal.text
+    assert terminal.json() == {"session_id": session_id, "chunks": []}
+    assert control.status_code == 409, control.text
+    assert control.json() == {"detail": "owning device is not control-connected"}
+
+
+def test_query_session_routes_keep_session_auth(hub: TestClient) -> None:
+    detail = hub.get("/api/session", params={"id": "session"})
+    terminal = hub.get("/api/session/terminal", params={"id": "session"})
+    control = hub.post(
+        "/api/session/control", params={"id": "session"}, json={"action": "stop"}
+    )
+
+    for response in (detail, terminal, control):
+        assert response.status_code == 401
+        assert response.json() == {"detail": "not signed in"}
 
 
 def test_teammate_can_watch_owner_can_control(hub: TestClient) -> None:

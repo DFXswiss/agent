@@ -15,3 +15,9 @@ teams:
       - joshuakrueger-dfx
       - jonnyluca
       - theo-vane
+
+agents:
+  jonnyluca:
+    owners:
+      - taprootfreak
+      - taprootfreakai

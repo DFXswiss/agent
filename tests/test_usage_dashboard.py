@@ -11,14 +11,21 @@ def test_dashboard_html_has_usage_table(hub: TestClient) -> None:
     assert r.status_code == 200
     body = r.text
     assert 'id="usage"' in body
+    assert 'id="lane-usage"' in body
+    assert 'id="account-usage"' in body
     assert 'id="k-usage"' in body
-    assert "fillUsage(data.activity" in body
-    assert "Grok usage" in body
+    assert "fillUsage(data.grok" in body
+    assert ">Usage<" in body
     assert "<h2>Usage</h2>" in body
     assert ".reverse(" not in body
     assert 'row.type !== "usage.snapshot"' in body
     assert "seen.has(key)" in body
     assert 'row._github_login || ""' in body
+    assert 'function sessionLink(value)' in body
+    assert 'const sessionId = typeof value === "string" ? value : ""' in body
+    assert 'href="/session?id=${encodeURIComponent(sessionId)}"' in body
+    assert 'sessionLink(row.session_id)' in body
+    assert 'href="/sessions/${encodeURIComponent(row.session_id || "")}"' not in body
 
 
 def test_api_state_usage_snapshots_newest_first(hub: TestClient) -> None:

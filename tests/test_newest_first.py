@@ -109,6 +109,43 @@ def test_api_state_lists_newest_first(hub: TestClient) -> None:
     )
 
 
+def test_api_assignments_lists_newest_first_with_row_id_tiebreak(agent_hub: TestClient) -> None:
+    sign_in(agent_hub, "code-alice")
+    for row_id, updated_at, number in (
+        ("assignment-old", "2026-11-04T08:00:00Z", 1),
+        ("assignment-tie-a", "2026-11-04T09:00:00Z", 2),
+        ("assignment-tie-b", "2026-11-04T09:00:00Z", 3),
+    ):
+        _insert_replica(
+            agent_hub,
+            table="activity",
+            row_id=row_id,
+            updated_at=updated_at,
+            login="alice",
+            origin="web:alice",
+            payload={
+                "id": row_id,
+                "type": "assignment.created",
+                "payload": {
+                    "agent": "helperbot",
+                    "actor": "alice",
+                    "repo": "Acme/Widget",
+                    "number": number,
+                    "title": row_id,
+                    "url": f"https://github.com/Acme/Widget/issues/{number}",
+                },
+            },
+        )
+
+    response = agent_hub.get("/api/assignments", params={"agent": "helperbot"})
+    assert response.status_code == 200
+    assert [row["title"] for row in response.json()["assignments"]] == [
+        "assignment-tie-b",
+        "assignment-tie-a",
+        "assignment-old",
+    ]
+
+
 def test_dashboard_keeps_api_order(hub: TestClient) -> None:
     html = (
         Path(__file__).resolve().parents[1] / "src" / "agent_core" / "static" / "index.html"
@@ -119,4 +156,4 @@ def test_dashboard_keeps_api_order(hub: TestClient) -> None:
     assert 'fill("tasks", data.task || []' in html
     assert 'fill("pings", data.pings || []' in html
     assert 'fill("devices", (data.devices || [])' in html
-    assert "fillUsage(data.activity" in html
+    assert "fillUsage(data.grok" in html
