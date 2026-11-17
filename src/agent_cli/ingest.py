@@ -42,6 +42,15 @@ _CODE_SPAN = re.compile(r"`[^`\n]*`")
 _DIGITS = re.compile(r"^[0-9]+$")
 
 
+class ListingFailed(Exception):
+    """The notifications listing could not be read as a list of pages.
+
+    This is not "no notifications". A failed `gh` call, unreadable JSON, or a
+    JSON value that is not a list of pages leaves every thread undecided. The
+    caller must report the pass as failed rather than claim an empty queue.
+    """
+
+
 def _addressing_text(body: str) -> str:
     """`body` with everything that quotes or displays rather than says it removed."""
     without_code = _CODE_SPAN.sub("", _FENCE.sub("", body))
@@ -199,12 +208,19 @@ def scan_mentions(
 
     completed = runner(["gh", "api", "--paginate", "--slurp", "notifications"])
     if completed.returncode != 0:
-        return created, 0
+        raise ListingFailed("notifications listing unusable")
     try:
-        pages = json.loads(completed.stdout or "[]")
-    except json.JSONDecodeError:
-        return created, 0
-    items = [i for page in pages if isinstance(page, list) for i in page]
+        pages = json.loads(completed.stdout or "")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ListingFailed("notifications listing unusable") from exc
+    # `--slurp` returns one list per page. Any other shape means the request
+    # path or the output cannot be trusted, so no thread is admitted and none
+    # is marked read.
+    if not isinstance(pages, list) or any(
+        not isinstance(page, list) for page in pages
+    ):
+        raise ListingFailed("notifications listing unusable")
+    items = [i for page in pages for i in page]
 
     allowed_types = policy.get("job_types_allow") if isinstance(policy, dict) else None
 

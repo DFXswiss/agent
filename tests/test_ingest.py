@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.ingest import (
+    ListingFailed,
     job_row,
     mark_read_argv,
     mentions,
@@ -540,25 +541,95 @@ def test_an_unreadable_visibility_counts_as_private(tmp_path: Path) -> None:
         store.close()
 
 
-@pytest.mark.parametrize("failing", ["notif_rc", "comments_rc"])
-def test_a_failing_gh_call_queues_nothing(tmp_path: Path, failing: str) -> None:
+def test_a_failing_notification_listing_is_not_an_empty_queue(
+    tmp_path: Path,
+) -> None:
+    # The list is the input to every admission decision. A failed call must be
+    # reported, never read as "nothing to do".
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        with pytest.raises(ListingFailed):
+            scan_mentions(
+                store,
+                _runner(
+                    notifications=[_notification()],
+                    comments=[_comment("@theo-vane please review")],
+                    notif_rc=1,
+                    calls=calls,
+                ),
+                session_id="s",
+                login="theo-vane",
+                policy=POLICY,
+            )
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_failing_comment_listing_queues_nothing_and_skips(
+    tmp_path: Path,
+) -> None:
+    # One unreadable thread is a skip; the rest of the listing is still a
+    # usable input, so this is not a failed pass.
     store = Store(tmp_path)
     try:
-        created, _ = scan_mentions(
+        created, skipped = scan_mentions(
             store,
             _runner(
                 notifications=[_notification()],
                 comments=[_comment("@theo-vane please review")],
-                **{failing: 1},
+                comments_rc=1,
             ),
             session_id="s",
             login="theo-vane",
             policy=POLICY,
         )
         assert created == []
+        assert skipped == 1
         assert _jobs(store) == []
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "",
+        "not json",
+        "{}",
+        '"a string"',
+        "[[], {}]",
+        "[[], 7]",
+    ],
+)
+def test_a_notification_listing_that_is_not_a_list_of_pages_fails(
+    tmp_path: Path, stdout: str
+) -> None:
+    # `--slurp` promises one list per page. Anything else means the output
+    # cannot be trusted, so no thread is admitted or marked read.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, stdout, "")
+
+    try:
+        with pytest.raises(ListingFailed):
+            scan_mentions(
+                store,
+                run,
+                session_id="s",
+                login="theo-vane",
+                policy=POLICY,
+            )
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    # Only the listing was asked for; nothing was read or marked.
+    assert calls == [["gh", "api", "--paginate", "--slurp", "notifications"]]
 
 
 def test_the_newest_addressing_comment_decides(tmp_path: Path) -> None:

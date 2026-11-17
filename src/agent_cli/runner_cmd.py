@@ -14,6 +14,13 @@ job as an orphan and remove it. Serialising the mutating commands makes that
 impossible, which is also why no "preparing" marker is ever written:
 `reap_orphans` receives `marker_of` that always answers "absent".
 
+`work` is the exception: it is the detached worker for one job and runs for the
+whole job. Taking the runner lock there would either print `runner busy` and
+leave the job unfinished or hold the whole queue while one lane runs. Dispatch
+starts the worker immediately before it writes the row as running, so the worker
+waits for that update before it validates the row. The worker itself changes no
+worktree, so it races with no mutating command.
+
 `main` imports this module at the top, so the helpers from `main` are imported
 inside the functions that use them — a module-level import would be circular.
 """
@@ -38,7 +45,7 @@ from .runtime import Completed, run_argv
 from .store import Store
 
 USAGE = (
-    "Usage: agent runner ingest --session ID|dispatch|supervise|prune|"
+    "Usage: agent runner ingest --session ID|dispatch|work|supervise|prune|"
     "retry JOB_ID|status|doctor"
 )
 
@@ -169,12 +176,19 @@ def verify_gh_login(runner: Callable[[list[str]], Completed], expected: str) -> 
 
     try:
         completed = runner(["gh", "api", "user", "--jq", ".login"])
-    except OSError as exc:
-        die(f"cannot run gh: {exc}")
+    except OSError:
+        # gh's own diagnostic can name a token or a configuration path; the
+        # failure alone is the actionable fact.
+        die("gh api user failed")
     actual = (completed.stdout or "").strip()
-    if completed.returncode != 0 or actual.lower() != expected.lower():
-        shown = actual or (completed.stderr or "").strip() or "unknown"
-        die(f"gh is authenticated as {shown}, policy expects {expected}")
+    if completed.returncode != 0:
+        # Never copy stderr here: it is an external diagnostic, not a message
+        # this command owns, and it may contain credentials.
+        die("gh api user failed")
+    if actual.lower() != expected.lower():
+        # The login came from `gh`, so naming it is safe and says which account
+        # is actually selected. An empty answer is reported as unknown.
+        die(f"gh is authenticated as {actual or 'unknown'}, policy expects {expected}")
     return actual
 
 
@@ -382,6 +396,7 @@ def _cmd_ingest(args: list[str]) -> None:
         # this runner's own outputs whenever the two differ in case.
         login = verify_gh_login(run_argv, expected_login(policy))
         store = open_store()
+        listing_failed = False
         try:
             # Plain Store, not OwnJobs: scan_mentions de-duplicates against every
             # device's rows. Reading a foreign row as absent would make its later
@@ -389,8 +404,16 @@ def _cmd_ingest(args: list[str]) -> None:
             created, skipped = ingest.scan_mentions(
                 store, run_argv, session_id=session_id, login=login, policy=policy
             )
+        except ingest.ListingFailed:
+            # The notification list is the input to every admission decision.
+            # Reporting "queued none" would claim a clean pass over a list that
+            # was never read, so this exits non-zero and prints no queue line.
+            listing_failed = True
         finally:
             store.close()
+    if listing_failed:
+        print("ingest failed: notifications listing unusable", file=sys.stderr)
+        raise SystemExit(1)
     for job_id in created:
         print(f"job.queued {job_id}")
     if not created:
@@ -402,19 +425,58 @@ def _cmd_ingest(args: list[str]) -> None:
 # ------------------------------------------------------------------- dispatch
 
 
-def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
-    """Start queued jobs, once a worker exists to start them.
+def _worker_preflight(paths: RunnerPaths) -> None:
+    """Stop before the lock unless a dispatched job could actually run.
 
-    `wrapper` is the command string tmux runs inside each job's worktree and
-    the seam for the worker pull request. Until that worker exists it is None,
-    and the command refuses before taking the lock, reading configuration or
-    opening the store, so a run can never half-create a job.
+    A job started here begins a real lane and posts a real review, so every
+    input the worker needs must already be present. Checking before the lock
+    and the store means a broken installation never leaves a half-created job;
+    the checks are the same ones `doctor` reports.
+    """
+    from .ai_accounts import AccountError, load_ai_accounts
+    from .main import die
+    from .runner_worker import WORKER_JOB_TYPES
+
+    prompt = paths.prompts / "pr-review.md"
+    if not prompt.is_file():
+        die(f"prompt template {prompt} is missing")
+    try:
+        ai = load_ai_accounts(paths.base.parent, defer_model_configuration=True)
+        ai.require_model_configuration()
+        ai.require_lane_execution()
+    except AccountError as exc:
+        die(f"dispatch: AI configuration cannot start lanes: {exc}")
+    policy = load_json(paths.policy, "policy")
+    allowed = policy.get("job_types_allow")
+    if not isinstance(allowed, list):
+        # Admission already treats a missing list as "admits nothing"; there is
+        # no allowed type for this command to reject.
+        return
+    for job_type in allowed:
+        if not isinstance(job_type, str) or job_type.lower() not in WORKER_JOB_TYPES:
+            die(f"job type {job_type} has no worker")
+
+
+def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
+    """Start queued jobs while capacity allows.
+
+    `wrapper` is the command string tmux runs inside each job's worktree. The
+    default runs this installation's `runner work`; tests supply a harmless
+    command. A wrapper is only meaningful once the worker's configuration is
+    present, so the preflight runs even when a wrapper was injected.
     """
     from .main import die, open_store
 
-    if wrapper is None:
-        die("dispatch needs a worker, and none exists yet (see docs/runner.md)")
     paths = _runner_base()
+    if wrapper is None:
+        from .runner_worker import worker_wrapper
+
+        try:
+            wrapper = worker_wrapper(_agent_home())
+        except ValueError as exc:
+            # The messages are fixed texts naming the missing absolute input.
+            die(f"dispatch: {exc}")
+    _worker_preflight(paths)
     with runner_lock(paths) as acquired:
         if not acquired:
             print("runner busy")
@@ -453,6 +515,66 @@ def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
         print("job.started none")
     if skipped > 0:
         print(f"dispatch skipped {skipped}", file=sys.stderr)
+
+
+# ----------------------------------------------------------------------- work
+
+
+def _cmd_work(args: list[str]) -> None:
+    """Run the one job whose worktree is the current directory.
+
+    This is the worker body that dispatch starts inside a job; it is not an
+    operator command. It takes no runner lock because it runs for the whole job
+    and because dispatch starts it immediately before writing the row as running,
+    so it waits for that update before validating the row. The exit file is the
+    worker's result; `supervise` reads it.
+
+    The worker's working directory is the pull-request checkout, so `PATH` is
+    reduced to its absolute entries first: an empty, `.` or relative entry would
+    let a commit at the checkout root name the `git` or `gh` the worker runs.
+    """
+    from . import github_act, lane
+    from .main import die, open_store
+    from .runner_worker import (
+        _absolute_path_entries,
+        _worker_fail,
+        _worker_job_id,
+        run_worker,
+    )
+
+    if args:
+        die(USAGE)
+    paths = _runner_base()
+    sanitized_path = _absolute_path_entries(os.environ.get("PATH", ""))
+    if not sanitized_path:
+        job_id = _worker_job_id(paths, os.getcwd())
+        if job_id is None:
+            raise SystemExit(2)
+        raise SystemExit(_worker_fail(paths, job_id, "worker failed"))
+    os.environ["PATH"] = sanitized_path
+    store = None
+    try:
+        store = open_store()
+        code = run_worker(
+            paths,
+            store,
+            os.getcwd(),
+            home=_agent_home(),
+            runner=run_argv,
+            launch=lane.launch,
+            execute_activity=github_act.execute_activity,
+        )
+    except (Exception, SystemExit):
+        # A worker that cannot even open the store still owes supervise an
+        # exit file; the message stays fixed so no store diagnostic leaks.
+        job_id = _worker_job_id(paths, os.getcwd())
+        if job_id is None:
+            raise SystemExit(2)
+        code = _worker_fail(paths, job_id, "worker failed")
+    finally:
+        if store is not None:
+            store.close()
+    raise SystemExit(code)
 
 
 # ------------------------------------------------------------------ supervise
@@ -602,7 +724,19 @@ def remove_job_worktree(
     tries again. `None` means the path was already absent or is now gone.
     """
     path = paths.work / job_id
+    try:
+        bare = workspace.bare_path(str(paths.repos), row.get("repo"))
+    except ValueError:
+        # Without a repository there is no `git worktree prune` to run. An
+        # absent path still needs no removal, so only a present one is refused.
+        if not path.exists() and not os.path.islink(path):
+            return None
+        return f"job {job_id} has no usable repo for its worktree"
     if not path.exists() and not os.path.islink(path):
+        # Git can keep administrative worktree entries after the directory is
+        # gone. Prune even when there is nothing to delete, so a later add of
+        # the same path does not see a stale registration.
+        runner(workspace.worktree_prune_argv(bare))
         return None
     # `git worktree remove` acts on whatever the path names, so the path is
     # checked before git sees it, not only before the recursive delete below.
@@ -614,10 +748,6 @@ def remove_job_worktree(
         os.path.realpath(str(paths.work)), os.path.realpath(str(path))
     ):
         return f"job {job_id} worktree {path} is outside the work root"
-    try:
-        bare = workspace.bare_path(str(paths.repos), row.get("repo"))
-    except ValueError:
-        return f"job {job_id} has no usable repo for its worktree"
     runner(workspace.worktree_remove_argv(bare, str(path)))
     runner(workspace.worktree_prune_argv(bare))
     if not path.exists() and not os.path.islink(path):
@@ -637,6 +767,8 @@ def remove_job_worktree(
         return f"job {job_id} worktree {path}: {exc}"
     if path.exists():
         return f"job {job_id} worktree {path} could not be removed"
+    # The recursive fallback left the same kind of administrative entry behind.
+    runner(workspace.worktree_prune_argv(bare))
     return None
 
 
@@ -731,6 +863,43 @@ def _cmd_doctor(args: list[str]) -> None:
     if problem is not None:
         problems.append(problem)
 
+    # The worker's own prerequisites: without an AI model/execution selection
+    # and a prompt template, a dispatched job could only fail after dispatch
+    # had already created its worktree and session.
+    from .ai_accounts import AccountError, load_ai_accounts
+    from .runner_worker import WORKER_JOB_TYPES
+
+    ai = None
+    try:
+        ai = load_ai_accounts(paths.base.parent, defer_model_configuration=True)
+    except AccountError as exc:
+        problems.append(f"AI configuration is not usable: {exc}")
+    if ai is not None:
+        try:
+            ai.require_model_configuration()
+        except AccountError as exc:
+            problems.append(str(exc))
+        try:
+            ai.require_lane_execution()
+        except AccountError as exc:
+            problems.append(str(exc))
+    if policy is not None:
+        allowed = policy.get("job_types_allow")
+        if isinstance(allowed, list):
+            for job_type in allowed:
+                if (
+                    not isinstance(job_type, str)
+                    or job_type.lower() not in WORKER_JOB_TYPES
+                ):
+                    problems.append(f"job type {job_type} has no worker")
+            if any(
+                isinstance(job_type, str) and job_type.lower() == "pr-review"
+                for job_type in allowed
+            ):
+                prompt = paths.prompts / "pr-review.md"
+                if not prompt.is_file():
+                    problems.append(f"prompt template {prompt} is missing")
+
     # All three health checks run whenever their inputs loaded. An empty answer
     # from one does not make another unnecessary.
     if runner_config is not None:
@@ -778,13 +947,15 @@ def _cmd_doctor(args: list[str]) -> None:
     if expected is not None:
         try:
             completed = run_argv(["gh", "api", "user", "--jq", ".login"])
-        except OSError as exc:
-            problems.append(f"gh api user failed: {exc}")
+        except OSError:
+            problems.append("gh login check failed")
         else:
             actual = (completed.stdout or "").strip()
             if completed.returncode != 0:
-                detail = (completed.stderr or "").strip() or "unknown"
-                problems.append(f"gh api user failed: {detail}")
+                # gh's stderr is external text that may contain tokens or
+                # configuration paths; doctor reports only that the check ran
+                # and failed.
+                problems.append("gh login check failed")
             elif actual.lower() != expected.lower():
                 problems.append(
                     f"gh is authenticated as {actual or 'unknown'}, "
@@ -814,6 +985,9 @@ def cmd_runner(args: list[str]) -> None:
         return
     if sub == "dispatch":
         _cmd_dispatch(rest)
+        return
+    if sub == "work":
+        _cmd_work(rest)
         return
     if sub == "supervise":
         _cmd_supervise(rest)

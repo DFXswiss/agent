@@ -63,6 +63,11 @@ def a38_report_task_lock(task_id: object) -> str:
     return f"coordinator-a38-report-task:{task_id}"
 
 
+def github_activity_lock(activity_id: str) -> str:
+    """Cross-process serialization key for one non-report GitHub activity row."""
+    return f"github-activity:{activity_id}"
+
+
 def coordinator_a38_report_activity_id(
     task_id: str,
     *,
@@ -1131,6 +1136,151 @@ def _run_comment_post(
         return f"comment.post {rid} error"
 
 
+# The activity types this executor owns; mail, query and subscription rows have
+# their own executors.
+GITHUB_ACTIVITY_TYPES = frozenset(
+    {"pr.open", "pr.body", "issue.write", "comment.post", "review.post"}
+)
+
+
+def _execute_row(
+    store: Store,
+    runner: Runner,
+    row: dict[str, Any],
+    *,
+    a38_report: bool = False,
+) -> str:
+    """Pin the account and execute one activity row.
+
+    The row is written back before the external effect so the account binding
+    is durable even if the process dies mid-call. The binding comparison is what
+    refuses an account switch between two attempts at the same activity.
+    """
+    typ = row.get("type")
+    account = load_accounts(store.home).for_session(
+        str(row.get("session_id") or "")
+    )
+    binding = {"account": account.name, "login": account.login.casefold()}
+    if (
+        row.get("execution_account") is not None
+        and row["execution_account"] != binding
+    ):
+        raise AccountError("Activity account binding changed; refusing account switch")
+    row = dict(row, execution_account=binding)
+    store.write("activity", "update", row["id"], _strip(row))
+    scoped_runner = account.runner(runner)
+    if typ == "pr.open":
+        return _run_pr_open(
+            store, scoped_runner, row, expected_login=account.login
+        )
+    if typ == "pr.body":
+        return _run_pr_body(store, scoped_runner, row)
+    if typ == "issue.write":
+        return _run_issue_write(store, scoped_runner, row)
+    if typ == "comment.post":
+
+        def revalidate_report() -> str | None:
+            current = store.row("activity", str(row["id"]))
+            if (
+                not isinstance(current, dict)
+                or current.get("execution_status") != "pending"
+            ):
+                return "A38 report activity is no longer pending"
+            report_error = _a38_report_intent_error(store, current)
+            if report_error is not None:
+                _retire_a38_report_activity(
+                    store, current, error=report_error
+                )
+            return report_error
+
+        return _run_comment_post(
+            store,
+            scoped_runner,
+            row,
+            expected_login=account.login,
+            before_post=revalidate_report if a38_report else None,
+        )
+    if typ == "review.post":
+        return _run_review_post(store, scoped_runner, row)
+    raise _GhError("unsupported activity type")
+
+
+def _execute_row_bound(store: Store, runner: Runner, row: dict[str, Any]) -> str | None:
+    """Run one row completely, including its lock and pending re-read.
+
+    This is the whole per-row path: account binding, per-type dispatch, the A38
+    report task/activity locks with their pending re-read and intent
+    revalidation, the generic per-activity lock and pending re-read for every
+    other row, and per-row error marking. `scan_github` and `execute_activity`
+    both call it, so a directly named row receives exactly the protection a
+    scanned row receives: two executors cannot both list the target and then
+    both post the same marker.
+
+    Returns the status line, or `None` when a concurrent executor or
+    invalidation made the row stop being pending while this call waited for its
+    lock.
+    """
+    typ = row.get("type")
+    activity_id = str(row.get("id") or "")
+    try:
+        if typ == "comment.post" and _is_a38_report_activity(store, row):
+            task_id = _a38_report_task_id(store, row)
+            with ExitStack() as locks:
+                if task_id is not None:
+                    locks.enter_context(
+                        store.exclusive(a38_report_task_lock(task_id))
+                    )
+                locks.enter_context(
+                    store.exclusive(a38_report_activity_lock(activity_id))
+                )
+                current = store.row("activity", activity_id)
+                if (
+                    not isinstance(current, dict)
+                    or current.get("execution_status") != "pending"
+                ):
+                    return None
+                report_error = _a38_report_intent_error(store, current)
+                if report_error is not None:
+                    _retire_a38_report_activity(store, current, error=report_error)
+                    return f"comment.post {current.get('id')} error"
+                return _execute_row(store, runner, current, a38_report=True)
+        with store.exclusive(github_activity_lock(activity_id)):
+            current = store.row("activity", activity_id)
+            if (
+                not isinstance(current, dict)
+                or current.get("execution_status") != "pending"
+            ):
+                return None
+            return _execute_row(store, runner, current)
+    except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
+        rid = str(row.get("id") or "?")
+        _mark(store, row, status="error", error=str(exc))
+        label = typ if isinstance(typ, str) else "activity"
+        return f"{label} {rid} error"
+
+
+def execute_activity(
+    store: Store, runner: Runner, activity_id: str
+) -> str | None:
+    """Execute one owned pending GitHub activity that this script can handle.
+
+    Returns the same status line `scan_github` would produce, or `None` when the
+    row is absent, no longer pending, or of a type this executor does not own.
+    The worker uses this after inserting its own `review.post`, so the script —
+    not the lane and not a scheduled scan — performs the external effect. The
+    row goes through exactly the shared per-row path, including the A38 report
+    locks and intent revalidation.
+    """
+    row = store.row("activity", activity_id)
+    if not isinstance(row, dict) or row.get("execution_status") != "pending":
+        return None
+    if row.get("_origin_device_id") != store.device_id():
+        return None
+    if row.get("type") not in GITHUB_ACTIVITY_TYPES:
+        return None
+    return _execute_row_bound(store, runner, row)
+
+
 def scan_github(store: Store, runner: Runner) -> list[str]:
     """Execute owned pending GitHub activities for this device.
 
@@ -1140,98 +1290,11 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
     Returns human-readable status lines, one per handled row.
     """
     lines: list[str] = []
-
-    def execute(row: dict[str, Any], *, a38_report: bool = False) -> str:
-        typ = row.get("type")
-        account = load_accounts(store.home).for_session(
-            str(row.get("session_id") or "")
-        )
-        binding = {"account": account.name, "login": account.login.casefold()}
-        if (
-            row.get("execution_account") is not None
-            and row["execution_account"] != binding
-        ):
-            raise AccountError("Activity account binding changed; refusing account switch")
-        row = dict(row, execution_account=binding)
-        store.write("activity", "update", row["id"], _strip(row))
-        scoped_runner = account.runner(runner)
-        if typ == "pr.open":
-            return _run_pr_open(
-                store, scoped_runner, row, expected_login=account.login
-            )
-        if typ == "pr.body":
-            return _run_pr_body(store, scoped_runner, row)
-        if typ == "issue.write":
-            return _run_issue_write(store, scoped_runner, row)
-        if typ == "comment.post":
-
-            def revalidate_report() -> str | None:
-                current = store.row("activity", str(row["id"]))
-                if (
-                    not isinstance(current, dict)
-                    or current.get("execution_status") != "pending"
-                ):
-                    return "A38 report activity is no longer pending"
-                report_error = _a38_report_intent_error(store, current)
-                if report_error is not None:
-                    _retire_a38_report_activity(
-                        store, current, error=report_error
-                    )
-                return report_error
-
-            return _run_comment_post(
-                store,
-                scoped_runner,
-                row,
-                expected_login=account.login,
-                before_post=revalidate_report if a38_report else None,
-            )
-        if typ == "review.post":
-            return _run_review_post(store, scoped_runner, row)
-        raise _GhError("unsupported activity type")
-
     for row in store.pending_work():
         typ = row.get("type")
-        if typ not in {
-            "pr.open",
-            "pr.body",
-            "issue.write",
-            "comment.post",
-            "review.post",
-        }:
+        if typ not in GITHUB_ACTIVITY_TYPES:
             continue
-        try:
-            if typ == "comment.post" and _is_a38_report_activity(store, row):
-                task_id = _a38_report_task_id(store, row)
-                with ExitStack() as locks:
-                    if task_id is not None:
-                        locks.enter_context(
-                            store.exclusive(a38_report_task_lock(task_id))
-                        )
-                    locks.enter_context(
-                        store.exclusive(
-                            a38_report_activity_lock(str(row.get("id") or ""))
-                        )
-                    )
-                    current = store.row("activity", str(row.get("id") or ""))
-                    if (
-                        not isinstance(current, dict)
-                        or current.get("execution_status") != "pending"
-                    ):
-                        continue
-                    report_error = _a38_report_intent_error(store, current)
-                    if report_error is not None:
-                        _retire_a38_report_activity(
-                            store, current, error=report_error
-                        )
-                        lines.append(f"comment.post {current.get('id')} error")
-                        continue
-                    lines.append(execute(current, a38_report=True))
-                    continue
-            lines.append(execute(row))
-        except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
-            rid = str(row.get("id") or "?")
-            _mark(store, row, status="error", error=str(exc))
-            label = typ if isinstance(typ, str) else "activity"
-            lines.append(f"{label} {rid} error")
+        line = _execute_row_bound(store, runner, row)
+        if line is not None:
+            lines.append(line)
     return lines
