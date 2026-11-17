@@ -1137,7 +1137,9 @@ package (version 3) and plain SQL.
 
 The deployment creates both roles and the database, with the owner role as the owner of the
 database (`CREATE DATABASE <database> OWNER <owner>`), so that the owner holds the `CREATE` right
-on the database that `CREATE SCHEMA` needs. It creates the writer role with `LOGIN` and none of
+on the database that `CREATE SCHEMA` needs. It gives the two roles two different names, and gives
+both roles and the database names that pass the name rules of section 15; a name that breaks them
+is refused by the configuration check of every program before any connection. It creates the writer role with `LOGIN` and none of
 `SUPERUSER`, `BYPASSRLS`, `CREATEROLE`, `CREATEDB` and `REPLICATION`, grants it no role and
 grants it no right; every right of the writer comes from the migration. The passwords of both roles are created by the deployment's secret tooling, never by a
 person (section 15). The migration (section 11.3) grants the writer exactly the rights of the
@@ -1171,7 +1173,12 @@ backups are kept off-site (section 12).
 ### 11.3 Schema
 
 Schema version 1. `<owner>` and `<writer>` are the role names, and `<database>` the database
-name, of the two connection strings that the `migrate` command reads (section 11.4).
+name, of the two connection strings that the `migrate` command reads (section 11.4). Each of them
+has passed the name rules of section 15 before `migrate` connects, so none of them is `public`,
+starts with `pg_`, or is one of `current_user`, `current_role`, `session_user`, `user` and
+`none`. `migrate` composes each of them into its statement as an identifier with the driver
+(`psycopg.sql.Identifier`), never by text formatting; the same holds for every role name or
+database name that any program of this document puts into an SQL statement (section 15).
 
 ```sql
 REVOKE ALL ON DATABASE <database> FROM PUBLIC;
@@ -1257,14 +1264,17 @@ deployment runs it to completion before every start of the hub: in the compose f
 one-shot service, and the hub service depends on it with the condition
 `service_completed_successfully` (section 15). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and
 `AGENT_CORE_RECORD_DATABASE`; it connects only with the owner's string and uses the writer's
-string only for the writer role name and the comparison of section 15. It runs these steps and
-stops at the first failure:
+string only for the writer role name and the comparison of section 15. It takes no argument
+after `migrate`. It runs these steps and stops at the first failure:
 
-1. `config`: both connection strings are present and have the form of section 15, name different
-   roles, and name the same host, port, database and `sslmode`; and the libpq that `psycopg`
-   uses is version 16 or later (section 15).
-2. `owner`: it connects with the owner role and refuses an owner role that is a superuser or that
-   does not own the database.
+1. `config`: no argument follows `migrate`; both connection strings are present and have the form
+   of section 15, including its name rules, name different roles, and name the same host, port,
+   database and `sslmode`; and the libpq that `psycopg` uses is version 16 or later (section
+   15). This step never connects to the database: when any argument follows `migrate`, whatever
+   it is, `migrate` prints `failed config` and exits 1 without reading the database.
+2. `owner`: it connects with the owner role, with the connect timeout of section 15, and refuses
+   an owner role that is a superuser or that does not own the database. A connection that fails,
+   also by that timeout, fails this step.
 3. `migrate`: in one transaction at isolation level `READ COMMITTED` (section 11.5) that first
    takes `pg_advisory_xact_lock(742180002)`, so that two runs never migrate at once, it applies the schema of section 11.3 when `record.schema_version`
    does not exist, does nothing when it holds exactly the versions the code knows, and fails when
@@ -1275,15 +1285,33 @@ It prints one line and exits: `migrated <version>` (exit 0) when it applied the 
 where `<step>` is `config`, `owner` or `migrate`. It prints no value from the configuration and
 no message of a database error.
 
+**No command or an unknown command.** The command is the first argument after
+`python -m agent_core.record`, compared byte for byte with the commands that exist. When no
+argument is given, or the first argument is not one of those commands (also `-h`, `--help` or a
+command of a later change), the program prints exactly one line, the usage line below followed
+by one `\n`, to stderr, prints nothing to stdout, reads no environment variable, does not connect
+to the database and exits 2. The usage line depends on the commands that exist after each change
+of section 16:
+
+| After | Commands that exist | Usage line |
+|---|---|---|
+| change 1 | `migrate` | `usage: python -m agent_core.record {migrate}` |
+| change 2 | `migrate` (change 2 adds no command to this repository) | `usage: python -m agent_core.record {migrate}` |
+| change 3 | `migrate`, `export`, `verify`, `restore` (section 12.3) | `usage: python -m agent_core.record {migrate,export,verify,restore}` |
+
+The arguments after a known command are checked by that command: by step `config` for `migrate`,
+and by `refused config` for `export`, `verify` and `restore` (section 12.3).
+
 **The start of the hub.** The hub does not start, and logs the line `record start failed <step>`
 without any value from the configuration, when a step of this sequence fails. For every step
 other than `verify` this is the only line of the record part about the failure; step `verify`
-logs one line before it (step 4). The hub opens its database connection in step `schema`; a
-failure of the database, also a failed connection, fails the step in which it occurs (`schema`,
-`writer` or `verify`), is logged only by this line, and is never logged as a failed
-verification.
+logs one line before it (step 4). The hub opens its database connection in step `schema`, with
+the connect timeout of section 15; a failure of the database, also a failed connection and a
+connection that the timeout ends, fails the step in which it occurs (`schema`, `writer` or
+`verify`), is logged only by this line, and is never logged as a failed verification.
 
-1. `config`: `AGENT_CORE_RECORD_DATABASE` is present and has the form of section 15,
+1. `config`: `AGENT_CORE_RECORD_DATABASE` is present and has the form of section 15, including
+   its name rules,
    `AGENT_CORE_RECORD_OWNER_DATABASE` is not set in the hub's environment, also not empty, and
    the libpq that `psycopg` uses is version 16 or later (section 15).
 2. `schema`: the hub connects with the writer role. `record.schema_version` exists and holds
@@ -1292,7 +1320,9 @@ verification.
    changes the schema.
 3. `writer`: the role has exactly the writer rights of section 11.2 and nothing else. The hub
    reads the catalog of the server and fails this step unless all of these hold:
-   - `current_user` is the role of the connection string, and in `pg_roles` its `rolsuper`,
+   - `current_user` is the role of the connection string (the hub passes that name to the
+     comparison as a parameter of the statement, and composes every role or database name that
+     enters a statement text as an identifier with the driver, section 15), and in `pg_roles` its `rolsuper`,
      `rolbypassrls`, `rolcreaterole`, `rolcreatedb` and `rolreplication` are all false.
    - `pg_auth_members` has no row whose `member` is the role, so it is a member of no role,
      directly or indirectly, including the owner role and every predefined role of PostgreSQL.
@@ -1571,8 +1601,16 @@ statement of the hub, not an event: the hub still authors no event.
 
 ### 12.3 Export, offline verification and restore
 
-Besides `migrate` (section 11.4), the hub package provides three commands. None of them needs the
-hub to run, and none of them reads `AGENT_CORE_RECORD_OWNER_DATABASE`.
+Besides `migrate` (section 11.4), the hub package provides three commands, added by change 3 of
+section 16. None of them needs the hub to run, and none of them reads
+`AGENT_CORE_RECORD_OWNER_DATABASE`. From change 3 on, `python -m agent_core.record` without a
+command or with an unknown command prints to stderr the one line
+`usage: python -m agent_core.record {migrate,export,verify,restore}`, prints nothing to stdout
+and exits 2, as section 11.4 defines; before change 3, `export`, `verify` and `restore` are
+unknown commands and get the usage line `usage: python -m agent_core.record {migrate}`.
+
+`export` and `restore` connect with the connect timeout of section 15 and check the name rules of
+section 15 as part of their configuration check, before any connection; `verify` never connects.
 
 | Command | Does |
 |---|---|
@@ -1596,7 +1634,7 @@ one line and exits:
 | `refused config` | 1 | `--out` is missing, an argument is unknown or given twice, `AGENT_CORE_RECORD_DATABASE` is missing, empty or outside the form of section 15, or the libpq that `psycopg` uses is older than version 16 |
 | `refused file_exists` | 1 | `FILE` exists; nothing is written |
 | `refused file_write` | 1 | `FILE` cannot be created or written |
-| `refused database` | 1 | a database operation failed |
+| `refused database` | 1 | a database operation failed, also a connection that failed or that the connect timeout of section 15 ended |
 
 `verify` prints one line and exits:
 
@@ -1639,7 +1677,7 @@ step 4 commits:
 | `refused schema_version` | 1 | step 2: the schema holds another version than this code expects |
 | `refused writer_rights` | 1 | step 2: the role does not have exactly the writer rights |
 | `refused not_empty` | 1 | step 3 |
-| `refused database` | 1 | a database operation failed |
+| `refused database` | 1 | a database operation failed, also the connection of step 2 when it failed or the connect timeout of section 15 ended it |
 
 The export file is JSON Lines, UTF-8, one JSON object per line, written without whitespace:
 
@@ -1758,7 +1796,8 @@ exactly one of the two lines `record verify failed` or `record database error`.
 A failure in a record endpoint is never logged with its exception message or a traceback, because
 a database exception can carry stored values. The commands `migrate`, `export`, `verify` and
 `restore` print only the lines given in sections 11.4 and 12.3, under the same rules: no value,
-no connection string, no message of a database error.
+no connection string, no message of a database error. `python -m agent_core.record` without a
+command or with an unknown command prints only the usage line of section 11.4, to stderr.
 
 ## 14. Tests this step must carry
 
@@ -1767,7 +1806,10 @@ The tests read the administrator connection string of a test server from
 `AGENT_CORE_TEST_POSTGRES`. Each test session creates a fresh database with a random name and the
 owner and writer roles with random names and random passwords, because roles are shared by every
 database of the server and fixed names would collide between parallel test sessions, and drops
-them at the end. Every other role that a test creates also gets a random name. In CI, the workflow runs
+them at the end. Every other role that a test creates also gets a random name, except in the one
+case of the identifier test below, which uses fixed names that are SQL keywords and holds the
+session advisory lock `pg_advisory_lock(742180003)` on the administrator connection while those
+roles and that database exist, so that parallel test sessions never collide on them. In CI, the workflow runs
 a `postgres:16` service container and sets the variable; locally, the developer runs a local
 PostgreSQL 16. When the variable is missing, the record tests fail with a message that names it;
 they are never skipped. Every endpoint case asserts the exact status, the exact body bytes and the
@@ -1794,6 +1836,38 @@ The database and the start:
   both, different hosts, ports, databases or `sslmode`, a reported libpq version below 16
   (`config`), an owner that is a superuser, an owner that does not own the database, and an
   unknown schema version
+- `migrate` with an argument after `migrate` (each of `--help`, `-h`, `x`, `migrate` and an empty
+  string, and two arguments) prints `failed config` and exits 1; a test server that logs
+  connections shows no connection, and the database stays unchanged
+- `python -m agent_core.record` without an argument, with an empty string as the command, with
+  `-h`, `--help`, `Migrate` and an unknown word as the command: stderr is exactly the usage line
+  of section 11.4 for the change under test and one `\n`, stdout is empty, the exit code is 2,
+  and a test server that logs connections shows no connection; after change 1 (and so after
+  change 2) the line is `usage: python -m agent_core.record {migrate}` and `export`, `verify` and
+  `restore` are unknown commands; after change 3 the line is
+  `usage: python -m agent_core.record {migrate,export,verify,restore}`
+- the identifier test (section 15): with the owner role named `grant`, the writer role named
+  `select` and the database named `order`, `migrate` prints `migrated 1` and grants exactly the
+  rights of section 11.3, and (from change 3) the hub starts, `export` and `restore` succeed;
+  this shows that every name enters SQL as an identifier of the driver
+- the name rules of section 15: a connection string whose `role` or whose `database` is `public`,
+  starts with `pg_` (such as `pg_monitor` and `pg_`), or is `current_user`, `current_role`,
+  `session_user`, `user` or `none`, is refused by the configuration check of `migrate`
+  (`failed config`, exit 1), and
+  from change 3 of the hub (`record start failed config`), `export` and `restore` (`refused
+  config`, exit 1); each in the owner string and in the writer string where the program reads
+  both; in every case a test server that logs connections shows no connection; a name that only
+  contains such a word, such as `public_x`, `x_pg_` or `users`, is accepted; the same names in
+  uppercase or mixed case (such as `PUBLIC` and `Pg_x`) are refused with the same line, here
+  already by the form of section 15, which allows only lowercase
+- the connect timeout of section 15: a test hook that records the parameters each program passes
+  to the driver shows `connect_timeout` `10` for every connection of `migrate` and, from change
+  3, of the hub, `export` and `restore`; against a test listener on `127.0.0.1` with
+  `sslmode=disable` that accepts TCP connections and never answers, each program gives the line
+  and exit code of the table of section 15 within 15 seconds: `migrate` prints `failed owner`
+  (exit 1), and from change 3 the hub logs `record start failed schema` and does not start, a
+  periodic run logs `record database error connect -`, `export` prints `refused database` (exit
+  1, no file left behind) and `restore` prints `refused database` (exit 1)
 - each start failure of the hub in section 11.4 logs `record start failed <step>` as its only
   line of the record part, except step `verify`, and the hub does not start:
   `AGENT_CORE_RECORD_DATABASE` missing, empty or malformed (`config`);
@@ -2194,7 +2268,8 @@ Logs:
 A connection string is
 `postgresql://<role>:<password>@<host>[:<port>]/<database>?sslmode=<mode>`:
 
-- `role` and `database`: 1 to 63 characters of `a-z`, `0-9` and `_`, starting with a letter or `_`
+- `role` and `database`: 1 to 63 characters of `a-z`, `0-9` and `_`, starting with a letter or
+  `_`, and passing the name rules below
 - `password`: 64 lowercase hex characters, created by the deployment's secret tooling; no person
   creates, sees or copies it
 - `host`: a lowercase host name in ASCII form, an IPv4 address, or an IPv6 address in brackets
@@ -2211,6 +2286,49 @@ A connection string is
   image trusts: the program passes `sslrootcert=system` to the driver itself, which takes
   precedence over the variable `PGSSLROOTCERT`. A private certificate authority is not supported in this step: a server whose
   certificate does not chain to the system trust store fails to connect with `verify-full`.
+
+**Name rules.** The configuration check of every program that reads a connection string (the hub,
+`migrate`, `export` and `restore`; sections 11.4 and 12.3) refuses the string, before any
+connection, when its `role` or its `database`, compared without regard to case:
+
+- is `public`
+- starts with `pg_`
+- is one of `current_user`, `current_role`, `session_user`, `user` and `none`
+
+These names stand for every role (`public`) or for a role of the server itself (the predefined
+roles `pg_*`, and the names that PostgreSQL reads as the role of the session or as no role), not
+for the one role that this document names. A grant to such a name, written by the migration of
+section 11.3, would open the record to roles that this document does not name, and a check of
+section 11.4 against such a name would test another role than the one that connects. In
+addition, `migrate` refuses two strings whose `role` is the same (step `config` of section 11.4),
+so the owner role and the writer role always have different names.
+
+Every role name and database name that reaches an SQL statement, in `migrate`, in the start of
+the hub, in `export` and in `restore`, is composed into the statement as an identifier by the
+driver (`psycopg.sql.Identifier`), or passed as a parameter of the statement where it is a value,
+such as in a comparison with `current_user`; it is never put into a statement by text formatting.
+
+**Connect timeout.** Every program of this document that connects to the database (the hub,
+`migrate`, `export` and `restore`; `verify` never connects) passes the connection parameter
+`connect_timeout=10` to the driver itself, beside the connection string, as it passes
+`sslrootcert=system`; the connection string never carries it, because it allows no query
+parameter besides `sslmode`. A connection attempt therefore fails after at most 10 seconds
+instead of waiting without limit. libpq applies the timeout to each address it tries, so a host
+name that resolves to several addresses can take 10 seconds per address; the resolution of the
+host name is not part of the timeout. A connection that the timeout ends is a failed connection,
+and gives exactly the line and exit code that this document already defines for an unreachable
+database; it has no SQLSTATE, so `<SQLSTATE or ->` is `-`:
+
+| Program and moment | Line | Exit or answer |
+|---|---|---|
+| the hub, at start (step `schema` of section 11.4) | `record start failed schema` | the hub does not start |
+| the hub, in a periodic verification (section 12.1) | `record database error connect -` | the process keeps running and runs again at the next interval |
+| the hub, in a checkpoint attempt (section 12.2) | `record database error checkpoint -` | no checkpoint is written |
+| the hub, in a request under `/api/key/record/` (section 13) | the request line with `database_error connect -` | signed `500` `{"error":"internal"}` |
+| the hub, in a request to `GET /api/key/release` (section 13) | `record database error connect -`, beside its line of KEY-PROTOCOL.md section 5 | signed `500` `{"error":"internal"}` |
+| `migrate` (step `owner` of section 11.4) | `failed owner` | exit 1 |
+| `export` (section 12.3) | `refused database` | exit 1, no file left behind |
+| `restore` (step 2 of section 12.3) | `refused database` | exit 1, nothing written |
 
 `migrate` checks that the two strings name different roles and the same host, port, database and
 `sslmode`. Like every `AGENT_CORE_*` variable, a missing or empty value stops a program that
@@ -2244,10 +2362,13 @@ therefore split into three changes:
 
 1. **Change 1, this repository: the migration and the library.** It adds the command
    `python -m agent_core.record migrate` (section 11.4), the schema of section 11.3, and the
-   record library: the event text, the event hash and the record hash (section 4), and the form
-   of a connection string (section 15). It adds the dependency and the test workflow of section
-   15, and carries the tests of section 14 for `migrate`, the rights, triggers and constraints of
-   the database, the connection string, and the event text and its hashes. The hub process does
+   record library: the event text, the event hash and the record hash (section 4), the form of a
+   connection string with its name rules, and the connect timeout (section 15). It adds the
+   usage line of section 11.4 for the one command `migrate`. It adds the dependency and the test
+   workflow of section 15, and carries the tests of section 14 for `migrate` (its arguments
+   included), the usage line, the rights, triggers and constraints of the database, the
+   connection string and its name rules, the identifier test and the connect timeout as far as
+   they concern `migrate`, and the event text and its hashes. The hub process does
    not use the database yet, reads no new variable, and starts and answers exactly as before.
 2. **Change 2, the deployment of each environment.** It provides a PostgreSQL 16 database with
    persistent storage, which serves TLS whenever the hub reaches it by a host other than a
@@ -2263,7 +2384,8 @@ therefore split into three changes:
 3. **Change 3, this repository: the record in the hub.** It makes the hub require
    `AGENT_CORE_RECORD_DATABASE` and run the start of section 11.4, and adds the scopes of section
    3, the reducer, the endpoints of section 7, the release rule of section 9, checkpoints, the
-   periodic verification, `export`, `verify` and `restore`, the updates of the compose file, the
+   periodic verification, `export`, `verify` and `restore` with the usage line of section 11.4
+   for the four commands, the updates of the compose file, the
    configuration test and the README of section 15, the updates of KEY-PROTOCOL.md named in
    section 1, and every remaining test of section 14.
 
@@ -2365,7 +2487,9 @@ confirms or changes each one.
 23. The state is kept in memory and rebuilt at start; no materialised table exists, so nothing in
     the database is ever updated (§11.3, §11.6).
 24. Appends, checkpoint attempts and the insert of `restore` are serialised by the advisory lock
-    742180001; runs of `migrate` by the advisory lock 742180002 (§11.4, §11.5, §12.2, §12.3).
+    742180001; runs of `migrate` by the advisory lock 742180002; on a test server, the identifier
+    test with fixed names by the session advisory lock 742180003 (§11.4, §11.5, §12.2, §12.3,
+    §14).
 25. Checkpoints are written at the first moment at or after each full hour when the head moved
     since the last checkpoint of the hub key id; `published_at` is the hub's clock at that moment;
     under the lock, at most one checkpoint per hub key id and full hour and per hub key id and
@@ -2591,6 +2715,26 @@ confirms or changes each one.
     `record database error connect` (§11.4, §12.1, §13).
 79. A record object that a key does not see is answered with the same status and body as one that
     does not exist; this document makes no promise about the time an answer takes (§3).
+81. `migrate` takes no argument; any argument after it, whatever it is, makes it print
+    `failed config` and exit 1 in step `config`, before any connection (§11.4).
+82. `python -m agent_core.record` without a command or with an unknown command prints one usage
+    line to stderr, nothing to stdout, and exits 2, without reading a variable or connecting. The
+    line is `usage: python -m agent_core.record {migrate}` after changes 1 and 2 and
+    `usage: python -m agent_core.record {migrate,export,verify,restore}` after change 3. Exit 2
+    separates a wrong call from a failure of a known command, which exits 1 (§11.4, §12.3, §13).
+83. Every program that connects to the database (the hub, `migrate`, `export`, `restore`) passes
+    `connect_timeout=10` to the driver itself, not in the connection string. A connection that
+    the timeout ends is a failed connection and gives the line and exit code already defined for
+    an unreachable database, with `-` as SQLSTATE. The limit is accepted that libpq applies the
+    timeout per address tried and does not cover name resolution (§11.4, §12.3, §15).
+84. A role name or database name that is `public`, starts with `pg_`, or is `current_user`,
+    `current_role`, `session_user`, `user` or `none`, compared without regard to case, is refused
+    by the configuration check of every program before any connection, because these names stand
+    for every role or for a role of the server itself, and a grant to them would open the record
+    to roles this document does not name; the owner and writer role names differ. Every role or
+    database name that reaches an SQL statement is composed as an identifier by the driver
+    (`psycopg.sql.Identifier`), or passed as a statement parameter where it is a value, never by
+    text formatting (§11.2, §11.3, §11.4, §15).
 80. The request log line writes `-` for a method other than `GET`, `POST` and `HEAD` and for a
     raw path that is not byte for byte one of the nine paths of §7.1, because such a method or
     path can carry text that a client chose; change 3 writes this into the sentence of
