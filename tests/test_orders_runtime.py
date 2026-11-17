@@ -620,6 +620,101 @@ def test_refresh_uses_the_checkpoint_sentence_when_the_stored_summary_is_the_tit
     assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
 
 
+def test_list_post_replaces_an_english_title_when_the_sentence_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="implement",
+        pr_number=42,
+        title=_ORDER_TITLE,
+    )
+    fake.pr["body"] = (
+        f"EN:\nDraft for order 11111111: {_ORDER_TITLE}.\n\n"
+        f"DE:\nEntwurf für Auftrag 11111111: {_ORDER_TITLE}.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        "Reused:\n- `src/agent_cli/coordinator_git.py:605` existing draft body\n"
+        "Added:\n- `src/agent_cli/github_act.py:745` pull request body update\n\n"
+        "</details>\n"
+    )
+    task["change_summary_de"] = f"{_ORDER_TITLE}."
+    task["reused_lines"] = [
+        "`src/agent_cli/coordinator_git.py:605` existing draft body"
+    ]
+    task["added_lines"] = [
+        "`src/agent_cli/github_act.py:745` pull request body update"
+    ]
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    published = fake.pr["body"]
+    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == "Entwurf für Auftrag 11111111."
+    assert _ORDER_TITLE not in published.split("DE:\n", 1)[1]
+    assert "`src/agent_cli/coordinator_git.py:605` existing draft body" in published
+    from agent_cli.coordinator_git import _require_stored_sentence
+
+    _require_stored_sentence(coord(task)["source"], published, None, task)
+    edits = len(fake.pr_edits)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    assert len(fake.pr_edits) == edits
+    assert fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0] == de_line
+
+
+def test_review_context_reads_the_german_line_after_the_list_post(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = prepare(tmp_path, monkeypatch)
+    wt = worker.workspace_root / OID
+    wt.mkdir()
+    task = seed_order_task(
+        store,
+        worker,
+        OID,
+        phase="implement",
+        title=_ORDER_TITLE,
+        worktree=str(wt),
+        base_sha=fake.base,
+        pr_number=42,
+    )
+    fake.pr["body"] = (
+        f"EN:\nDraft for order 11111111: {_ORDER_TITLE}.\n\n"
+        f"DE:\nEntwurf für Auftrag 11111111: {_ORDER_TITLE}.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        "Reused:\n- `src/agent_cli/coordinator_git.py:605` existing draft body\n"
+        "Added:\n- `src/agent_cli/github_act.py:745` pull request body update\n\n"
+        "</details>\n"
+    )
+    task["change_summary_de"] = _GERMAN_SENTENCE
+    task["reused_lines"] = [
+        "`src/agent_cli/coordinator_git.py:605` existing draft body"
+    ]
+    task["added_lines"] = [
+        "`src/agent_cli/github_act.py:745` pull request body update"
+    ]
+    save_task(store, task)
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    write_review_context(store, worker, task, fake)
+    pr_path = control_dir(worker, OID) / f"review-base-{fake.base[:12]}-pr-body.txt"
+    text = pr_path.read_text(encoding="utf-8")
+    de_line = text.split("DE:\n", 1)[1].split("\n", 1)[0]
+    assert de_line == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
+    assert _ORDER_TITLE not in text.split("DE:\n", 1)[1]
+    assert de_line == fake.pr["body"].split("DE:\n", 1)[1].split("\n", 1)[0]
+
+
 class _EchoPatchKeepsPublishedBody(FakeGh):
     """The pulls response echoes the new description; the view stays old."""
 
