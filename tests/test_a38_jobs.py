@@ -1252,7 +1252,7 @@ def _path_report(script: Path, report: Path) -> None:
         "    'node': shutil.which('node'),\n"
         "    'npm': shutil.which('npm'),\n"
         "    'npx': shutil.which('npx'),\n"
-        "}}), encoding='utf-8')\n",
+        "}), encoding='utf-8')\n",
         encoding="utf-8",
     )
 
