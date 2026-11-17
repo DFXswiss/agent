@@ -225,7 +225,7 @@ class FakeApproval(FakeAPI):
             return 200, [listed, *copy.deepcopy(self.extra_pulls)], {}
         if method == "GET" and path.startswith(f"{root}/compare/"):
             self.compare_urls.append(path)
-            return 200, {"status": self.comparison}, {}
+            return 200, {"status": self.comparison, "merge_base_commit": {"sha": BASE}}, {}
         if method == "GET" and path == f"{root}/issues/1/events":
             self.event_reads += 1
             return 200, copy.deepcopy(self.events), {}

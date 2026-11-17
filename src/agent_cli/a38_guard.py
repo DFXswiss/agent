@@ -1548,6 +1548,24 @@ def fetch_file_at_ref(api: GitHubApi, repo: str, path: str, ref: str) -> bytes |
     return _decode_contents_file(data)
 
 
+def fetch_merge_base(api: GitHubApi, repo: str, base_sha: str, head_sha: str) -> str | None:
+    """Merge-base commit of the exact base and head SHAs, or None when GitHub has none."""
+    if base_sha == head_sha:
+        return base_sha
+    status, data = api.get_optional(
+        f"/repos/{repo}/compare/{base_sha}...{head_sha}?per_page=1"
+    )
+    if status in {404, 422}:
+        return None
+    if status < 200 or status >= 300:
+        raise GuardError(f"compare HTTP {status} for {base_sha}...{head_sha}")
+    merge_base = data.get("merge_base_commit") if isinstance(data, dict) else None
+    sha = merge_base.get("sha") if isinstance(merge_base, dict) else None
+    if not isinstance(sha, str) or HEAD_SHA_RE.fullmatch(sha) is None:
+        raise GuardError("compare response missing a valid merge_base_commit sha")
+    return sha
+
+
 def fetch_policy_text(api: GitHubApi, repo: str, base_sha: str) -> str | None:
     raw = fetch_file_at_ref(api, repo, POLICY_PATH, base_sha)
     if raw is None:
@@ -1633,6 +1651,7 @@ def check_pr_guard_config_migration(
     snap: PullSnapshot,
     *,
     allow_changes: bool,
+    merge_base_sha: str | None = None,
 ) -> list[str]:
     """Require migration approval when `.github/pr-guard.json` bytes change.
 
@@ -1643,6 +1662,9 @@ def check_pr_guard_config_migration(
     cannot merge and break later trusted-config reads. A missing head file
     (removal) remains governed only by exact approval.
 
+    A change counts only when the pull request itself makes it: when the head
+    bytes equal the merge-base bytes, the file is untouched and returns early.
+
     Head bytes are read through the base/target repository at the exact
     validated head SHA so private-fork heads remain reachable with a
     repository-scoped token.
@@ -1651,6 +1673,12 @@ def check_pr_guard_config_migration(
     base_bytes = fetch_file_at_ref(api, snap.repo, PR_GUARD_CONFIG_PATH, snap.base_sha)
     if head_bytes == base_bytes:
         return []
+    if merge_base_sha is not None and merge_base_sha != snap.base_sha:
+        merge_base_bytes = fetch_file_at_ref(
+            api, snap.repo, PR_GUARD_CONFIG_PATH, merge_base_sha
+        )
+        if merge_base_bytes == head_bytes:
+            return []
     if head_bytes is not None:
         try:
             text = head_bytes.decode("utf-8")
@@ -1947,6 +1975,7 @@ def check_workflows_against_policy(
     policy: Mapping[str, Any],
     allow_changes: bool = False,
     skip_bytes_paths: Sequence[str] = (),
+    merge_base_sha: str | None = None,
 ) -> list[str]:
     """Return maintainer-facing problems for head workflows vs trusted base policy.
 
@@ -1975,6 +2004,7 @@ def check_workflows_against_policy(
     allowed = classified_pairs(policy)
     actual: set[tuple[str, str]] = set()
     all_paths = sorted(set(head_map) | set(base_map))
+    merge_base_map: Mapping[str, str | None] | None = None
     for path in all_paths:
         head_blob = head_map[path] if path in head_map else None
         base_blob = base_map[path] if path in base_map else None
@@ -1991,10 +2021,29 @@ def check_workflows_against_policy(
             head_bytes = _workflow_file_bytes(api, repo, path, head_sha, head_map)
             base_bytes = _workflow_file_bytes(api, repo, path, base_sha, base_map)
         if head_bytes != base_bytes and not allow_changes and path not in skip_bytes:
-            problems.append(
-                f"{path} bytes changed vs base; "
-                "a maintainer must approve the current head"
-            )
+            if merge_base_sha is not None and merge_base_sha != base_sha:
+                if merge_base_map is None:
+                    merge_base_map = workflow_blobs_at(api, repo, merge_base_sha)
+                    _prefetch_git_blobs(
+                        api,
+                        repo,
+                        {
+                            sha
+                            for sha in merge_base_map.values()
+                            if isinstance(sha, str) and sha not in _blob_cache
+                        },
+                    )
+                merge_base_bytes = _workflow_file_bytes(
+                    api, repo, path, merge_base_sha, merge_base_map
+                )
+                changed_by_pull_request = head_bytes != merge_base_bytes
+            else:
+                changed_by_pull_request = True
+            if changed_by_pull_request:
+                problems.append(
+                    f"{path} bytes changed vs base; "
+                    "a maintainer must approve the current head"
+                )
         if head_bytes is None:
             # Removed at head: still fine for classification; no head jobs to require.
             continue
@@ -3203,11 +3252,39 @@ def assess_pull(
             allow_changes=bool(approval),
             skip_bytes_paths=skip_bytes_paths,
         )
-    workflow_problems.extend(
-        check_pr_guard_config_migration(
-            api, snap, allow_changes=bool(approval)
-        )
+    migration_problems = check_pr_guard_config_migration(
+        api, snap, allow_changes=bool(approval)
     )
+    # Resolve the merge base only when the strict comparison found candidate
+    # bytes changes. A pull request that touches neither a workflow nor
+    # pr-guard.json keeps today's request pattern.
+    merge_base_sha: str | None = None
+    if (
+        any(reason.endswith(_APPROVAL_SUFFIX) for reason in workflow_problems)
+        or migration_problems
+    ):
+        merge_base_sha = fetch_merge_base(
+            api, snap.repo, snap.base_sha, snap.head_sha
+        )
+        if merge_base_sha is not None:
+            if policy is not None and policy_error is None:
+                workflow_problems = check_workflows_against_policy(
+                    api,
+                    snap.repo,
+                    head_sha=snap.head_sha,
+                    base_sha=snap.base_sha,
+                    policy=policy,
+                    allow_changes=bool(approval),
+                    skip_bytes_paths=skip_bytes_paths,
+                    merge_base_sha=merge_base_sha,
+                )
+            migration_problems = check_pr_guard_config_migration(
+                api,
+                snap,
+                allow_changes=bool(approval),
+                merge_base_sha=merge_base_sha,
+            )
+    workflow_problems.extend(migration_problems)
     comments = collect_comments(api, snap.repo, snap.number)
     author_comment, absence = select_gate_report(
         api, snap, comments, policy=policy, changed_paths=paths
