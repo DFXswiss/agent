@@ -41,10 +41,11 @@ work as before. The hub additionally requires three new environment variables at
 | Ed25519 signature | the 64 raw bytes, plain Ed25519 (not the prehashed or the context variant) |
 | Passkey public key | the 65 bytes of the uncompressed P-256 point (`0x04`, X, Y) |
 
-A public key must be a valid point: an Ed25519 key decodes to a point on the curve that is not
-of small order and is in its canonical encoding; a passkey key is a point on P-256 (only ES256 credentials). Small order is checked against the
-fixed list of small-order encodings and canonical encoding by comparing with the field prime;
-this is input validation, not an own implementation of a primitive.
+An Ed25519 public key is refused when it is one of the fixed small-order encodings, or when its
+y value is not below the field prime (not canonical). Both are checked by comparing bytes and
+integers; this is input validation, not an own implementation of a primitive. An encoding that
+is no point of the curve verifies no signature and needs no further check. A passkey key must be
+a point on P-256 (only ES256 credentials).
 
 A value that does not decode, is not canonical or has the wrong length is refused.
 
@@ -124,8 +125,8 @@ Further rules:
 - The `handle` of a `staff` or `agent` entry is a member of that entry's `team` in `teams.yaml`
   and is not a login in the `agents` map of that file. The `handle` of a `service` entry need not
   be in `teams.yaml`.
-- Several entries may name the same `device`. Among the entries of one handle that are not
-  revoked, the pair of `device` and `program` is unique; `program` is required when two such
+- Several entries may name the same `device`. Among the `agent` and `service` entries of one
+  handle that are not revoked at start, the pair of `device` and `program` is unique; `program` is required when two such
   entries share a `device`.
 - An entry is revoked when its `revoked` time is at or before now, and expired when its `expires`
   time is at or before now. A time in the future has no effect yet.
@@ -152,7 +153,8 @@ Further rules:
 
 ### Loader
 
-The loader fails closed. The process does not start when:
+The file is a mapping with exactly one key, `keys`, whose value is a list. The loader fails
+closed. The process does not start when:
 
 - the file is missing or unreadable, or a mapping key is written twice
 - a field is unknown, missing, of the wrong type, refused for that principal or not in the form
@@ -213,8 +215,8 @@ agent-request-v1
   The client builds every line from its configured hub URL and its own request by the same rules.
 - **Host** is the host of the hub's public URL (`AGENT_CORE_PUBLIC_URL`), lowercase, followed by
   `:` and the port only when the port is not the default of the URL's scheme. An IPv6 address is
-  written in brackets, an international name in its ASCII form. The public URL has no path, query
-  or fragment; otherwise the process does not start. A single trailing `/` is not a path.
+  written in brackets, an international name in its ASCII form. The public URL has no user
+  information, path, query or fragment; otherwise the process does not start. A single trailing `/` is not a path.
 - **Request target** is the path and query as the hub receives them: the raw path with its
   percent-encoding unchanged, followed by `?` and the raw query only when the query is not
   empty. A client never sends `?` with an empty query. Whatever stands in front of the hub
@@ -232,7 +234,8 @@ never carries the hub's signature headers, also when the request carries `Agent-
 - A request under `/api/key/` for which no endpoint exists with this exact path and method, also
   with an added or missing trailing slash and also `HEAD`, passes checks 1 to 8 and then gets a
   signed `404` with the body `{"error": "not_found"}`. The hub never answers there with `405` or
-  a redirect.
+  a redirect. "Exact path" means the percent-decoded path the router sees. The answer to `HEAD`
+  has no body, and its body hash is that of the empty string.
 - A `500` under `/api/key/` has the body `{"error": "internal"}`.
 
 The hub builds the text from what it received and checks in this order, stopping at the first
@@ -240,7 +243,7 @@ failure:
 
 | # | Check | Status | `error` |
 |---|---|---|---|
-| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII. The request has no `Content-Encoding` other than a single `gzip`, its body decodes, and it is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
+| 1 | All four headers are present, once each, and well formed: `Agent-Key` follows the `id` rule, `Agent-Time` the time form, `Agent-Nonce` is 16 bytes and `Agent-Signature` 64 bytes. The request target is ASCII and in origin form (it starts with `/`). The request has no `Content-Encoding` other than the single token `gzip`, compared without regard to case (`identity` and a list are refused), its body decodes, and it is at most 1 MiB before and after decoding; decoding stops as soon as the limit is passed. | 401 | `signature_missing` |
 | 2 | `Agent-Key` names an entry in `keys` | 401 | `key_unknown` |
 | 3 | The entry is not revoked | 401 | `key_revoked` |
 | 4 | The entry is not expired | 401 | `key_expired` |
@@ -366,7 +369,14 @@ The hub:
 - a replayed request, two parallel copies of one request (exactly one accepted), and the same
   nonce under two different keys (both accepted)
 - a request signed for another key id, host, method, path, query and body
-- a percent-encoded path, and a request sent with `?` and an empty query
+- a correctly signed request to `/api/%6Bey/whoami` (accepted: the signature covers the raw
+  target, the router sees the decoded path), and a request sent with `?` and an empty query
+  (refused at check 7)
+- a request target with a byte outside ASCII or in absolute form, an `Agent-Time` with
+  fractional seconds, with an offset instead of `Z` or with an impossible date (all refused at
+  check 1)
+- the host line for a public URL with uppercase letters and with an explicit default port; a
+  public URL with user information, a query or a fragment is refused at start
 - a revoked key, an expired key, a key whose `revoked` or `expires` time equals now (refused),
   and a key whose `revoked` time is in the future (accepted)
 - a `webauthn` key used directly
@@ -423,6 +433,7 @@ merge. The order is therefore fixed, for every environment:
 3. An operator reads the public key from the hub's start log line and gives it, with the key id,
    to those who pin it.
 
-The pull request of step 2 states that step 1 is rolled out for every environment that deploys
-from its target branch. The same holds for every later merge that brings the change to another
-deploying branch, such as a release pull request.
+The pull request of step 2 is merged only after step 1 is rolled out for every environment that
+deploys from its target branch, and its body states this. The same holds for every later merge
+that brings the change to another deploying branch: a release pull request to the production
+branch is merged only after step 1 is rolled out for production, and its body states this.
