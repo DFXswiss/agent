@@ -2217,23 +2217,34 @@ def launch_lane(
                         ),
                         write_backs=write_backs,
                     )
-                if lane_runner is not None:
-                    completed = lane_runner(argv, stdin_text)
-                else:
-                    completed = run_bounded(
-                        argv,
-                        timeout=worker.lane_timeout,
-                        cwd=worktree,
-                        stdin_text=stdin_text,
-                        on_start=lane_start_recorder(
-                            worker, str(task["id"]), aid, capture=True
-                        ),
-                        survive_stop=True,
-                        stdout_path=str(capture["stdout"]),
-                        stderr_path=str(capture["stderr"]),
-                        status_path=str(capture["status"]),
-                        pid_path=str(capture["pid"]),
-                    )
+                try:
+                    if lane_runner is not None:
+                        completed = lane_runner(argv, stdin_text)
+                    else:
+                        completed = run_bounded(
+                            argv,
+                            timeout=worker.lane_timeout,
+                            cwd=worktree,
+                            stdin_text=stdin_text,
+                            on_start=lane_start_recorder(
+                                worker, str(task["id"]), aid, capture=True
+                            ),
+                            survive_stop=True,
+                            stdout_path=str(capture["stdout"]),
+                            stderr_path=str(capture["stderr"]),
+                            status_path=str(capture["status"]),
+                            pid_path=str(capture["pid"]),
+                        )
+                except Exception as exc:
+                    # A delegated implementer can change git metadata and then
+                    # raise. Restore it before the exception leaves this block.
+                    if git_snapshot is not None and restore_git_metadata(
+                        git_snapshot
+                    ):
+                        raise LaneFailedError(
+                            DELEGATED_GIT_METADATA_CHANGED
+                        ) from exc
+                    raise
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
             stderr = _redact_coordinator_lane_text(

@@ -3170,6 +3170,77 @@ def test_launch_delegate_restores_changed_git_metadata(tmp_path: Path) -> None:
     assert not (hooks / "post-commit").exists()
 
 
+def test_launch_delegate_restores_git_metadata_when_runner_raises(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        head.write_text("ref: refs/heads/other\n", encoding="utf-8")
+        raise RuntimeError("runner failed")
+
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.returncode != 0
+    assert DELEGATED_GIT_METADATA_CHANGED in result.stderr
+    assert "runner failed" in result.stderr
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
+def test_launch_delegate_propagates_runner_exception_without_git_change(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        lane_execution={"mode": "delegate", "argv": ["/opt/operator/run-lane"]},
+    )
+    worktree = tmp_path / "work"
+    worktree.mkdir()
+    gitdir = worktree / ".git"
+    gitdir.mkdir()
+    head = gitdir / "HEAD"
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        raise RuntimeError("runner failed")
+
+    with pytest.raises(RuntimeError, match="runner failed"):
+        launch(
+            role="implementer",
+            vendor="driver-a",
+            spec_file=str(spec),
+            cwd=str(worktree),
+            runner=fake,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+    assert head.read_text(encoding="utf-8") == "ref: refs/heads/main\n"
+
+
 def test_launch_delegate_allows_tracked_file_write_back(tmp_path: Path) -> None:
     write_operator_ai_accounts(
         tmp_path,
