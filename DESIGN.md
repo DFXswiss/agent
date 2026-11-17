@@ -1370,7 +1370,7 @@ This revision records the decision of 2026-11-17 to build the team record in age
 
 This revision records the decision of 2026-11-17 to store the team record in PostgreSQL, with a database role that may only insert and read events (§24.8).
 
-This revision adds the proposal for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not decided and not implemented.
+This revision records the decision of 2026-11-17 for central operation (§25): devices as principals with two levels, work handed over through the hub, tasks and a team log in place of outside trackers, complete recording, the full session view, one overview, and one interface for people and for AI. It is not implemented; the details still open are listed in §25.15.
 
 ## 24. Team record and key identity (decided, not implemented)
 
@@ -1514,9 +1514,9 @@ When the matching part ships, its pull request changes these rows in the same di
 - Every implementation pull request carries tests for its signature checks, chain checks and refusal paths, not only the success path.
 - Build order: keys file with scopes and signature verification first, then the authenticated release query with a hub-signed answer for external programs, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
 
-## 25. Central operation (proposed, not decided)
+## 25. Central operation (decided, not implemented)
 
-Status: proposed on 2026-11-17, not decided and not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record) and changes nothing until a human decides it and each part ships. The open decisions are listed in §25.15.
+Status: decided on 2026-11-17, not built. This section describes how the whole team works through the hub: devices connect once, work is handed over, watched, answered and recorded in one place. It builds on §24 (key identity and the team record). Until a part of this section ships, the rules in §§2–24 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §25.13 in the same diff. The details still open are listed in §25.15.
 
 ### 25.1 Goal
 
@@ -1655,7 +1655,6 @@ Optional, later, and not part of the core: the team holds one central account at
 Each is decided by a human before the part it affects is built:
 
 - How long session logs are kept, and whether they follow the never-delete rule of the team record.
-- Whether anyone besides the owner (for example a team lead) may write to a device.
 - Whether a controller device may give work only to executors of the same staff member, or also to others with their consent.
 - Whether sessions on a controller device that were not handed over are recorded in the same full detail.
 - Whether push through the phone makers' services is acceptable under the rule against third-party dependencies (§24.2 covers identity only).
