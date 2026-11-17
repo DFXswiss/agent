@@ -610,9 +610,11 @@ def draft_pr_body(
 ) -> str:
     """Draft text. The reused and added list and its headings appear only when the script posts a list.
 
-    An order's DE block is German. With a change summary, that sentence follows
-    the order label. Without one, the block names the order and leaves the
-    English title in the EN block.
+    An order's DE block is German. With a change summary that is not the
+    English title, that sentence follows the order label. Without one, or when
+    the stored sentence is only that title, the block names the order and
+    leaves the English title in the EN block. A refresh replaces a stale
+    English DE line.
     """
     details = ""
     if reused or added:
@@ -633,8 +635,9 @@ def draft_pr_body(
                 raise CoordinatorError("task DE summary is missing")
             german = redact(summary_de.strip(), limit=800).rstrip(". ")
             if not german or german.casefold() == title.casefold():
-                raise CoordinatorError("task DE summary is missing")
-            de_line = f"Entwurf für Auftrag {short}: {german}."
+                de_line = f"Entwurf für Auftrag {short}."
+            else:
+                de_line = f"Entwurf für Auftrag {short}: {german}."
         visible = (
             f"EN:\nDraft for order {short}: {title}.\n\n"
             f"DE:\n{de_line}\n\n"
@@ -749,7 +752,11 @@ def ensure_draft(
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)
-    body = draft_pr_body(source)
+    stored_de = task.get("change_summary_de")
+    body = draft_pr_body(
+        source,
+        summary_de=stored_de if isinstance(stored_de, str) else None,
+    )
     head = pr_head_ref(branch, target, publication)
     queue_activity(
         store,

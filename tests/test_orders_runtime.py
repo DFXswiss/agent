@@ -414,13 +414,19 @@ def test_draft_body_for_an_order() -> None:
         draft_pr_body(order_source(OID), summary_de="  ")
     with pytest.raises(CoordinatorError, match="task DE summary is missing"):
         draft_pr_body(order_source(OID), summary_de="Zeile\nZwei.")
-    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
-        draft_pr_body(order_source(OID), summary_de="Add a widget.")
-    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
-        draft_pr_body(
-            order_source(OID, title="Add a widget."),
-            summary_de="add a widget",
-        )
+    titled = draft_pr_body(order_source(OID), summary_de="Add a widget.")
+    assert titled.split("DE:\n", 1)[1].split("\n", 1)[0] == (
+        "Entwurf für Auftrag 11111111."
+    )
+    assert "Add a widget" not in titled.split("DE:\n", 1)[1]
+    folded = draft_pr_body(
+        order_source(OID, title="Add a widget."),
+        summary_de="add a widget",
+    )
+    assert folded.split("DE:\n", 1)[1].split("\n", 1)[0] == (
+        "Entwurf für Auftrag 11111111."
+    )
+    assert "add a widget" not in folded.split("DE:\n", 1)[1].casefold()
 
 
 def test_refresh_draft_body_updates_an_order_draft(
@@ -437,6 +443,10 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
+    fake.pr["body"] = (
+        "EN:\nDraft for order 11111111: Add a widget.\n\n"
+        "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
+    )
     task["change_summary_de"] = (
         "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
         "statt dies als Authentifizierungsfehler zu melden."
@@ -454,9 +464,12 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Add a widget" not in german
     task["change_summary_de"] = "Add a widget."
     save_task(store, task)
-    with pytest.raises(CoordinatorError, match="task DE summary is missing"):
-        refresh_draft_body(store, worker, task, fake)
-    assert "Add a widget" not in fake.pr["body"].split("DE:\n", 1)[1]
+    assert refresh_draft_body(store, worker, task, fake) == [
+        "posted reused and added list on example/project#42"
+    ]
+    replaced = fake.pr["body"].split("DE:\n", 1)[1].split("\n\n", 1)[0]
+    assert replaced == "Entwurf für Auftrag 11111111."
+    assert "Add a widget" not in replaced
 
 
 def test_review_context_uses_the_order_text(
