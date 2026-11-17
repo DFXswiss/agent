@@ -35,9 +35,9 @@ The issue coordinator starts the same script-owned resolution on its own for an
 order whose pull request has merge conflicts, as the remedy of the check
 `pr_mergeable`; see [issue coordinator](issue-coordinator.md). There the mandate
 is the order, not a comment. This route uses the worker key `conflict_remedy` in
-`coordinator.json`, not `conflicts.json`. The script numbers its requests, so
-the result marker carries a request number instead of a comment id. It adds no
-reaction. A blocker reaches the human as the order's question.
+`coordinator.json`, not `conflicts.json`. The script numbers its requests
+locally. This route posts no result marker, no blocker comment and no reaction
+on the pull request. A final blocker reaches the human as the order's question.
 
 The check `pr_mergeable` is required before readiness and leave-draft for issue
 tasks and orders. `UNKNOWN` retries the same phase. `CONFLICTING` is a no. For
@@ -56,8 +56,9 @@ the head. The isolated worktree and request state are below
 After a remedy push, the coordinator adopts the published head, removes the
 old-head evidence and continues at tests. It produces the report, both review
 pairs and CI again; recorded overrides and skips remain. An open outcome retries
-under `lane_retries`. Only a final blocker publishes a conflict status and an
-order question that accepts `reply` and `cancel`. A reply measures mergeability
+under `lane_retries`. Only a final blocker records an order question that
+accepts `reply` and `cancel`; neither the result nor the blocker of this remedy
+is posted on the pull request. A reply measures mergeability
 again and may start the remedy again. At most `max_attempts` resolutions start
 between human decisions. Remedy start and success write no order event.
 

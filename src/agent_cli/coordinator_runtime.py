@@ -77,6 +77,7 @@ from .coordinator_common import (
     seconds_since,
     source_kind,
     source_key,
+    source_label,
     strip_row,
     task_text_path,
     task_text_reference,
@@ -1092,7 +1093,14 @@ def _implementer_instruction(
         "reuse or extend what the search finds rather than writing a second "
         "one: one of those goes in only when no existing element in this "
         "repository does that job. For a helper the caller does not see, reuse "
-        "is the better change and not a requirement."
+        "is the better change and not a requirement.\n"
+        "The script writes the pull-request description, not you. Put the "
+        "complete description at the end of your result, between a line "
+        "PR_BODY_BEGIN and a line PR_BODY_END, following the target "
+        "repository's rules for pull-request text. Each round's block replaces "
+        "the published description; a round without a block keeps it. A "
+        "finding about the description is fixed through this block. Never "
+        "ask a human to edit GitHub."
     )
     if not review_rules_bound(store, worker, runner, task):
         return text
@@ -1564,21 +1572,27 @@ def _apply_implementer_outcome(
         pending_q = c.get("pending_question")
         if isinstance(pending_q, str) and pending_q:
             question = pending_q
+        # An order asks through the agent system only: the order event carries
+        # question_text. An issue task asks on its issue.
+        qid: str | None = None
+        posted = f"ask recorded for {source_label(task)}"
         try:
-            target = comment_target(task)
-            if target is None:
-                raise CoordinatorError("question has no comment target")
-            qid = post_issue_comment(
-                store,
-                worker,
-                runner,
-                repo=target[0],
-                number=target[1],
-                body=f"Question:\n{question}",
-                kind="question",
-                occurrence=f"{task['id']}:{round_num}",
-                target=target[2],
-            )
+            if not is_order(task):
+                target = comment_target(task)
+                if target is None:
+                    raise CoordinatorError("question has no comment target")
+                qid = post_issue_comment(
+                    store,
+                    worker,
+                    runner,
+                    repo=target[0],
+                    number=target[1],
+                    body=f"Question:\n{question}",
+                    kind="question",
+                    occurrence=f"{task['id']}:{round_num}",
+                    target=target[2],
+                )
+                posted = f"ask posted on {target[0]}#{target[1]}"
         except (CoordinatorError, StoreError) as exc:
             # Preserve the actual question across draft/publication failures.
             committed_task = copy.deepcopy(task)
@@ -1606,9 +1620,13 @@ def _apply_implementer_outcome(
         committed_c = coord(committed_task)
         committed_c.pop("pending_question", None)
         committed_c["phase"] = "ask"
-        if committed_c.get("question_activity_id") != qid:
-            committed_c["replies_consumed_through"] = None
-        committed_c["question_activity_id"] = qid
+        if qid is None:
+            committed_c.pop("question_activity_id", None)
+            committed_c.pop("replies_consumed_through", None)
+        else:
+            if committed_c.get("question_activity_id") != qid:
+                committed_c["replies_consumed_through"] = None
+            committed_c["question_activity_id"] = qid
         if is_order(task):
             committed_c["question_text"] = redact(question, limit=1500)
         committed_c["resume_phase"] = "implement"
@@ -1630,7 +1648,7 @@ def _apply_implementer_outcome(
         task.update(committed_task)
         tr.clear()
         tr.update(committed_tr)
-        return [f"ask posted on {target[0]}#{target[1]}"] + draft_lines
+        return [posted] + draft_lines
 
     if model_result == "blocked":
         # review-loop: implementer blocked → task failed. Stop.
@@ -1740,8 +1758,14 @@ def _apply_implementer_outcome(
     if listed is not None:
         committed_task["reused_lines"] = listed[0]
         committed_task["added_lines"] = listed[1]
-    if rules_bound:
+    # Only the redacted checkpoint field is trusted; a round without a block
+    # keeps the description of the previous round.
+    proposed_body = replay.get("pr_body") if isinstance(replay, dict) else None
+    if isinstance(proposed_body, str) and proposed_body:
+        committed_task["pr_body"] = proposed_body
+    if rules_bound or committed_task.get("pr_body"):
         refresh_draft_body(store, worker, committed_task, runner)
+    if rules_bound:
         committed_c.pop("surface_list_held", None)
     committed_tr["implementer_verdict"] = "done"
     committed_task["state"] = "reviewing"
@@ -1971,7 +1995,9 @@ def phase_implement(
         checkpoint = {}
     replay_keys = ("summary_en", "summary_de", "reused_lines", "added_lines")
     if all(key in checkpoint for key in replay_keys):
+        # A checkpoint written before pr_body existed replays without it.
         replay_fields = {key: checkpoint[key] for key in replay_keys}
+        replay_fields["pr_body"] = checkpoint.get("pr_body")
     else:
         replay_fields = implementer_replay_fields(
             result.stdout or "",

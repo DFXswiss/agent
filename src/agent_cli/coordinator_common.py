@@ -1656,14 +1656,17 @@ def source_label(task: dict[str, Any]) -> str:
 
 
 def comment_target(task: dict[str, Any]) -> tuple[str, int, str] | None:
-    """Where the script publishes questions, blockers and status for this task."""
+    """Where the script publishes questions, blockers and status for this task.
+
+    An order has no comment target. Its questions, blockers and status stay in
+    the agent system: order events, ``agent order`` and the dashboard. The
+    pull request of an order carries the change and its description, never
+    the dialogue with the human.
+    """
     c = coord(task)
     source = c["source"]
     if source_kind(c) == ORDER_KIND:
-        number = as_int(c.get("pr_number"))
-        if number is None:
-            return None
-        return (target_repo(task), number, "pr")
+        return None
     return (str(source["repo"]), int(source["number"]), "issue")
 
 
@@ -1859,6 +1862,38 @@ def parse_change_summaries(stdout: str) -> tuple[str, str] | None:
             return None
         summaries.append(values[0].strip())
     return (summaries[0], summaries[1])
+
+
+PR_BODY_BOUND = 20_000
+_PR_BODY_BEGIN_RE = re.compile(r"(?m)^PR_BODY_BEGIN[ \t]*\r?$")
+_PR_BODY_END_RE = re.compile(r"(?m)^PR_BODY_END[ \t]*\r?$")
+_PR_BODY_RE = re.compile(
+    r"(?ms)^PR_BODY_BEGIN[ \t]*\r?\n(.*?)^PR_BODY_END[ \t]*\r?$"
+)
+_HTML_COMMENT_RE = re.compile(r"(?s)<!--.*?-->")
+
+
+def parse_pr_body(stdout: str) -> str | None:
+    """The pull-request description an implementer proposes, or None.
+
+    The text stands between one line ``PR_BODY_BEGIN`` and one line
+    ``PR_BODY_END``. The script publishes it on the draft; a model lane never
+    calls GitHub and never asks a human to edit the pull request. HTML
+    comments are removed, because markers in the body belong to the script
+    and the guard, not to the model.
+    """
+    if (
+        len(_PR_BODY_BEGIN_RE.findall(stdout)) != 1
+        or len(_PR_BODY_END_RE.findall(stdout)) != 1
+    ):
+        return None
+    match = _PR_BODY_RE.search(stdout)
+    if match is None:
+        return None
+    text = _HTML_COMMENT_RE.sub("", match.group(1)).strip()
+    if not text or "<!--" in text or len(text) > PR_BODY_BOUND:
+        return None
+    return text
 
 
 def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:

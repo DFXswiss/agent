@@ -6569,10 +6569,7 @@ def test_script_mandate_resolves_without_a_comment(
     assert result.new_head == "d" * 40
     assert result.base_sha == "b" * 40
     assert fake.reactions == []
-    assert len(fake.pr_comments) == 1
-    assert fake.pr_comments[0]["body"].startswith(
-        "<!-- agent-conflicts:result:v1:1 -->"
-    )
+    assert fake.pr_comments == []
     assert any(
         "--force-with-lease=refs/heads/feature:" + SCRIPT_HEAD in call
         for argv in fake.calls
@@ -6625,7 +6622,7 @@ def test_script_mandate_rebases_a_mergeable_branch_when_asked(
         "--force-with-lease=refs/heads/feature:" + SCRIPT_HEAD in " ".join(call)
         for call in fake.calls
     )
-    assert len(fake.pr_comments) == 1
+    assert fake.pr_comments == []
     state = json.loads(
         (control_dir(worker_cfg, SCRIPT_REQ) / "state.json").read_text()
     )
@@ -6681,10 +6678,7 @@ def test_script_mandate_refuses_another_head(
     )
     assert result.outcome == "blocked"
     assert result.reason == "pull request head differs from the mandated head"
-    assert len(fake.pr_comments) == 1
-    assert fake.pr_comments[0]["body"].startswith(
-        "<!-- agent-conflicts:result:v1:1 -->"
-    )
+    assert fake.pr_comments == []
     assert not any("clone" in call for call in fake.calls)
     assert fake.lanes == []
     store.close()
@@ -6786,7 +6780,7 @@ def test_script_mandate_after_a_push_is_pending_and_decided(
     )
     assert finished.outcome == "finished"
     assert finished.new_head == "d" * 40
-    assert len(fake.pr_comments) == 1
+    assert fake.pr_comments == []
     store.close()
 
 

@@ -485,6 +485,12 @@ pair.
    implementer result that lacks summaries or its
    reused and added list is not retried. Pull-request review-pair preparation
    failure is not retried.
+   The implementer may end a completed result with the pull-request
+     description between a line `PR_BODY_BEGIN` and a line `PR_BODY_END`. The
+     script removes HTML comments, redacts the text like the summaries, and
+     publishes it as the visible draft body, followed by the reused and added
+     list when one exists. A round without the block keeps the published
+     description. The model never edits GitHub and never asks a human to.
    A `no-change` result that adds no commit, on a task that already holds both
    summaries from an earlier round (and, when `REVIEW.md` exists at the base, a
    reused and added list), keeps them and closes its round like `done`; it
@@ -602,10 +608,11 @@ pair.
    publication. The coordinator checks this condition before reconciling saved
    rejection intents. In a gate phase it then blocks the task with a
    `phase-error` blocker that names that gate phase as resume phase, so the
-   task waits instead of being advanced on every tick. Until that blocker is
-   verified as published and its reply checkpoint is saved, each later visit
-   repeats the same publication, and an order reply or an override of
-   `review_2` waits for it. A task that is already blocked or asking on such a
+   task waits instead of being advanced on every tick. For an issue task,
+   until that blocker is verified as published and its reply checkpoint is
+   saved, each later visit repeats the same publication. An order has no
+   comment target, so the blocker is only recorded, and an order reply or an
+   override of `review_2` does not wait for a publication. A task that is already blocked or asking on such a
    resume phase otherwise returns without publishing another blocker and reads
    no comment reply while the history cannot be ordered; an order reply given
    with `agent order reply` or from the dashboard resumes the gate phase, which
@@ -735,8 +742,8 @@ pair.
    both review pairs and CI return to pending and run on the new head. Recorded
    overrides and skips remain. An open remedy outcome retries under
    `lane_retries` with its backoff. Only a final remedy blocker blocks the
-   order. It posts a pull-request status comment of kind `conflict` and a
-   `question` event for `pr_mergeable`, offering `reply` and `cancel`.
+   order. It records a `question` event for `pr_mergeable`, offering `reply`
+   and `cancel`.
 
    A reply measures mergeability again and starts resolution again while the
    conflict remains. At most `max_attempts` resolutions start between two human
@@ -1129,9 +1136,11 @@ Reply, override and cancel on a done order fail with `order UUID is already
 done`.
 
 Wherever this document says a blocker or question is published on the issue,
-an order publishes it on its pull request. Before the draft exists it is only
-an order event. Once the draft exists, authorized comments from
-`reply_logins` also resume the order.
+an order records it only as an order event, before and after the draft exists.
+The coordinator posts no question, blocker or status comment on the pull
+request of an order, and a pull-request comment does not resume an order. An
+implementer question of an order (`RESULT: ask`) becomes a `question` event
+directly.
 
 An event's `answers` are `ack` for `ready`, `failed`, and `cancelled`. A
 `question` or `blocked` event offers `reply` unless the failed check allows only
@@ -1529,10 +1538,10 @@ control's introducer and final both used with parameters between them (`Q[w`
 in `Q\x1b[32!w`). Such text never renders the secret on a terminal and does
 not contain it contiguously in raw form; matching every per-control combination
 would need a non-linear matcher.
-User-facing blockers and questions are
-published on the source issue, or on the pull request of an order, only when
-`execution_status=done` is verified;
-otherwise they remain locally visible (`CoordinatorError` / `StoreError`
+User-facing blockers and questions of an issue task are
+published on the source issue only when `execution_status=done` is verified;
+an order records them only as order events. Unpublished issue blockers and
+questions remain locally visible (`CoordinatorError` / `StoreError`
 subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
 No silent failure.

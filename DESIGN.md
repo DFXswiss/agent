@@ -733,10 +733,12 @@ hostnames belong in the deployment configuration, not this public repository.
    and blockers, when needed, are communicated through GitHub by the script;
    GitHub replies return through the script. The user need not operate a terminal
    or a separate dashboard to manage the assigned issue.
-   Questions and blockers of an order go to its order events and, once the
-   draft exists, to pull-request comments. Answers return through `agent order
-   reply`, `agent order override`, `agent order cancel`, `agent order done`, or
-   an authorized pull-request comment.
+   Questions and blockers of an order go only to its order events, never to
+   pull-request comments. Answers return through `agent order reply`,
+   `agent order override`, `agent order cancel`, `agent order done`, or the
+   orders view of the dashboard. The implementer supplies the pull-request
+   description between a line `PR_BODY_BEGIN` and a line `PR_BODY_END`; the
+   script publishes it on the draft.
    When the lane has no further work, it returns to the script; it does not
    monitor GitHub or wait for CI. The script observes subsequent events and
    informs a lane when further work is useful.
@@ -1002,7 +1004,7 @@ events and acknowledge them.
 
 `agent order reply`, `agent order override`, and `agent order cancel` write an
 `order.reply` row for the next coordinator tick. A reply resumes the exact
-`resume_phase` like an authorized pull-request or issue comment. A repeated
+`resume_phase` directly; a pull-request comment never does. A repeated
 question requires a new reply. A cancel closes an open pull request of the
 order with the fixed comment and ends the order as failed with kind
 `cancelled`. Without an open pull request (none yet, or a closed one) it ends
@@ -1041,10 +1043,11 @@ starts `Previous answer refused: <text>`. A refused override with no pending
 question creates no event. `agent order show` records its fate as
 `last-answer`.
 
-Once the draft exists, it is the public carrier. Questions, blockers and gate
-rejections are pull-request comments. Authorized comments from `reply_logins`
-resume the order. Before the draft exists, a question or blocker exists only as
-an order event. Models never write either order activity type.
+Once the draft exists, it carries the change, its description and the review
+records; gate rejections are still pull-request review comments. Questions and
+blockers of an order exist only as order events, before and after the draft
+exists, and a pull-request comment does not resume the order. Models never
+write either order activity type.
 
 Every side-effecting coordinator action has an ordered list of precondition
 checks in `preconditions.py`. Adding a check to an action requires one registry
@@ -1154,8 +1157,8 @@ Without `conflict_remedy`, no resolution starts and the order receives the
 After a remedy push, the script adopts the published head, removes old-head
 evidence and continues at tests. Tests, report, both review pairs and CI run
 again; recorded overrides and skips remain. Open remedy outcomes retry under
-`lane_retries`. Only a final blocker produces a pull-request conflict comment
-and a `question` event for `pr_mergeable`, accepting `reply` and `cancel`. A
+`lane_retries`. Only a final blocker produces a `question` event for
+`pr_mergeable`, accepting `reply` and `cancel`; no pull-request comment. A
 reply measures mergeability again and may start another resolution. At most
 `max_attempts` resolutions start between human decisions. Start and success
 produce no event.

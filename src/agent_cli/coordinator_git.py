@@ -597,14 +597,21 @@ def draft_pr_body(
     source: dict[str, Any],
     reused: list[str] | None = None,
     added: list[str] | None = None,
+    description: str | None = None,
 ) -> str:
-    """Draft text. The reused and added list and its headings appear only when the script posts a list."""
+    """Draft text. The reused and added list and its headings appear only when the script posts a list.
+
+    ``description`` is the implementer's proposed pull-request text. When it
+    exists it replaces the placeholder sentence.
+    """
     details = ""
     if reused or added:
         reused_text = "\n".join(f"- {line}" for line in reused or [])
         added_text = "\n".join(f"- {line}" for line in added or [])
         details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
-    if source.get("kind") == ORDER_KIND:
+    if description:
+        visible = description.rstrip() + "\n\n"
+    elif source.get("kind") == ORDER_KIND:
         short = str(source.get("order_id") or "")[:8]
         title = redact(str(source.get("title") or ""), limit=200).rstrip(". ")
         visible = (
@@ -631,11 +638,24 @@ def refresh_draft_body(
     task: dict[str, Any],
     runner: Runner,
 ) -> list[str]:
-    """Post the implementer's reused and added list. The script calls GitHub, not the model."""
+    """Post the implementer's description and its reused and added list.
+
+    The script calls GitHub, not the model. A description without a draft
+    waits for ``phase_publish_draft``, which calls this function again.
+    """
     c = coord(task)
     reused = task.get("reused_lines")
     added = task.get("added_lines")
-    if not isinstance(reused, list) or not isinstance(added, list) or not reused or not added:
+    listed = (
+        isinstance(reused, list) and isinstance(added, list) and bool(reused) and bool(added)
+    )
+    raw_description = task.get("pr_body")
+    description = (
+        raw_description
+        if isinstance(raw_description, str) and raw_description.strip()
+        else None
+    )
+    if not listed and description is None:
         return []
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     if not isinstance(source.get("repo"), str) or (
@@ -645,8 +665,15 @@ def refresh_draft_body(
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
     if number is None or target == "":
+        if not listed:
+            return []
         raise CoordinatorError("reused and added list has no draft to update")
-    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    body = draft_pr_body(
+        source,
+        [str(line) for line in reused] if listed else None,
+        [str(line) for line in added] if listed else None,
+        description,
+    )
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
     queue_activity(
         store,
@@ -659,7 +686,9 @@ def refresh_draft_body(
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
         raise CoordinatorError("pr.body did not update the draft")
-    return [f"posted reused and added list on {target}#{number}"]
+    if description is None:
+        return [f"posted reused and added list on {target}#{number}"]
+    return [f"posted pull-request description on {target}#{number}"]
 
 
 def ensure_draft(

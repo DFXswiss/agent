@@ -432,13 +432,8 @@ def test_remedy_blocker_becomes_a_question_of_kind_conflict(
     comments = [
         row for row in store.rows("activity") if row.get("type") == "comment.post"
     ]
-    assert len(comments) == 1
-    assert comments[0]["payload"]["target"] == "pr"
-    assert comments[0]["payload"]["body"].startswith(
-        "Blocked: Check pr_mergeable failed for order"
-    )
-    assert "<!-- agent-coordinator:status:v1:conflict:" in comments[0]["payload"]["body"]
-    assert saved["question_activity_id"] == comments[0]["id"]
+    assert comments == []
+    assert "question_activity_id" not in saved
     assert saved["remedies"]["pr_mergeable"]["state"] == "blocked"
     assert saved["remedies"]["pr_mergeable"]["blocks"] == 1
     mergeable = fact(store, "pr_mergeable")

@@ -160,8 +160,8 @@ def post_issue_comment(
 ) -> str:
     """Publish a deterministic idempotent status/question comment on the given target.
 
-    The target is the source issue (``target="issue"``) or the order's pull
-    request (``target="pr"``).
+    The target is the source issue of an issue task. Orders have no comment
+    target (``comment_target``); their dialogue stays in the agent system.
     """
     activity_id = queue_issue_comment(
         store,
@@ -260,8 +260,8 @@ def publish_blocker(
 ) -> list[str]:
     """Publish a blocker on the task's comment target.
 
-    The target is the source issue, or the pull request of an order; an order
-    without a pull request only records the blocker.
+    The target is the source issue. An order only records the blocker; its
+    order event carries it to the human, never a pull-request comment.
 
     Recoverable blockers pin ``question_activity_id`` so ``phase_read_replies``
     can resume the exact ``resume_phase``. Eligibility follows task state and

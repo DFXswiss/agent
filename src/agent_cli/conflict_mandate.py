@@ -1048,6 +1048,10 @@ def _finish_result(
 ) -> list[str]:
     body = safe(ctx.worker, body)
     save_state(ctx, "result-pending", result_body=body)
+    if ctx.mandated_head is not None:
+        # A script mandate serves an order. Nothing is posted on the pull
+        # request; only a final blocker reaches the human, as an order question.
+        return _finish_marker(ctx, dry_run=False, observation=observation)
     if find_result_comment(
         request_runtime.github,
         ctx.request.repo,
@@ -1109,22 +1113,26 @@ def _finish_blocker(
                 skip_git = True
         if skip_git and ctx.state.get("blocker_skip_git") is not True:
             save_state(ctx, None, blocker_skip_git=True)
-        body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
-        try:
-            post_comment_once(
-                request_runtime.github,
-                ctx.request.repo,
-                ctx.request.number,
-                login=login,
-                comment_id=ctx.request.comment_id,
-                body=body,
-            )
-        except ConflictTransientError:
-            raise
+        if ctx.mandated_head is None:
+            body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
+            try:
+                post_comment_once(
+                    request_runtime.github,
+                    ctx.request.repo,
+                    ctx.request.number,
+                    login=login,
+                    comment_id=ctx.request.comment_id,
+                    body=body,
+                )
+            except ConflictTransientError:
+                raise
+            prefix = "blocker posted"
+        else:
+            # A script mandate serves an order; the order event carries it.
+            prefix = "blocker recorded"
         save_state(ctx, "blocked", blocker=safe_reason)
         advance_checkpoint(ctx.worker, ctx.request)
         shutil.rmtree(ctx.worktree, ignore_errors=True)
-        prefix = "blocker posted"
     else:
         prefix = "would post blocker"
     return [f"{prefix}: {safe(ctx.worker, safe_reason)}"]
