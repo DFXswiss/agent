@@ -25,14 +25,14 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Topic | Decision |
 |---|---|
 | Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings and website-created `assignment.created` / `assignment.reply` rows recorded by the hub with origin `web:<login>` when a human owner issues or answers a mandate, either signed in on the website or through `agent assign` with the bearer of a device paired to that owner (never an agent's own device). In both cases the hub creates the GitHub issue and assignment with that human's own OAuth token, stored when the human signed in on the website. `web:` origins are reserved for the hub. |
-| Hub role | Full replica + fan-out + always-on website. Not a shared write database. |
+| Hub role | Full replica + fan-out + always-on website. Not a shared write database. Planned: verifier and keeper of the signed team-record chain (§24). |
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
 | Visibility | Self always. A team only if the GitHub login is listed on that team. Several teams → union. |
 | Sync (this device) | Always: own events, gapless. Also: implicit **inbox** snapshots (session mail to a session this device owns), **pings** snapshots (person pings this login sent or received), plus optional table subscriptions and one-shot queries. Not a default full pull of every visible origin. |
 | Inbound apply | Own origin stays gapless (`last+1`). Foreign inbound is **row snapshots**, not gapless replay of the sender’s `origin_seq`. Same-device session mail (own origin, other session) is already in the event log; apply is idempotent on `row_id` and still `NOTIFY`s the knock. |
 | Restore | Required. A wiped device comes back from the hub: own events, inbox snapshots (session mail), and pings snapshots (person pings this login sent or received). |
-| Identity | GitHub login, lowercase. Device = stable UUID, not the hostname. |
+| Identity | GitHub login, lowercase. Device = stable UUID, not the hostname. Planned replacement by registered key pairs: §24.2. |
 | Session | No work without a `session` row. The start hook inserts it. |
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
@@ -172,7 +172,7 @@ The hub reads the file from the deployed tree. After merge, the new roster appli
 
 `https://agent.dfx.swiss` (and `https://dev.agent.dfx.swiss`) is one origin: HTML dashboard + API + sync. No second API hostname.
 
-**Sign-in** is GitHub OAuth (`read:user` only). After login the browser is the team dashboard.
+**Sign-in** is GitHub OAuth (`read:user` only). After login the browser is the team dashboard. Planned replacement: key-pair sign-in without a third-party identity (§24.2).
 
 **Pairing is not automatic from “I opened the website”.** The browser does not know the laptop. Linking is a deliberate step in the same GitHub session.
 
@@ -1346,3 +1346,113 @@ immediate draft; bounded retries and lane recovery; the per-implementer-model
 round limit and its assessment lane; the conflict remedy for orders; the A38
 model second review; the acceptance report; and the orders view of the local
 dashboard.
+
+This revision records the accepted concept for a team record with key identity (§24): signed append-only events for tasks, security issues and discussions, no third-party identity, no deletion, and a time axis. It is not implemented; §§2–12 stay in force until each part ships.
+
+## 24. Team record and key identity (accepted concept, not implemented)
+
+Status: accepted direction, not built. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes.
+
+### 24.1 Purpose
+
+The team needs one record it owns, beside the session store:
+
+- open **tasks**
+- known **security issues**
+- **discussions**: between people, between agents, and between people and agents, including topics that must be settled internally
+- a **read view of open pull requests** (§24.5)
+- a **dashboard** that answers questions such as "how many security issues are open, in which repository, at which severity", for today and for any past date
+
+Every change to the record stays attributable: who changed which object, which field, from which value to which value, and when. That attribution is cryptographic, not only logged.
+
+The session store (§§8–11) is unchanged. Sessions, activities, session mail and person pings stay device-owned rows on the session bus. The team record is a separate stream with its own rules.
+
+### 24.2 No third-party identity
+
+Identity is a key pair. The private key never leaves the person's authenticator or the agent's device. The hub stores only public keys.
+
+| Who | Key | How it proves itself |
+|---|---|---|
+| Person (browser) | WebAuthn credential on a hardware authenticator that does not sync to an outside account | Signs a hub challenge on sign-in; every write from the website is signed by that credential |
+| Agent or device (CLI, scripts) | Ed25519 key generated on the device, stored under `$AGENT_HOME` with mode `0600` | Signs every team-record event; the hub verifies the signature against the registered public key |
+
+Rules:
+
+- No GitHub OAuth, no password, no mailbox code and no outside identity provider decides who someone is. GitHub stays the home of code and pull requests (§24.5); it is not an identity source for the record.
+- The network edge in front of the hub (reverse proxy, tunnel, access gate) is infrastructure. It may filter traffic, but it is never the identity: the hub accepts a write only on a valid signature by a registered key.
+- Public keys are registered in a keys file next to `teams.yaml`, changed only by pull request: key id, kind (`webauthn` or `ed25519`), the handle of the person or agent it belongs to (a handle, never a legal name or mail address, because the file is public), and the team. Adding, rotating and revoking a key is a pull request.
+- A person may hold several keys (one per authenticator); an agent has one key per device. A revoked key can no longer write. Events it already signed stay valid and stay attributed to it.
+- An agent key is never registered under a person. Agent events name the agent and, where one exists, the person who runs it.
+
+### 24.3 Events, not rows
+
+The record is an append-only chain of signed events. The current state is computed from the chain.
+
+Each event carries:
+
+| Field | Meaning |
+|---|---|
+| `event_id` | UUID chosen by the writer |
+| `object_type`, `object_id` | What changed (§24.4) |
+| `changes` | Each changed field with its old and new value; a create has no old values |
+| `actor_key_id` | The registered key that signed |
+| `signed_at` | Writer clock, part of the signed bytes |
+| `received_at` | Hub clock, set on append |
+| `prev_hash` | Hash of the previous event in the chain |
+| `signature` | Signature over the canonical bytes of all fields above except `received_at` |
+
+Rules:
+
+- **Nothing is deleted and nothing is rewritten.** A correction is a new event. There is no redaction event and no administrative delete, not in the hub, not in the database, not in a backup.
+- Because nothing can be removed, **personal data, secrets, credentials and customer data must never be written into the record.** Objects refer to them by an external reference that does not reveal them. A review treats a field that invites such data as a defect.
+- The hub rejects an event whose signature does not verify, whose key is unknown or revoked, whose `prev_hash` is not the current chain head, or whose old values do not match the current state (the writer retries against the new head). This makes concurrent edits explicit instead of losing one.
+- The hub never authors an event. It only verifies, orders and stores.
+
+### 24.4 Objects
+
+| Object | Fields (minimum) |
+|---|---|
+| Task | title, description, assignee, status, links |
+| Security issue | repository, short name (at most 30 characters, unique), severity, urgency 1–10, assignee, status (`open`, `in progress`, `done`), source reference, fix reference |
+| Discussion | topic, audience (people, agents, mixed), status (`open`, `settled`), outcome |
+| Message | discussion id, body |
+
+Security issue workflow: whoever starts work on a security issue first writes an event that sets themselves as assignee and the status to `in progress`. Nobody takes over an issue that already has an assignee without that person's agreement. Completion is an event that sets `done` and the fix reference.
+
+### 24.5 Pull requests are read, not owned
+
+Open pull requests stay in GitHub. The hub reads them and shows them; the record stores at most a reference from a task or security issue to a pull request. A copy of pull-request state is a cache with its fetch time, never a second truth.
+
+### 24.6 Time axis
+
+The state at any past moment is the fold of all events with `received_at` up to that moment. The dashboard lets a viewer pick a date and shows the record as it was then, including counts per repository and severity. No separate snapshot store is needed; snapshots may exist only as a cache that can be rebuilt from the chain.
+
+### 24.7 Visibility
+
+Only registered keys read the record. Team scope follows §6. There is no public view of security issues, not even a count, unless a later pull request to this section allows a specific public view.
+
+### 24.8 Integrity and backup
+
+- The chain is the authoritative team record. Its data class is **unique** (§13); losing it loses history that exists nowhere else.
+- Three copies, one of them off-site, with a restore that is tested and verifies the whole chain (signatures and hashes) before the hub serves it.
+- The hub publishes the current chain head hash at a fixed interval, signed with its own key, so that a later rewrite of history is detectable from any earlier published head.
+
+### 24.9 What this changes in the locked decisions
+
+When the matching part ships, its pull request changes these rows in the same diff:
+
+| Place | Today | With §24 |
+|---|---|---|
+| §2 Hub role | Not a shared write database | Still true for the session store; the hub is the verifier and keeper of the team-record chain |
+| §2 Login, §2 Identity, §5, §7 Sign-in, §12 | GitHub login | Registered key pair (§24.2) |
+| §3 One shared database everyone writes to | Rejected | Still rejected for the session store; the team record is a signed append-only chain, not a shared mutable database |
+| §3 Plane (or any issue tracker) as the store | Rejected | Still rejected; the team record replaces an outside tracker instead of mirroring one |
+| §3 Hub-owned task lifecycle and leases | Rejected | Still rejected for session tasks (spine); record tasks are written by signed events of people and agents, never by the hub |
+
+### 24.10 Project rules
+
+- This section changes only by pull request. A change to identity (§24.2) or to the no-delete rule (§24.3) needs an explicit human decision recorded in that pull request.
+- Code is public; record data never enters any repository, issue, pull request, log or error message.
+- No private repository, internal hostname or internal infrastructure is named here or in code (CONTRIBUTING.md).
+- Every implementation pull request carries tests for its signature checks, chain checks and refusal paths, not only the success path.
+- Build order: keys file and signature verification first, then the chain and the security-issue object, then the dashboard with the time axis, then discussions and tasks, then sign-in without GitHub, then removal of GitHub login.
