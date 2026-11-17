@@ -32,7 +32,10 @@ agent_cli = ["static/*", "skills/**"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = ["no_pg: tests that must not start a PostgreSQL cluster"]
+markers = [
+  "no_pg: tests that must not start a PostgreSQL cluster",
+  "timing: wall-clock bounds; CI runs them without coverage tracing, which slows the measured code",
+]
 
 [tool.coverage.run]
 source = ["agent_cli"]

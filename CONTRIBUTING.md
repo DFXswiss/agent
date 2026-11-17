@@ -41,10 +41,11 @@ Complete test coverage is the goal of this repository. Every pull request helps 
 
 CI measures line and branch coverage of `src/agent_cli` with `coverage` on every pull request (`.github/workflows/test.yml`, settings under `[tool.coverage]` in `pyproject.toml`). `fail_under` is the floor of the measured total. A pull request never lowers it. A pull request that raises the measured total raises `fail_under` to the new value, rounded down to two decimals, in the same change.
 
-Run the same measurement locally with:
+Tests marked `timing` assert wall-clock bounds. Coverage tracing slows the measured code, so CI runs them in a separate step without it. Run the same measurement locally with:
 
 ```sh
-coverage run -m pytest && coverage combine && coverage report
+coverage run -m pytest -m "not timing" && coverage combine && coverage report
+pytest -m timing
 ```
 
 ## Local CI report (A38)

@@ -745,6 +745,7 @@ def test_shared_redaction_covers_an_unquoted_value_after_a_quoted_key() -> None:
         assert cleaned == '{"access token": [redacted], "visible": "keep-me"}'
 
 
+@pytest.mark.timing
 def test_shared_redaction_is_linear_on_a_large_unicode_key() -> None:
     raw = "token" + "\u00e9" * 1_000_000 + "=hunter2 visible"
     started = time.monotonic()
@@ -985,6 +986,7 @@ def test_redact_diagnostic_hides_config_path_before_length_bound() -> None:
     ],
     ids=("separatorless-word", "keyword-prefix", "raw-control-wrapper"),
 )
+@pytest.mark.timing
 def test_public_shared_and_lane_redaction_are_linear_on_large_words(
     raw: str, contains_secret: bool
 ) -> None:
@@ -1012,6 +1014,7 @@ def test_public_shared_and_lane_redaction_are_linear_on_large_words(
     ],
     ids=("separatorless-word", "keyword-prefix"),
 )
+@pytest.mark.timing
 def test_public_terminal_redaction_helpers_are_linear_on_large_words(
     raw: str,
 ) -> None:
@@ -1039,6 +1042,7 @@ def test_public_terminal_redaction_helpers_are_linear_on_large_words(
         assert elapsed < 2, f"{label} redaction took {elapsed:.3f}s"
 
 
+@pytest.mark.timing
 def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
 ) -> None:
     depth = 100_000
@@ -1070,6 +1074,7 @@ def test_terminal_string_control_scanner_is_linear_at_100000_nested_introducers(
         assert cleaned == expected
 
 
+@pytest.mark.timing
 def test_known_secret_scanners_are_linear_across_one_large_nested_string_control(
 ) -> None:
     depth = 100_000
@@ -1098,6 +1103,7 @@ def test_known_secret_scanners_are_linear_across_one_large_nested_string_control
         assert cleaned == "[redacted]"
 
 
+@pytest.mark.timing
 def test_known_secret_scanners_are_linear_across_repeated_candidates_and_nested_unterminated_controls(
 ) -> None:
     config_dir = "/opt/provider-profile"
@@ -1134,6 +1140,7 @@ def test_known_secret_scanners_are_linear_across_repeated_candidates_and_nested_
     ids=("65-osc", "1000-osc", "65-c0", "mixed"),
 )
 @pytest.mark.parametrize("encoded", (False, True), ids=("exact", "percent-encoded"))
+@pytest.mark.timing
 def test_known_secret_scanners_cross_unbounded_terminal_control_runs(
     control_run: str, encoded: bool
 ) -> None:
@@ -1162,6 +1169,7 @@ def test_known_secret_scanners_cross_unbounded_terminal_control_runs(
     assert cleaned == "before [redacted] after"
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_ambiguous_csi_final_bytes() -> None:
     secret = "/opt/key"
     control_run = "\x1b[o" * 1_000
@@ -1193,6 +1201,7 @@ def test_lane_config_dir_redaction_crosses_a_truncated_escape_prefix(
     assert "my profile" not in cleaned
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_many_candidate_starts() -> None:
     n = 20_000
     raw = "\x1b[a" * n
@@ -1206,6 +1215,7 @@ def test_known_secret_scanner_is_linear_across_many_candidate_starts() -> None:
     assert cleaned == raw
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_many_percent_encoded_candidate_starts(
 ) -> None:
     n = 20_000
@@ -1220,6 +1230,7 @@ def test_known_secret_scanner_is_linear_across_many_percent_encoded_candidate_st
     assert cleaned == raw
 
 
+@pytest.mark.timing
 def test_urlencoded_matcher_is_linear_on_a_literal_percent_run() -> None:
     n = 20_000
     raw = "%" * n
@@ -1233,6 +1244,7 @@ def test_urlencoded_matcher_is_linear_on_a_literal_percent_run() -> None:
     assert cleaned == raw
 
 
+@pytest.mark.timing
 def test_urlencoded_matcher_is_linear_on_an_encoded_percent_run() -> None:
     n = 20_000
     raw = "%25" * n
@@ -1278,6 +1290,7 @@ def test_urlencoded_secret_containing_percent_is_redacted_raw_encoded_and_mixed(
     )
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_a_repeated_visible_prefix() -> None:
     raw = "/opt/" * 20_000
     secret = "/opt/" * 5_000 + "X"
@@ -1290,6 +1303,7 @@ def test_known_secret_scanner_is_linear_across_a_repeated_visible_prefix() -> No
     assert cleaned == raw
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_repeated_prefixes_split_by_control_runs(
 ) -> None:
     raw = ("/opt/" + "\x1b[31m") * 20_000
@@ -1362,6 +1376,7 @@ def test_known_secret_redacts_a_secret_split_across_two_string_payloads() -> Non
     assert " profile" not in cleaned
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_repeated_csi_landings() -> None:
     n = 20_000
     raw = "\x1b[aa" * n
@@ -1496,6 +1511,7 @@ def test_known_secret_views_yield_the_secret_for_every_control_placement(
     assert "[redacted]" in cleaned
 
 
+@pytest.mark.timing
 def test_known_secret_scanner_is_linear_across_kept_csi_finals() -> None:
     n = 20_000
     raw = "\x1b[31a" * n
@@ -1606,6 +1622,7 @@ def test_urlencoded_double_encoded_esc_is_not_a_control() -> None:
     assert redact_terminal_interleaved_urlencoded_secret(raw, "sekret") == raw
 
 
+@pytest.mark.timing
 def test_urlencoded_control_views_are_linear_on_percent_decoded_csi() -> None:
     n = 20_000
     raw = "%1B[31ma" * n

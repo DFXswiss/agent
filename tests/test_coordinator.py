@@ -16936,6 +16936,7 @@ def test_reviewer_audit_failure_recovers_every_finished_result(
     assert calls == 2
 
 
+@pytest.mark.timing
 def test_reviewer_spool_bounds_serialized_stdout_and_stderr(tmp_path: Path) -> None:
     from agent_cli import coordinator_lanes
     from agent_cli.lane import LaneResult, LaneUsage
