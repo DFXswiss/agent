@@ -217,14 +217,17 @@ A worker with `"orders": true` also accepts orders submitted on the device with
 and results through `agent order wait` or `agent order events`; the coordinator
 does not depend on any front end.
 Idle workers on one device share GitHub requests for one login. Assigned-issue
-discovery runs once per repository per `poll_seconds`, then sends
-`If-None-Match`. An unchanged listing is a 304 and does not consume the
-5000-request hourly REST budget. With `poll_seconds` 30 and three repositories,
-discovery is 360 requests per hour for that login no matter how many idle
-workers share the account. `gh api user` is shared by those workers and by
-`agent knock` for at most 15 minutes per account. Busy workers, order pickup,
-and the pause between ticks stay the same. This budget is the idle discovery
-and login traffic, not pushes or comments from a busy worker.
+discovery runs once per repository per `poll_seconds`. When the stored listing
+is one page and shorter than `per_page`, the next request sends that page's
+ETag as `If-None-Match`. An unchanged page is a 304 and does not consume the
+5000-request hourly REST budget. A full page or a later page is read again in
+full at the same interval, still once per repository. With `poll_seconds` 30
+and three repositories, discovery is 360 requests per hour for that login no
+matter how many idle workers share the account. `gh api user` is shared by
+those workers and by `agent knock` for at most 15 minutes per account.
+Busy workers, order pickup, and the pause between ticks stay the same. This
+budget is the idle discovery and login traffic, not pushes or comments from a
+busy worker.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 
 The optional [comment mandate `conflicts`](docs/conflict-mandate.md) worker is

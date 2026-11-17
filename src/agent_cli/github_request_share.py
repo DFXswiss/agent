@@ -37,6 +37,9 @@ _HTTP_304_RE = re.compile(r"\bHTTP 304\b", re.IGNORECASE)
 _ETAG_RE = re.compile(r"(?im)^etag:[ \t]*([^\r\n]+?)[ \t]*$")
 # A stored validator is sent back as a header value, so it has to be one token.
 _SAFE_ETAG = re.compile(r'(?:W/)?"[^"\\\s]+"')
+# Page size of the assignee listing. A full page can gain a later page while
+# its own ETag stays unchanged, so only a shorter single page is conditional.
+_ASSIGNMENT_PAGE_SIZE = 100
 _AUTH_MARKERS = (
     "http 401",
     "bad credentials",
@@ -329,7 +332,14 @@ def _json_values(body: str) -> list[Any]:
     return values
 
 
-def _issues_from_body(body: str) -> list[Any]:
+def _one_document(data: Any) -> tuple[list[Any], int]:
+    """Flatten one JSON document and report how many GitHub pages it holds."""
+    if isinstance(data, list) and data and all(isinstance(item, list) for item in data):
+        return json_list(data), len(data)
+    return json_list(data), 1
+
+
+def _issues_and_pages(body: str) -> tuple[list[Any], int]:
     stripped = body.strip()
     if stripped == "":
         raise CoordinatorError("empty command output")
@@ -338,16 +348,47 @@ def _issues_from_body(body: str) -> list[Any]:
     except json.JSONDecodeError:
         data = None
     else:
-        return json_list(data)
+        return _one_document(data)
     values = _json_values(body)
     if not values:
         raise CoordinatorError("invalid JSON from command")
     if len(values) == 1:
-        return json_list(values[0])
+        return _one_document(values[0])
     flat: list[Any] = []
+    pages = 0
     for value in values:
-        flat.extend(json_list(value))
-    return flat
+        issues, count = _one_document(value)
+        flat.extend(issues)
+        pages += count
+    return flat, pages
+
+
+def _include_header_blocks(stdout: str) -> list[str]:
+    """Header blocks from ``gh api --include``, including every paginated page."""
+    normalized = stdout.replace("\r\n", "\n").replace("\r", "\n")
+    blocks: list[str] = []
+    current: list[str] | None = None
+    for line in normalized.split("\n"):
+        if _STATUS_RE.match(line):
+            if current:
+                blocks.append("\n".join(current))
+            current = [line]
+            continue
+        if current is None:
+            continue
+        if line == "":
+            blocks.append("\n".join(current))
+            current = None
+            continue
+        current.append(line)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def _block_continues(block: str) -> bool:
+    folded = block.casefold()
+    return 'rel="next"' in folded or "rel=next" in folded
 
 
 def _not_modified_without_headers(stdout: str, stderr: str) -> bool:
@@ -360,6 +401,18 @@ def _not_modified_without_headers(stdout: str, stderr: str) -> bool:
     return _HTTP_304_RE.search(blob) is not None
 
 
+def _status_list(stdout: str, stderr: str) -> tuple[list[str], list[int]]:
+    blocks = _include_header_blocks(stdout)
+    codes = [code for block in blocks for code in _status_codes(block)]
+    if codes:
+        return blocks, codes
+    headers, _body = _split_headers(stdout)
+    codes = _status_codes(headers) or _status_codes(stderr)
+    if not codes and _HTTP_304_RE.search(f"{stdout}\n{stderr}"):
+        codes = [304]
+    return blocks, codes
+
+
 def _parse_completed(completed: Completed) -> _Parsed:
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
@@ -369,25 +422,23 @@ def _parse_completed(completed: Completed) -> _Parsed:
     if not stripped.startswith("HTTP/"):
         if completed.returncode != 0:
             _command_failed(completed)
-        raw = stripped.strip()
-        if raw == "":
-            raise CoordinatorError("empty command output")
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise CoordinatorError("invalid JSON from command") from exc
-        return _Parsed(200, json_list(data), None)
-    headers, body = _split_headers(stripped)
-    codes = _status_codes(headers) or _status_codes(stderr)
-    if not codes and _HTTP_304_RE.search(f"{stdout}\n{stderr}"):
-        codes = [304]
+        issues, _pages = _issues_and_pages(stripped)
+        return _Parsed(200, issues, None)
+    blocks, codes = _status_list(stripped, stderr)
     if not codes:
         _command_failed(completed)
     if all(code == 304 for code in codes):
-        return _Parsed(304, [], _header_etag(headers))
+        # One stored ETag was sent on every page. A later 304 is not evidence
+        # that those pages still match the stored body.
+        if len(codes) != 1:
+            _command_failed(completed)
+        source = blocks[0] if len(blocks) == 1 else _split_headers(stripped)[0]
+        return _Parsed(304, [], _header_etag(source))
     if completed.returncode != 0 or any(code != 200 for code in codes):
         _command_failed(completed)
-    return _Parsed(200, _issues_from_body(body), _header_etag(headers))
+    _headers, body = _split_headers(stripped)
+    issues, json_pages = _issues_and_pages(body)
+    return _Parsed(200, issues, _etag_for_single_short_page(blocks, issues, json_pages))
 
 
 def _run(runner: Runner, argv: list[str]) -> Completed:
@@ -401,16 +452,44 @@ def _assignment_key(login: str, repo: str) -> str:
     return f"{login.casefold()}\n{repo.casefold()}"
 
 
+def _etag_for_single_short_page(
+    blocks: list[str], issues: list[Any], json_pages: int
+) -> str | None:
+    """ETag of one short page, or none when that validator cannot cover the list.
+
+    ``gh api --paginate`` repeats one ``If-None-Match`` on every page. The
+    first page's ETag says nothing about a later page: that page can change
+    while page 1 answers 304. A page that already holds
+    ``_ASSIGNMENT_PAGE_SIZE`` issues can gain that later page while page 1
+    stays unmodified.
+    """
+    if len(blocks) != 1 or json_pages != 1:
+        return None
+    if len(issues) >= _ASSIGNMENT_PAGE_SIZE:
+        return None
+    block = blocks[0]
+    if _block_continues(block):
+        return None
+    if _status_codes(block) != [200]:
+        return None
+    return _header_etag(block)
+
+
 def _assignment_argv(repo: str, login: str, etag: str | None) -> list[str]:
     argv = ["gh", "api", "--include", "--paginate", "--slurp"]
     if etag is not None:
         argv.extend(["-H", f"If-None-Match: {etag}"])
-    argv.append(f"repos/{repo}/issues?assignee={login}&state=open&per_page=100")
+    argv.append(
+        f"repos/{repo}/issues?assignee={login}&state=open&per_page={_ASSIGNMENT_PAGE_SIZE}"
+    )
     return argv
 
 
 def _stored_etag(entry: object) -> str | None:
-    if not isinstance(entry, dict):
+    if not isinstance(entry, dict) or entry.get("single_page") is not True:
+        return None
+    issues = entry.get("issues")
+    if not isinstance(issues, list) or len(issues) >= _ASSIGNMENT_PAGE_SIZE:
         return None
     etag = entry.get("etag")
     if not isinstance(etag, str):
@@ -437,9 +516,10 @@ def shared_assigned_issues(
     """Return assigned open issues for one login and repository.
 
     A record younger than ``poll_seconds`` is shared by every worker on the
-    device. At the interval boundary the device asks GitHub again. When an
-    ETag was stored, that request sends ``If-None-Match`` and a 304 keeps the
-    stored issues. The caller receives a copy.
+    device. At the interval boundary the device asks GitHub again. When the
+    stored listing is one page shorter than ``per_page``, that request sends
+    ``If-None-Match`` and a 304 keeps the stored issues. A full page or a
+    later page is read again in full. The caller receives a copy.
     """
     key = _assignment_key(login, repo)
     now = wall_time()
@@ -454,7 +534,12 @@ def shared_assigned_issues(
         )
         if parsed.status == 304:
             issues = entry.get("issues") if isinstance(entry, dict) else None
-            if isinstance(entry, dict) and isinstance(issues, list):
+            if (
+                isinstance(entry, dict)
+                and entry.get("single_page") is True
+                and isinstance(issues, list)
+                and len(issues) < _ASSIGNMENT_PAGE_SIZE
+            ):
                 entry["at"] = now
                 if parsed.etag is not None:
                     entry["etag"] = parsed.etag
@@ -466,6 +551,7 @@ def shared_assigned_issues(
         stored: dict[str, Any] = {"at": now, "issues": copy.deepcopy(parsed.issues)}
         if parsed.etag is not None:
             stored["etag"] = parsed.etag
+            stored["single_page"] = True
         assignments[key] = stored
         share.dirty = True
         return copy.deepcopy(parsed.issues)

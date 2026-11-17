@@ -225,6 +225,185 @@ def test_conditional_discovery_reuses_the_body_on_304(
     assert 'If-None-Match: W/"iss"' in calls[1]
 
 
+def _paginated_include(
+    pages: list[list[dict[str, object]]],
+    etags: list[str],
+    statuses: list[int],
+) -> str:
+    if len(pages) != len(etags) or len(etags) != len(statuses):
+        raise AssertionError((len(pages), len(etags), len(statuses)))
+    parts: list[str] = []
+    for etag, code in zip(etags, statuses):
+        reason = "Not Modified" if code == 304 else "OK"
+        parts.append(f'HTTP/2.0 {code} {reason}\r\nETag: {etag}\r\n\r\n')
+    if any(code != 304 for code in statuses):
+        parts.append(json.dumps(pages))
+    return "".join(parts)
+
+
+def _share_entry(home: Path) -> dict[str, object]:
+    document = json.loads((home / SHARE_FILE).read_text(encoding="utf-8"))
+    assert len(document) == 1
+    entry = next(iter(document.values()))
+    assert isinstance(entry, dict)
+    return entry
+
+
+@pytest.mark.no_pg
+def test_two_pages_do_not_reuse_the_first_page_etag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = {"now": float(_START)}
+    monkeypatch.setattr("agent_cli.github_request_share.wall_time", lambda: clock["now"])
+    page_one = [
+        {"number": 40, "title": "newer"},
+        {"number": 39, "title": "newer"},
+    ]
+    page_two = [{"number": 3, "title": "older"}]
+    added = {"number": 2, "title": "assigned later"}
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        conditional = any(item.startswith("If-None-Match:") for item in argv)
+        if len(calls) == 1:
+            assert conditional is False
+            return Completed(
+                0,
+                _paginated_include(
+                    [page_one, page_two],
+                    ['W/"page-1"', 'W/"page-2"'],
+                    [200, 200],
+                ),
+                "",
+            )
+        pages = [page_one, [*page_two, added]]
+        etags = ['W/"page-1"', 'W/"page-2b"']
+        if conditional:
+            return Completed(0, _paginated_include(pages, etags, [304, 200]), "")
+        return Completed(0, _paginated_include(pages, etags, [200, 200]), "")
+
+    kwargs = {
+        "repo": "example/project",
+        "login": "worker-bot",
+        "poll_seconds": 30,
+    }
+    first = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert first == [*page_one, *page_two]
+    document = json.loads((tmp_path / SHARE_FILE).read_text(encoding="utf-8"))
+    assert len(document) == 1
+    entry = next(iter(document.values()))
+    assert isinstance(entry, dict)
+    assert "etag" not in entry
+    assert "single_page" not in entry
+    # A record written before this fix stored the first page's ETag on the
+    # whole multi-page list. That validator must not be sent.
+    entry["etag"] = 'W/"page-1"'
+    entry["at"] = clock["now"] - 30
+    (tmp_path / SHARE_FILE).write_text(json.dumps(document), encoding="utf-8")
+    clock["now"] += 30
+    second = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert second == [*page_one, *page_two, added]
+    assert len(calls) == 2
+    assert not any(item.startswith("If-None-Match:") for item in calls[1])
+
+
+@pytest.mark.no_pg
+def test_full_page_does_not_hide_a_new_second_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = {"now": float(_START)}
+    monkeypatch.setattr("agent_cli.github_request_share.wall_time", lambda: clock["now"])
+    page = [{"number": number} for number in range(100, 0, -1)]
+    older = {"number": 0, "title": "older"}
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        conditional = any(item.startswith("If-None-Match:") for item in argv)
+        if len(calls) == 1:
+            assert conditional is False
+            return Completed(
+                0,
+                'HTTP/2.0 200 OK\r\nETag: W/"full"\r\n\r\n' + json.dumps(page),
+                "",
+            )
+        if conditional:
+            return Completed(0, 'HTTP/2.0 304 Not Modified\r\nETag: W/"full"\r\n\r\n', "")
+        return Completed(
+            0,
+            _paginated_include([page, [older]], ['W/"full"', 'W/"older"'], [200, 200]),
+            "",
+        )
+
+    kwargs = {
+        "repo": "example/project",
+        "login": "worker-bot",
+        "poll_seconds": 30,
+    }
+    first = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert first == page
+    assert "etag" not in _share_entry(tmp_path)
+    clock["now"] += 30
+    second = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert second == [*page, older]
+    assert len(calls) == 2
+    assert not any(item.startswith("If-None-Match:") for item in calls[1])
+
+
+@pytest.mark.no_pg
+def test_next_link_on_one_short_page_is_not_conditional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = {"now": float(_START)}
+    monkeypatch.setattr("agent_cli.github_request_share.wall_time", lambda: clock["now"])
+    first_page = [{"number": 8, "title": "only page received"}]
+    second_page = [{"number": 1, "title": "followed later"}]
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        conditional = any(item.startswith("If-None-Match:") for item in argv)
+        if len(calls) == 1:
+            assert conditional is False
+            return Completed(
+                0,
+                'HTTP/2.0 200 OK\r\nETag: W/"partial"\r\n'
+                'Link: <https://api.github.com/repositories/1/issues?page=2>; rel="next"\r\n'
+                "\r\n"
+                + json.dumps(first_page),
+                "",
+            )
+        if conditional:
+            return Completed(
+                0,
+                'HTTP/2.0 304 Not Modified\r\nETag: W/"partial"\r\n\r\n',
+                "",
+            )
+        return Completed(
+            0,
+            _paginated_include(
+                [first_page, second_page],
+                ['W/"partial"', 'W/"rest"'],
+                [200, 200],
+            ),
+            "",
+        )
+
+    kwargs = {
+        "repo": "example/project",
+        "login": "worker-bot",
+        "poll_seconds": 30,
+    }
+    first = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert first == first_page
+    assert "etag" not in _share_entry(tmp_path)
+    clock["now"] += 30
+    second = shared_assigned_issues(tmp_path, runner, **kwargs)
+    assert second == [*first_page, *second_page]
+    assert not any(item.startswith("If-None-Match:") for item in calls[1])
+
+
 @pytest.mark.no_pg
 def test_authentication_error_verifies_login_again(tmp_path: Path) -> None:
     calls: list[list[str]] = []
