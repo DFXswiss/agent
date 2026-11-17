@@ -203,3 +203,10 @@ def test_international_host_name_must_be_configured_in_ascii_form() -> None:
     with pytest.raises(ConfigError) as caught:
         public_url_host("https://bücher.example")
     assert str(caught.value) == "AGENT_CORE_PUBLIC_URL must carry an international host name in its ASCII form"
+
+
+@pytest.mark.parametrize("url", ["https://", "https://:8787"])
+def test_public_url_without_a_host_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        public_url_host(url)
+    assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has no host"

@@ -515,3 +515,27 @@ def test_release_failures_are_the_three_conditions_in_order() -> None:
 def test_release_body_refuses_an_inconsistent_answer(released: bool, failed: str | None) -> None:
     with pytest.raises(ValueError):
         release_body(ReleaseQuery(REPO, 42), released, failed, "hub-1")
+
+
+async def _no_handler(request: Any) -> tuple[int, dict[str, Any]]:
+    return 200, {}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "message"),
+    [
+        ("GET", "/api/other/release", "a key route must start with /api/key/: /api/other/release"),
+        ("get", "/api/key/other", "a key route needs an uppercase method other than HEAD: get"),
+        ("HEAD", "/api/key/other", "a key route needs an uppercase method other than HEAD: HEAD"),
+        ("GET", "/api/key/release", "key route GET /api/key/release is already registered"),
+    ],
+)
+def test_key_routes_refuse_an_invalid_or_repeated_registration(method: str, path: str, message: str) -> None:
+    from agent_core.signing import KeyRoutes
+
+    routes = KeyRoutes()
+    routes.add("GET", "/api/key/release", _no_handler, scope=None, subject=None)
+    with pytest.raises(ValueError) as caught:
+        routes.add(method, path, _no_handler, scope=None, subject=None)
+    assert str(caught.value) == message
+    assert routes.registered() == [("GET", "/api/key/release")]
