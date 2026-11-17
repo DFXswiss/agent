@@ -7,15 +7,18 @@ error (section 13).
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
+import psycopg
 from psycopg import sql
 
-from .connection import ConnectionStringError, libpq_supported, migrate_config
+from .connection import ConnectionStringError, identifier, libpq_supported, migrate_config
 
 SCHEMA_VERSION = 1
 KNOWN_VERSIONS = frozenset({SCHEMA_VERSION})
 MIGRATE_LOCK = 742180002
+# How long step `migrate` waits for the migration lock or a catalog lock before it fails.
+LOCK_TIMEOUT_MS = 60000
 
 STEP_CONFIG = "config"
 STEP_OWNER = "owner"
@@ -81,20 +84,39 @@ FROM pg_roles r JOIN pg_database d ON d.datname = current_database()
 WHERE r.rolname = current_user
 """
 
+# Step `migrate`: the writer role exists as a role of its own, can log in and is no superuser.
+# The pseudo-role PUBLIC has no row in `pg_roles`.
+_WRITER_CHECK = "SELECT rolcanlogin, rolsuper FROM pg_roles WHERE rolname = %s"
+
 
 class _UnknownVersion(Exception):
     """`record.schema_version` holds a version the code does not know, or lacks one it knows."""
 
 
+class _BadWriter(Exception):
+    """The writer role does not exist, cannot log in, or is a superuser."""
+
+
 def schema_statements(database: str, owner: str, writer: str) -> list[sql.Composed]:
-    """The statements of section 11.3 for these names."""
+    """The statements of section 11.3 for these names; a name of a wrong form or reserved raises."""
+    if owner == writer:
+        raise ConnectionStringError("the owner and the writer are the same role")
     names = {
-        "database": sql.Identifier(database),
-        "owner": sql.Identifier(owner),
-        "writer": sql.Identifier(writer),
+        "database": identifier(database),
+        "owner": identifier(owner),
+        "writer": identifier(writer),
         "version": sql.Literal(SCHEMA_VERSION),
     }
     return [sql.SQL(statement).format(**names) for statement in SCHEMA_STATEMENTS]
+
+
+def _check_writer(connection: psycopg.Connection[Any], writer: str) -> None:
+    row = connection.execute(_WRITER_CHECK, (writer,)).fetchone()
+    if row is None:
+        raise _BadWriter()
+    can_login, superuser = row
+    if not can_login or superuser:
+        raise _BadWriter()
 
 
 def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
@@ -113,7 +135,11 @@ def run_migrate(environ: Mapping[str, str]) -> tuple[str, int]:
                 return _failed(STEP_OWNER)
             step = STEP_MIGRATE
             with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('lock_timeout', %s, true)", (f"{LOCK_TIMEOUT_MS}ms",)
+                )
                 connection.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
+                _check_writer(connection, writer.role)
                 exists = connection.execute(
                     "SELECT to_regclass('record.schema_version') IS NOT NULL"
                 ).fetchone()

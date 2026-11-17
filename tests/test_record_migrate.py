@@ -15,16 +15,16 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import psycopg
 import pytest
 from psycopg import sql
 
-from agent_core.record import connection
+from agent_core.record import connection, migrate
 from agent_core.record.__main__ import USAGE
-from agent_core.record.connection import parse_connection_string
-from agent_core.record.migrate import MIGRATE_LOCK, run_migrate
+from agent_core.record.connection import ConnectionStringError, parse_connection_string
+from agent_core.record.migrate import MIGRATE_LOCK, run_migrate, schema_statements
 from tests.conftest import RecordDatabase
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -331,6 +331,10 @@ def test_two_runs_at_once_create_the_schema_once(record_db: RecordDatabase) -> N
         assert admin.execute("SELECT version FROM record.schema_version").fetchall() == [(1,)]
 
 
+# Role names PostgreSQL treats specially or reserves (RECORD-PROTOCOL.md section 15).
+RESERVED_ROLES = ("public", "none", "user", "current_user", "current_role", "session_user", "pg_write_all_data")
+
+
 def other_host(db: RecordDatabase) -> str:
     return "127.0.0.2" if db.host != "127.0.0.2" else "127.0.0.3"
 
@@ -380,6 +384,27 @@ CONFIG_FAULTS = {
         **db.migrate_env(),
         "AGENT_CORE_RECORD_DATABASE": db.url(db.writer_role, db.writer_password, sslmode=other_sslmode(db)),
     },
+    **{
+        f"writer named {name}": (
+            lambda db, name=name: {
+                **db.migrate_env(),
+                "AGENT_CORE_RECORD_DATABASE": db.url(name, db.writer_password),
+            }
+        )
+        for name in RESERVED_ROLES
+    },
+    "owner named public": lambda db: {
+        **db.migrate_env(),
+        "AGENT_CORE_RECORD_OWNER_DATABASE": db.url("public", db.owner_password),
+    },
+    "owner with prefix pg_": lambda db: {
+        **db.migrate_env(),
+        "AGENT_CORE_RECORD_OWNER_DATABASE": db.url("pg_database_owner", db.owner_password),
+    },
+    "database named public": lambda db: {
+        "AGENT_CORE_RECORD_OWNER_DATABASE": db.url(db.owner_role, db.owner_password, database="public"),
+        "AGENT_CORE_RECORD_DATABASE": db.url(db.writer_role, db.writer_password, database="public"),
+    },
 }
 
 
@@ -388,6 +413,8 @@ def test_migrate_fails_at_config(record_db: RecordDatabase, fault: str) -> None:
     line, code = run_migrate(CONFIG_FAULTS[fault](record_db))
     assert (line, code) == ("failed config", 1)
     assert not schema_exists(record_db)
+    with record_db.admin() as admin:
+        assert grants(admin, "database") == set()
 
 
 @pytest.mark.parametrize("version", [150007, 159999])
@@ -461,6 +488,219 @@ def test_migrate_fails_without_the_writer_role_and_changes_nothing(record_db: Re
     assert not schema_exists(record_db)
     with record_db.admin() as admin:
         assert grants(admin, "database") == set()
+
+
+@pytest.mark.parametrize("attribute", ["NOLOGIN", "SUPERUSER"])
+def test_migrate_fails_for_a_writer_that_cannot_log_in_or_is_a_superuser(
+    record_db: RecordDatabase, attribute: str
+) -> None:
+    with record_db.admin() as admin:
+        admin.execute(
+            sql.SQL("ALTER ROLE {} {}").format(sql.Identifier(record_db.writer_role), sql.SQL(attribute))
+        )
+    assert run_migrate(record_db.migrate_env()) == ("failed migrate", 1)
+    assert not schema_exists(record_db)
+    with record_db.admin() as admin:
+        assert grants(admin, "database") == set()
+
+
+def test_a_second_run_fails_when_the_writer_can_no_longer_log_in(record_db: RecordDatabase) -> None:
+    migrated(record_db)
+    with record_db.admin() as admin:
+        admin.execute(sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(record_db.writer_role)))
+    assert run_migrate(record_db.migrate_env()) == ("failed migrate", 1)
+
+
+def writer_named_public(db: RecordDatabase) -> dict[str, str]:
+    return {**db.migrate_env(), "AGENT_CORE_RECORD_DATABASE": db.url("public", db.writer_password)}
+
+
+def test_the_writer_named_public_is_refused_at_config_and_grants_nothing(record_db: RecordDatabase) -> None:
+    assert run_migrate(writer_named_public(record_db)) == ("failed config", 1)
+    assert not schema_exists(record_db)
+    with record_db.admin() as admin:
+        # The database keeps the ACL the deployment gave it: nothing was revoked or granted.
+        assert admin.execute(
+            "SELECT datacl IS NULL FROM pg_database WHERE datname = current_database()"
+        ).fetchone() == (True,)
+
+
+def test_the_migration_itself_refuses_the_writer_public(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Second line of defence: even with the name check of the configuration switched off, the
+    # migration finds no role `public` in pg_roles and grants nothing to PUBLIC.
+    monkeypatch.setattr(connection, "reserved_name", lambda name: False)
+    assert run_migrate(writer_named_public(record_db)) == ("failed migrate", 1)
+    assert not schema_exists(record_db)
+    with record_db.admin() as admin:
+        assert admin.execute(
+            "SELECT datacl IS NULL FROM pg_database WHERE datname = current_database()"
+        ).fetchone() == (True,)
+
+
+@pytest.mark.parametrize(
+    ("database", "owner", "writer"),
+    [
+        ("record", "record_owner", "public"),
+        ("record", "record_owner", "PUBLIC"),
+        ("record", "record_owner", "current_user"),
+        ("record", "record_owner", "none"),
+        ("record", "record_owner", "pg_write_all_data"),
+        ("record", "public", "record_writer"),
+        ("public", "record_owner", "record_writer"),
+        ("record", "record_owner", "record-writer"),
+        ("record", "record_owner", 'w" TO PUBLIC; --'),
+        ("record", "record_role", "record_role"),
+    ],
+)
+def test_schema_statements_refuse_a_name_that_is_not_accepted(database: str, owner: str, writer: str) -> None:
+    with pytest.raises(ConnectionStringError):
+        schema_statements(database, owner, writer)
+
+
+def test_schema_statements_quote_the_names_as_identifiers(record_db: RecordDatabase) -> None:
+    statements = schema_statements("record_db", "record_owner", "record_writer")
+    with record_db.admin() as admin:
+        texts = [statement.as_string(admin) for statement in statements]
+    assert texts[:5] == [
+        'REVOKE ALL ON DATABASE "record_db" FROM PUBLIC',
+        'GRANT CONNECT ON DATABASE "record_db" TO "record_writer"',
+        'CREATE SCHEMA record AUTHORIZATION "record_owner"',
+        "REVOKE ALL ON SCHEMA record FROM PUBLIC",
+        'GRANT USAGE ON SCHEMA record TO "record_writer"',
+    ]
+    assert texts[-3:-1] == [
+        'GRANT SELECT, INSERT ON record.event, record.checkpoint TO "record_writer"',
+        'GRANT SELECT ON record.schema_version TO "record_writer"',
+    ]
+
+
+def test_migrate_fails_when_the_lock_is_held_past_the_lock_timeout(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(migrate, "LOCK_TIMEOUT_MS", 200)
+    with record_db.admin(autocommit=False) as holder:
+        holder.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK,))
+        assert run_migrate(record_db.migrate_env()) == ("failed migrate", 1)
+        holder.rollback()
+    assert not schema_exists(record_db)
+
+
+def test_pghostaddr_does_not_redirect_the_connection(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 192.0.2.1 is a documentation address (RFC 5737) that no test server listens on.
+    monkeypatch.setenv("PGHOSTADDR", "192.0.2.1")
+    migrated(record_db)
+
+
+# --- PUBLIC and other roles (section 11.2) ------------------------------------------------------
+
+# Every privilege of PUBLIC, including the defaults of PostgreSQL that an ACL of NULL stands for.
+_PUBLIC_ACL = """
+SELECT a.privilege_type
+FROM {catalog} o CROSS JOIN LATERAL aclexplode(coalesce(o.{column}, acldefault('{kind}', o.{owner}))) a
+WHERE {where} AND a.grantee = 0
+"""
+PUBLIC_ACL_QUERIES = {
+    "database": _PUBLIC_ACL.format(
+        catalog="pg_database", column="datacl", kind="d", owner="datdba", where="o.datname = current_database()"
+    ),
+    "schema": _PUBLIC_ACL.format(
+        catalog="pg_namespace", column="nspacl", kind="n", owner="nspowner", where="o.nspname = 'record'"
+    ),
+    "function": _PUBLIC_ACL.format(
+        catalog="pg_proc",
+        column="proacl",
+        kind="f",
+        owner="proowner",
+        where="o.oid = 'record.refuse_change()'::regprocedure",
+    ),
+    **{
+        table: _PUBLIC_ACL.format(
+            catalog="pg_class", column="relacl", kind="r", owner="relowner", where=f"o.oid = '{table}'::regclass"
+        )
+        for table in TABLES
+    },
+}
+DATABASE_PRIVILEGES = ("CREATE", "CONNECT", "TEMPORARY")
+SCHEMA_PRIVILEGES = ("CREATE", "USAGE")
+TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+
+
+def privileges_of(admin: psycopg.Connection[Any], role: str) -> list[tuple[str, str]]:
+    """Every privilege `role` holds, directly or through PUBLIC, on the database and the record."""
+    held: list[tuple[str, str]] = []
+    checks: list[tuple[str, str, str, str]] = [
+        ("database", "has_database_privilege(%s, current_database(), %s)", "", privilege)
+        for privilege in DATABASE_PRIVILEGES
+    ]
+    checks += [("schema", "has_schema_privilege(%s, 'record', %s)", "", p) for p in SCHEMA_PRIVILEGES]
+    checks += [("function", "has_function_privilege(%s, 'record.refuse_change()', %s)", "", "EXECUTE")]
+    checks += [(t, "has_table_privilege(%s, %s, %s)", t, p) for t in TABLES for p in TABLE_PRIVILEGES]
+    for name, call, table, privilege in checks:
+        params = (role, table, privilege) if table else (role, privilege)
+        row = admin.execute(f"SELECT {call}", params).fetchone()
+        assert row is not None
+        if row[0]:
+            held.append((name, privilege))
+    return held
+
+
+def test_public_holds_no_privilege_on_the_record_after_the_migration(record_db: RecordDatabase) -> None:
+    migrated(record_db)
+    with record_db.admin() as admin:
+        for name, query in PUBLIC_ACL_QUERIES.items():
+            assert admin.execute(query).fetchall() == [], name
+        assert privileges_of(admin, "public") == []
+
+
+def test_a_third_role_can_neither_read_nor_write_the_record(record_db: RecordDatabase) -> None:
+    migrated(record_db)
+    third = f"t_third_{secrets.token_hex(6)}"
+    password = secrets.token_hex(32)
+    with record_db.admin() as admin:
+        admin.execute(
+            sql.SQL(
+                "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}"
+            ).format(sql.Identifier(third), sql.Literal(password))
+        )
+    try:
+        with record_db.admin() as admin:
+            assert privileges_of(admin, third) == []
+        # Without CONNECT, which PUBLIC no longer holds, the role cannot even connect.
+        with pytest.raises(psycopg.OperationalError):
+            connect(record_db.url(third, password)).close()
+        # Even with CONNECT given by hand, it can neither read nor write a table of the record.
+        with record_db.admin() as admin:
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(record_db.name), sql.Identifier(third)
+                )
+            )
+        with connect(record_db.url(third, password)) as other:
+            attempts: list[Callable[[], object]] = [
+                lambda table=table: other.execute(f"SELECT count(*) FROM {table}") for table in TABLES
+            ]
+            attempts += [
+                lambda: insert_event(other),
+                lambda: insert_checkpoint(other),
+                lambda: other.execute(
+                    "INSERT INTO record.schema_version (version, applied_at) VALUES (2, now())"
+                ),
+            ]
+            for attempt in attempts:
+                with pytest.raises(psycopg.Error) as refused:
+                    attempt()
+                assert refused.value.sqlstate == "42501"
+        with record_db.admin() as admin:
+            counts = [admin.execute(f"SELECT count(*) FROM {table}").fetchone() for table in TABLES]
+        assert counts == [(1,), (0,), (0,)]
+    finally:
+        with record_db.admin() as admin:
+            admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(third)))
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(third)))
 
 
 # --- the no-delete rule (section 11.2) ----------------------------------------------------------

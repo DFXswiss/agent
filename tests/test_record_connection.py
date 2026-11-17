@@ -10,16 +10,19 @@ from typing import Any
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from agent_core.record import connection
 from agent_core.record.connection import (
     ConnectionString,
     ConnectionStringError,
+    identifier,
     libpq_supported,
     libpq_version,
     migrate_config,
     parse_connection_string,
     read_connection_string,
+    reserved_name,
 )
 
 PASSWORD = "0123456789abcdef" * 4
@@ -152,6 +155,73 @@ def test_a_malformed_connection_string_is_refused(text: str) -> None:
     assert "example" not in str(refused.value)
 
 
+RESERVED = [
+    "public",
+    "none",
+    "user",
+    "current_user",
+    "current_role",
+    "session_user",
+    "pg_",
+    "pg_monitor",
+    "pg_record",
+]
+
+
+@pytest.mark.parametrize("name", RESERVED)
+def test_a_reserved_role_name_is_refused(name: str) -> None:
+    with pytest.raises(ConnectionStringError) as refused:
+        parse_connection_string(url(role=name))
+    assert PASSWORD not in str(refused.value)
+    assert name not in str(refused.value).split()
+
+
+@pytest.mark.parametrize("name", RESERVED)
+def test_a_reserved_database_name_is_refused(name: str) -> None:
+    with pytest.raises(ConnectionStringError):
+        parse_connection_string(url(database=name))
+
+
+@pytest.mark.parametrize("name", ["publicx", "_public", "nones", "users", "pg", "pgx", "record_pg_", "_pg_x"])
+def test_a_name_that_only_resembles_a_reserved_one_is_accepted(name: str) -> None:
+    parsed = parse_connection_string(url(role=name, database=name))
+    assert (parsed.role, parsed.database) == (name, name)
+
+
+@pytest.mark.parametrize(
+    ("name", "reserved"),
+    [
+        ("public", True),
+        ("PUBLIC", True),
+        ("Public", True),
+        ("NONE", True),
+        ("Current_User", True),
+        ("CURRENT_ROLE", True),
+        ("Session_User", True),
+        ("USER", True),
+        ("PG_monitor", True),
+        ("Pg_x", True),
+        ("record_writer", False),
+        ("publicx", False),
+        ("x_pg_", False),
+    ],
+)
+def test_reserved_name_ignores_case(name: str, reserved: bool) -> None:
+    assert reserved_name(name) is reserved
+
+
+def test_identifier_accepts_a_name_of_section_15() -> None:
+    assert identifier("record_writer") == sql.Identifier("record_writer")
+
+
+@pytest.mark.parametrize(
+    "name", [None, 1, "", "Record", "record-writer", "1record", "r" * 64, "public", "PUBLIC", "pg_x", "none"]
+)
+def test_identifier_refuses_a_name_of_another_form_or_a_reserved_name(name: object) -> None:
+    with pytest.raises(ConnectionStringError):
+        identifier(name)
+
+
 def test_the_host_of_254_characters_case_is_really_254_characters() -> None:
     assert len(".".join(["a" * 63] * 3 + ["a" * 62])) == 254
 
@@ -176,6 +246,7 @@ def test_the_password_never_appears_in_a_repr() -> None:
 def test_connect_kwargs_for_require() -> None:
     assert parse_connection_string(url()).connect_kwargs() == {
         "host": "db.example.org",
+        "hostaddr": "",
         "port": 5432,
         "dbname": "record",
         "user": "record_writer",
@@ -203,6 +274,7 @@ def test_verify_full_passes_sslrootcert_system_to_the_driver(monkeypatch: pytest
     assert seen == [
         {
             "host": "db.example.org",
+            "hostaddr": "",
             "port": 5432,
             "dbname": "record",
             "user": "record_writer",
@@ -273,6 +345,10 @@ def test_migrate_config() -> None:
         migrate_env(url(role="record_owner", port=":5433"), url()),
         migrate_env(url(role="record_owner", database="record2"), url()),
         migrate_env(url(role="record_owner", sslmode="verify-full"), url()),
+        migrate_env(url(role="record_owner"), url(role="public")),
+        migrate_env(url(role="public"), url()),
+        migrate_env(url(role="record_owner"), url(role="pg_write_all_data")),
+        migrate_env(url(role="record_owner", database="public"), url(database="public")),
     ],
     ids=[
         "both missing",
@@ -286,6 +362,10 @@ def test_migrate_config() -> None:
         "different ports",
         "different databases",
         "different sslmode",
+        "writer named public",
+        "owner named public",
+        "writer named with pg_",
+        "database named public",
     ],
 )
 def test_migrate_config_refuses(env: dict[str, str]) -> None:

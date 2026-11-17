@@ -12,6 +12,7 @@ from dataclasses import field as dataclass_field
 from typing import Any, Mapping
 
 import psycopg
+from psycopg import sql
 
 WRITER_VARIABLE = "AGENT_CORE_RECORD_DATABASE"
 OWNER_VARIABLE = "AGENT_CORE_RECORD_OWNER_DATABASE"
@@ -21,15 +22,22 @@ MAX_HOST_NAME = 253
 MIN_LIBPQ_VERSION = 160000
 CONNECT_TIMEOUT_SECONDS = 10
 
+_NAME = r"[a-z_][a-z0-9_]{0,62}"
+_NAME_RE = re.compile(_NAME)
 _STRING_RE = re.compile(
     r"postgresql://"
-    r"(?P<role>[a-z_][a-z0-9_]{0,62})"
+    rf"(?P<role>{_NAME})"
     r":(?P<password>[0-9a-f]{64})"
     r"@(?P<host>\[[0-9a-f:.]+\]|[a-z0-9.-]+)"
     r"(?::(?P<port>[1-9][0-9]{0,4}))?"
-    r"/(?P<database>[a-z_][a-z0-9_]{0,62})"
+    rf"/(?P<database>{_NAME})"
     r"\?sslmode=(?P<sslmode>disable|require|verify-full)"
 )
+# Names PostgreSQL treats specially or reserves. In a role position `public` is the pseudo-role
+# PUBLIC even in double quotes, `none` is refused, and the keywords stand for a role of the
+# session; the prefix `pg_` is reserved for the system.
+RESERVED_NAMES = frozenset({"public", "none", "user", "current_user", "current_role", "session_user"})
+RESERVED_PREFIX = "pg_"
 _LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _DOTTED_DIGITS_RE = re.compile(r"[0-9.]+")
 _IPV6_LOOPBACK = ipaddress.IPv6Address("::1")
@@ -54,6 +62,9 @@ class ConnectionString:
         """The parameters for the driver. `verify-full` checks against the system trust store."""
         kwargs: dict[str, Any] = {
             "host": self.host,
+            # Given explicitly as empty, so the variable PGHOSTADDR cannot send the connection to
+            # another address than the checked host.
+            "hostaddr": "",
             "port": self.port,
             "dbname": self.database,
             "user": self.role,
@@ -92,6 +103,25 @@ def _host(text: str) -> tuple[str, bool] | None:
     return text, text == "localhost"
 
 
+def reserved_name(name: str) -> bool:
+    """A role or database name that PostgreSQL treats specially or reserves, in any case."""
+    folded = name.lower()
+    return folded in RESERVED_NAMES or folded.startswith(RESERVED_PREFIX)
+
+
+def identifier(name: object) -> sql.Identifier:
+    """A role or database name of a connection string as an SQL identifier composed by the driver.
+
+    The only way a name of a connection string reaches SQL: it must have the form of section 15
+    and must not be a reserved name.
+    """
+    if not isinstance(name, str) or _NAME_RE.fullmatch(name) is None:
+        raise ConnectionStringError("a name breaks the form of section 15")
+    if reserved_name(name):
+        raise ConnectionStringError("a name is reserved by PostgreSQL")
+    return sql.Identifier(name)
+
+
 def parse_connection_string(text: object) -> ConnectionString:
     """Section 15: `postgresql://<role>:<password>@<host>[:<port>]/<database>?sslmode=<mode>`."""
     if not isinstance(text, str):
@@ -99,6 +129,8 @@ def parse_connection_string(text: object) -> ConnectionString:
     match = _STRING_RE.fullmatch(text)
     if match is None:
         raise ConnectionStringError("the connection string breaks its form")
+    if reserved_name(match["role"]) or reserved_name(match["database"]):
+        raise ConnectionStringError("the connection string names a role or database reserved by PostgreSQL")
     host = _host(match["host"])
     if host is None:
         raise ConnectionStringError("the host of the connection string breaks its form")
