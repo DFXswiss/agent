@@ -542,8 +542,10 @@ A record of a check lane is closed the same way, but closing it does not retry t
    generated. The text stored in `change_summary_de` is the full German
    sentence. The check reads the published description, not the request
    that was sent. A missing sentence, or a sentence that is only
-   the English title, does not leave that title in the published
-   description: the read `DE:` line names the order and does not repeat it.
+   the English title, does not replace the published description with
+   the order-only line, and that check does not succeed. The refresh
+   replaces the published description only with the full German sentence,
+   and `gh pr view` has to show that sentence.
 6. **Tests** run only via script `check_argv` on the exact clean signed head
    (cwd = worktree). Failure routes bounded output to the implementer. Stale
    passes from another head are not reused. A check command that times out with

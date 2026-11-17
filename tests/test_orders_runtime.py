@@ -444,6 +444,10 @@ def test_refresh_draft_body_updates_an_order_draft(
     task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
     task["reused_lines"] = ["`src/pay.ts:40` existing gift invoice"]
     task["added_lines"] = ["`src/habit.ts:12` member habit route"]
+    task["change_summary_de"] = (
+        "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
+        "statt dies als Authentifizierungsfehler zu melden."
+    )
     save_task(store, task)
     assert refresh_draft_body(store, worker, task, fake) == [
         "posted reused and added list on example/project#42"
@@ -451,15 +455,16 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Draft for order 11111111: Add a widget." in fake.pr["body"]
     assert "existing gift invoice" in fake.pr["body"]
     assert "member habit route" in fake.pr["body"]
+    german = fake.pr["body"].split("DE:\n", 1)[1].split("\n\n", 1)[0]
+    assert german == (
+        "Entwurf für Auftrag 11111111: Der Koordinator wartet auf das "
+        "Zurücksetzen des GitHub-Ratenlimits, statt dies als "
+        "Authentifizierungsfehler zu melden."
+    )
     fake.pr["body"] = (
         "EN:\nDraft for order 11111111: Add a widget.\n\n"
         "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
     )
-    task["change_summary_de"] = (
-        "Der Koordinator wartet auf das Zurücksetzen des GitHub-Ratenlimits, "
-        "statt dies als Authentifizierungsfehler zu melden."
-    )
-    save_task(store, task)
     assert refresh_draft_body(store, worker, task, fake) == [
         "posted reused and added list on example/project#42"
     ]
@@ -472,12 +477,16 @@ def test_refresh_draft_body_updates_an_order_draft(
     assert "Add a widget" not in german
     task["change_summary_de"] = "Add a widget."
     save_task(store, task)
-    assert refresh_draft_body(store, worker, task, fake) == [
-        "posted reused and added list on example/project#42"
-    ]
-    replaced = fake.pr["body"].split("DE:\n", 1)[1].split("\n\n", 1)[0]
-    assert replaced == "Entwurf für Auftrag 11111111."
-    assert "Add a widget" not in replaced
+    published = fake.pr["body"]
+    edits = len(fake.pr_edits)
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ):
+        refresh_draft_body(store, worker, task, fake)
+    assert fake.pr["body"] == published
+    assert len(fake.pr_edits) == edits
+    assert "Entwurf für Auftrag 11111111." not in fake.pr["body"].split("DE:\n", 1)[1]
 
 
 _GERMAN_SENTENCE = (
@@ -517,22 +526,32 @@ def test_refresh_replaces_a_published_order_description_without_a_list(
     assert store.row("task", OID)["change_summary_de"] == _GERMAN_SENTENCE
 
 
-def test_refresh_replaces_a_published_english_title_without_a_german_sentence(
+def test_refresh_does_not_replace_an_english_title_with_the_order_only_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = prepare(tmp_path, monkeypatch)
     task = seed_order_task(store, worker, OID, phase="implement", pr_number=42)
-    fake.pr["body"] = (
+    english = (
         "EN:\nDraft for order 11111111: Add a widget.\n\n"
         "DE:\nEntwurf für Auftrag 11111111: Add a widget.\n\n"
     )
-    assert refresh_draft_body(store, worker, task, fake) == [
-        "replaced draft description on example/project#42"
-    ]
-    published = fake.pr["body"]
-    de_line = published.split("DE:\n", 1)[1].split("\n", 1)[0]
-    assert de_line == "Entwurf für Auftrag 11111111."
-    assert "Add a widget" not in published.split("DE:\n", 1)[1]
+    fake.pr["body"] = english
+    edits = len(fake.pr_edits)
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ):
+        refresh_draft_body(store, worker, task, fake)
+    assert fake.pr["body"] == english
+    assert len(fake.pr_edits) == edits
+    assert "Entwurf für Auftrag 11111111." not in fake.pr["body"].split("DE:\n", 1)[1]
+    from agent_cli.coordinator_git import _require_stored_sentence
+
+    with pytest.raises(
+        CoordinatorError,
+        match="published description DE line is not the stored German sentence",
+    ):
+        _require_stored_sentence(coord(task)["source"], english, None, task)
     fake.pr["body"] = _ENGLISH_TITLE_IN_DE
     task["change_summary_de"] = "Add a widget."
     coord(task)["lane_outcome"] = {
