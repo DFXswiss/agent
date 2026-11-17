@@ -753,11 +753,11 @@ def test_single_account_role_is_unchanged_next_to_a_pool(tmp_path: Path) -> None
         ),
         (
             {"accounts": ["seat-1", "seat-1"]},
-            "Role pooled accounts lists account seat-1 twice",
+            "Role pooled accounts contains duplicate account seat-1",
         ),
         (
             {"accounts": ["seat-1", "missing"]},
-            "Role pooled references an unknown account missing",
+            "Role pooled references an unknown account",
         ),
         (
             {"accounts": ["seat-1"]},

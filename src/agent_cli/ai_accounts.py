@@ -89,6 +89,10 @@ POOL_ROLE_NEEDS_COORDINATOR = (
     "Role {role} names an account pool; a pool account is chosen only when a "
     "coordinator lane starts"
 )
+# Refusal of a role whose account, or one of whose pool accounts, is not configured.
+ROLE_UNKNOWN_ACCOUNT = "Role {role} references an unknown account"
+# Refusal of a list of account names that names one account twice.
+DUPLICATE_ACCOUNT = "{where} contains duplicate account {account}"
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
 # capabilities, not installed user-role names.
 READ_ONLY_WORKFLOW_KINDS = frozenset(
@@ -538,7 +542,7 @@ def load_ai_accounts(
         if "account" in entry:
             account_name = _text(entry.get("account"), "role account")
             if account_name not in accounts:
-                raise AccountError(f"Role {name} references an unknown account")
+                raise AccountError(ROLE_UNKNOWN_ACCOUNT.format(role=name))
             role_account = accounts[account_name]
         else:
             role_account = _role_pool(
@@ -643,7 +647,9 @@ def load_ai_accounts(
             f"usage_accounts account {account_name}",
         )
         if account_name in usage_accounts:
-            raise AccountError(f"usage_accounts contains duplicate account {account_name}")
+            raise AccountError(
+                DUPLICATE_ACCOUNT.format(where="usage_accounts", account=account_name)
+            )
         usage_accounts.append(account_name)
     keepalive_seconds = _parse_token_keepalive(raw.get("token_keepalive"))
     for role in roles.values():
@@ -723,9 +729,11 @@ def _role_pool(
     for item in value:
         member = _text(item, f"role {role} accounts entry")
         if member not in accounts:
-            raise AccountError(f"Role {role} references an unknown account {member}")
+            raise AccountError(ROLE_UNKNOWN_ACCOUNT.format(role=role))
         if member in members:
-            raise AccountError(f"Role {role} accounts lists account {member} twice")
+            raise AccountError(
+                DUPLICATE_ACCOUNT.format(where=f"Role {role} accounts", account=member)
+            )
         members.append(member)
     providers = sorted({accounts[member].provider for member in members})
     if len(providers) != 1:

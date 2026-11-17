@@ -107,6 +107,22 @@ def record_snapshot(
     weekly: dict[str, Any] | None,
 ) -> None:
     """Store a window ``usage.snapshot`` as usage polling stores it."""
+    record_windows(
+        store,
+        login,
+        {
+            "five_hour": five_hour,
+            "weekly": weekly,
+            "weekly_models": [
+                # Not part of the load: a display name, not a role model.
+                {"model": "model-x", "used_percent": 99.0, "resets_at": LATER}
+            ],
+        },
+    )
+
+
+def record_windows(store: Store, login: str, windows: Any) -> None:
+    """Store a ``usage.snapshot`` whose ``windows`` value is given as is."""
     activity_id = str(uuid.uuid4())
     store.write(
         "activity",
@@ -121,14 +137,7 @@ def record_snapshot(
                 "provider": POOL_DRIVER,
                 "account_email": login,
                 "tier": None,
-                "windows": {
-                    "five_hour": five_hour,
-                    "weekly": weekly,
-                    "weekly_models": [
-                        # Not part of the load: a display name, not a role model.
-                        {"model": "model-x", "used_percent": 99.0, "resets_at": LATER}
-                    ],
-                },
+                "windows": windows,
                 "fetched_at": OLD_FETCH,
             },
             "execution_status": "done",
@@ -307,6 +316,63 @@ def test_unreadable_login_file_is_skipped_with_its_own_reason(tmp_path: Path) ->
         choose(store, ai)
     assert str(excinfo.value) == (
         "Role pooled has no usable pool account (seat-1: unreadable login file; "
+        "seat-2: no login)"
+    )
+
+    write_login(logins / "seat-2", login_of("seat-2"))
+    record_snapshot(store, login_of("seat-2"), five_hour=None, weekly=window(50))
+    choice = choose(store, ai)
+    assert choice.account.name == "seat-2"
+    assert choice.load == 50
+
+
+@pytest.mark.parametrize(
+    "windows",
+    [
+        pytest.param([], id="windows-list"),
+        pytest.param({"five_hour": "x", "weekly": None}, id="window-text"),
+        pytest.param(
+            {"five_hour": {"used_percent": True, "resets_at": LATER}, "weekly": None},
+            id="used-percent-bool",
+        ),
+        pytest.param(
+            {
+                "five_hour": {"used_percent": float("inf"), "resets_at": LATER},
+                "weekly": None,
+            },
+            id="used-percent-infinite",
+        ),
+        pytest.param(
+            {"five_hour": {"used_percent": 10.0, "resets_at": 7}, "weekly": None},
+            id="resets-at-number",
+        ),
+        pytest.param(
+            {"five_hour": {"used_percent": 10.0, "resets_at": "not-a-date"}, "weekly": None},
+            id="resets-at-not-a-date",
+        ),
+        pytest.param(
+            {
+                "five_hour": {"used_percent": 10.0, "resets_at": "2026-11-20T00:00:00"},
+                "weekly": None,
+            },
+            id="resets-at-without-zone",
+        ),
+    ],
+)
+def test_unreadable_usage_snapshot_is_skipped_with_its_own_reason(
+    tmp_path: Path, windows: Any
+) -> None:
+    store = Store(tmp_path)
+    logins = tmp_path / "logins"
+    ai = configure(store.home, logins, seats=("seat-1", "seat-2"))
+    # seat-1 is logged in, and its newest snapshot has a broken windows shape.
+    write_login(logins / "seat-1", login_of("seat-1"))
+    record_windows(store, login_of("seat-1"), windows)
+    # seat-2 has no login on this device.
+    with pytest.raises(AccountError) as excinfo:
+        choose(store, ai)
+    assert str(excinfo.value) == (
+        "Role pooled has no usable pool account (seat-1: unreadable usage snapshot; "
         "seat-2: no login)"
     )
 
