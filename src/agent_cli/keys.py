@@ -540,7 +540,7 @@ def whoami(
     )
     if status != 200:
         error = _error_value(body)
-        detail = "no error value" if error is None else error
+        detail = "" if error is None else error
         raise KeyProtocolError(f"hub {WHOAMI_METHOD} {WHOAMI_TARGET} → HTTP {status}: {detail}")
     try:
         answer = json.loads(body)

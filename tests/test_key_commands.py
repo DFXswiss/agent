@@ -532,7 +532,7 @@ def test_whoami_does_not_follow_a_signed_redirect(agent_home: Path, hub: FakeHub
     hub.extra_headers = [("Location", "https://other.example/api/key/whoami")]
     with pytest.raises(keys.KeyProtocolError) as caught:
         call(agent_home, hub, NOW, HUB_URL)
-    assert str(caught.value) == "hub GET /api/key/whoami → HTTP 307: no error value"
+    assert str(caught.value) == "hub GET /api/key/whoami → HTTP 307: "
     assert len(hub.requests) == 1
     assert hub.requests[0].url.host == HUB_HOST
 
@@ -702,3 +702,20 @@ def test_cli_list_reports_a_keys_path_that_is_a_file(agent_home: Path) -> None:
     agent_home.mkdir(parents=True, exist_ok=True)
     (agent_home / "keys").write_text("not a directory", encoding="utf-8")
     assert cli_refused("list").startswith(f"agent: key files under {agent_home}: ")
+
+
+def test_cli_refuses_a_repeated_flag_with_the_usage_line(agent_home: Path) -> None:
+    message = cli_refused("create", "--id", CLIENT_ID, "--id", CLIENT_ID)
+    assert message == f"agent: {agent_main.KEY_USAGE}"
+    assert not (agent_home / "keys").exists()
+
+
+def test_whoami_refuses_an_id_outside_the_rule_without_claiming_a_write(
+    agent_home: Path, hub: FakeHub
+) -> None:
+    pin = keys.load_hub_pin(agent_home)
+    with httpx.Client(transport=httpx.MockTransport(hub)) as client:
+        with pytest.raises(keys.KeyProtocolError) as caught:
+            keys.whoami(agent_home, "../x", pin, HUB_URL, client, lambda: NOW)
+    assert "nothing was written" not in str(caught.value)
+    assert str(caught.value).startswith("ID must be ")
