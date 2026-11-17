@@ -34,6 +34,7 @@ The token requires contents write, pull requests write, issues write and statuse
   with:
     token: ${{ steps.app-token.outputs.token }}
     actor_app_slug: ${{ steps.app-token.outputs.app-slug }}
+    attribution_patterns: ${{ vars.A38_ATTRIBUTION_PATTERNS }}
 ```
 
 Actions must actually be available for event-driven operation. When Actions are blocked or unavailable, run the same reconciler on a trusted external host:
@@ -73,7 +74,7 @@ The value is one JSON object with exactly these keys (placeholder values):
 
 Every key is required and holds a non-empty list of at most 50 strings. Each string has at most 100 characters and no whitespace. A token starts and ends with a letter, digit or underscore. A session header contains no `:`. An address contains `@`. Entries are literals, not regular expressions. Unknown keys are rejected.
 
-When the value is empty, missing or invalid, the guard never passes silently. For every pull request it assesses, the attribution scan is replaced by a hard-fail reason: `AI attribution patterns are not configured: set the dfx pr guard input attribution_patterns`, or `AI attribution patterns are invalid: <detail>`. That reason takes the same path as an attribution hit: `enforce` posts a failing status and Ready is never set, `observe` reports it as advisory, and the run exits 1. The comment tells maintainers what to configure, and each run also prints one `::error` annotation. Closed pull requests and excluded target branches are not scanned and stay unchanged. An adopter that keeps an older pin is unaffected until the pin moves.
+When the value is empty, missing or invalid, the guard never passes silently. For every pull request it assesses, the attribution scan is replaced by a hard-fail reason: `AI attribution patterns are not configured: set the dfx pr guard input attribution_patterns`, or `AI attribution patterns are invalid: <detail>`. That reason takes the same path as an attribution hit: `enforce` posts a failing status and Ready is never set, `observe` reports it as advisory, and the run exits 1. On a draft, the reason is carried by the failing status and the `::error` annotation; once the pull request is Ready, the comment names what to configure. Each run also prints one `::error` annotation. Closed pull requests and excluded target branches are not scanned and stay unchanged. An adopter that keeps an older pin is unaffected until the pin moves.
 
 ## Trust and policy
 
