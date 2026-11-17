@@ -9,6 +9,9 @@ nothing is ever deleted.
 [DESIGN.md §24](../DESIGN.md#24-team-record-and-key-identity-decided-not-implemented). This
 page explains them. If the two ever disagree, DESIGN.md wins and this page is fixed.
 
+How the team works through the hub day to day (devices, handing work over, watching sessions,
+the overview) is explained in [central-operation.md](central-operation.md).
+
 ## Contents
 
 1. [Why we build it](#1-why-we-build-it)
@@ -140,8 +143,11 @@ sequenceDiagram
 
 - There is no password and no code by mail.
 - You may register several passkeys, for example one on your laptop and one on your phone.
-- The private part never leaves your device or security key. Whether your platform may copy a
-  passkey between your own devices is still an open question (section 14).
+- The private part stays with you. Your platform may sync a passkey between your own devices
+  (decided on 2026-11-17).
+- The passkey is asked once, at sign-in. It then certifies a session key in your browser that
+  signs what you do for at most one working day
+  ([DESIGN.md §25.6](../DESIGN.md#256-proof-that-reaches-the-device)).
 
 ### Agents: one key per device, like SSH
 
@@ -228,7 +234,7 @@ edge. The hub's own check is the only authentication.
 
 Because the edge terminates TLS, it can read what passes through. It cannot forge a request or
 an answer, because both are signed, and it cannot replay an old one, because both carry a nonce
-and a time. Whether reading in transit is acceptable for all objects is still open (section 14).
+and a time. That the edge can read in transit is accepted (decided on 2026-11-17).
 
 **Order of change:** the access gate that sits at the edge today is removed only in the same
 release that makes the hub check every request itself, never before. Otherwise there would be
@@ -354,7 +360,7 @@ If two people try to claim the same issue at the same moment, the second claim i
 
 | Who | Today | With the team record |
 |---|---|---|
-| Staff member | Signs in to the hub with GitHub; claims a security issue with a pull request to a markdown list | Signs in with a passkey; claims, updates and closes with a click, signed by the passkey |
+| Staff member | Signs in to the hub with GitHub; claims a security issue with a pull request to a markdown list | Signs in with a passkey; claims, updates and closes with a click, signed by the session key their passkey certified at sign-in |
 | Agent operator | Device pairs through a GitHub sign-in | Each device (and each program where needed) has its own registered Ed25519 key |
 | External program | Calls open endpoints or none | Has its own service key with minimal scopes and checks the hub's signed answers |
 | Maintainer of agent-core | Edits `teams.yaml` | Also reviews pull requests to the keys file |
@@ -377,24 +383,27 @@ tests for every refusal path, not only the success path.
 | Step | What | Status |
 |---|---|---|
 | 1 | Keys file with scopes, and signature checking in the hub | not started |
-| 2 | Release query for external programs, with a hub-signed answer | not started; needs open question 2 |
+| 2 | Release query for external programs, with a hub-signed answer | not started |
 | 3 | Event chain in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
-| 6 | Sign-in with passkeys instead of GitHub | not started; needs open question 1 |
+| 6 | Sign-in with passkeys instead of GitHub | not started |
 | 7 | Removal of the GitHub sign-in, together with removing the edge access gate | not started |
 
 ## 14. Open questions
 
-A person decides each of these before the step it affects is built.
+None at the moment. Three earlier questions were decided on 2026-11-17:
 
-1. **Passkey sync.** May a staff member's passkey be synced by their platform between their own
-   devices, or must every passkey be bound to one device or one hardware security key? Affects
-   step 6.
-2. **What "released" means.** What exactly must be true before the hub answers "yes" to a
-   release query? Affects step 2.
-3. **Reading at the edge.** Is it acceptable that the network edge can read content in transit,
-   or do some objects need protection end to end? Affects all steps that carry record data.
+1. **Passkey sync.** A staff member's passkey may be synced by their platform between their own
+   devices.
+2. **What "released" and "done" mean.** A task is done when its pull requests are merged into
+   the default branch. A security issue is done only after a staff member has also confirmed
+   that the change is rolled out to production and was checked there. The rule can be changed
+   per task. A release query is answered with yes when the pull request is linked to a task
+   that has an assignee, is in progress or ready for review, and has no unanswered question.
+   The binding text is [DESIGN.md §24.11](../DESIGN.md#2411-done-and-released).
+3. **Reading at the edge.** It is accepted that the network edge can read content in transit.
+   It still cannot forge or replay anything.
 
 ## 15. Alternatives we rejected
 
@@ -444,8 +453,8 @@ Not for the record. It still reads open pull requests from GitHub to show them, 
 every change are checked by the hub alone.
 
 **Can the network edge provider change my entries?**
-No. Every request and every answer is signed. The provider can see traffic in transit, which is
-open question 3, but it cannot forge or replay anything.
+No. Every request and every answer is signed. The provider can see traffic in transit, which the
+team accepts, but it cannot forge or replay anything.
 
 **Who decides what a key may do?**
 The team, through the reviewed keys file. A key can do only what its scopes allow.
