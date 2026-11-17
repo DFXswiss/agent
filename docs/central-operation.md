@@ -41,8 +41,10 @@ Today the pieces are spread out:
 - Nobody has one place that shows tasks, pull requests, running sessions and AI usage together.
 
 Central operation puts all of that in the hub, with one rule on top: whatever was commanded,
-by whom, on which target and when can always be reconstructed. Only a value masked by the
-device's owner (section 8) is replaced by a marker.
+by whom, on which target and when can always be reconstructed from the team record and the
+device's own log. Only a value masked by the device's owner (section 8) is replaced by a
+marker. What a lost device, or a device whose key was stolen, recorded after its last sync
+stays only on that device (section 14).
 
 ## 2. The idea in one picture
 
@@ -65,7 +67,7 @@ Three things matter in this picture:
 - **The hub delivers, it does not decide.** It never invents work and never picks a device.
 - **The executor checks every command itself.** It does not trust the hub's word.
 - **Everything flows back.** What a session shows and receives is recorded on the device and
-  synced completely.
+  synced completely, as long as the device's key is not revoked (section 14).
 
 ## 3. Devices and their two levels
 
@@ -87,10 +89,31 @@ entries belong to one device. The device key's entry decides three things:
   device's name. The device key `device-example-device` belongs to the device
   `example-device`, whose page on the hub is `/example-device` (section 10).
 - **The login.** The device works and syncs under the handle written in its device key's
-  entry. The hub accepts its sync only when it is signed by a key of that device.
+  entry. The hub accepts its sync only when it is signed by a key of that device that is not
+  revoked.
 - **The owner.** That handle is the handle of a staff member, and that staff member owns the
   device. This holds also for a device run by an autonomous agent: it works under its owner's
   handle; the agent's own key on it is a program key.
+
+**Handles are the logins.** Your handle, the one on all your passkey entries, is your
+code-host login in lowercase at the time your first passkey is added. It is only a name: the
+hub never asks the code host about it, and renaming your code-host account later does not
+change it. The review of the pull request that adds your first passkey checks that the two
+match; the automatic check of the keys file cannot. Because handles are these logins, the
+team file lists handles, and person pings, session mail and every synced row name people by
+their handle. The only other logins in the team file are those that older devices were paired
+under, for example an agent's own login, so that their history stays readable.
+
+**Devices paired before build step 1** are retired in that step. Each one syncs completely
+before the step goes live; after it, the hub accepts nothing more for that old device. Its
+history stays readable on the website under the login it was paired with, but it gets no
+device page. The machine is connected again as a new device with a new key, device id and
+name; anything it recorded under its old device id after its last sync stays on the machine.
+
+**A revoked key cannot sync.** When a device key is revoked, the same pull request revokes
+every program key of the device, so nothing of that device reaches the hub any more. What it
+recorded after its last sync stays only on the device. A device you retire on purpose syncs
+completely first; for a lost device or a stolen key this loss is accepted (section 14).
 
 The hub's **device list** shows every device by its name, with its device id, owner and level.
 A device whose device key is revoked shows as retired, without a level. Because all teams on
@@ -115,7 +138,8 @@ a device a second device key or a key of another team. A pull request that adds 
 path that is already the name of a device fails as well. One limit stays: the check cannot
 tell who holds the private key of a new program key added to your device; the review of that
 pull request has to. Such a key still cannot command your device, which obeys only its allow
-list (section 6).
+list (section 6). At the hub, though, it counts as a key of your device: it can sync into
+your device's records and, if it may read, read what your login may see.
 
 A device key is never replaced in place. A device whose key must be replaced, or that changes
 owner, is connected again as a new device with a new key, a new device id and a new name.
@@ -129,8 +153,8 @@ the rule.
 
 A device tells the hub what it has, its **inventory**: which AI accounts and subscriptions are
 set up on it, which code-host accounts it can act as, which runtimes it offers, everything
-else of its configuration and local state that its local dashboard shows and that is not in its
-session store, and how long its time window for commands is. It reports names, states and
+else of its configuration and local state that its local dashboard shows and that is not in
+the synced records of its session store, and how long its time window for commands is. It reports names, states and
 times only, never a password or token.
 
 Devices always connect outward to the hub. No device opens a port for it.
@@ -140,7 +164,7 @@ Devices always connect outward to the hub. No device opens a port for it.
 | You | On your own devices | On a colleague's device |
 |---|---|---|
 | Read: tasks, sessions in full detail, logs, usage, device pages | Yes, row by row: a device page can leave out some rows (below, section 10) | Yes, if you may see your colleague's login, row by row (below) |
-| Write: submit orders, answer questions, type into a session, start and stop, and every other action of the device page | Yes, without restriction | Only with a grant your colleague signed |
+| Write: submit orders, answer questions, type into a session, start and stop, and every other action of the device page | Yes, without restriction, except on a retired device | Only with a grant your colleague signed |
 
 Everyone on your team can see what everyone else on it is working on. Nobody can interfere with a colleague's
 device unless that colleague allowed exactly that.
@@ -151,7 +175,11 @@ from and every person it names. If you share only one of a colleague's teams, th
 page leaves out what comes from or names people of their other teams (section 10).
 
 A device run by an autonomous agent is yours like any other device you own: it works under
-your login, and the agent's own key on it is one of its program keys (section 3).
+your login, and the agent's own key on it is one of its program keys (section 3). No device
+works under the agent's own login any more, so a ping sent to that login reaches no device;
+it stays readable on the website. Ping the device's owner instead. `agent assign --agent`
+still names the code-host account the issue is assigned to, until tasks and orders replace
+it.
 
 ## 5. Handing work over
 
@@ -177,7 +205,8 @@ sequenceDiagram
 - Orders on one executor are queued per worker, as local orders are today.
 - When several answers arrive, the executor accepts the first valid one and refuses the rest.
 - If the hub is unreachable, the executor keeps working on what it accepted and keeps
-  recording. Everything is synced afterwards without a gap.
+  recording. Everything is synced afterwards without a gap, unless the device's key was
+  revoked in the meantime (section 3).
 - Handing over is the normal way and stays voluntary. A session on your controller may do the
   work itself.
 - Logging in to an executor directly stays possible as an override. A login to the account
@@ -279,7 +308,7 @@ there.
 | Store | Holds | Rule |
 |---|---|---|
 | Team record | Tasks, log entries, discussions, orders, questions, answers, grants and other changes of an allow list, maskings, every command | Signed, chained, never deleted, no secrets and no personal data |
-| Session log | Everything a session shows and receives | Recorded on the device first, synced completely, never deleted; the only later change is masking |
+| Session log | Everything a session shows and receives | Recorded on the device first, synced completely while the device's key is not revoked, never deleted; the only later change is masking |
 | Access log | Every authenticated request to the hub, including every page view and every read | Written by the hub, append-only |
 
 - A command that cannot be written to the device's local log is not executed.
@@ -326,17 +355,21 @@ see, and only the rows you may see, by the same rules as the device page (Readin
 same tables and the same sub-pages as the local dashboard of that device (`agent dashboard`)
 when you open it on the device itself, but every row only if you may see it (Reading, below).
 Every page also shows in its header the device's name, id, login and level, or that it is
-retired. If you are signed in under the login the device works under, that is if you are its
-owner, you see what the local dashboard shows, apart from the few rows named below. For
+retired. The login there is the device's login, its owner's handle; the local dashboard
+shows the login stored on the device, which can differ, for example on a device that was
+paired under an agent's own login. If you are signed in under the login the device works
+under, that is if you are its owner, you see what the local dashboard shows, apart from the
+few rows named below. For
 `example-device`, the main page is `/example-device` and the Subscriptions page is
 `/example-device/usage`. The full view of a session (section 9) is not part of the device
 page; the page links to it.
 
 - **The hub never asks the device.** It shows the page only from four things it already holds
-  for that device: the device's own records; the records of other devices that the hub
+  for that device: the device's own records, up to the last sync the hub accepted; the records of other devices that the hub
   delivered to it, that is session mail to its sessions, the pings its login sent or received,
   and what matched its subscriptions; its inventory (section 3); and the hub's own state for
-  the device, that is its entry in the device list, the time of its last sync and the commands
+  the device, that is its entry in the device list, the time of its last sync by the hub's
+  clock (if that clock is set back, the time shown can be too early), and the commands
   sent to it with whether they were delivered, accepted or refused. To decide what you may see
   and do, the hub also reads your key, the team file and the grants of the device's owner.
   Sync keeps the device's records and inventory in step with the device. Whatever the local
@@ -359,9 +392,13 @@ page; the page links to it.
 - **What even the device's own login does not see there.** Someone you may not see may still
   send your session mail or a ping, and the local dashboard shows it. The device page leaves
   such a row out, also for you. After a change of the teams it also leaves out the rows you
-  may no longer see.
+  may no longer see. It never shows what the device holds from the old device id it had before
+  it was connected again (section 3), nor what the device recorded after its last sync.
 - **Acting** is for the device's owner, and for a colleague only within a grant of the owner.
-  Every action that a page of the local dashboard offers counts: submitting, acknowledging,
+  You act signed in with your passkey, or your AI acts through the API with a key of one of
+  your controller devices; a key of an executor never acts. Someone without a matching grant
+  gets the same refusal whatever row they name. The page of a retired device offers no
+  action. Every action that a page of the local dashboard offers counts: submitting, acknowledging,
   answering, overriding, cancelling and marking orders done, and starting a session or an AI
   session, stopping it and typing into it. Changing the size of a terminal is not offered,
   because no page of the local dashboard offers it. An action on a row works only on a row of
@@ -369,7 +406,8 @@ page; the page links to it.
   the new-order page, and it is the same operation as submitting an order to that device in
   any other way (section 5). An action from the page goes through the hub as a signed command,
   like an order, and the device checks it itself (section 6). The page never talks to the
-  device directly, and it offers no action on a row that came from another device.
+  device directly, and it offers no action on a row that came from another device. A command
+  the hub delivered is either run by the device or recorded there with its signed refusal.
 - **An action for a device that is off** waits at the hub. Until the device accepts or refuses
   it, the page shows it as not yet accepted or refused and says whether the hub has delivered
   it. The hub delivers it only within the device's time window for commands, by the hub's
@@ -415,9 +453,10 @@ keep arriving after your sign-in has expired; to answer, you sign in.
 | You add a passkey | The administrator sends you an invite link for it, as for your first one. After its pull request you add it to the allow lists of your devices from a controller device. |
 | You add a device | A new key is created on it and added by pull request as its device key `device-<name>`, with your handle, its device id, your team and its level. On the device you confirm the keys it will obey. |
 | You leave | Your open orders are ended and your devices sync completely. Then your keys are revoked by pull request, and every device stops obeying them. Your devices are retired or connected again for a new owner. What you signed stays valid and attributed to you. |
-| A device is lost or retired | Its keys are revoked and its broker key disabled. The entries stay in the keys file, and the device stays in the device list as retired, with its name and its page. You end its open orders and withdraw their questions. Its history stays in the hub. A device whose device key must be replaced is retired and connected again as a new device. |
+| A device is lost or retired | A device you retire syncs completely first; a lost one cannot, and what it recorded after its last sync never reaches the hub. Its keys are revoked and its broker key disabled. The entries stay in the keys file, and the device stays in the device list as retired, with its name and its page. You end its open orders and withdraw their questions. Its history stays in the hub. A device whose device key must be replaced is retired and connected again as a new device. |
 | A device changes owner | It is connected again by hand as a new device with a new key, a new device id and a new name; its old keys are revoked and the old device shows as retired. |
 | A passkey is lost | A pull request revokes it, and your devices stop obeying it. You remove it from your devices from a controller device. |
+| A device key is stolen | A pull request revokes it together with every program key of that device, and the device is retired. Until then whoever holds the key can sync made-up records into the device's history at the hub, and the device's own records with the same numbers are then refused. What the device recorded after its last accepted sync stays only on the device; this loss is accepted, and there is no later upload for a retired device. |
 
 ## 15. What stays refused
 
@@ -435,7 +474,7 @@ Each step is its own pull request and follows the steps of the
 
 | Step | What | Status |
 |---|---|---|
-| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key; the allow list on the device; the device id in team-record.md | not started |
+| 1 | Device keys with levels and inventory; device ids, device names and their check against the base branch; the device's login from its device key, and handles as logins; retiring the devices paired before, after each has synced completely, and connecting them again as new devices; the allow list on the device; the device id in team-record.md | not started |
 | 2 | Checking the session key's certificate on the device; grants | not started |
 | 3 | Tasks, log entries, repository registry, one-time import | not started |
 | 4 | Orders and questions through the hub | not started |
@@ -455,8 +494,9 @@ Each step is its own pull request and follows the steps of the
 | **Device key** | The one key of a device whose keys-file id is `device-<name>`; its entry fixes the device's name, login and owner |
 | **Device list** | The hub's list of every device, by name, with its device id, owner and level, or marked as retired; keys of external programs are not in it |
 | **Device name** | The `<name>` in the id `device-<name>` of the device key; unique on the whole hub, never changed and never given to a second device; public; also the path of its device page |
+| **Handle** | A name in the keys file; a staff member's handle is their code-host login in lowercase when their first passkey is added, and it is their login for what they may see |
 | **Device's login** | The handle in the device key's entry, which is the handle of its owner; the device works and syncs under it, also when an autonomous agent runs it |
-| **Inventory** | What one device reports about itself: accounts, runtimes, the other values its local dashboard shows that are not in its session store, and the length of its time window for commands |
+| **Inventory** | What one device reports about itself: accounts, runtimes, the other values its local dashboard shows that are not in the synced records of its session store, and the length of its time window for commands |
 | **Device page** | The page `/<device name>` on the hub that shows the pages of the device's local dashboard, every row only if the reader may see it |
 | **Owner** | The staff member a device belongs to |
 | **Executor** | A device that runs work it was given |
@@ -504,7 +544,7 @@ file. A program reads it only through the API with a key that may read.
 
 **What if the hub is down?**
 Executors keep working on what they accepted and keep recording. You can still submit work on
-the device itself. Everything syncs afterwards.
+the device itself. Everything syncs afterwards, unless a device's key was revoked meanwhile.
 
 **What if someone breaks into the hub?**
 They can read, delay and drop, hold back or fake the notice that a key was revoked, and create
