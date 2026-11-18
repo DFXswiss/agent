@@ -196,12 +196,13 @@ The three exceptions, and what they reveal:
     or about any other event or object (section 7.9). With the position, the answer tells only
     where the record first fails and whether that failure is one of the three record-wide values
     or concerns the event at that position. A key that sees that event and checks it itself
-    cannot narrow the cause to one value: `row_mismatch`, which compares the stored columns
-    `event_id`, `actor_key_id` and `prev_hash` that no endpoint answers, always remains
-    possible. The signed `429` `verify_busy` of section 7.9 tells every key
-    with `record:read`, of any team, that some key asked the answering process for a
-    verification less than 60 seconds before, or that one runs; it names neither that key nor
-    its team.
+    cannot narrow the cause to one that depends on state it does not see: `row_mismatch`, which
+    compares the stored columns `event_id`, `actor_key_id` and `prev_hash` that no endpoint
+    answers, always remains possible, and a key that sees every event and object involved may be
+    left with `row_mismatch` alone, which reveals nothing hidden. The signed `429` `verify_busy`
+    of section 7.9 tells every key with `record:read`, of any team, that some key asked the
+    answering process for a verification less than 60 seconds before, or that one runs; it names
+    neither that key nor its team.
   - The `503` `record_unverified` (section 7.1) tells every caller of a record endpoint and of
     the release query, also a key without `record:read`, that the answering process found the
     record broken, whichever team's event failed.
@@ -211,11 +212,12 @@ The three exceptions, and what they reveal:
 - The release rule reads the tasks of every team and of both kinds. Its yes/no can therefore
   tell a `service` key with `release:query` that a pull request in its `subjects` has a linked
   task it does not see, for example a security issue or a task of another team (`task_not_ready`
-  instead of `task_missing`, or `released` true). It also reveals whether every such task, which
-  is not `dropped`, has an `assignee` and the status `in_progress` or `ready_for_review`, and by
-  repeated queries when that changes: when such a task is linked or unlinked, is dropped, gets or
-  loses its assignee, or enters or leaves those two statuses. It never names the task and never
-  says how many such tasks there are; a `dropped` task does not count (section 9).
+  instead of `task_missing`, or `released` true). It can also reveal whether every such task,
+  which is not `dropped`, has an `assignee` and the status `in_progress` or `ready_for_review`,
+  and by repeated queries when that changes: when such a task is linked or unlinked, is dropped
+  or set back from `dropped` to `open`, gets or loses its assignee, or enters or leaves those two
+  statuses. It never names the task and never says how many such tasks there are; a `dropped`
+  task does not count (section 9).
 - An id the caller already holds. An event whose `object_id` is the id of an existing object the
   actor does not see is an update of that object and gets `object_not_found` (check 12 (d) of
   section 6.7), where an unused id creates the object; an event whose `event_id` a stored event
@@ -1093,9 +1095,11 @@ such cases would itself tell a key that sees the event that the cause is one of 
 this endpoint no failure that concerns an event is named. The kind of such a failure is for the
 operator: the request line of section 13 logs the true value and the position in every case
 (`verify_failed <position> <failure>`), and offline `verify` of an export (section 12.3), which
-the operator runs with the full file, prints it. `verified` and `position` tell every reader
-whether and where the record fails verification, which is what lets a reader detect a later
-rewrite of the record.
+the operator runs with the full file, prints it, except a `row_mismatch` of the stored columns
+`event_id`, `actor_key_id` or `prev_hash`: an export does not carry those columns (section
+12.3), so only the log line names it. `verified` and `position` tell every reader whether and
+where the record fails verification, which is what lets a reader detect a later rewrite of the
+record.
 
 Example of a failure that concerns an event, for every calling key and a broken event at
 position 18 of the story of section 4.2:
@@ -2516,7 +2520,8 @@ Integrity and backup:
   database superuser with the triggers bypassed at the end of the record, validly signed:
   `chain_broken`, an event of a key on a task the caller sees whose `prev_hash` is the event hash
   of an earlier event of the same key that the caller does not see and that is not that key's
-  previous event; `event_time_invalid`, an event of a key on a task the caller sees, chained to
+  previous event (the superuser first drops the constraint `UNIQUE (actor_key_id, prev_hash)` of
+  section 11.3, which otherwise refuses that row); `event_time_invalid`, an event of a key on a task the caller sees, chained to
   that key's previous event, which is on a security issue the caller (without `record:security`)
   does not see and has a later `signed_at`, while the event's own `received_at` order and its
   120-second bound hold; `event_refused` with the reducer's value `short_name_taken`, an event
@@ -2526,13 +2531,15 @@ Integrity and backup:
   for byte the answer to a key of another team, and the request line logs `verify_failed
   <position> <failure>` with the true value
 - a stored `received_at` of `10000-01-01 00:00:00+00` at the last position, changed as database
-  superuser with the triggers bypassed: the verification on request fails with
-  `event_time_invalid` at that position, not with `record_hash_mismatch`, and a restart refuses
-  to start with `record verify failed <position> event_time_invalid`
+  superuser with the triggers bypassed: the verification on request answers `withheld` at that
+  position, not `record_hash_mismatch`, and the request line logs `verify_failed <position>
+  event_time_invalid`; a restart refuses to start with `record verify failed <position>
+  event_time_invalid`
 - a stored `received_at` of `infinity` at the last position, changed as database superuser with
-  the triggers bypassed: the verification on request fails with `event_time_invalid` at that
-  position, not with `record_hash_mismatch`, and a restart refuses to start with
-  `record verify failed <position> event_time_invalid`
+  the triggers bypassed: the verification on request answers `withheld` at that position, not
+  `record_hash_mismatch`, and the request line logs `verify_failed <position>
+  event_time_invalid`; a restart refuses to start with `record verify failed <position>
+  event_time_invalid`
 - removal at the end of the record: as database superuser with the triggers bypassed, the last
   two events and every checkpoint that names them are removed; instance A, whose state holds the
   removed events, fails its next verification on request with `position_gap` at the first
@@ -3034,11 +3041,11 @@ confirms or changes each one.
     review asked for (§3, §7.4, §7.9, §7.10).
 41. The release rule reads the tasks of every team and of both kinds; its yes/no can therefore
     reveal to the asking key that a linked task it does not see exists, such as a security issue
-    or a task of another team. It also reveals whether every such task, which is not `dropped`,
-    has an assignee and is in `in_progress` or `ready_for_review`, and by repeated queries when
-    that changes: when such a task is linked or unlinked, is dropped, gets or loses its assignee,
-    or enters or leaves those two statuses. It never names the task and never says how many
-    there are (§3, §9).
+    or a task of another team. It can also reveal whether every such task, which is not
+    `dropped`, has an assignee and is in `in_progress` or `ready_for_review`, and by repeated
+    queries when that changes: when such a task is linked or unlinked, is dropped or set back
+    from `dropped` to `open`, gets or loses its assignee, or enters or leaves those two statuses.
+    It never names the task and never says how many there are (§3, §9).
 42. In a process already in the state `record_unverified`, the signed `503` comes after checks 1
     to 10 of KEY-PROTOCOL.md section 5 and the query and body validation of the endpoint, and
     before any read of the record, on every record endpoint and on the release query. When the
@@ -3169,10 +3176,12 @@ confirms or changes each one.
     it sees. It still gets `verified` and the position, so it can detect a later rewrite of the
     record. Where the operator finds the kind: the request line of §13 logs `verify_failed
     <position> <failure>` with the true value in every case, and offline `verify` of an export
-    (§12.3), run with the full file, prints `failed <position> <failure>`. Of the alternatives of
-    the reviews (name the answer as part of the first exception of §3, list the disclosures of
-    the named values there, answer `withheld` only in the cases that depend on state the caller
-    does not see, or never name a failure that concerns an event), the last is taken (§3, §7.9,
+    (§12.3), run with the full file, prints `failed <position> <failure>`, except for a
+    `row_mismatch` of the stored columns `event_id`, `actor_key_id` or `prev_hash`, which an
+    export does not carry, so that only the log line names it. Of the alternatives of the
+    reviews (name the answer as part of the first exception of §3, list the disclosures of the
+    named values there, answer `withheld` only in the cases that depend on state the caller does
+    not see, or never name a failure that concerns an event), the last is taken (§3, §7.9,
     §12.1, §12.3, §13).
 74. A full verification that a running process runs on request or periodically also compares the
     snapshot with the head of the process's state in memory: a snapshot that ends below that head
