@@ -57,8 +57,10 @@ Not built in this step:
   steps that build them.
 - the published hash of the website (DESIGN.md §25.16) and the access log (DESIGN.md §25.9)
 
-No existing endpoint changes its behaviour, with two exceptions: the dashboard page `/` gets one
-link (section 10.1), and on an existing route under `/api/key/` an `Agent-Key` in the session key
+No existing endpoint changes its behaviour, with three exceptions: the dashboard page `/` gets one
+link (section 10.1), every HTML answer of the hub carries the headers of section 10.1 and the
+existing pages load their scripts and styles from files (section 10.1, decision 57), and on an
+existing route under `/api/key/` an `Agent-Key` in the session key
 id form now passes check 1 and is refused at check 2 with `key_unknown` instead of at check 1 with
 `signature_missing` (section 7.1). The hub needs no new environment variable. It refuses to start
 when the host of `AGENT_CORE_PUBLIC_URL` ends with a dot or is an IP address (section 3); section
@@ -1024,7 +1026,16 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
   `Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
   `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 - The dashboard `/` gets one link "Sign in with a passkey" to `/passkey`, next to the GitHub
-  button. Nothing else on `/` changes.
+  button. Nothing else that `/` shows or does changes.
+- Every HTML answer of the hub, including the existing pages `/`, `/session` and `/pair`, is
+  served with the three headers above (decision 57). The existing pages therefore run no inline
+  script and no inline style: the two inline `<script>` elements of
+  `src/agent_core/static/index.html` move into `index-theme.js` (the theme script in `<head>`) and
+  `index.js`, the inline `<script>` of `src/agent_core/static/session.html` into `session.js`, and
+  the `<style>` elements and `style` attributes of both pages into `index.css` and `session.css`,
+  all in `src/agent_core/static/`. The pages load them with `<script src>` and
+  `<link rel="stylesheet">`, and `src/agent_core/app.py` serves them under `/static/` with `GET`
+  and `HEAD`. The pages keep what they show and do.
 - The pages load nothing from another origin.
 - When the statement check of section 6.3 stops a sign-in because the expiry is later than the
   browser's clock plus `SESSION_KEY_MAX_SECONDS`, `/passkey` shows "Sign-in stopped: the clock of
@@ -1045,9 +1056,9 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
   (decision 30). A new sign-in replaces the record.
 - IndexedDB belongs to the origin, not to a page. Every page of the hub's origin can reach the
   record and use the session key with `crypto.subtle.sign`, without `signText`; rule 1 of section
-  8.3 binds only `passkey.js`. Until the build step that reworks them, the existing pages `/`,
-  `/session` and `/pair` are served without the policy of section 10.1. Section 10.3 states the
-  consequence; the owner decides it (section 17.2).
+  8.3 binds only `passkey.js`. Every HTML answer of the hub, including the existing pages `/`,
+  `/session` and `/pair`, is served with the policy of section 10.1 and runs no inline script
+  (decision 57). Section 10.3 states the consequence.
 - The page deletes the record on sign-out, when the expiry passed, and when a signed request is
   refused with `key_unknown`, `key_revoked`, `key_expired` or `certificate_invalid`.
 - The next command sequence number is kept in the same record and incremented in one IndexedDB
@@ -1114,7 +1125,7 @@ What an edge that changes the page code can do in addition, in full:
   expiry. The edge thereby obtains a certificate over its own statement whose validity begins
   later, usable at a device for at most one session-key lifetime at a time it chooses, until the
   passkey is revoked. Using it needs a delivery path to the device, which this build step does
-  not fix (DESIGN.md §25.6).
+  not define (DESIGN.md §25.6).
 
 What it cannot do:
 
@@ -1162,9 +1173,9 @@ hub's origin, not only by `/passkey` and `/invite` (section 10.2). Script that r
 the origin can use the non-extractable key directly with `crypto.subtle.sign`, past `signText`,
 for as long as the key is valid: every signed request the scopes of the person's passkey entry
 allow (for an administrator, creating invites), and `noop` commands to the person's own devices.
-The existing pages `/`, `/session` and `/pair` run inline script and are served without the policy
-of section 10.1 until the build step that reworks them. Whether that is accepted until then is a
-decision for the owner (decision 57).
+Every HTML answer of the hub, including the existing pages `/`, `/session` and `/pair`, is served
+with the policy of section 10.1 and runs no inline script (decision 57), so only script files that
+the hub delivers run on a page of the origin.
 
 This contradicts DESIGN.md §24.2, §25.6 and §25.16 as written; section 17.2 names the sentences
 the owner adjusts.
@@ -1172,7 +1183,8 @@ the owner adjusts.
 ## 11. Coexistence with GitHub sign-in
 
 - GitHub sign-in, the cookie session, the OAuth token, device pairing and every existing endpoint
-  stay exactly as they are until the following build step removes them.
+  stay exactly as they are, apart from the headers and the script and style files of section 10.1
+  on the existing pages, until the following build step removes them.
 - The passkey path uses no cookie, does not read or write `request.session`, never reads the
   OAuth token, the `device` table or `teams.yaml` logins as identity, and never calls GitHub. Its
   identity is the keys-file entry alone.
@@ -1403,7 +1415,7 @@ real endpoints.
   line
 - sign-out: signed `200`, then `key_unknown`; a keys-file key gets `session_key_required`
 - every existing test of KEY-PROTOCOL.md section 10 still passes, except the one case named
-  below. Two existing tests change: the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of
+  below. One existing fixture and one existing test case change: the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of
   `tests/test_config.py`, from `http://127.0.0.1:8787` to `http://localhost:8787` (section 15);
   and in `tests/test_keys_file.py` the case `(agent(program="agent-cli"), _second_agent(),
   "each needs a program")` of `test_device_and_program_pair_must_be_unique`, an `agent` entry with
@@ -1412,7 +1424,12 @@ real endpoints.
   `test_device_and_program_pair_must_be_unique` that expect "each needs a program" (two `agent`
   entries without `program`; an `agent` entry without `program` next to a `service` entry; an
   `agent` entry without `program` next to one whose `revoked` time is in the future) stay
-  refused. Every other existing test is unchanged.
+  refused. The existing tests that read script text from `index.html` or `session.html`
+  (`tests/test_index_page_js.py`, `tests/test_session_page_js.py`, and the cases of
+  `tests/test_assignments.py`, `tests/test_prs.py`, `tests/test_usage_and_timeline.py` and
+  `tests/test_newest_first.py` that read those files) read it from the script files of section
+  10.1 instead, with the same assertions; their assertions on the markup still read the HTML
+  files. Every other existing test is unchanged.
 
 ### 13.5 The hub, commands
 
@@ -1445,7 +1462,13 @@ real endpoints.
 - the pages `/passkey`, `/invite` and `/static/passkey.js` carry the headers of section 10.1, no
   inline script, no `<style>` element, no `style` attribute, no use of `.style` or
   `setAttribute("style"` in the script, and no substituted value, and answer `HEAD`
-- the dashboard `/` carries the link to `/passkey` and is otherwise unchanged
+- the existing pages `/`, `/session` and `/pair` carry the headers of section 10.1 on `GET` and
+  `HEAD`, contain no inline script, no `<style>` element and no `style` attribute, and load the
+  script and style files of section 10.1, which answer `GET` and `HEAD`
+  (`tests/test_page_policy.py`); and each page still works without an inline script: in
+  headless Chromium (section 13.8, `tests/e2e/test_passkey_e2e.py`), loading each of the three
+  pages under the policy fires no `securitypolicyviolation` event and runs its script files
+- the dashboard `/` carries the link to `/passkey` and otherwise shows and does what it did
 - the tables of section 12 are created at start, and after a full invite and sign-in no row holds
   the invite token or any private key
 
@@ -1653,6 +1676,19 @@ A change of the steps changes the file in the same pull request.
 - `src/agent_core/keys.py`: the loader rule of section 7.4.
 - `tests/test_keys_file.py`: the case of section 13.4 that moves from the refused pairs to the
   allowed pairs.
+- Because every HTML answer of the hub carries the headers of section 10.1 (decision 57), the same
+  change edits these files:
+  - `src/agent_core/app.py`: the headers of section 10.1 on every HTML answer, and the routes for
+    the script and style files of the existing pages (section 10.1)
+  - `src/agent_core/static/index.html` and `src/agent_core/static/session.html`: their inline
+    scripts and styles move into the new files `src/agent_core/static/index-theme.js`,
+    `src/agent_core/static/index.js`, `src/agent_core/static/index.css`,
+    `src/agent_core/static/session.js` and `src/agent_core/static/session.css` (section 10.1)
+  - `tests/test_index_page_js.py`, `tests/test_session_page_js.py`, `tests/test_assignments.py`,
+    `tests/test_prs.py`, `tests/test_usage_and_timeline.py` and `tests/test_newest_first.py`: they
+    read script text from the script files (section 13.4)
+  - the new `tests/test_page_policy.py` and the page case in `tests/e2e/test_passkey_e2e.py`: the
+    test of section 13.6 for the existing pages
 - `pyproject.toml`: the dependencies above and the pytest settings of section 14.
 - The CI files and CONTRIBUTING.md of section 14: `.github/workflows/test.yml`,
   `.github/a38.json`, `.github/pr-guard.json` and the sentence in `CONTRIBUTING.md`.
@@ -1669,8 +1705,14 @@ A change of the steps changes the file in the same pull request.
    with this change.
 2. Merge the change, together with the edits of section 15 (`src/agent_core/config.py`,
    `src/agent_core/__main__.py`, `src/agent_core/keys.py`, `docker-compose.yaml`,
-   `tests/test_config.py`, `tests/test_keys_file.py`, `README.md`,
-   `pyproject.toml`, `tests/vectors/passkey.json`, and the CI files and the sentence of
+   `tests/test_config.py`, `tests/test_keys_file.py`, `README.md`, `src/agent_core/app.py`,
+   `src/agent_core/static/index.html`, `src/agent_core/static/session.html`, the new
+   `src/agent_core/static/index-theme.js`, `src/agent_core/static/index.js`,
+   `src/agent_core/static/index.css`, `src/agent_core/static/session.js` and
+   `src/agent_core/static/session.css`, `tests/test_index_page_js.py`,
+   `tests/test_session_page_js.py`, `tests/test_assignments.py`, `tests/test_prs.py`,
+   `tests/test_usage_and_timeline.py`, `tests/test_newest_first.py`, the new
+   `tests/test_page_policy.py`, `tests/e2e/test_passkey_e2e.py`, `pyproject.toml`, `tests/vectors/passkey.json`, and the CI files and the sentence of
    `CONTRIBUTING.md` of section 14: `.github/workflows/test.yml`, `.github/a38.json`,
    `.github/pr-guard.json`). Both CI jobs, `pytest` and `e2e`, are green. The tables are created
    at start.
@@ -1953,16 +1995,19 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     6.4 decide. This is a limit. (Section 4, 13.10)
 57. The session key in IndexedDB is reachable by every page of the hub's origin, and any script
     that runs there can use it with `crypto.subtle.sign`, past `signText`, within the session's
-    rights. The existing pages `/`, `/session` and `/pair` run inline script and are served without
-    the policy of section 10.1 until the build step that reworks them. Owner decision, not taken
-    in this document: either accept this until the build step that reworks the existing pages, or
-    set the headers of section 10.1 for every HTML answer of the hub in this step, which requires
-    reworking the inline scripts of the existing pages. (Section 10.2, 10.3)
+    rights. Therefore every HTML answer of the hub, including the existing pages `/`, `/session`
+    and `/pair`, is served with the headers of section 10.1 in this step, and the inline scripts
+    and styles of the existing pages move into files. Choice for the owner: of "serve the existing
+    pages without the policy until the build step that reworks them" and "set the headers of
+    section 10.1 for every HTML answer of the hub in this step", the stricter second is taken. Its
+    consequence: this step also reworks the existing pages. (Section 10.1, 10.2, 10.3, 13.4, 13.6,
+    15, 16)
 
 ### 17.2 Decisions for the human owner
 
 The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 43, 44, 45, 49,
-50, 52, 53, 55 and 56, and adjusts these sentences of DESIGN.md:
+50, 52, 53, 55, 56 and 57 (for 57 with its consequence that this step also reworks the existing
+pages `/`, `/session` and `/pair`), and adjusts these sentences of DESIGN.md:
 
 - §24.2: the sentence that the network edge "cannot forge a request or an answer, because both are
   signed". It holds for devices and programs, which pin the hub key; it does not hold for the
@@ -1985,9 +2030,3 @@ The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 4
   bootstrap invite is created without an administrator's signature (decision 15).
 - §24.2 "Every request is authenticated", with opening an invite link as the only exception: the
   list of decision 28 replaces that exception.
-
-The owner also chooses for decision 57, which this document leaves open: either accept that every
-page of the hub's origin can reach and use the session key, while the existing pages `/`,
-`/session` and `/pair` are served without the policy of section 10.1, until the build step that
-reworks the existing pages; or set the headers of section 10.1 for every HTML answer of the hub
-in this step, which requires reworking the inline scripts of the existing pages.
