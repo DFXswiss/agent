@@ -153,8 +153,10 @@ def test_c2_accepts_the_body_of_section_8_2() -> None:
 @pytest.mark.parametrize("missing", sorted(FIELDS))
 def test_c2_each_field_missing(missing: str) -> None:
     fields = {name: value for name, value in FIELDS.items() if name != missing}
+    # Without the field there is no command text to sign. C2 runs before C4 (section 8.2), so any
+    # well-formed signature of 64 bytes lets the body reach the field check.
     with _refusal("command_invalid"):
-        parse_command_body(_body(fields), SENDER)
+        parse_command_body(_body(fields, signature=b64(bytes(64))), SENDER)
 
 
 @pytest.mark.parametrize(
