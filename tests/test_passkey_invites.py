@@ -7,8 +7,9 @@ import gzip
 import hashlib
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import pytest
 import yaml
@@ -408,6 +409,28 @@ def test_open_at_and_after_the_expiry_is_invite_expired_and_not_marked_opened(
     assert pkhub.rows("SELECT id FROM passkey_registration") == []
 
 
+def test_open_reads_the_clock_after_the_wait_for_the_store(
+    pkhub: PasskeyHub, hubs: HubFactory, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # Section 12, "Clock": the open arrives one second before the expiry and waits for the store
+    # until the expiry; O3 uses the clock at the moment of its check.
+    invite = pkhub.create_invite(admin(pkhub, hubs), lifetime=300)
+    pkhub.clock.now = NOW + 299
+    transaction = pkhub.store.transaction
+
+    @contextmanager
+    def waited() -> Iterator[Any]:
+        pkhub.clock.now = NOW + 300
+        with transaction() as connection:
+            yield connection
+
+    monkeypatch.setattr(pkhub.store, "transaction", waited)
+    refused(pkhub.open(invite["link"]), 401, "invite_expired")
+    monkeypatch.undo()
+    assert pkhub.rows("SELECT opened FROM passkey_invite") == [{"opened": None}]
+    assert pkhub.rows("SELECT id FROM passkey_registration") == []
+
+
 def test_a_second_open_is_invite_used(pkhub: PasskeyHub, hubs: HubFactory) -> None:  # noqa: F811
     invite, _ = opened_invite(pkhub, admin(pkhub, hubs))
     refused(pkhub.open(invite["link"]), 401, "invite_used")
@@ -609,6 +632,25 @@ def test_registration_r3_accepts_exactly_300_seconds(pkhub: PasskeyHub, hubs: Hu
     _, opened = opened_invite(pkhub, admin(pkhub, hubs))
     pkhub.clock.now = NOW + 300
     assert pkhub.register(stranger(), opened).status == 200
+
+
+def test_registration_r3_reads_the_clock_after_the_wait_for_r2(
+    pkhub: PasskeyHub, hubs: HubFactory, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # Section 12, "Clock": the finish arrives 300 seconds after the open and waits for the store
+    # until 301 seconds have passed; R3 uses the clock at the moment of its check.
+    _, opened = opened_invite(pkhub, admin(pkhub, hubs))
+    pkhub.clock.now = NOW + 300
+    passkey_store = pkhub.app.state.passkey.store
+    consume = passkey_store.consume_registration
+
+    def waited(registration_id: str, now: int) -> Any:
+        pkhub.clock.now = NOW + 301
+        return consume(registration_id, now)
+
+    monkeypatch.setattr(passkey_store, "consume_registration", waited)
+    refused(pkhub.register(stranger(), opened), 401, "registration_expired")
+    assert pkhub.rows("SELECT received FROM passkey_invite") == [{"received": None}]
 
 
 def test_registration_r3_refuses_an_invite_that_expired_during_the_ceremony(pkhub: PasskeyHub, hubs: HubFactory) -> None:  # noqa: F811

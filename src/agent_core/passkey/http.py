@@ -225,14 +225,13 @@ class PasskeyRoutes:
         token = None if fields is None else b64url_decode(fields["token"])
         if token is None or len(token) != INVITE_TOKEN_BYTES:
             return _error(400, REQUEST_INVALID)
-        now = self.clock()
         challenge = secrets.token_bytes(REGISTRATION_CHALLENGE_BYTES)
         user_id = secrets.token_bytes(USER_ID_BYTES)
         registration = ceremony_id(secrets.token_bytes(CEREMONY_ID_BYTES))
         outcome = await asyncio.to_thread(
             self.store.open_invite,
             token_hash(token),
-            now,
+            self.clock,
             registration_id=registration,
             challenge=b64url_encode(challenge),
             user_id=b64url_encode(user_id),
@@ -263,10 +262,14 @@ class PasskeyRoutes:
         decoded = None if fields is None else _decoded(fields, REGISTRATION_FIELDS)
         if fields is None or decoded is None:
             return _error(400, REQUEST_INVALID)
-        now = self.clock()
-        registration = await asyncio.to_thread(self.store.consume_registration, fields["registration"], now)
+        registration = await asyncio.to_thread(
+            self.store.consume_registration, fields["registration"], self.clock()
+        )
         if registration is None:
             return _error(401, REGISTRATION_UNKNOWN)
+        # R3 and the later checks read the clock after R2, so that the wait for the store lies
+        # before them (section 12, "Clock").
+        now = self.clock()
         if now - registration.opened > CEREMONY_SECONDS or now >= registration.expires:
             return _error(401, REGISTRATION_EXPIRED)
         try:
@@ -403,10 +406,12 @@ class PasskeyRoutes:
             or (fields["user_handle"] is not None and b64url_decode(fields["user_handle"]) is None)
         ):
             return _error(400, REQUEST_INVALID)
-        now = self.clock()
         pending = await asyncio.to_thread(self.store.take_sign_in, fields["sign_in"])
         if pending is None:
             return _error(401, CHALLENGE_UNKNOWN)
+        # S3 and the later checks read the clock after S2, so that the wait for the store lies
+        # before them (section 12, "Clock").
+        now = self.clock()
         if now - pending.created > CEREMONY_SECONDS:
             return _error(401, CHALLENGE_EXPIRED)
         entry = self._staff_entry(decoded["credential_id"])

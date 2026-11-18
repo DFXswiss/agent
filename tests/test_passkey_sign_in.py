@@ -245,6 +245,25 @@ def test_finish_exactly_300_seconds_after_begin_is_accepted(pkhub: PasskeyHub, h
     assert pkhub.post(FINISH, body).status == 200
 
 
+def test_finish_s3_reads_the_clock_after_the_wait_for_s2(
+    pkhub: PasskeyHub, hubs: HubFactory, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # Section 12, "Clock": the request arrives 300 seconds after begin and waits for the store
+    # until 301 seconds have passed; S3 uses the clock at the moment of its check.
+    body = _assertion(pkhub, hubs.passkeys["staff"])
+    pkhub.clock.now = NOW + 300
+    passkey_store = pkhub.app.state.passkey.store
+    take = passkey_store.take_sign_in
+
+    def waited(sign_in_id: str) -> Any:
+        pkhub.clock.now = NOW + 301
+        return take(sign_in_id)
+
+    monkeypatch.setattr(passkey_store, "take_sign_in", waited)
+    refused(pkhub.post(FINISH, body), 401, "challenge_expired")
+    assert pkhub.rows("SELECT id FROM passkey_session") == []
+
+
 def test_finish_301_seconds_after_begin_with_a_begin_in_between_is_challenge_unknown(pkhub: PasskeyHub, hubs: HubFactory) -> None:  # noqa: F811
     body = _assertion(pkhub, hubs.passkeys["staff"])
     pkhub.clock.now = NOW + 301

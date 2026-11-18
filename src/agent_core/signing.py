@@ -566,8 +566,10 @@ class KeyService:
             (HEADER_HUB_SIGNATURE.encode("ascii"), self.signer.sign(text).encode("ascii")),
         ]
         if area is not None and result is not None:
-            # The request line of the area replaces the line below, for every principal. `_answer`
-            # derives a result for every request in an area.
+            # The request line of the area replaces the `service` line of the next branch
+            # (RECORD-PROTOCOL.md section 13), for every principal; `_answer` derives a result for
+            # every request in an area. It does not replace the session line below, which carries
+            # the passkey id that the request line has no field for.
             area.log(request, status, result)
         elif request.entry.principal == "service":
             LOG.info(
@@ -579,7 +581,7 @@ class KeyService:
             )
         if request.session is not None:
             # PASSKEY-PROTOCOL.md section 7.1: one line for every request of a session key that
-            # passed check 8; no body, certificate or signature.
+            # passed check 8, also in a log area; no body, certificate or signature.
             LOG.info(
                 "key request %s %s %s %s %d",
                 request.session.id,

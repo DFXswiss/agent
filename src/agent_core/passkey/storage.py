@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from ..signing import SessionKey, b64url_decode, b64url_encode
+from ..signing import Clock, SessionKey, b64url_decode, b64url_encode
 from .encoding import CEREMONY_SECONDS, INVITE_OPEN_LIMIT, PENDING_SIGN_IN_LIMIT
 from .webauthn import check_counter
 
@@ -107,8 +107,9 @@ INVITE_USED = "invite_used"
 SESSION_KEY_KNOWN = "session_key_known"
 TOO_MANY_PENDING = "too_many_pending"
 
-# An invite is open (section 5.2: `pending` or `opened`) at the time bound to the first, second and
-# third placeholder, with the ceremony bound to the fourth. `r` is its registration, joined.
+# An invite is open (section 5.2: `pending` or `opened`) at the time bound to the first and second
+# placeholder, with `CEREMONY_SECONDS` bound to the third. `i` is the invite and `r` its
+# registration, left-joined by `_INVITES`.
 _OPEN = (
     "i.received IS NULL AND r.finished IS NULL AND i.expires > ? "
     "AND (i.opened IS NULL OR ? - i.opened <= ?)"
@@ -244,7 +245,8 @@ def proposed_id(handle: str, taken: set[str]) -> str:
 
 
 class PasskeyStore:
-    """The passkey tables of one hub store. Every method takes the time it acts at."""
+    """The passkey tables of one hub store. Every method that acts at a time takes that time, except
+    `open_invite`, which takes the clock and reads it inside its transaction."""
 
     def __init__(self, store: "Store") -> None:
         self.store = store
@@ -295,15 +297,18 @@ class PasskeyStore:
         return [_invite(row) for row in rows]
 
     def open_invite(
-        self, token_hash: str, now: int, *, registration_id: str, challenge: str, user_id: str
+        self, token_hash: str, clock: Clock, *, registration_id: str, challenge: str, user_id: str
     ) -> Invite | str:
         """O2 to O4 and the insert of the registration, in one write transaction (section 5.4).
 
         Returns the opened invite, or `invite_unknown`, `invite_expired` or `invite_used`. O3 and O4
-        use the same `now`; the update of O4 marks the invite opened only when it was not opened
-        before and is not expired, so an expired invite is never marked opened.
+        use the same now, read from `clock` once the transaction has begun, so that the wait for the
+        store lock and for SQLite's write lock lies before the check (section 12, "Clock"). The
+        update of O4 marks the invite opened only when it was not opened before and is not expired,
+        so an expired invite is never marked opened.
         """
         with self.store.transaction() as connection:
+            now = clock()
             row = connection.execute(
                 f"SELECT {_INVITE_COLUMNS} {_INVITES} WHERE i.token_hash = ?", (token_hash,)
             ).fetchone()

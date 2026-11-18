@@ -260,9 +260,10 @@ class RecordRuntime:
             return _database_failed(error)
 
     def append(
-        self, actor: KeyEntry, endpoint: str, text: bytes, signature: bytes
+        self, actor: KeyEntry, agent_key: str, endpoint: str, text: bytes, signature: bytes
     ) -> Appended | Refused | AlreadyUnverified | Unverified | DatabaseFailed:
-        """An append endpoint after checks 1 and 2 of section 6.7.
+        """An append endpoint after checks 1 and 2 of section 6.7, for the request's `Agent-Key`
+        `agent_key` and the entry `actor` its request checks established (see `AppendContext`).
 
         The `503` of a process already in the state `record_unverified` comes before check 3;
         checks 3 to 6 need no connection; then the append transaction of section 11.5. Its step 2
@@ -273,7 +274,7 @@ class RecordRuntime:
         if self.unverified:
             return ALREADY_UNVERIFIED
         try:
-            check_signed_event(text, signature, actor)
+            check_signed_event(text, signature, actor, agent_key)
         except RecordRefusal as refusal:
             return Refused(refusal.error)
         try:
@@ -283,6 +284,7 @@ class RecordRuntime:
                     self.memory,
                     self.keys,
                     actor,
+                    agent_key,
                     endpoint,
                     text,
                     signature,

@@ -303,7 +303,8 @@ failure:
 
 - A `webauthn` key never signs a request directly (check 5). A staff member's requests are
   signed by a session key that the passkey certified: for such a request `Agent-Key` is a session
-  key id, and PASSKEY-PROTOCOL.md section 7.1 changes checks 1 to 5 and 7 and adds check 9a.
+  key id, and PASSKEY-PROTOCOL.md section 7.1 changes checks 1 to 5, 7 and 9 (the scopes of a
+  session key), names the key id that check 8 stores for it, and adds check 9a.
 - Check 8 is one atomic insert of key id and nonce under a unique constraint. Only a violation
   of that constraint gives `nonce_replayed`; any other failure of the insert gives an unsigned
   `500`. A nonce is stored only after check 7 passed and is kept for 10
