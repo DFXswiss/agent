@@ -2039,8 +2039,9 @@ The record's data class is unique (DESIGN.md §24.8). The deployment of every en
   file, which verifies the whole record before it inserts anything (section 12.3); and starts a
   hub against it, which verifies again before it serves (section 11.4). That hub has its own hub
   key id and its own seed, never those of the environment's hub, because a seed is never used
-  by two hubs (KEY-PROTOCOL.md section 4); it skips the restored checkpoints of the other hub
-  key id (section 12.1).
+  by two hubs (KEY-PROTOCOL.md section 4); of the restored checkpoints of the other hub key id
+  it checks only the form of `published_at` and of the hub key id and skips the rest of the row
+  `checkpoint_invalid` (section 12.1).
 
 ## 13. Logs
 
@@ -3416,4 +3417,6 @@ confirms or changes each one.
     violation fails verification with `checkpoint_invalid` at the position that checkpoint names.
     `export` refuses the same values and an unwritable `received_at` with `refused
     value_unwritable`, so a record that cannot be exported for such a value also fails the hub's
-    verification, which names the cause (§11.3, §12.1, §12.2, §12.3).
+    verification; unless an earlier failure ends that run, the failure is `event_time_invalid` or
+    `checkpoint_invalid` at the position of that value, and the log line of §13 names it (the
+    answer of §7.9 says `withheld` for `event_time_invalid`) (§11.3, §12.1, §12.2, §12.3).
