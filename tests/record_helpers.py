@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
@@ -29,8 +29,11 @@ from agent_core.record.reducer import AppendContext, reduce_append
 from agent_core.record.state import EMPTY_STATE, RecordState
 from agent_core.record.storage import (
     APPEND_LOCK,
+    Appended,
+    CheckpointWritten,
     MemoryState,
     append_event,
+    checkpoint_attempt,
     prepare_session,
 )
 from agent_core.record.verify import RowCopies, StoredEvent
@@ -46,7 +49,11 @@ TEAM = "example"
 ALICE = "alice-laptop-1"
 BOB = "bob-laptop-1"
 CARA = "cara-laptop-1"
-SEEDS = {ALICE: 51, BOB: 52, CARA: 53}
+# The writer of the story of section 4.2, and a key of another team (position 18 of that story).
+STAFF = "example-staff-laptop-1"
+OPS = "ops-agent-laptop-1"
+OPS_TEAM = "ops"
+SEEDS = {ALICE: 51, BOB: 52, CARA: 53, STAFF: 54, OPS: 55}
 SCOPES = ["record:read", "record:write", "device:controller"]
 
 HUB = "hub-1"
@@ -71,13 +78,13 @@ def hub_key_argument(signer: HubSigner) -> str:
 # --- the keys file and the teams file -------------------------------------------------------------
 
 
-def key_entry(key_id: str, handle: str) -> dict[str, Any]:
+def key_entry(key_id: str, handle: str, team: str) -> dict[str, Any]:
     return {
         "id": key_id,
         "kind": "ed25519",
         "principal": "agent",
         "handle": handle,
-        "team": TEAM,
+        "team": team,
         "public_key": b64url_encode(public(SEEDS[key_id])),
         "scopes": list(SCOPES),
         "device": "laptop-1",
@@ -93,8 +100,30 @@ def write_key_files(directory: Path, key_ids: Sequence[str] = (ALICE, BOB)) -> t
     )
     keys = directory / "record-keys.yaml"
     keys.write_text(
-        yaml.safe_dump({"keys": [key_entry(key_id, handles[key_id]) for key_id in key_ids]}), encoding="utf-8"
+        yaml.safe_dump({"keys": [key_entry(key_id, handles[key_id], TEAM) for key_id in key_ids]}), encoding="utf-8"
     )
+    return keys, teams
+
+
+def write_story_key_files(directory: Path) -> tuple[Path, Path]:
+    """The keys file and the teams file of the story of section 4.2: alice and bob of the team
+    `example` (the other keys of positions 1 to 15), `example-staff-laptop-1` of the team `example`,
+    and a key of the team `ops` (position 18)."""
+    teams = directory / "story-teams.yaml"
+    teams.write_text(
+        yaml.safe_dump(
+            {"teams": {TEAM: {"members": ["alice", "bob", "example-staff"]}, OPS_TEAM: {"members": ["ops-agent"]}}}
+        ),
+        encoding="utf-8",
+    )
+    keys = directory / "story-keys.yaml"
+    entries = [
+        key_entry(ALICE, "alice", TEAM),
+        key_entry(BOB, "bob", TEAM),
+        key_entry(STAFF, "example-staff", TEAM),
+        key_entry(OPS, "ops-agent", OPS_TEAM),
+    ]
+    keys.write_text(yaml.safe_dump({"keys": entries}), encoding="utf-8")
     return keys, teams
 
 
@@ -314,6 +343,125 @@ def process(db: RecordDatabase, keys: KeyRing) -> Iterator[Process]:
         yield made
     finally:
         made.close()
+
+
+# --- the story of section 4.2 ---------------------------------------------------------------------
+
+
+def _at(text: str) -> int:
+    seconds = parse_time(text)
+    assert seconds is not None
+    return seconds
+
+
+STORY_TASK = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+STORY_COMMENT = "8e2f4a6c-1b3d-4e5f-9a7b-0c1d2e3f4a5b"
+STORY_FIRST_EVENT_ID = "0b6f3c1e-8d2a-4c1b-9f3e-2a7d5c9e1f40"
+STORY_SECOND_EVENT_ID = "6a0e9d4c-2b7f-4e1a-8c3d-5f2b1a0e9d8c"
+STORY_LINK = "example-org/example-repo#42"
+# Section 4.2: the hub writes a checkpoint of position 20 at 11:00:00 and one of position 21 at
+# 12:00:00, each after the event at that position was appended.
+STORY_CHECKPOINTS = {20: _at("2026-11-17T11:00:00Z"), 21: _at("2026-11-17T12:00:00Z")}
+# Positions 1 to 15 are received one minute apart from 09:45:00, before 10:00:00.
+_STORY_EARLIER_START = _at("2026-11-17T09:45:00Z")
+
+
+@dataclass(frozen=True)
+class StoryEvent:
+    """One position of the story of section 4.2: who signs what, when, and when the hub receives it.
+    `event_id` None means that the event id is drawn at random, as a writer draws it."""
+
+    key_id: str
+    object_type: str
+    object_id: str
+    changes: Changes
+    signed_at: int
+    received_at: int
+    event_id: str | None
+
+
+def story_events() -> list[StoryEvent]:
+    """The 21 positions of the table of section 4.2."""
+    earlier = [
+        StoryEvent(
+            ALICE if index % 2 == 0 else BOB,
+            "task",
+            new_id(),
+            task_create(f"Earlier task {index + 1}"),
+            _STORY_EARLIER_START + index * STEP,
+            _STORY_EARLIER_START + index * STEP,
+            None,
+        )
+        for index in range(15)
+    ]
+    return [
+        *earlier,
+        StoryEvent(
+            STAFF, "task", STORY_TASK, task_create(),
+            _at("2026-11-17T10:00:00Z"), _at("2026-11-17T10:00:01Z"), STORY_FIRST_EVENT_ID,
+        ),
+        StoryEvent(
+            STAFF, "task", STORY_TASK, [("assignee", None, "example-staff"), ("status", "open", "in_progress")],
+            _at("2026-11-17T10:05:00Z"), _at("2026-11-17T10:05:01Z"), STORY_SECOND_EVENT_ID,
+        ),
+        StoryEvent(
+            OPS, "task", new_id(), [("kind", None, "work"), ("team", None, OPS_TEAM), ("title", None, "Other team")],
+            _at("2026-11-17T10:06:00Z"), _at("2026-11-17T10:06:00Z"), None,
+        ),
+        StoryEvent(
+            STAFF, "comment", STORY_COMMENT, [("body", None, "Started"), ("task", None, STORY_TASK)],
+            _at("2026-11-17T10:30:00Z"), _at("2026-11-17T10:30:00Z"), None,
+        ),
+        StoryEvent(
+            STAFF, "comment", new_id(), [("body", None, "Login fixed locally"), ("task", None, STORY_TASK)],
+            _at("2026-11-17T10:45:00Z"), _at("2026-11-17T10:45:00Z"), None,
+        ),
+        StoryEvent(
+            STAFF, "task", STORY_TASK, [("links", None, STORY_LINK)],
+            _at("2026-11-17T11:20:00Z"), _at("2026-11-17T11:20:00Z"), None,
+        ),
+    ]
+
+
+@dataclass(frozen=True)
+class StoredStory:
+    """What `store_story` appended: per position its `received_at` and its event text, in position
+    order, and the checkpoints the hub wrote."""
+
+    rows: list[tuple[int, int, bytes]]
+    checkpoints: list[CheckpointWritten]
+
+
+def store_story(db: RecordDatabase, keys: KeyRing) -> StoredStory:
+    """Migrate `db` and store the story of section 4.2 as one hub process does: each event through
+    the append transaction of section 11.5 with the clock at its `received_at`, and the checkpoints
+    of hub-1 through the checkpoint attempt of section 12.2 at their full hours."""
+    migrated(db)
+    rows: list[tuple[int, int, bytes]] = []
+    checkpoints: list[CheckpointWritten] = []
+    with process(db, keys) as hub:
+        for position, item in enumerate(story_events(), start=1):
+            text, signature = sign_event(
+                hub.memory.state,
+                item.key_id,
+                item.object_type,
+                item.object_id,
+                item.changes,
+                item.signed_at,
+                event_id=item.event_id,
+                prev_hash=hub.accepted_prev_hash(item.key_id),
+            )
+            hub.clock.now = item.received_at
+            outcome = hub.append_text(item.key_id, text, signature)
+            assert isinstance(outcome, Appended) and outcome.position == position, (position, outcome)
+            rows.append((position, item.received_at, text))
+            if position in STORY_CHECKPOINTS:
+                hour = STORY_CHECKPOINTS[position]
+                hub.clock.now = hour
+                written = checkpoint_attempt(hub.connection, hub.memory, keys, HUB_SIGNER, hour, hub.clock)
+                assert written == CheckpointWritten(position, outcome.record_hash), (position, written)
+                checkpoints.append(written)
+    return StoredStory(rows=rows, checkpoints=checkpoints)
 
 
 def timestamp(seconds: int) -> datetime:

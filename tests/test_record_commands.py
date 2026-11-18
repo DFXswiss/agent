@@ -9,6 +9,7 @@ real PostgreSQL of AGENT_CORE_TEST_POSTGRES.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -24,7 +25,7 @@ from psycopg import sql
 from agent_core.keys import KeyRing
 from agent_core.record import commands, connection
 from agent_core.record.checkpoint import Checkpoint
-from agent_core.record.event import parse_event
+from agent_core.record.event import parse_event, record_hash
 from agent_core.record.export import write_export
 from agent_core.record.storage import Appended, CheckpointWritten, checkpoint_attempt, read_snapshot, verify_stored
 from agent_core.signing import HubSigner, b64url_encode, parse_time
@@ -65,11 +66,13 @@ from tests.record_helpers import (
     sign_event,
     signed_checkpoint,
     silent_listener,
+    store_story,
     stored_event,
     tamper,
     unreachable_url,
     wait_for_append_lock,
     write_key_files,
+    write_story_key_files,
     writer,
 )
 from tests.test_record_migrate import run_cli
@@ -191,6 +194,103 @@ def test_export_writes_the_whole_record_with_mode_0600_and_prints_its_head(
     assert verify(key_files, out, *hub_key()) == (f"verified 3 {head}", 0)
 
 
+# The two event texts of section 4.2, byte for byte; the second names the event hash of the first.
+STORY_FIRST_TEXT = b"\n".join(
+    [
+        b"agent-event-v1",
+        b"0b6f3c1e-8d2a-4c1b-9f3e-2a7d5c9e1f40",
+        b"task",
+        b"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        b"example-staff-laptop-1",
+        b"2026-11-17T10:00:00Z",
+        b"-",
+        b"-",
+        b"3",
+        b"kind",
+        b"-",
+        b"=d29yaw",
+        b"team",
+        b"-",
+        b"=ZXhhbXBsZQ",
+        b"title",
+        b"-",
+        b"=Rml4IGxvZ2lu",
+    ]
+)
+
+
+def story_second_text(first_event_hash: str) -> bytes:
+    return b"\n".join(
+        [
+            b"agent-event-v1",
+            b"6a0e9d4c-2b7f-4e1a-8c3d-5f2b1a0e9d8c",
+            b"task",
+            b"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+            b"example-staff-laptop-1",
+            b"2026-11-17T10:05:00Z",
+            first_event_hash.encode("ascii"),
+            b"-",
+            b"2",
+            b"assignee",
+            b"-",
+            b"=ZXhhbXBsZS1zdGFmZg",
+            b"status",
+            b"=b3Blbg",
+            b"=aW5fcHJvZ3Jlc3M",
+        ]
+    )
+
+
+# The `received_at` of positions 16 to 21 in the table of section 4.2.
+STORY_RECEIVED_AT = [
+    "2026-11-17T10:00:01Z",
+    "2026-11-17T10:05:01Z",
+    "2026-11-17T10:06:00Z",
+    "2026-11-17T10:30:00Z",
+    "2026-11-17T10:45:00Z",
+    "2026-11-17T11:20:00Z",
+]
+
+
+def test_export_of_the_story_of_section_4_2_prints_exported_21_and_its_record_hash(
+    record_db: RecordDatabase, tmp_path: Path
+) -> None:
+    key_files = write_story_key_files(tmp_path)
+    stored = store_story(record_db, load_ring(*key_files))
+    assert [position for position, _, _ in stored.rows] == list(range(1, 22))
+    # Positions 16 and 17 are the two event texts of section 4.2, byte for byte.
+    first_hash = hashlib.sha256(STORY_FIRST_TEXT).hexdigest()
+    assert stored.rows[15][2] == STORY_FIRST_TEXT
+    assert stored.rows[16][2] == story_second_text(first_hash)
+    # Section 4.2 pins no hash value. The record hash of every position is computed again here by
+    # the library from the event texts and the times alone, with the event hash taken by hashlib,
+    # independently of the hashes the hub stored.
+    chain: list[str] = []
+    for position, received_at, text in stored.rows:
+        chain.append(record_hash(position, received_at, hashlib.sha256(text).hexdigest(), chain[-1] if chain else None))
+    out = tmp_path / "export.jsonl"
+    assert export(["--out", str(out)], {WRITER_VARIABLE: record_db.writer_url}) == (f"exported 21 {chain[-1]}", 0)
+    lines = [json.loads(line) for line in out.read_bytes().splitlines()]
+    assert lines[0] == {
+        "format": "agent-record-export-v1",
+        "position": 21,
+        "record_hash": chain[-1],
+        "exported_at": "2026-11-18T02:00:00Z",
+    }
+    events, checkpoints = lines[1:22], lines[22:]
+    assert [(line["type"], line["position"], line["record_hash"]) for line in events] == [
+        ("event", position, chain[position - 1]) for position in range(1, 22)
+    ]
+    assert [line["event"] for line in events] == [b64url_encode(text) for _, _, text in stored.rows]
+    assert all(line["received_at"] < "2026-11-17T10:00:00Z" for line in events[:15])
+    assert [line["received_at"] for line in events[15:]] == STORY_RECEIVED_AT
+    assert [(line["type"], line["signed_by"], line["position"], line["record_hash"], line["published_at"]) for line in checkpoints] == [
+        ("checkpoint", HUB, 20, chain[19], "2026-11-17T11:00:00Z"),
+        ("checkpoint", HUB, 21, chain[20], "2026-11-17T12:00:00Z"),
+    ]
+    assert verify(key_files, out, *hub_key()) == (f"verified 21 {chain[-1]}", 0)
+
+
 EXPORT_ARGUMENTS = {
     "--out missing": [],
     "--out given twice": ["--out", "a.jsonl", "--out", "b.jsonl"],
@@ -286,6 +386,40 @@ def test_export_refuses_a_file_that_cannot_be_created(
     not_a_directory = written(tmp_path, b"", "plain")
     for out in (not_a_directory / "export.jsonl", tmp_path / "missing" / "export.jsonl"):
         assert export(["--out", str(out)], {WRITER_VARIABLE: record_db.writer_url}) == ("refused file_write", 1)
+    assert no_connection == []
+
+
+def creates_a_file_in(directory: Path) -> bool:
+    """Whether this process creates a file in `directory`; a file it created is removed again."""
+    probe = directory / "probe"
+    try:
+        descriptor = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except PermissionError:
+        return False
+    os.close(descriptor)
+    probe.unlink()
+    return True
+
+
+def test_export_refuses_a_directory_that_cannot_be_written_with_refused_file_write(
+    no_connection: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    directory = tmp_path / "read-only"
+    directory.mkdir()
+    directory.chmod(0o500)
+    try:
+        if creates_a_file_in(directory):
+            pytest.fail(
+                "this process creates files in a directory of mode 0500, as a superuser of the operating "
+                "system does, so this test cannot show `refused file_write`; run the tests as an ordinary user",
+                pytrace=False,
+            )
+        out = directory / "export.jsonl"
+        assert export(["--out", str(out)], {WRITER_VARIABLE: NO_DATABASE}) == ("refused file_write", 1)
+        assert list(directory.iterdir()) == []
+    finally:
+        directory.chmod(0o700)
+    # FILE is created before any connection, so the refusal comes without one.
     assert no_connection == []
 
 
@@ -965,6 +1099,30 @@ def test_restore_refuses_its_arguments_and_variables_with_refused_config(
     keys.write_text("keys: {}\n", encoding="utf-8")
     assert restore(env, path, *hub_key()) == CONFIG
     assert no_connection == []
+
+
+@pytest.mark.parametrize("name", ["public_x", "x_pg_", "users"])
+def test_restore_accepts_a_name_that_only_contains_a_reserved_word(
+    record_db: RecordDatabase,
+    key_files: tuple[Path, Path],
+    story: PureRecord,
+    no_connection: list[dict[str, Any]],
+    tmp_path: Path,
+    name: str,
+) -> None:
+    path = written(tmp_path, story.export())
+    urls = (
+        record_db.url(name, record_db.writer_password),
+        record_db.url(record_db.writer_role, record_db.writer_password, database=name),
+    )
+    # Not `refused config`: the name passes the rules of section 15, and the one connection attempt
+    # of each run meets a database that cannot be reached (`refused database`).
+    for url in urls:
+        assert restore(restore_env(url, key_files), path, *hub_key()) == DATABASE
+    assert [(attempt["user"], attempt["dbname"]) for attempt in no_connection] == [
+        (name, record_db.name),
+        (record_db.writer_role, name),
+    ]
 
 
 # --- the identifier test and the printed lines ---------------------------------------------------
