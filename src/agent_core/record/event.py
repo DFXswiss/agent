@@ -44,6 +44,12 @@ MAX_POSITION = 9223372036854775807
 # 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z.
 MIN_TIME = -62135596800
 MAX_TIME = 253402300799
+# A stored `timestamptz` (`received_at`, `published_at`) that is no time of section 2 reaches this
+# library as an int outside MIN_TIME..MAX_TIME, so that `time_text` gives None for it (sections
+# 12.1 and 12.3): a finite time with a year outside 0001 to 9999 as its seconds since the epoch,
+# `infinity` as STORED_INFINITY and `-infinity` as -STORED_INFINITY. Every finite `timestamptz`
+# lies within 2**44 seconds of the epoch, so neither value is the seconds of a stored finite time.
+STORED_INFINITY = 2**63
 _EPOCH = datetime(1970, 1, 1)
 
 ERROR_EVENT_INVALID = "event_invalid"

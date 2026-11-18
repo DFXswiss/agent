@@ -1,8 +1,10 @@
 """The export file of the record and its offline verification (RECORD-PROTOCOL.md section 12.3).
 
-`write_export` writes the JSON Lines file; `parse_export` checks the file format in the order of
-the list of section 12.3 and refuses it with `file_invalid` and the position that section defines;
-`verify_export` is offline `verify` as a library function. The commands come with the storage part.
+`write_export` writes the JSON Lines file, or refuses a stored value outside the form of its
+member with `ValueUnwritable` (`refused value_unwritable`); `parse_export` checks the file format
+in the order of the list of section 12.3 and refuses it with `file_invalid` and the position that
+section defines; `verify_export` is offline `verify` as a library function. The commands, the
+snapshot read and the file handling come with the storage part.
 """
 
 from __future__ import annotations
@@ -64,18 +66,51 @@ def _line(value: dict[str, Any]) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("ascii") + b"\n"
 
 
-def _time(seconds: int) -> str:
+REFUSED_VALUE_UNWRITABLE = "value_unwritable"
+
+
+class ValueUnwritable(Exception):
+    """A stored value of the snapshot has no form of its member (section 12.3, decision 57).
+
+    `export` stops at it, removes `FILE` and prints `refused value_unwritable`. The message is only
+    that value, never the stored value (section 13).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(REFUSED_VALUE_UNWRITABLE)
+
+
+def _stored_time(seconds: int) -> str:
+    """A stored `received_at` or `published_at` as a time of section 2, or `ValueUnwritable`."""
     text = time_text(seconds)
     if text is None:
-        raise ValueError("a time of the export is outside the form of section 2")
+        raise ValueUnwritable()
     return text
+
+
+def _stored_key_id(hub_key_id: str) -> str:
+    """A stored `hub_key_id`, written as `signed_by`, when it follows the `id` rule."""
+    if not valid_key_id(hub_key_id):
+        raise ValueUnwritable()
+    return hub_key_id
 
 
 def write_export(
     events: Sequence[StoredEvent], checkpoints: Sequence[Checkpoint], exported_at: int
 ) -> bytes:
     """The export file of section 12.3: the header with the head (the last event), every event in
-    the given order, and the checkpoints by hub key id in byte order, then by position."""
+    the given order, and the checkpoints by hub key id in byte order, then by position.
+
+    It never writes a stored value outside the form of its member. Of the stored values it checks
+    the three whose form no column type or `CHECK` of section 11.3 guarantees: `received_at`, and
+    a checkpoint's `published_at` and `hub_key_id`. At the first that fails, in the order of the
+    file, it raises `ValueUnwritable` and returns nothing, so no partial file comes from here.
+    `exported_at` is the caller's clock, no stored value: one outside the form of section 2 is a
+    fault of the caller, `ValueError`.
+    """
+    exported = time_text(exported_at)
+    if exported is None:
+        raise ValueError("exported_at is outside the form of section 2")
     last = events[-1] if events else None
     out = [
         _line(
@@ -83,7 +118,7 @@ def write_export(
                 "format": EXPORT_FORMAT,
                 "position": 0 if last is None else last.position,
                 "record_hash": None if last is None else last.record_hash,
-                "exported_at": _time(exported_at),
+                "exported_at": exported,
             }
         )
     ]
@@ -93,7 +128,7 @@ def write_export(
                 {
                     "type": TYPE_EVENT,
                     "position": stored.position,
-                    "received_at": _time(stored.received_at),
+                    "received_at": _stored_time(stored.received_at),
                     "event_hash": stored.event_hash,
                     "record_hash": stored.record_hash,
                     "event": b64url_encode(stored.text),
@@ -101,15 +136,18 @@ def write_export(
                 }
             )
         )
-    for checkpoint in sorted(checkpoints, key=lambda item: (item.hub_key_id.encode("ascii"), item.position)):
+    # Byte order of the stored text (`COLLATE "C"`, section 12.1); a stored hub key id outside the
+    # `id` rule can hold any character, so it is ordered by its UTF-8 bytes, which for a valid id
+    # are its ASCII bytes.
+    for checkpoint in sorted(checkpoints, key=lambda item: (item.hub_key_id.encode("utf-8"), item.position)):
         out.append(
             _line(
                 {
                     "type": TYPE_CHECKPOINT,
                     "position": checkpoint.position,
                     "record_hash": checkpoint.record_hash,
-                    "published_at": _time(checkpoint.published_at),
-                    "signed_by": checkpoint.hub_key_id,
+                    "published_at": _stored_time(checkpoint.published_at),
+                    "signed_by": _stored_key_id(checkpoint.hub_key_id),
                     "signature": b64url_encode(checkpoint.signature),
                 }
             )
@@ -366,5 +404,5 @@ def verify_export(data: bytes, keys: KeyRing, hub_keys: Mapping[str, bytes]) -> 
     try:
         export = parse_export(data)
     except ExportInvalid as invalid:
-        return FoldResult(state=EMPTY_STATE, failure=Failure(FILE_INVALID, invalid.position, None))
+        return FoldResult(state=EMPTY_STATE, failure=Failure(FILE_INVALID, invalid.position))
     return verify_record(export.events, export.checkpoints, keys, hub_keys, None)

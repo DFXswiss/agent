@@ -17,9 +17,18 @@ from agent_core.record.checkpoint import (
     checkpoint_signature_valid,
     checkpoint_text,
     checkpoint_valid,
+    checkpoint_well_formed,
     full_hour,
 )
-from agent_core.record.event import Change, build_event_text, parse_event, record_hash
+from agent_core.record.event import (
+    MAX_TIME,
+    MIN_TIME,
+    STORED_INFINITY,
+    Change,
+    build_event_text,
+    parse_event,
+    record_hash,
+)
 from agent_core.record.state import EMPTY_STATE, Head
 from agent_core.record.export import verify_export, write_export
 from agent_core.record.verify import RowCopies, StoredEvent, fold_events, verify_record
@@ -137,7 +146,6 @@ def test_a_verification_of_a_running_process_compares_its_head() -> None:
     result = verify_record(world.stored, [], world.keys, {}, beyond)
     assert result.failure is not None
     assert (result.failure.failure, result.failure.position) == ("position_gap", 4)
-    assert result.failure.event is None
     empty = verify_record([], [], world.keys, {}, beyond)
     assert empty.failure is not None
     assert (empty.failure.failure, empty.failure.position) == ("position_gap", 1)
@@ -159,7 +167,7 @@ def test_event_invalid_for_a_text_and_for_a_value() -> None:
     broken = replace(world.stored[2], text=b"agent-event-v1")
     result = verify_record([*world.stored[:2], broken], [], world.keys, {}, None)
     assert result.failure is not None
-    assert (result.failure.failure, result.failure.position, result.failure.event) == ("event_invalid", 3, None)
+    assert (result.failure.failure, result.failure.position) == ("event_invalid", 3)
     assert result.state.head is not None
     assert result.state.head.position == 2
     malformed = text_of(ALICE.id, new_id(), "task", work, world.now, world.prev(ALICE.id),
@@ -168,7 +176,6 @@ def test_event_invalid_for_a_text_and_for_a_value() -> None:
     result = verify_record(events, [], world.keys, {}, None)
     assert result.failure is not None
     assert (result.failure.failure, result.failure.position) == ("event_invalid", 4)
-    assert result.failure.event is not None
 
 
 @pytest.mark.parametrize("column", ["event_hash", "event_id", "actor_key_id", "prev_hash"])
@@ -219,7 +226,6 @@ def test_certificate_not_supported_in_every_fold() -> None:
     result = verify_record(events, [], world.keys, {}, None)
     assert result.failure is not None
     assert (result.failure.failure, result.failure.position) == ("certificate_not_supported", 4)
-    assert result.failure.event is not None and result.failure.event.object_id == work
     assert result.state == world.state
     # The incremental fold, after the state of a running process.
     incremental = fold_events(world.state, events[3:], world.keys, None)
@@ -312,7 +318,6 @@ def test_event_refused_and_the_state_before_it() -> None:
     result = verify_record(events, [], world.keys, {}, None)
     assert result.failure is not None
     assert (result.failure.failure, result.failure.position) == ("event_refused", 4)
-    assert result.failure.event is not None and result.failure.event.object_id == work
     assert result.state == world.state
 
 
@@ -347,6 +352,81 @@ def test_checkpoints_are_checked_for_the_given_hub_key_ids() -> None:
     # Without the hub key id, the same checkpoint is skipped.
     skipped = checkpoint(9, last.record_hash, T0, HUB, HUB_SEED)
     assert verify_record(world.stored, [skipped], world.keys, {}, None).failure is None
+
+
+UNWRITABLE_TIMES = [MAX_TIME + 1, STORED_INFINITY, -STORED_INFINITY, MIN_TIME - 1]
+UNWRITABLE_TIME_IDS = ["year 10000", "infinity", "-infinity", "year 0"]
+KEY_IDS_OUTSIDE_THE_ID_RULE = ["Hub-2", 'hub"2', "h2", "-hub", "hub-", "", "hüb"]
+
+
+@pytest.mark.parametrize("published_at", UNWRITABLE_TIMES, ids=UNWRITABLE_TIME_IDS)
+@pytest.mark.parametrize("hub", [HUB, "hub-2"], ids=["own hub key id", "another hub key id"])
+@pytest.mark.parametrize("hub_keys", [HUB_KEYS, {}], ids=["hub key given", "no hub key given"])
+def test_checkpoint_invalid_for_a_published_at_that_is_no_time_also_unchecked(
+    published_at: int, hub: str, hub_keys: dict[str, bytes]
+) -> None:
+    """Section 12.1, row `checkpoint_invalid` (decision 103): the form of `published_at` is checked
+    for every stored checkpoint, also one whose signature is not checked, at the position it names."""
+    world, _ = story()
+    stored = checkpoint(2, world.stored[1].record_hash, T0, hub, 31)
+    bad = replace(stored, published_at=published_at)
+    result = verify_record(world.stored, [bad], world.keys, hub_keys, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 2)
+    assert result.state == world.state
+
+
+@pytest.mark.parametrize("hub_key_id", KEY_IDS_OUTSIDE_THE_ID_RULE)
+@pytest.mark.parametrize("hub_keys", [HUB_KEYS, {}], ids=["hub key given", "no hub key given"])
+def test_checkpoint_invalid_for_a_hub_key_id_outside_the_id_rule(hub_key_id: str, hub_keys: dict[str, bytes]) -> None:
+    """Section 12.1, row `checkpoint_invalid` (decision 103): a stored hub key id outside the `id`
+    rule of KEY-PROTOCOL.md section 3 fails, whether or not any key is given for it."""
+    world, _ = story()
+    bad = replace(checkpoint(3, world.stored[2].record_hash, T0, HUB, HUB_SEED), hub_key_id=hub_key_id)
+    result = verify_record(world.stored, [bad], world.keys, {**hub_keys, hub_key_id: public(HUB_SEED)}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 3)
+    result = verify_record(world.stored, [bad], world.keys, hub_keys, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 3)
+
+
+def test_checkpoint_form_is_decided_in_the_order_of_the_rows() -> None:
+    """Section 12.1: the events first, then the end of the snapshot against the head in memory,
+    then the checkpoints in the given order; the first failure ends the run."""
+    world, _ = story()
+    malformed = replace(checkpoint(1, world.stored[0].record_hash, T0, "hub-2", 31), published_at=STORED_INFINITY)
+    # An event failure comes first: an unwritable `received_at` fails `event_time_invalid`.
+    events = [*world.stored[:2], replace(world.stored[2], received_at=STORED_INFINITY)]
+    result = verify_record(events, [malformed], world.keys, HUB_KEYS, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("event_time_invalid", 3)
+    # The comparison with the head in memory comes before the checkpoints.
+    beyond = Head(position=5, received_at=0, record_hash="f" * 64)
+    result = verify_record(world.stored, [malformed], world.keys, HUB_KEYS, beyond)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("position_gap", 4)
+    # Among the checkpoints, the first that fails in the given order decides.
+    beyond_head = checkpoint(9, world.stored[2].record_hash, T0, HUB, HUB_SEED)
+    for order, position in (([beyond_head, malformed], 9), ([malformed, beyond_head], 1)):
+        result = verify_record(world.stored, order, world.keys, HUB_KEYS, None)
+        assert result.failure is not None
+        assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", position)
+    # A well-formed checkpoint of another hub key id is still skipped beyond its form.
+    skipped = checkpoint(9, "0" * 64, T0, "hub-2", 31)
+    assert verify_record(world.stored, [skipped], world.keys, HUB_KEYS, None).failure is None
+
+
+def test_the_newest_checkpoint_check_of_step_3_includes_the_form_of_published_at() -> None:
+    """Section 12.2 step 3: position, record hash, `published_at` as a time of section 2, signature."""
+    valid = checkpoint(2, "b" * 64, T0, HUB, HUB_SEED)
+    assert checkpoint_well_formed(valid)
+    for published_at in UNWRITABLE_TIMES:
+        unwritable = replace(valid, published_at=published_at)
+        assert not checkpoint_well_formed(unwritable)
+        assert not checkpoint_valid(unwritable, 2, "b" * 64, public(HUB_SEED))
+    for hub_key_id in KEY_IDS_OUTSIDE_THE_ID_RULE:
+        assert not checkpoint_well_formed(replace(valid, hub_key_id=hub_key_id))
 
 
 def test_a_checkpoint_of_an_empty_record_is_beyond_the_head() -> None:

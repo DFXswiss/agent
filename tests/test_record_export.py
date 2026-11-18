@@ -14,10 +14,20 @@ import pytest
 
 from agent_core.keys import KeyRing
 from agent_core.record.checkpoint import Checkpoint
-from agent_core.record.event import time_text
-from agent_core.record.export import ExportInvalid, parse_export, verify_export, write_export
+from agent_core.record.event import MAX_TIME, MIN_TIME, time_text
+from agent_core.record.export import ExportInvalid, ValueUnwritable, parse_export, verify_export, write_export
+from agent_core.record.verify import StoredEvent
 from tests.test_record_reducer import BOB, T0, public
-from tests.test_record_verify import HUB, HUB_KEYS, HUB_SEED, checkpoint, story
+from tests.test_record_verify import (
+    HUB,
+    HUB_KEYS,
+    HUB_SEED,
+    KEY_IDS_OUTSIDE_THE_ID_RULE,
+    UNWRITABLE_TIME_IDS,
+    UNWRITABLE_TIMES,
+    checkpoint,
+    story,
+)
 
 EXPORTED_AT = T0 + 86400
 
@@ -102,10 +112,64 @@ def test_checkpoint_lines_are_written_in_byte_order_of_the_hub_key_id() -> None:
     assert verify_export(data, world.keys, {"hub1": public(HUB_SEED), "hub-2": public(31)}).failure is None
 
 
-def test_the_writer_refuses_a_time_outside_its_form() -> None:
+def test_the_writer_refuses_an_exported_at_outside_its_form() -> None:
+    """`exported_at` comes from no stored column: a fault of the caller, not `value_unwritable`."""
     world, _ = story()
     with pytest.raises(ValueError):
         write_export(world.stored, [], 10**12)
+    assert not issubclass(ValueUnwritable, ValueError)
+
+
+def unwritable(events: list[StoredEvent], checkpoints: list[Checkpoint]) -> None:
+    with pytest.raises(ValueUnwritable) as refused:
+        write_export(events, checkpoints, EXPORTED_AT)
+    assert str(refused.value) == "value_unwritable"
+
+
+@pytest.mark.parametrize("received_at", UNWRITABLE_TIMES, ids=UNWRITABLE_TIME_IDS)
+@pytest.mark.parametrize("index", [0, 2], ids=["first event", "last event"])
+def test_export_refuses_value_unwritable_for_a_received_at_that_is_no_time(received_at: int, index: int) -> None:
+    """Section 12.3 (decision 57): a stored `received_at` that is no time of section 2."""
+    world, _ = story()
+    events = list(world.stored)
+    events[index] = replace(events[index], received_at=received_at)
+    unwritable(events, [])
+
+
+@pytest.mark.parametrize("published_at", UNWRITABLE_TIMES, ids=UNWRITABLE_TIME_IDS)
+@pytest.mark.parametrize("hub", [HUB, "hub-2"], ids=["own hub key id", "another hub key id"])
+def test_export_refuses_value_unwritable_for_a_published_at_that_is_no_time(published_at: int, hub: str) -> None:
+    """Section 12.3 (decision 57): a checkpoint's stored `published_at` that is no time of section 2,
+    whichever hub key id it has."""
+    world, _ = story()
+    good = checkpoint(3, world.stored[2].record_hash, T0, HUB, HUB_SEED)
+    bad = replace(checkpoint(2, world.stored[1].record_hash, T0, hub, 31), published_at=published_at)
+    unwritable(world.stored, [good, bad])
+
+
+@pytest.mark.parametrize("hub_key_id", KEY_IDS_OUTSIDE_THE_ID_RULE)
+def test_export_refuses_value_unwritable_for_a_hub_key_id_outside_the_id_rule(hub_key_id: str) -> None:
+    """Section 12.3 (decision 57): a checkpoint's stored `hub_key_id`, written as `signed_by`."""
+    world, _ = story()
+    good = checkpoint(3, world.stored[2].record_hash, T0, HUB, HUB_SEED)
+    bad = replace(checkpoint(2, world.stored[1].record_hash, T0, HUB, HUB_SEED), hub_key_id=hub_key_id)
+    unwritable(world.stored, [good, bad])
+
+
+def test_the_values_the_writer_checks_are_exactly_its_limits() -> None:
+    """The ends of a time of section 2 and the shortest and longest ids are written."""
+    world, _ = story()
+    events = [replace(world.stored[0], received_at=MIN_TIME), *world.stored[1:2],
+              replace(world.stored[2], received_at=MAX_TIME)]
+    edges = [replace(checkpoint(1, "a" * 64, T0, "h-1", 31), published_at=MIN_TIME),
+             replace(checkpoint(2, "a" * 64, T0, "h" * 63, 31), published_at=MAX_TIME)]
+    lines = lines_of(write_export(events, edges, EXPORTED_AT))
+    assert [json.loads(line)["received_at"] for line in lines[1:4:2]] == ["0001-01-01T00:00:00Z",
+                                                                         "9999-12-31T23:59:59Z"]
+    # Byte order: `-` (0x2d) before `h` (0x68).
+    assert [json.loads(line)["signed_by"] for line in lines[4:]] == ["h-1", "h" * 63]
+    assert [json.loads(line)["published_at"] for line in lines[4:]] == ["0001-01-01T00:00:00Z",
+                                                                       "9999-12-31T23:59:59Z"]
 
 
 def test_offline_verify_of_a_well_formed_export_that_fails() -> None:
@@ -129,7 +193,7 @@ def test_offline_verify_of_a_well_formed_export_that_fails() -> None:
 def test_verify_export_reports_file_invalid_with_its_position() -> None:
     result = verify_export(b"", KeyRing({}), {})
     assert result.failure is not None
-    assert (result.failure.failure, result.failure.position, result.failure.event) == ("file_invalid", 0, None)
+    assert (result.failure.failure, result.failure.position) == ("file_invalid", 0)
 
 
 # --- file_invalid and its position ---------------------------------------------------------------------
@@ -232,7 +296,13 @@ def test_an_event_position_outside_its_form(literal: bytes) -> None:
         (2, {"record_hash": "A" * 64}, 2),
         (2, {"event": "a=="}, 2),
         (2, {"signature": "AAAA"}, 2),
+        (2, {"received_at": "10000-01-01T00:00:00Z"}, 2),
+        (2, {"received_at": "infinity"}, 2),
         (4, {"signed_by": "Hub"}, 4),
+        (4, {"signed_by": "Hub-2"}, 4),
+        (4, {"signed_by": 'hub"2'}, 4),
+        (4, {"published_at": "10000-01-01T00:00:00Z"}, 4),
+        (4, {"published_at": "-infinity"}, 4),
         (4, {"published_at": 1}, 4),
         (4, {"record_hash": None}, 4),
         (4, {"signature": "x"}, 4),

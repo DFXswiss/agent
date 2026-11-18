@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from agent_core.record.event import parse_event, time_text
+from agent_core.record.event import MAX_TIME, STORED_INFINITY, Change, parse_event, time_text
+from agent_core.record.verify import verify_record
 from agent_core.record.visibility import (
     WITHHELD,
     answered_failure,
@@ -41,6 +44,7 @@ from tests.test_record_reducer import (
     key,
     new_id,
 )
+from tests.test_record_verify import forged, rehash, story, text_of
 
 NO_READ = key("nora-laptop-1", 20, "agent", "nora", TEAM, ("record:write", "device:executor"), None, None, None)
 FOREIGN_WATCHER = key("lib-watcher-1", 21, "service", "lib-watcher", TEAM, (READ,), (FOREIGN_REPO,), FAR, None)
@@ -124,54 +128,72 @@ def test_a_withheld_entry_and_a_full_entry() -> None:
                     text=b"t", signature=b"s", visible=True)
 
 
-@pytest.mark.parametrize("failure", ["position_gap", "record_hash_mismatch", "checkpoint_invalid"])
-def test_record_wide_failures_are_named_to_every_key(failure: str) -> None:
-    world = World(STANDARD)
-    assert answered_failure(DAVE, failure, None, world.state) == failure
+RECORD_WIDE = ["position_gap", "record_hash_mismatch", "checkpoint_invalid"]
+# Section 7.9: every failure of section 12.1 that concerns an event.
+EVENT_FAILURES = ["event_invalid", "certificate_not_supported", "row_mismatch", "key_unknown",
+                  "event_signature_invalid", "event_id_taken", "chain_broken", "event_time_invalid",
+                  "event_refused"]
+
+
+@pytest.mark.parametrize("failure", RECORD_WIDE)
+def test_verify_answer_names_a_record_wide_failure(failure: str) -> None:
+    assert answered_failure(failure) == failure
+
+
+@pytest.mark.parametrize("failure", EVENT_FAILURES)
+def test_verify_answer_withholds_every_failure_that_concerns_an_event(failure: str) -> None:
+    assert answered_failure(failure) == WITHHELD
 
 
 def test_file_invalid_never_reaches_an_answer() -> None:
     with pytest.raises(ValueError):
-        answered_failure(ALICE, "file_invalid", None, World(STANDARD).state)
+        answered_failure("file_invalid")
 
 
-def test_event_failures_are_named_only_to_a_key_that_sees_the_object() -> None:
+def test_verify_answer_is_withheld_for_a_key_that_sees_the_failing_event() -> None:
+    """Section 14, `withheld` to a key that sees the failing event: `chain_broken` of an alice event
+    on a work task that bob sees, chained to an earlier event of alice that is not her previous
+    one. The answer is `withheld`, the same as for a key of another team; the true value and the
+    position stay in the failure for the log line `verify_failed <position> <failure>`."""
+    world, work = story()
+    first = world.stored[0]
+    fork = text_of(ALICE.id, new_id(), "task", work, world.now, parse_event(first.text).event_hash,
+                   [Change("title", b"Fix it", b"Fix")])
+    events = rehash([*world.stored, forged(world, ALICE.id, fork, 4, world.now)])
+    result = verify_record(events, [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("chain_broken", 4)
+    assert sees_event(BOB, result.state, parse_event(fork))
+    assert not sees_event(DAVE, result.state, parse_event(fork))
+    assert answered_failure(result.failure.failure) == WITHHELD
+
+
+def test_verify_answer_is_withheld_for_an_unwritable_received_at() -> None:
+    """Section 14: a stored `received_at` of 10000-01-01 and of `infinity` at the last position
+    answers `withheld` there, not `record_hash_mismatch`; the log keeps `event_time_invalid`."""
+    world, _ = story()
+    for received_at in (MAX_TIME + 1, STORED_INFINITY):
+        events = [*world.stored[:2], replace(world.stored[2], received_at=received_at)]
+        result = verify_record(events, [], world.keys, {}, None)
+        assert result.failure is not None
+        assert (result.failure.failure, result.failure.position) == ("event_time_invalid", 3)
+        assert answered_failure(result.failure.failure) == WITHHELD
+
+
+def test_a_comment_create_names_a_task_only_by_a_task_id() -> None:
+    """Check 12 (d) of section 6.7: the `task` value of a comment create names a task only when it
+    is the id of a task; a comment id names no task, although the key sees the comment's task."""
     world = World(STANDARD)
     work = create_work(world, ALICE.id, [])
-    issue = create_security(world, ALICE.id, "login-bypass", [])
     comment = new_id()
     world.write(ALICE.id, "comment", comment, [("task", None, work), ("body", None, "x")], EVENTS)
     state = world.state
-
-    def event(object_type: str, object_id: str, changes: list) -> object:
-        text, _ = world.sign(ALICE.id, object_type, object_id, changes, new_id())
-        return parse_event(text)
-
-    update = event("task", work, [("title", "Fix login", "x")])
-    assert answered_failure(BOB, "event_signature_invalid", update, state) == "event_signature_invalid"
-    assert answered_failure(DAVE, "event_signature_invalid", update, state) == WITHHELD
-    secret = event("task", issue, [("title", "Login bypass", "x")])
-    assert answered_failure(BOB, "chain_broken", secret, state) == "chain_broken"
-    assert answered_failure(CAROL, "chain_broken", secret, state) == WITHHELD
-    on_comment = event("comment", comment, [("body", "x", "y")])
-    assert answered_failure(BOB, "event_refused", on_comment, state) == "event_refused"
-    assert answered_failure(DAVE, "event_refused", on_comment, state) == WITHHELD
-    create = event("task", new_id(), [("kind", None, "work")])
-    assert answered_failure(ALICE, "event_refused", create, state) == WITHHELD
-    named = event("comment", new_id(), [("task", None, work), ("body", None, "x")])
-    assert answered_failure(BOB, "event_id_taken", named, state) == "event_id_taken"
-    assert answered_failure(DAVE, "event_id_taken", named, state) == WITHHELD
-    for changes in ([("body", None, "x")], [("task", work, None)], [("task", None, "é")], [("task", None, new_id())]):
-        assert answered_failure(BOB, "event_refused", event("comment", new_id(), changes), state) == WITHHELD
-    # A comment id names no task (section 7.9), although BOB sees the comment's task.
-    on_a_comment_id = event("comment", new_id(), [("task", None, comment), ("body", None, "x")])
     assert sees_object(BOB, state, comment)
-    assert answered_failure(BOB, "event_refused", on_a_comment_id, state) == WITHHELD
     assert sees_named_task(BOB, state, work.encode("ascii"))
     assert not sees_named_task(BOB, state, comment.encode("ascii"))
     assert not sees_named_task(DAVE, state, work.encode("ascii"))
     assert not sees_named_task(BOB, state, None)
-    assert answered_failure(BOB, "event_invalid", None, state) == WITHHELD
+    assert not sees_named_task(BOB, state, "é".encode())
 
 
 def test_another_team_sees_nothing() -> None:

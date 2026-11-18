@@ -1,7 +1,9 @@
-"""Which key sees which object, event and failure (RECORD-PROTOCOL.md sections 3, 7.4 and 7.9).
+"""Which key sees which object and event, and the answered failure (RECORD-PROTOCOL.md sections 3,
+7.4 and 7.9).
 
 Pure functions over a state and a key entry of the keys file. A key that sees a task sees the
 whole task, every link included (section 3); a key that does not see an object reads nothing of it.
+The answered failure of section 7.9 is the one answer here that depends on no key.
 """
 
 from __future__ import annotations
@@ -20,7 +22,8 @@ SCOPE_SECURITY = "record:security"
 SERVICE = "service"
 
 WITHHELD = "withheld"
-# Section 7.9: failures that concern only record-wide positions, hashes and checkpoints.
+# Section 7.9: the only failures the answer names, for every key; they concern only record-wide
+# positions, `received_at` values, hashes and checkpoints. Every other failure is `withheld`.
 RECORD_WIDE_FAILURES = frozenset({POSITION_GAP, RECORD_HASH_MISMATCH, CHECKPOINT_INVALID})
 
 
@@ -64,8 +67,7 @@ def sees_named_task(entry: KeyEntry, state: StateView, value: bytes | None) -> b
     """Whether the `task` value of a comment create names a task the key sees.
 
     The value names a task when it is a UUID (section 5.3) that is the id of a task; the id of a
-    comment, or of nothing, names no task. Check 12 (d) of section 6.7 and the answer of section 7.9
-    use this one test.
+    comment, or of nothing, names no task. Check 12 (d) of section 6.7 uses this test.
     """
     if value is None or not valid_value(COMMENT, "task", value):
         return False
@@ -109,25 +111,14 @@ def event_entry(
     }
 
 
-def answered_failure(entry: KeyEntry, failure: str, event: Event | None, state: StateView) -> str:
-    """The `failure` of section 7.9 for the calling key.
+def answered_failure(failure: str) -> str:
+    """The `failure` of the answer of section 7.9 for the true value `failure` of section 12.1.
 
-    `event` is the failing event when its text could be read, `state` the state that the
-    verification folded from the events before it. A record-wide failure is named to every key;
-    every other failure only to a key that sees the failing event's object in that state: for an
-    update of a task that task, for an event of an existing comment the comment's task, and for a
-    create of a comment the task that its `task` value names (a comment id names no task).
+    The answer does not depend on what the calling key sees, so this takes no key and no state
+    (section 3, decision 73): a record-wide failure is named; every failure that concerns an event
+    is `withheld`, for every key, also one that sees the failing event's object. The true value
+    stays in `verify.Failure.failure` for the log line of section 13.
     """
     if failure == FILE_INVALID:
         raise ValueError("file_invalid never arises in the hub")
-    if failure in RECORD_WIDE_FAILURES:
-        return failure
-    if event is None:
-        return WITHHELD
-    if event.object_id in state.objects:
-        return failure if sees_object(entry, state, event.object_id) else WITHHELD
-    if event.object_type != COMMENT:
-        return WITHHELD
-    # The fields of an event are unique (section 4.2), so there is at most one change of `task`.
-    named = next((change.new for change in event.changes if change.field == "task"), None)
-    return failure if sees_named_task(entry, state, named) else WITHHELD
+    return failure if failure in RECORD_WIDE_FAILURES else WITHHELD
