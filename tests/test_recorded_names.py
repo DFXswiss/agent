@@ -476,6 +476,93 @@ def test_tick_keeps_old_checklist_keys_until_recorded_slots_is_configured(
         store.close()
 
 
+def test_tick_advances_a_younger_task_past_a_refused_runnable_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_coordinator_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    old = "aa000001-0000-4000-8000-000000000311"
+    other = "aa000001-0000-4000-8000-000000000312"
+    for tid, created in (
+        (old, "2026-01-01T00:00:00Z"),
+        (other, "2026-01-02T00:00:00Z"),
+    ):
+        store.write(
+            "task",
+            "insert",
+            tid,
+            {
+                "id": tid,
+                "session_id": worker.session_id,
+                "workflow": "implement",
+                "state": "open",
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "payload": {"coordinator": {"phase": "implement"}},
+                "created_at": created,
+            },
+        )
+    old_names = {
+        "review_1_quality": "driver-a_pr_quality",
+        "review_1_logic": "driver-a_pr_logic",
+        "review_2_quality": "driver-b_pr_quality",
+        "review_2_logic": "driver-b_pr_logic",
+    }
+    stored = [old_names.get(key, key) for key in CHECKLIST_KEYS["implement"]]
+    for key in stored:
+        cid = str(uuid.uuid4())
+        store.write(
+            "checklist_item",
+            "insert",
+            cid,
+            {
+                "id": cid,
+                "task_id": old,
+                "key": key,
+                "status": "ja",
+                "evidence": "reviewed",
+                "source": "script",
+                "deviation_declared": False,
+                "deviation_granted": False,
+                "granted_by": None,
+                "updated_at": utcnow(),
+            },
+        )
+    advanced: list[str] = []
+
+    def advance(store, worker, task, **kwargs):  # type: ignore[no-untyped-def]
+        advanced.append(str(task["id"]))
+        return [f"advanced {task['id']}"]
+
+    def runner(argv):  # type: ignore[no-untyped-def]
+        pytest.fail(f"a refused tick must not run {argv}")
+
+    def keys(tid: str) -> list[str]:
+        return sorted(
+            str(row["key"])
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid
+        )
+
+    monkeypatch.setattr(coordinator_runtime, "_advance_guarded", advance)
+    try:
+        assert recorded_names() is None
+        # The older task is runnable but refused; the younger task must still
+        # advance in the same tick.
+        assert coordinator_runtime.advance_one(
+            store, worker, runner=runner, lane_runner=None
+        ) == [
+            f"blocked: task {old} holds unknown checklist key driver-a_pr_logic {HINT}",
+            f"advanced {other}",
+        ]
+        assert advanced == [other]
+        assert keys(old) == sorted(stored)
+        assert keys(other) == sorted(CHECKLIST_KEYS["implement"])
+    finally:
+        store.close()
+
+
 @pytest.mark.no_pg
 def test_read_only_views_show_neutral_phases_without_writing() -> None:
     install_recorded_names(RECORDED)

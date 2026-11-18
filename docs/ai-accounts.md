@@ -1454,7 +1454,9 @@ boolean. `account_file.file`, `credential.file` and optional
 `credential` keys `label`, `object`, `token`, `token_name`, `expires_at`,
 `subscription`, `login_name` and `renew` are non-empty single-line strings;
 `multiplier.plan` and `multiplier.field` are too. `multiplier.pattern` is a
-non-empty string of at most 500 characters with exactly one group. The
+non-empty string of at most 500 characters with exactly one group; the pattern
+is matched as written, and a `(?i)` at its start makes the match
+case-insensitive. The
 `keychain` keys `service`, `user_env`, `fallback_user` and `platform` are
 non-empty single-line strings, `user_env` is an environment variable name,
 `user_pattern` is a valid regular expression, and `argv` is a non-empty list of

@@ -2917,6 +2917,19 @@ class A38AttributionPatternsTests(unittest.TestCase):
             del os.environ["A38_ATTRIBUTION_PATTERNS"]
             return reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
 
+    def test_duplicate_keys_are_invalid(self) -> None:
+        raw = (
+            '{"tool_tokens":["tool-a"],"tool_tokens":["tool-b"],'
+            '"session_headers":["Tool-A-Session"],'
+            '"noreply_emails":["noreply@tool-a.example"]}'
+        )
+        with self.assertRaises(a38_guard.AttributionPatternsError) as caught:
+            parse_attribution_patterns(raw)
+        self.assertEqual(
+            str(caught.exception),
+            "AI attribution patterns are invalid: duplicate key 'tool_tokens'",
+        )
+
     def test_missing_patterns_hard_fail_an_otherwise_passing_pull(self) -> None:
         fake = FakeAPI()
         fake.add_author_report(
