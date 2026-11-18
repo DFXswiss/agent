@@ -394,18 +394,12 @@ def test_unreadable_usage_snapshot_is_skipped_with_its_own_reason(
     assert choice.load == 50
 
 
-class UntouchableStore:
-    """A store that fails any read: a single-account role reads nothing."""
-
-    def __getattr__(self, name: str) -> Any:
-        raise AssertionError(f"selection read the store: {name}")
-
-
-@pytest.mark.no_pg
-def test_single_account_role_is_returned_without_reading(tmp_path: Path) -> None:
-    ai = configure(tmp_path, tmp_path / "logins")
+def test_single_account_role_is_returned_without_choosing(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    ai = configure(store.home, tmp_path / "logins")
     role = ai.roles["driver-c-writer"]
-    choice = select_lane_account(UntouchableStore(), ai, role, now=NOW)  # type: ignore[arg-type]
+    # No login and no usage snapshot exist: a single-account role needs neither.
+    choice = select_lane_account(store, ai, role, now=NOW)
     assert choice.role is role
     assert choice.load is None
     assert choice.running_lanes is None
@@ -566,13 +560,13 @@ def test_agent_run_refuses_a_pool_role_without_an_agent_row(
     assert not any(agent.get("role") == "implementer" for agent in _agents(tmp_path, tid))
 
 
-@pytest.mark.no_pg
 def test_pool_selection_refuses_a_time_without_a_zone(tmp_path: Path) -> None:
-    ai = configure(tmp_path, tmp_path / "logins")
+    store = Store(tmp_path)
+    ai = configure(store.home, tmp_path / "logins")
     naive = datetime(2026, 11, 17, 12, 0)
     with pytest.raises(AccountError) as excinfo:
-        # The refusal comes before any store read.
-        select_lane_account(UntouchableStore(), ai, ai.roles[POOL_ROLE], now=naive)  # type: ignore[arg-type]
+        # No member has a login: the time is refused before members are read.
+        select_lane_account(store, ai, ai.roles[POOL_ROLE], now=naive)
     assert str(excinfo.value) == "pool selection time must carry a time zone"
 
 
