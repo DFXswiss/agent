@@ -32,10 +32,10 @@ from tests.test_record_connection import MALFORMED
 SRC = Path(__file__).resolve().parents[1] / "src"
 TABLES = ("record.schema_version", "record.event", "record.checkpoint")
 TRIGGERS = [
-    ("checkpoint_no_change", "record.checkpoint", "O", "refuse_change"),
-    ("checkpoint_no_truncate", "record.checkpoint", "O", "refuse_change"),
-    ("event_no_change", "record.event", "O", "refuse_change"),
-    ("event_no_truncate", "record.event", "O", "refuse_change"),
+    ("checkpoint_no_change", "record.checkpoint", "A", "refuse_change"),
+    ("checkpoint_no_truncate", "record.checkpoint", "A", "refuse_change"),
+    ("event_no_change", "record.event", "A", "refuse_change"),
+    ("event_no_truncate", "record.event", "A", "refuse_change"),
 ]
 COLUMNS = [
     ("checkpoint", "hub_key_id", "text", "NO"),
@@ -981,6 +981,39 @@ def test_the_owner_gets_p0001_for_a_truncate_of_an_empty_table(record_db: Record
             assert refused.value.sqlstate == "P0001"
 
 
+@pytest.mark.parametrize("table", ["record.event", "record.checkpoint"])
+@pytest.mark.parametrize("statement", sorted(CHANGES))
+def test_the_trigger_refuses_a_change_also_with_session_replication_role_replica(
+    record_db: RecordDatabase, table: str, statement: str
+) -> None:
+    # Section 11.2: the triggers are enabled ALWAYS, so they fire also in a superuser session whose
+    # `session_replication_role` is `replica`.
+    migrated(record_db)
+    with connect(record_db.writer_url) as writer:
+        insert_event(writer)
+        insert_checkpoint(writer)
+    with record_db.admin() as admin:
+        admin.execute("SET session_replication_role = replica")
+        with pytest.raises(psycopg.Error) as refused:
+            admin.execute(CHANGES[statement].format(table=table))
+        assert refused.value.sqlstate == "P0001"
+        assert admin.execute(f"SELECT count(*) FROM {table}").fetchall() == [(1,)]
+
+
+def test_migrate_leaves_public_no_right_after_default_privileges_to_public(record_db: RecordDatabase) -> None:
+    with record_db.admin() as admin:
+        admin.execute(
+            sql.SQL("ALTER DEFAULT PRIVILEGES FOR ROLE {} GRANT ALL ON TABLES TO PUBLIC").format(
+                sql.Identifier(record_db.owner_role)
+            )
+        )
+    migrated(record_db)
+    with record_db.admin() as admin:
+        for table in TABLES:
+            assert admin.execute(PUBLIC_ACL_QUERIES[table]).fetchall() == [], table
+        assert privileges_of(admin, "public") == []
+
+
 def test_the_writer_inserts_and_reads(record_db: RecordDatabase) -> None:
     migrated(record_db)
     with connect(record_db.writer_url) as writer:
@@ -1186,7 +1219,7 @@ def test_the_command_without_variables() -> None:
     assert (result.stdout, result.stderr, result.returncode) == ("failed config\n", "", 1)
 
 
-@pytest.mark.parametrize("args", [[], ["export"], ["Migrate"]])
+@pytest.mark.parametrize("args", [[], ["Export"], ["Migrate"], ["-h"]])
 def test_an_unknown_command_prints_the_usage(args: list[str]) -> None:
     result = run_cli(args, {})
     assert (result.stdout, result.stderr, result.returncode) == ("", USAGE + "\n", 2)
