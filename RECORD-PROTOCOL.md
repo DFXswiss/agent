@@ -3294,6 +3294,6 @@ confirms or changes each one.
     to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) —
     fails verification with `event_time_invalid`, in the order of the table of §12.1 after
     `chain_broken` and before `record_hash_mismatch`, because no record hash can be computed from
-    it. The check constraint of the column `received_at` in §11.3 is not the defence against such
-    a value, because the owner role or a superuser can remove it; the rule of verification is
-    (§11.3, §12.1).
+    it. The check constraint of the column `received_at` in §11.3 does not refuse such a value: it
+    requires only whole seconds, and a year after 9999, `infinity` and `-infinity` all meet it.
+    The only defence is this rule of verification (§11.3, §12.1).
