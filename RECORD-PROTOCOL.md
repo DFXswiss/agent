@@ -611,7 +611,7 @@ other column is a state rule.
   reached `merged`, and `links` cannot change in `merged` (section 6.6), so it still holds. An
   event that changes `completion` from `verified` to `merged` on a task in `merged` with `links`
   and changes `status` neither to `done` (row 13) nor to `in_progress` (row 14) is refused with
-  `transition_invalid`. An event that changes `completion` from `verified` to `merged` and sets
+  `409` `transition_invalid`. An event that changes `completion` from `verified` to `merged` and sets
   the task back to `in_progress` matches row 14, which puts no condition on `completion`; it is
   accepted when row 14 holds, and the task is then in `in_progress` under the rule `merged`. A
   task in `merged` without `links` keeps its status when the event does not change `status`; its
@@ -625,10 +625,10 @@ other column is a state rule.
   from `in_progress` or `ready_for_review`: a task in `open` reaches `done` or `merged` through
   its assignee only by row 2 first and then row 10, two events. This is narrower than DESIGN.md §24.11 and a decision of section 17.
 - A change of `status` that matches no row by its state conditions is refused with
-  `transition_invalid`. A change that matches a row by its state conditions, but no such row
+  `409` `transition_invalid`. A change that matches a row by its state conditions, but no such row
   allows the actor, is refused with `change_not_allowed`.
 - An event that changes `verification`, whether it sets a value or removes it (`new` is `-`),
-  without matching row 11 is refused with `transition_invalid`. Row 11 sets a value; no row
+  without matching row 11 is refused with `409` `transition_invalid`. Row 11 sets a value; no row
   removes one, so a value of `verification` is never removed.
 - Row 11 needs a change of `verification`, and `old` and `new` of a change differ (section 4.2).
   When row 14 set a task back after an earlier confirmation, the next confirmation by row 11
@@ -640,8 +640,10 @@ other column is a state rule.
 
 Checked at write time only. Rule 1 is checked at check 12 (c) of section 6.7, before every check
 that reads the state of a team, so that a create for another team never reaches a check that can
-reveal that team's state (such as `short_name_taken`). Rules 2 to 6 are checked at check 18 of
-section 6.7, in this order:
+reveal that team's state (such as `short_name_taken`). The part of rule 3 that limits an event
+through `POST /api/key/record/watch` to the fields `status` and `fix` is also checked at check 12
+(e) of section 6.7, for the same reason. Rules 2 to 6 are checked at check 18 of section 6.7, in
+this order:
 
 | # | Rule | Status | `error` |
 |---|---|---|---|
@@ -724,12 +726,12 @@ failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transa
 | 9 | `prev_hash` is the event hash of the last accepted event of this key, or `-` when there is none. | 409 | `chain_broken` |
 | 10 | `signed_at` is at most 120 seconds after the `received_at` that step 2 of section 11.5 fixed for this append (section 4.6), and not earlier than `signed_at` of the last accepted event of this key. | 400 | `event_time_invalid` |
 | 11 | The actor's key is neither revoked nor expired at `received_at`. | 409 | `key_not_valid_at_receipt` |
-| 12 | The object, in this order: (a) through the watch endpoint, an object that does not exist or is not a task, such as a comment (404 `object_not_found`); (b) a create of a task without a change of `kind`, or a create of a comment without a change of `task` (409 `field_required`); (c) a create of a task with a change of `team` whose new value differs from the actor's `team`, actor rule 1 of section 6.5 (403 `change_not_allowed`); (d) an update of an object the actor does not see, or a create of a comment whose `task` value is not a UUID, names no task or names a task the actor does not see (404 `object_not_found`). | 403 / 404 / 409 | `change_not_allowed` / `object_not_found` / `field_required` |
+| 12 | The object, in this order: (a) through the watch endpoint, an object that does not exist or is not a task, such as a comment (404 `object_not_found`); (b) a create of a task without a change of `kind`, or a create of a comment without a change of `task` (409 `field_required`); (c) a create of a task with a change of `team` whose new value differs from the actor's `team`, actor rule 1 of section 6.5 (403 `change_not_allowed`); (d) an update of an object the actor does not see, or a create of a comment whose `task` value is not a UUID, names no task or names a task the actor does not see (404 `object_not_found`); (e) through the watch endpoint, an event that names any field other than `status` or `fix`, the field limit of actor rule 3 of section 6.5, checked here before every check that reads the state of the team (403 `change_not_allowed`). | 403 / 404 / 409 | `change_not_allowed` / `object_not_found` / `field_required` |
 | 13 | A create of a task of kind `security` by an actor without `record:security`. | 403 | `scope_missing` |
-| 14 | Every value of a field that the object type has is in the form of that field (section 5). | 400 | `value_invalid` |
+| 14 | Every value of a field that the object type of the event has is in the form of that field (section 5). | 400 | `value_invalid` |
 | 15 | Section 6.2. | 409 | `state_mismatch` |
 | 16 | Section 6.3. | 400 / 409 | `field_not_allowed` / `field_immutable` |
-| 17 | Section 6.4 (state conditions) and section 6.6, in the order of their tables. | 404 / 409 | as given there |
+| 17 | Section 6.4 (state conditions) and section 6.6, in the order of their tables. | 404 / 409 | `409` `transition_invalid` for section 6.4; section 6.6 as given there |
 | 18 | Section 6.5, rules 2 to 6, in the order of its table. | 403 / 409 | as given there |
 
 Checks 10, 11 and 18 use the one `received_at` that step 2 of section 11.5 fixed for this
@@ -1113,10 +1115,13 @@ hold; the value after each item is the refusal when the earlier checks of sectio
   17 when no row matches by its state conditions, or `change_not_allowed` by actor rule 2 or 3
   at check 18)
 - it changes no other field, except `fix` of a task of kind `security`, whose new value is one of
-  the task's `links` (otherwise the first refusal of section 6.7 that applies: for example
-  `value_invalid` for a malformed value, `field_not_allowed` for `fix` or another security field
-  on a task of kind `work`, `field_immutable` for `kind` or `team`, `links_frozen` or another
-  state rule of check 17, and otherwise `change_not_allowed` by actor rule 3)
+  the task's `links` (otherwise, when it names any field other than `status` or `fix`,
+  `change_not_allowed` at check 12 (e), which runs before every check that reads the state of the
+  team, so that such an event never reaches the uniqueness of `short_name` of check 17 and never
+  learns whether a task the watcher does not see uses a short name; for `fix`, the first refusal
+  of section 6.7 that applies: for example `value_invalid` for a malformed value,
+  `field_not_allowed` on a task of kind `work`, a state rule of check 17, and otherwise
+  `change_not_allowed` by actor rule 3)
 - every repository of the task's `links` is in the watcher's `subjects` (otherwise
   `subject_not_allowed`, actor rule 6)
 
@@ -1606,6 +1611,7 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `file_invalid` | Only in `verify` and `restore` (section 12.3): the export file breaks the file format of section 12.3. |
 | `position_gap` | The positions are not 1, 2, 3, … without gap; or, in a verification that a running hub process runs on request or periodically, the last event of the snapshot has a lower position than the head of the process's state in memory. |
 | `event_invalid` | An event text breaks section 4.2, or a value breaks the form of its field (the reducer's `value_invalid`). |
+| `certificate_not_supported` | Until section 10 is built: the `key_certificate` of an event is not `-` (check 5 of section 6.7). |
 | `row_mismatch` | A stored `event_id`, `actor_key_id`, `prev_hash` or `event_hash` differs from the value taken from the event text. |
 | `key_unknown` | `actor_key_id` is not an `ed25519` entry of the keys file. |
 | `event_signature_invalid` | The signature does not verify. |
@@ -1928,7 +1934,7 @@ record request <key id> <method> <path> <status> <result>
 ```
 
 `<method>` is the method of the request when it is `GET`, `POST` or `HEAD`, otherwise `-`.
-`<path>` is the raw path without the query when it equals, byte for byte, one of the nine paths
+`<path>` is the raw path without the query when it equals, byte for byte, one of the paths
 of the table of section 7.1, otherwise `-`. An unknown path, a path with a trailing slash or with
 percent-encoding, and an unknown method can carry text that a client chose, such as an id, and
 therefore never enter the log.
@@ -2319,8 +2325,13 @@ Visibility:
 The watcher:
 
 - rows 8 and 9 accepted; `fix` set to one of the links (accepted) and to another reference
-  (`change_not_allowed`); any other changeable field (`change_not_allowed`); `fix` on a task of
-  kind `work` (`field_not_allowed`); `kind` (`field_immutable`)
+  (`change_not_allowed`); any other changeable field (`change_not_allowed` at check 12 (e)); `fix`
+  on a task of kind `work` (`field_not_allowed`); `kind` (`change_not_allowed` at check 12 (e),
+  not `field_immutable`)
+- check 12 (e) of section 6.7: a watcher with `record:security` changes `short_name` of a security
+  issue it sees to the short name of a security issue of its team that it does not see, because
+  no repository of that issue is in its `subjects` (`change_not_allowed`, not
+  `short_name_taken`), and to an unused short name (`change_not_allowed`)
 - a link outside its `subjects` (`subject_not_allowed`, not `change_not_allowed`); a task that
   does not exist and the id of an existing comment (both `object_not_found`)
 - a watcher without `record:security`, whose `subjects` hold the task's `repository` and links,
@@ -2455,6 +2466,13 @@ Integrity and backup:
   at the position of the later one); the same export without `--hub-key` skips the checkpoint
   and prints `verified`; `restore` of the file with the repeated `event_id` prints
   `failed <position> event_id_taken` at step 1 (c), not `refused database`, and inserts nothing
+- `certificate_not_supported` (section 12.1): an event of a registered `ed25519` key, validly
+  signed and chained, whose `key_certificate` is `=` followed by a value; inserted after the state
+  of instance A as database superuser with the triggers bypassed, A's incremental fold fails with
+  `certificate_not_supported` at its position, A answers the signed `503` and logs the failure
+  with its position; in an export with the record hashes recomputed, offline `verify` prints
+  `failed <position> certificate_not_supported` and exits 1, and `restore` prints the same line
+  and inserts nothing
 - `failed <position> file_invalid` from `verify` and from `restore`, with the position of section
   12.3, for: a file that is not UTF-8 (`0`), an empty file (`0`), a missing final `\n` (`0`), an
   empty line, a line that is not JSON, a member twice, a header with an unknown `format` (`0`),
@@ -3019,7 +3037,7 @@ confirms or changes each one.
 79. A record object that a key does not see is answered with the same status and body as one that
     does not exist; this document makes no promise about the time an answer takes (§3).
 80. The request log line writes `-` for a method other than `GET`, `POST` and `HEAD` and for a
-    raw path that is not byte for byte one of the nine paths of §7.1, because such a method or
+    raw path that is not byte for byte one of the paths of §7.1, because such a method or
     path can carry text that a client chose; change 3 writes this into the sentence of
     KEY-PROTOCOL.md section 5 that it replaces (§1, §13).
 81. `migrate` takes no argument; any argument after it, whatever it is, makes it print
