@@ -233,7 +233,12 @@ directory. A log line is appended with one `write` call followed by `fsync`.
 **The lock.** The guard and every key-account command read and write the files of this table
 only while they hold `lock`, and `agent device verify` reads them while it holds it. Two writers
 therefore never interleave. The guard holds the lock for one step at a time (§19.1) and never
-while it waits for the hub inside a socket operation (§19.3). Except `guard.json`, which is read
+while it waits for the hub inside a socket operation (§19.3). Within a step it holds the lock
+while it waits for the hub, and every hub request ends at the hub request deadline of §5.2: a
+request whose whole answer has not been read 30 s after it was sent is a failed fetch (§19.1),
+nothing of its answer is used, and the step sends no further request and releases the lock. A
+key-account command, `agent device allow remove` included, therefore waits for the lock at most
+until the running step ends. Except `guard.json`, which is read
 at start (§5.1), the guard uses no file content from an earlier step for a decision: each step
 reads the files it needs again, so that a change that a key-account command made between two
 steps (for example a new hub pin, §18.4) takes effect at the next step. The only values it keeps
@@ -315,7 +320,11 @@ check, until ids reach their drop time, at most 1209600 s after they were record
 is full, the fetch of statements stops at the first statement refused at S8 or later and fetches
 it again at the next poll (§12.2), so that no `remove` statement is passed over unanswered. From step 4 every key that the allow list lists
 as a sender of commands, a grantee included, can do the same with commands, each id kept 7200 s.
-The remedy is to remove or revoke that key; ids already recorded stay until their drop time.
+The remedy is to remove that key's entry by hand (`agent device allow remove`, §18.7); ids already
+recorded stay until their drop time. Revoking the key is not enough: the documents of a revoked
+key still pass S7 or C10 and are refused at S8 or C11, which records their ids in `seen`; only an
+intact hub stops delivering them (§12.2). A `remove` statement is no remedy while `seen` is full,
+because it is itself refused with `replay_state_full` (S12).
 
 A missing or invalid `state.json` after `agent device init` stops the guard and every key-account
 command except `agent device init --reset-state` with `state.json is missing` or `state.json is
@@ -452,7 +461,7 @@ it at start.
 | socket request size | 65536 bytes |
 | socket read deadline per connection | 5 s |
 | socket connections handled at once | 8 |
-| hub request timeout of the `inventory` socket operation | 30 s |
+| hub request deadline, for every hub request of the guard (the `inventory` socket operation included) and of a key-account command, from sending until the whole answer is read | 30 s (§4.2) |
 | inventory size | 65536 bytes |
 | revocation notices per answer | 1000 |
 | statements per answer | 100 |
@@ -490,7 +499,7 @@ it at start.
   - an allow-list file with an entry of kind `p256` is invalid (`allow_list_invalid`, §11.2);
   - a statement whose `entry.kind` is `p256` fails S1 (`malformed`);
   - a keys-file entry of kind `p256` is not usable (§8.2), so every check that looks its key up
-    in the copy refuses it with `unknown_key` (E2, S10, C13);
+    in the copy refuses it with `unknown_key` (E2, E3, S10, C13, C16);
   - the by-hand commands `agent device allow add` and `agent device sign` stop before any check
     with `key kind p256 is not supported by this client` (exit 1, nothing written) when the
     copy's entry for `--key-id` has kind `p256` (§18.6, §18.10). This message is never a
@@ -841,7 +850,7 @@ report of the next interval is then sent again (§18.15).
 | `repositories` | exactly `["*"]` (every repository), or 1 to 64 distinct sorted `OWNER/NAME` values by K6 |
 | `expires_at` | time or `null`; a `grant` always has a time |
 | `status` | `active`; `suspended` (its signer was revoked, §9); `revoked` (a notice or the copy names its key id, or, for a program entry, revokes the device key with its `device_label` and `handle`, §9; final); `removed` (removed while `removed` held 65536 ids; final). "Final" means that no statement, by-hand command, notice or copy changes it; an edit outside the client can (§11.5) |
-| `signer.by` | `hand` or `statement` |
+| `signer.by` | `hand` or `statement`; a by-hand add or confirm sets `hand` (§18.6, §18.8) |
 | `signer.key_id`, `signer.fingerprint`, `signer.statement_id`, `signer.sequence` | for `statement`: the signing controller key id, the fingerprint of its key, the statement id and its sequence; for `hand`: all `null` |
 | `added_at` | time the device applied it |
 
@@ -899,7 +908,7 @@ confirmed entry.
 |---|---|
 | E1. The keys-file copy is fresh, and `revocations_incomplete` is not set (§9). | `keys_file_stale`, `revocations_incomplete` |
 | E2. The copy has a usable entry (§8.2) with this key id, not marked revoked, with the same kind, `alg`, public key, principal, handle and device label; no applied notice names the key id. | `unknown_key`, `key_revoked`, `key_mismatch` |
-| E3. A `device` key has `device:controller`. A `program` key's device key (§8.2) has `device:controller`, is not marked revoked in the copy, and no applied notice names it. | `executor_key`, `key_revoked` |
+| E3. A `device` key has `device:controller`. A `program` key's device key (§8.2) is a usable entry (§8.2), has `device:controller`, is not marked revoked in the copy, and no applied notice names it. | `unknown_key`, `executor_key`, `key_revoked` |
 | E4. The key is not this device's own device key and not one of the program keys in `$AGENT_KEY_HOME/keys` (compared by fingerprint). A key held under `$AGENT_HOME/keys` cannot be told apart by the guard; the owner never lists such a key, and the keys-file pull request of a program key that may send commands names a key created with `agent device program-key`. | `own_key` |
 | E5. `type` is `entry` when the handle is the owner, `grant` otherwise. | `entry_invalid` |
 | E6. `allow_list.change` only for a `device` key with the owner's handle. | `entry_invalid` |
@@ -1121,6 +1130,15 @@ of a controller device key of the owner, or by hand on the device.
 | G5. Number | at most one grant per key id (E8) |
 | G6. Change | never; a wider or longer grant is a `remove` and a new `add` |
 
+Consequence of G6 and the removal time (§11.2, Removal): the removal time of a `remove` statement
+is at least the device clock when the target applies it, and S9 refuses every `add` for the same
+key id whose `signed_at` is not later. An `add` signed together with the `remove`, before the
+target applied it, is therefore refused with `entry_removed`, also when both arrive in the same
+poll, and later still when the target's clock is ahead. The controller signs the new `add` only
+after the target applied the `remove` (its `allow_list.removed` event, §17.3), or signs it again
+after the signed refusal `entry_removed` (§17.2). The same holds for adding again a key whose
+entry was removed by statement.
+
 ### 13.3 Signed form
 
 A grant is the `add` statement of §12.1 with `entry.type` `grant`. Its removal is the `remove`
@@ -1233,7 +1251,7 @@ entry's status, the keys-file copy, the level and the permission comes after it.
 | C13 | `signer` has a usable entry in the copy (§8.2) | `unknown_key` |
 | C14 | The copy does not mark it revoked and no applied notice names its key id | `key_revoked` |
 | C15 | The copy's entry has the same kind, `alg`, public key, principal, handle and device label as the allow-list entry | `key_mismatch` |
-| C16 | Level: a `device` signer has `device:controller`; a `program` signer's device key (§8.2) has `device:controller`, is not marked revoked in the copy, and no applied notice names it | `executor_key`, `key_revoked` |
+| C16 | Level: a `device` signer has `device:controller`; a `program` signer's device key (§8.2) is a usable entry (§8.2), has `device:controller`, is not marked revoked in the copy, and no applied notice names it | `unknown_key`, `executor_key`, `key_revoked` |
 | C17 | For a certificate: V6 to V8 of §15.3 | `session_key_expired`, `session_key_lifetime_exceeded`, `certificate_fresh_value_reused` |
 | C18 | Target and permission, in this order: for a kind that names a session, the device knows the target session; `kind` in the entry's `permissions`; the command's repository is in the entry's `repositories` or the entry has `["*"]`, where the command's repository is the envelope's `repository` for `order.submit` and the target session's repository from the device's own store for every other kind, and a target session without a repository passes only `["*"]`; under a grant, `question.answer` and `session.input` do not target the owner's own AI session | `session_unknown`, `permission_denied`, `repository_denied`, `own_ai_session_under_grant` |
 | C19 | The members that acceptance adds fit the limits of §4.3 | `replay_state_full` |
@@ -1397,7 +1415,8 @@ listed below:
   or through the hub only if the hub stores it again under a new cursor, which it does not for a
   `statement_id` it already stores (§12.2); a fetched statement refused at S1 to S4, S6 or S7 is
   not fetched again, because the cursor moves past it (§12.2). Because its sender received no
-  signed refusal, the sender has not signed it again.
+  signed refusal, the sender has not signed it again, except in the cases of "When a sender signs
+  again" below.
 - No signed refusal is sent either when the id cannot be recorded in `seen` because it is full;
   the decision is then in the log only. When the decision line cannot be written
   (`log_write_failed`), nothing is recorded anywhere and the refusal is shown only on standard
@@ -1415,6 +1434,11 @@ listed below:
   sender's fresh keys-file copy, whose `document_hash` equals the hash of the document it sent,
   whose value is not `replayed`, and whose `refused_at` is not later than the document's
   `signed_at` plus 3600 s for a command or 604800 s for a statement (the largest windows of §5.1).
+  A statement may also be signed again without such a refusal in exactly these cases, because the
+  earlier one can then no longer take effect or taking effect twice changes nothing: it is a
+  `remove` (a second one is refused with `entry_removed`, S9), at any time; its send failed and it
+  never left the device (§18.10); its `signed_at` plus 604800 s has passed (S3); or the target has
+  accepted a later statement of the same signer (S4).
   A statement of the hub alone is no reason to send again (DESIGN.md §25.6). In these two steps no
   client sends again by itself; the rule binds the owner and the senders of step 4.
 
@@ -1513,9 +1537,9 @@ Key account: §18.1 to §18.14. Session account: §18.15 and §18.16.
 | 18.5 | `agent device refresh` | one fetch of keys file, revocations and statements | `keys file serial N, age S s; revocations up to N` followed by `, incomplete` while `revocations_incomplete` is set; `statements applied N, refused N`; 0, or 1 when the hub is unreachable or not verified |
 | 18.6 | `agent device allow add --key-id ID --fingerprint HEX --permissions P[,P…] --repos R[,R…]\|* [--expires TIME]` | by-hand add of §11.5, under the lock, after the comparison of §11.5. It stops before any check with `key kind p256 is not supported by this client` when the copy's entry for ID has kind `p256` (§6.2). Then, in this order: the allow list is valid (`allow_list_invalid`); E1 to E10; `--fingerprint` is the fingerprint of the copy's key for ID (`key_mismatch`, as S11 `add`). The entry fields `kind`, `alg`, `public_key`, `principal`, `handle` and `device_label` come from the copy; the type follows E5; a new UUID is the entry id. Every outcome of a check writes a `hand` line | `added <entry id> <type> <key id>`, 0; or `refused: <value>`, 3 |
 | 18.7 | `agent device allow remove --entry UUID` | by-hand remove (§11.2, Removal), under the lock, after the comparison of §11.5, also of an entry id the allow list does not hold, which is then only added to `removed`; needs no keys-file copy. Refused with `allow_list_invalid` when the allow list is invalid, and with `entry_removed` when UUID is in `removed` or its entry has `status` `removed`, and with `allow_list_full` when `removed` holds 65536 ids and UUID is not in `entries` (§11.2) | `removed <entry id>`, 0; or `refused: <value>`, 3 |
-| 18.8 | `agent device allow confirm --entry UUID --fingerprint HEX` | under the lock, after the comparison of §11.5: re-activates a `suspended` entry whose key meets E1, E2 and E3 and has that fingerprint, as S11 `confirm` (`allow_list_invalid`, `entry_unknown`, `entry_not_suspended`, the values of E1 to E3, `key_mismatch`); refuses a `revoked` or `removed` entry with `entry_not_suspended` | `confirmed <entry id>`, 0; or `refused: <value>`, 3 |
+| 18.8 | `agent device allow confirm --entry UUID --fingerprint HEX` | under the lock, after the comparison of §11.5: re-activates a `suspended` entry whose key meets E1, E2 and E3 and has that fingerprint, as S11 `confirm` (`allow_list_invalid`, `entry_unknown`, `entry_not_suspended`, the values of E1 to E3, `key_mismatch`); refuses a `revoked` or `removed` entry with `entry_not_suspended`. It sets `status` `active` and `signer` to `{"by": "hand", "key_id": null, "fingerprint": null, "statement_id": null, "sequence": null}`, so that the revoked earlier signer no longer suspends the entry, neither through a copy with a higher serial nor when notices are applied again (§8.3, §9) | `confirmed <entry id>`, 0; or `refused: <value>`, 3 |
 | 18.9 | `agent device allow list [--json]` | the entries: id, type, key id, handle, device label, permissions, repositories, expiry, status, signer | one line each, or the JSON array; 0 |
-| 18.10 | `agent device sign --target DEVICE_KEY_ID --action add\|change\|remove\|confirm [--entry UUID] [--key-id ID --fingerprint HEX] [--permissions … --repos … [--expires TIME]] [--request ID] [--out FILE]` | on a controller: builds, shows and signs a statement, appends the `signed` line (§12.1), for a grant, or for a `remove` of an entry id for which its own `log/events.jsonl` holds a `device_grant.signed` event for the same target, writes the device event (§17.3), and sends it (§12.2) or writes it to FILE. Checks, in this order: (1) the copy: for `add`, `change` and `confirm` it is fresh and `revocations_incomplete` is not set, for `remove` it is valid, fresh or not; otherwise `the keys file copy is not fresh; run agent device refresh`; (2) the level: the copy gives this device key `device:controller`, does not mark it revoked, and no applied notice names it; otherwise `this device is not a controller`; (3) the key: for `add`, `change` and `confirm`, `--key-id` names the key (for `confirm`, the key of the confirmed entry) and `--fingerprint` is required and equals the copy's fingerprint of that key; otherwise `fingerprint does not match the keys file copy; nothing was written`. `add` takes `--key-id`, `--fingerprint`, `--permissions`, `--repos` and `--expires`; `change` takes `--entry` and the same flags, and its key fields come from the copy; `remove` takes `--entry`; `confirm` takes `--entry`, `--key-id` and `--fingerprint`. With `--request ID` the target, action, entry id and entry come from the change request of §12.4, and only `--fingerprint`, `--key-id` (for `confirm`), `--permissions`, `--repos` and `--expires` (for `add` and `change`) and `--out` may be given; `--fingerprint` is required exactly as without `--request`, and for `add` and `change` the request's key fields must equal the copy's entry of the typed key. For `add` and `change` with `--request`, `--permissions`, `--repos` and `--expires` are given exactly as without `--request`, and it stops with `request does not match the typed entry; nothing was written` unless the typed permissions, repositories and expiry (`null` when `--expires` is not given) equal the request's entry. Before check (3) it stops with `key kind p256 is not supported by this client` when the copy's entry for `--key-id` has kind `p256` (§6.2). For `add` and `change` the entry fields `kind`, `alg`, `public_key`, `principal`, `handle` and `device_label` come from the copy's entry of the key, and `type` follows E5: `entry` when that entry's handle is this device's `owner`, `grant` otherwise; for `add` a new UUID is the entry id. Writes, under one hold of the lock: `state.json` with the new `own_sequence`, then the `signed` line, then for a grant or such a removal the device event, then FILE when `--out` is given (§12.1); a stop after the first write only leaves a sequence number unused. It then sends the statement with `request_id` (§12.2) without holding the lock. When the send fails (no answer within 30 s, an answer that fails K3, or a verified refusal), it prints the `signed` line's output and then `agent: statement not sent: <reason>; it is kept in log/decisions.jsonl` and exits 1. The statement then never left the device: it reaches the target only if someone copies it from the log, and once a later statement of this controller is accepted there, it fails S4. The owner may sign the change again | `signed <statement id> sequence N` and `sent` or `written FILE`; 0; or 1 as stated |
+| 18.10 | `agent device sign --target DEVICE_KEY_ID --action add\|change\|remove\|confirm [--entry UUID] [--key-id ID --fingerprint HEX] [--permissions … --repos … [--expires TIME]] [--request ID] [--out FILE]` | on a controller: builds, shows and signs a statement, appends the `signed` line (§12.1), for a grant, or for a `remove` of an entry id for which its own `log/events.jsonl` holds a `device_grant.signed` event for the same target, writes the device event (§17.3), and sends it (§12.2) or writes it to FILE. Checks, in this order: (1) the copy: for `add`, `change` and `confirm` it is fresh and `revocations_incomplete` is not set, for `remove` it is valid, fresh or not; otherwise `the keys file copy is not fresh; run agent device refresh`; (2) the level: the copy gives this device key `device:controller`, does not mark it revoked, and no applied notice names it; otherwise `this device is not a controller`; (3) the key: for `add`, `change` and `confirm`, `--key-id` names the key (for `confirm`, the key of the confirmed entry) and `--fingerprint` is required and equals the copy's fingerprint of that key; otherwise `fingerprint does not match the keys file copy; nothing was written`. `add` takes `--key-id`, `--fingerprint`, `--permissions`, `--repos` and `--expires`; `change` takes `--entry` and the same flags, and its key fields come from the copy; `remove` takes `--entry`; `confirm` takes `--entry`, `--key-id` and `--fingerprint`. With `--request ID` the target, action, entry id and entry come from the change request of §12.4, and only `--fingerprint`, `--key-id` (for `confirm`), `--permissions`, `--repos` and `--expires` (for `add` and `change`) and `--out` may be given; `--fingerprint` is required exactly as without `--request`, and for `add` and `change` the request's key fields must equal the copy's entry of the typed key. For `add` and `change` with `--request`, `--permissions`, `--repos` and `--expires` are given exactly as without `--request`, and it stops with `request does not match the typed entry; nothing was written` unless the typed permissions, repositories and expiry (`null` when `--expires` is not given) equal the request's entry. Before check (3) it stops with `key kind p256 is not supported by this client` when the copy's entry for `--key-id` has kind `p256` (§6.2). For `add` and `change` the entry fields `kind`, `alg`, `public_key`, `principal`, `handle` and `device_label` come from the copy's entry of the key, and `type` follows E5: `entry` when that entry's handle is this device's `owner`, `grant` otherwise; for `add` a new UUID is the entry id. Writes, under one hold of the lock: `state.json` with the new `own_sequence`, then the `signed` line, then for a grant or such a removal the device event, then FILE when `--out` is given (§12.1); a stop after the first write only leaves a sequence number unused. It then sends the statement with `request_id` (§12.2) without holding the lock. When the send fails (no answer within 30 s, an answer that fails K3, or a verified refusal), it prints the `signed` line's output and then `agent: statement not sent: <reason>; it is kept in log/decisions.jsonl` and exits 1. The statement then never left the device: it reaches the target only if someone copies it from the log, and once a later statement of this controller is accepted there, it fails S4. The owner may sign the change again (§17.2) | `signed <statement id> sequence N` and `sent` or `written FILE`; 0; or 1 as stated |
 | 18.11 | `agent device requests` | lists the open change requests of §12.4 | one line each: request id, target, action, key id, permissions, repositories, expiry, requested by, requested at; 0 |
 | 18.12 | `agent device apply --file PATH` | runs §12.3 on one statement | `applied <statement id>`, exit 0; or `refused: <value>` on standard error, exit 3 |
 | 18.13 | `agent device verify --file PATH [--session-origin owner_ai\|other --session-repository OWNER/NAME\|none]` | runs §14.3 on one delivery record without writing anything (C20 is skipped and reported as `not written`); the two flags are given together, only for a command that names a session (§14.3) | `accepted` exit 0; `refused: <value>` on standard error, exit 3 |
@@ -1564,14 +1588,20 @@ lock and with the files read again at each step (§4.2), the load of `allow-list
 Socket requests are handled apart from these steps (§19.3).
 
 A failed fetch is logged to standard error with its reason and retried at the next interval; it
-never stops the guard.
+never stops the guard. A hub request that exceeds the hub request deadline (§5.2) is a failed
+fetch and ends its step (§4.2); an upload it carried stays unsent and is retried (§17.2, §17.3).
 
 **Program files.** The guard stops at start with `<path> must belong to root or the key account
 and must not be writable by group or others` unless each of these belongs to root or the key
 account and is not writable by group or others: the program file it was started as
 (`sys.argv[0]`, resolved), the interpreter (`sys.executable`, resolved), the directory of the
 installed `agent_cli` package with every file and directory below it, and every directory above
-each of them up to `/`. Otherwise the session account could replace the code that holds the
+each of them up to `/`. This check catches a client installed where the session account can
+write it; it is not complete. It does not cover the other modules the interpreter loads (for
+example `cryptography`, `httpx` and the standard library, other `sys.path` entries and `.pth`
+files), and it runs only at the guard's start, not before a key-account command. Keeping every
+file that the key account's interpreter loads writable only by root or the key account is the
+administrator's duty (§19.4); otherwise the session account could replace code that uses the
 device key.
 
 ### 19.2 The session daemon (`agent daemon`, session account)
@@ -1590,7 +1620,8 @@ connection delays a fetch. At most 8 connections are handled at once; a further 
 closed without an answer. One request per connection: one JSON object of at most 65536 bytes
 followed by a line feed, received within 5 s of the connection; one JSON object answer followed by
 a line feed; then the guard closes. A connection that has not sent its line within 5 s is closed
-without an answer. The `inventory` operation sends its hub request with a timeout of 30 s. Access
+without an answer. The `inventory` operation sends its hub request with the hub request deadline
+of §5.2 (30 s). Access
 is by file mode and group (§4.2): the socket has mode `0660` and the group of its set-group-id
 directory; the guard stops at start when the socket's group differs from the directory's.
 Operations, closed list:
@@ -1627,8 +1658,9 @@ system's own means. On every platform these must hold:
    `AGENT_HOME`.
 2. It starts at boot, without a login of any account, and is started again when it ends.
 3. The session account cannot stop, change or replace it: the unit file belongs to root and only
-   root can write it; only root can load or stop it; the program files it runs meet the rule of
-   §19.1, which the guard checks at start.
+   root can write it; only root can load or stop it; the program files it runs, and every file
+   its interpreter loads, belong to root or the key account and are not writable by group or
+   others; the guard checks the part named in §19.1 at start.
 
 | Platform | Unit | Must hold | Check by the administrator |
 |---|---|---|---|
@@ -1829,7 +1861,13 @@ of `command`, `statement`, `hand`, `keys_file` and `revocation`. Examples:
   `test_device_report_restart_limit_does_not_stop_daemon`;
 - `test_report_follow_keeps_running_on_socket_error`;
 - `test_serve_refuses_install_flags`;
-- one test per command of §18 for its output, each error message and each exit code.
+- one test per command of §18 for its output, each error message and each exit code;
+- `test_hand_confirm_sets_signer_hand_and_entry_stays_active` (after a copy with a higher serial
+  and after every notice is applied again);
+- `test_remove_and_add_for_same_key_in_one_poll_refuses_add_entry_removed`;
+- `test_hub_request_deadline_ends_step_and_releases_lock` (a hub that does not finish its answer
+  delays `agent device allow remove` by at most one step);
+- `test_program_key_whose_device_entry_is_not_usable_is_refused_unknown_key` (command and entry).
 
 ## 21. Rollout order
 
@@ -1914,7 +1952,7 @@ that reads DESIGN.md says so.
 | No guard state in PostgreSQL; all in files under `$AGENT_KEY_HOME` | §4.1, §20 |
 | Every file write is followed by `fsync` of the file and of its directory; `keys._write_new_file` gains the `fsync`, which changes `agent key` in durability only | §4.2, §22 |
 | A change that spans several files is written under one hold of the lock as decision line, `revocations.json`, `keys-file.json`, `allow-list.json`, device event and refusal line, `state.json` last; a stop between two steps is found at the next load as an edit outside the client and the document is checked again, so the device never obeys more. Limit: the second check can send a signed refusal for a statement whose change the first run applied | §4.2, §12.3, §14.3, §17.2 |
-| The guard reads every file except `guard.json` again at each step and never holds the lock while it waits for the hub in a socket operation | §4.2, §10.3, §19.1 |
+| The guard reads every file except `guard.json` again at each step and never holds the lock while it waits for the hub in a socket operation. Within a step it holds the lock while it waits for the hub; every hub request ends 30 s after it was sent, body included, as a failed fetch that ends the step, so a slow or taken-over hub delays a key-account command by at most one step. Chosen over sending the fetches without the lock, because it changes fewer rules | §4.2, §5.2, §10.3, §19.1 |
 | The administrator of a device is trusted like its owner and can change every file under `$AGENT_KEY_HOME`; the client detects only edits of `allow-list.json`. Reading of DESIGN.md §25.6 | §4.1, Words |
 | The device clock is trusted and kept correct by the administrator. Limits, stated rather than closed: a clock set back accepts certificates, grants and entries that have ended in true time and keeps the copy fresh longer; a clock set forward and then back drops replay state early, so a session-key command or a held-back statement for a removed key can pass again. No high-water mark of the clock is kept | §4.5 |
 | Replay state limits and `replay_state_full` as checks C19 and S12; `sequences` is keyed by the key id alone (an id is never given to another key, H9), so that it can be checked before the key is looked up, and is never dropped; session-key sequence numbers are dropped after the certificate's expiry | §4.3, §12.3, §14.3 |
@@ -1922,13 +1960,13 @@ that reads DESIGN.md says so.
 | The signature is verified as early as the signer's key is known (allow list valid, signer's entry, certificate proof, signature; C6 to C10, S5 to S7); every check on the entry's status, removals, the keys-file copy, the level and the permission comes after it | §12.3, §14.3 |
 | Only a refusal after the signature verified records the id in `seen` and is answered with a signed refusal; a refusal before records nothing in the replay state and sends nothing, `outside_time_window`, `signed_before_reset` and `replayed` included | §4.3, §12.3, §14.3, §17.2 |
 | The drop time of an id in `seen` is the decision time plus twice the largest window (7200 s for commands, 1209600 s for statements), never computed from a time the sender wrote | §4.3 |
-| Remaining risk, stated rather than closed: the owner's own controller keys (and from step 4 every listed sender, grantees included) can fill `seen` and block the device with `replay_state_full` for up to 1209600 s; a hub that was taken over cannot | §4.3 |
+| Remaining risk, stated rather than closed: the owner's own controller keys (and from step 4 every listed sender, grantees included) can fill `seen` and block the device with `replay_state_full` for up to 1209600 s; a hub that was taken over cannot. The remedy is removing that key's entry by hand; a revocation helps only while the hub is intact, because a revoked key's documents are refused after their signature verified and still fill `seen`. Chosen over not recording ids of a revoked signer, because it changes no rule | §4.3 |
 | `tainted_sessions` is never dropped; a reset empties it and `tainted_before` covers earlier sessions; when it is full only commands under a grant are refused | §4.3, §13.6 |
 | No restore of `state.json` from a backup; the only repair is `init --reset-state` | §4.3 |
 | A missing or invalid `revocations.json` stops the guard and every key-account command; `init --reset-state` repairs it by writing it empty and fetching every notice from serial 1 again, with entry statuses kept and `revocations_incomplete` set meanwhile. The reset writes `state.json` before `revocations.json`, so a stop leaves a file that makes the reset run again | §4.3, §4.4 |
 | A reset never clears replay protection or revocations: it refuses what was signed before `reset_at` plus the largest window (3600 s commands, 604800 s statements except `remove`, 43200 s certificates) with `signed_before_reset`, keeps the serials from the stored files and `own_sequence` from the log, marks every earlier session tainted, and treats the allow list as edited outside the client. Chosen over rebuilding `seen` and `sequences` from the decision log, because it holds also when the log is incomplete. Its consequences (no widening statement for 604800 s, no command for 3600 s, no passkey command until a certificate expires after `reset_at` plus 43200 s) are accepted | §4.4 |
 | Default and allowed ranges of the four configured times; "one working day" is 43200 s | §5.1 |
-| Fixed intervals, size limits, socket deadline 5 s, 8 socket connections, 30 s hub timeout | §5.2 |
+| Fixed intervals, size limits, socket deadline 5 s, 8 socket connections, 30 s hub request deadline for every hub request | §5.2 |
 | Device key id `device-<device label>`, program key id `program-<device label>-<program label>`; both are checked against the labels of the keys-file entry, and an entry that breaks them is not usable | §6.1, §8.2, §18.3 |
 | Program keys that may send commands live in the key account; keys under `$AGENT_HOME/keys` are never senders, which the guard cannot detect and the owner and the keys-file review ensure | §6.1, §11.4 |
 | The sequence counter of a program key that signs commands is fixed in step 4 | §1 |
@@ -1967,7 +2005,7 @@ that reads DESIGN.md says so.
 | Every `add`, `change` and `confirm` statement carries the fingerprint the owner typed on the controller, also when the statement comes from a change request; `sign` requires it for these three actions and the target checks it against the key; for `add` and `change` with `--request`, `sign` also requires the owner to type permissions, repositories and expiry and stops unless they equal the request's entry; a request of the hub is only a proposal | §12.1, §12.3, §12.4, §18.10 |
 | A `change` never changes the key: `key_id`, `kind`, `alg`, `public_key`, `principal`, `handle` and `device_label` stay, otherwise `key_unchangeable`; a different key is a `remove` and an `add`. Chosen over allowing a key change with a typed fingerprint, because it accepts less | §12.3 |
 | A `change` needs an `active` entry of type `entry`, never yields a grant, changes only permissions, repositories and expiry, keeps `status` `active` and sets `signer` to the changing statement | §12.3 |
-| Reading of DESIGN.md §25.6 for the owner to confirm: "every entry and grant that key signed" is read as every entry whose recorded `signer` is that key. A `change` or `confirm` by controller B, made with a fingerprint typed on B, replaces the signer, so the entry is then suspended when B is revoked and no longer when the controller A that added it is revoked. Keeping every earlier signer would suspend more, but needs a list of signers per entry, which no finding asked for | §9, §12.3 |
+| Reading of DESIGN.md §25.6 for the owner to confirm: "every entry and grant that key signed" is read as every entry whose recorded `signer` is that key. A `change` or `confirm` by controller B, made with a fingerprint typed on B, replaces the signer, so the entry is then suspended when B is revoked and no longer when the controller A that added it is revoked. Keeping every earlier signer would suspend more, but needs a list of signers per entry, which no finding asked for. A confirm by hand sets the signer to `hand`, so no notice of an earlier signer suspends the entry again | §9, §12.3, §18.8 |
 | Statement transport through hub endpoints with a per-device cursor that advances over accepted and refused statements, with a file path for offline use. Exceptions: a statement refused with `allow_list_invalid` (S5), with `log_write_failed` (S13), or at S8 or later while `seen` is full, does not move the cursor; the guard stops that answer and fetches the statement again at the next poll, so that no `remove` is passed over unanswered. Consequence: such a statement blocks the later ones until the device's state is repaired | §12.2, §17.1, §17.2 |
 | A statement answer of the hub with a wrong form, more than 100 items, cursors that do not rise above `statement_cursor` or cursors above 2^53−1 is refused as a whole; a revocation answer with a wrong form or more than 1000 notices likewise | §9, §12.2 |
 | A statement that reaches the target after a later statement of the same signer is refused `replayed` without a signed refusal; its change is lost, as if the hub had dropped it: a lost `remove` leaves the key listed until the owner removes it again. Stated, not closed, because a hub can drop a statement anyway. The hub stores a `statement_id` at most once | §12.2 |
@@ -1975,6 +2013,7 @@ that reads DESIGN.md says so.
 | The hub stores a statement only when it verifies with a controller device key of the target's owner that is not revoked; it stores a change request only from a key of the target's owner, and a refusal only when the device key it names signed it | §12.2, §12.4, §17.2, §21.1 |
 | Change requests: their form and the answer of `GET /api/device/requests` | §12.4 |
 | Grants are never changed; at most 30 days, at least 60 s | §13.2 |
+| Consequence of the removal time, stated rather than changed: an `add` for a key id signed before the target applied the `remove` of that key's entry, a wider or longer grant included, is refused with `entry_removed`; the controller signs it after the removal is applied or again after that refusal. Chosen over taking `signed_at` alone as the removal time of a `remove` statement, because it changes no rule | §11.2, §12.3, §13.2 |
 | A controller writes `device_grant.removed` only when its own `log/events.jsonl` holds a `device_grant.signed` event for the same target and entry id, because it does not hold the target's allow list and a `remove` carries no type; every other grant removal is in the team record only as the target's `allow_list.removed` event. Chosen over a `--grant` flag, which the controller cannot check | §17.3, §18.10 |
 | Tainted sessions recorded now for the signing service of step 4 | §13.6 |
 | Command envelope carries only a content hash; delivery record keeps the hub answer, whose body holds envelopes only | §14.1, §14.2 |
@@ -1983,7 +2022,7 @@ that reads DESIGN.md says so.
 | `session.start` names a session the device's store holds; step 4 fixes its effect on a session that is already running | §14.1 |
 | The keys-file comparison of a command's signer covers kind, `alg`, public key, principal, handle and device label, as E2 does (C15); it replaces the separate comparison of the passkey key in the certificate checks | §14.3, §15.3 |
 | Session-key algorithm P-256; statement of seven lines; signature counter not checked; fresh-value reuse refused, with `statement_hash` the hash of the statement bytes | §4.3, §15 |
-| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at` | §17.2 |
+| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at`. A statement is also signed again without a signed refusal when it is a `remove`, when its send failed (§18.10), when its `signed_at` plus 604800 s has passed, or when the target accepted a later statement of the same signer; chosen over limiting the rule to commands, because it keeps the rule for statements and adds only the cases in which the earlier statement can no longer take effect or taking effect twice changes nothing | §12.2, §17.2, §18.10 |
 | The decision log has the document kinds `command`, `statement`, `hand`, `signed`, `reset`, `keys_file`, `revocation` and `expiry`; a refusal before the signature verified is recorded with the document's hash only; the client never truncates the log; its remaining growth (about 30 MB a day from a hub that was taken over without its signing key, and up to 1440000 notice lines a day from a holder of that key, each of which revokes a key) is stated, not capped | §17.1 |
 | A signed refusal tells the hub and the sender the refusal value, the document's id, signer, sequence and hash, and the decision time; this is accepted as what a sender needs to decide whether to sign again | §17.2 |
 | Device events follow the record protocol and define no format here; each is signed by the device key of the writing device in its one chain; the event type is not a member of `changes`; old values come from the recorded allow list; a refused event is kept and never sent again, and later events are signed again against the last accepted one; the record protocol names every event type this document needs | §2.3, §17.3, §21.1 |
@@ -2001,4 +2040,4 @@ that reads DESIGN.md says so.
 | The `status` answer has the members `device_key_id`, `level`, `keys_file_age_seconds`, `entries`, `grants`, `revocations_incomplete` and `socket_refusals`; it reveals counts, not keys | §18.16, §19.3 |
 | `device-report` keeps running on errors and has its own restart counter whose limit never stops the daemon (both measures together, rather than one of them) | §18.15, §19.2 |
 | The guard is a system service that an administrator installs by the operating system's own means: a LaunchDaemon with `UserName` on darwin, a system unit with `User=` on linux; never a per-user service and never through the session daemon's installer. Chosen over a lingering systemd user unit of the key account, because only root can then change or stop it. The client installs nothing; `serve` takes no flag | §4.1, §18.14, §19.4, §21.2, §22 |
-| The guard stops at start when its program files can be written by anyone other than root and the key account | §19.1, §19.4 |
+| The guard stops at start when its program files can be written by anyone other than root and the key account. Limit, stated rather than closed: the check covers the program file, the interpreter and the `agent_cli` package, not every other module loaded, and runs only at the guard's start; every other file the key account's interpreter loads is the administrator's duty. Chosen over checking every loaded module before every key-account command, because it adds no check | §19.1, §19.4 |
