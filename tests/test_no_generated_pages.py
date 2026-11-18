@@ -49,8 +49,10 @@ XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
 # allows more characters at the start of its host or userinfo; both narrower sets are the
 # check's own choice, so that ordinary script text such as "// note", "//-----", "//.",
 # /^https:\/\/.+/ or a placeholder "https://..." is not reported. So "</script>", "a//b",
-# "https:" alone, "rows:1fr" and "url(/x.png)" in CSS, regular expressions such as /\/+$/,
-# /\/api\// and /^https:\/\//.test(u), strings such as "\\d+", template literals such as
+# "https:" alone, "rows:1fr" and "url(/x.png)" in CSS, the regular expressions /\/+$/,
+# /\/api\// and /^https:\/\//.test(u) (a scheme-testing expression whose slashes are
+# followed by a flag letter, a character class or a class escape is reported, see the
+# harmless text below), strings such as "\\d+", template literals such as
 # `//${location.host}/x` and `wss://${location.host}/s`, data: and blob: URLs are not
 # literals (a data: payload that itself contains a literal, such as base64 starting with "//",
 # is reported).
@@ -80,8 +82,9 @@ XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
 # Harmless text that is also reported, so the check fails closed: a URL in visible text, a
 # line comment with a character that \w matches, "[", "%", "@" or "~" right after a "//" where
 # a literal can start ("//comment", "{a:1}//note"), a regular expression whose scheme and
-# slashes are followed by a flag letter (/^https:\/\//i.test(u)), and the own address without
-# a path where no quote directly precedes it and further text follows. A policy enforced by
+# slashes are followed by a flag letter, a character class or a class escape
+# (`/^https:\/\//i.test(u)`, `/^https:\/\/[^/]+/`, `/^https:\/\/\w+/`), and the own address
+# without a path where no quote directly precedes it and further text follows. A policy enforced by
 # the browser, planned with a later change, covers what reading the text cannot.
 _AFTER_SCHEME = r"(?=\w|[\[%@~:-])"
 _AFTER_SLASHES = r"(?=\w|[\[%@~])"
@@ -218,6 +221,9 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ("const o = {a:1}//note", OWN_HOST, ["//note"]),
     ("see https://hub.example now", OWN_HOST, ["https://hub.example now"]),
     (r"/^https:\/\//i.test(u)", OWN_HOST, [r"https:\/\//i.test(u)"]),
+    (r"/^https:\/\/[^/]+/.test(u)", OWN_HOST, [r"https:\/\/[^/]+/.test"]),
+    (r"/^https:\/\/\w+/.test(u)", OWN_HOST, [r"https:\/\/\w+/.test"]),
+    (r"/^https:\/\/\S+$/", OWN_HOST, [r"https:\/\/\S+$/"]),
     ('<link rel="stylesheet" href="//fonts.example/a.css">', OWN_HOST, ["//fonts.example/a.css"]),
     ('@import"https://fonts.example/a.css";', OWN_HOST, ["https://fonts.example/a.css"]),
     ("@font-face{src:url(//fonts.example/f.woff2)}", OWN_HOST, ["//fonts.example/f.woff2"]),
@@ -318,6 +324,7 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ('<input placeholder="https://...">', OWN_HOST, []),
     # Limits of the check (not found, see the comment above).
     ('s.src = "https://" + cdn + "/x.js";', OWN_HOST, []),
+    ("`wss://${host}/s`", OWN_HOST, []),
     ('new WebSocket("wss:cdn.example/s")', OWN_HOST, []),
     ('<script src="https:/\t/cdn.example/x.js">', OWN_HOST, []),
     ('<script src="https://\ncdn.example/x.js">', OWN_HOST, []),
@@ -327,6 +334,7 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ('<script src="//☃.example/x.js">', OWN_HOST, []),
     ('<script src="https://$@cdn.example/x.js">', OWN_HOST, []),
     ('<script src="https://(@cdn.example/x.js">', OWN_HOST, []),
+    ('<script src="https://.cdn.example/x.js">', OWN_HOST, []),
     # Mixed or backward slashes without a scheme. Accepting "/\" would also report /\s+/.
     (r'<script src="/\cdn.example/x.js"></script>', OWN_HOST, []),
     (r'<img src="\\cdn.example/x.png">', OWN_HOST, []),
