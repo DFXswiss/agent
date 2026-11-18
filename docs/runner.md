@@ -159,11 +159,12 @@ the handled comment is first recorded as the row's `trigger`, so a later
 failure or head change that makes
 the thread unread cannot select the same mention again. A path that leaves the
 thread unread leaves the trigger unchanged, with one exception: after a
-successful trigger write — in `_consume_mention`, or after a re-queue — marking
-the thread read can fail, or be skipped because the notification carries no
-usable thread id. The trigger is then recorded while the thread stays unread,
-and the next pass only marks it read, because the recorded high-water mark
-already covers the comment.
+successful trigger write — in `_consume_mention`, in the insert of a new job,
+whose row carries the trigger, or after a re-queue — marking the thread read
+can fail, or be skipped because the notification carries no usable thread id.
+The trigger is then recorded while the thread stays unread, and the next pass
+only marks it read, because the recorded high-water mark already covers the
+comment.
 
 The row carries `job_type` (the skill id), `queue_type`, `trigger` and
 `head_sha` alongside the fields dispatch records later. `head_sha` is written

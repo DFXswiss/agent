@@ -552,7 +552,15 @@ def scan_mentions(
         except json.JSONDecodeError:
             skipped += 1
             continue
-        comments = [c for page in comment_pages if isinstance(page, list) for c in page]
+        # `--slurp` promises one list per page. A value that is not a list of
+        # lists cannot be trusted, so the thread stays unread and undecided.
+        # Objects inside a page that are not comments are dropped below.
+        if not isinstance(comment_pages, list) or any(
+            not isinstance(page, list) for page in comment_pages
+        ):
+            skipped += 1
+            continue
+        comments = [c for page in comment_pages for c in page]
 
         # The bot's own comment is never a request, even when it quotes the
         # handle. Dropping it before the last-addressing choice also stops it
