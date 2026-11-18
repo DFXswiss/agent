@@ -264,11 +264,12 @@ compete for the lock during it. Among the guard's own waiters the order is fixed
 ends and a step is due, the guard takes the lock for that step before any socket operation, and a
 socket operation never takes the lock while a step is due. A socket operation therefore delays a
 due step by at most one socket operation's hold of the lock and one pause, however many
-`inventory` requests the session account sends (§19.3). A key-account command, `agent device
-allow remove` included, that waits for the lock while no other key-account command waits for it
-therefore takes the lock in the first pause after it started waiting; the order among the
-guard's own waiters does not change this, because it applies only when a pause ends. While a guard step or socket operation holds the lock,
-it waits until that hold ends and takes the lock within the following pause: at most 60 s plus
+`inventory` requests the session account sends (§19.3); a key-account command that took the lock
+in that pause delays the step further, by its own hold of the lock. A key-account command,
+`agent device allow remove` included, that waits for the lock while no other key-account
+command waits for it therefore takes the lock in the first pause after it started waiting; the
+order among the guard's own waiters does not change this, because it applies only when a pause
+ends. While a guard step or socket operation holds the lock, it waits until that hold ends and takes the lock within the following pause: at most 60 s plus
 the step's local work plus 1 s after the step took the lock. While another key-account command
 holds the lock, it waits until that command ends (for `agent device refresh` at most 60 s plus its
 local work after it took the lock), then for at most one step or socket operation of the guard,
@@ -1485,29 +1486,57 @@ listed below:
   different change signed after a failed send, for example a narrower `add` after a wider one
   whose send timed out, is a new decision, not a signing again: until the earlier statement's
   window ends (S3) or the target accepts a later statement of this controller (S4), the earlier
-  one can still be delivered and take effect, before or after the later one, since a refused
-  statement does not raise `sequences` (§4.3, §12.3). In either order of delivery:
-  - a later `remove` of the earlier statement's `entry_id` is safe. It is accepted also when the
-    target does not hold that entry, adds the id to `removed` and raises `sequences` (§11.2
-    Removal, §12.3), so an earlier statement arriving after it is refused (S4, S9); arriving after the
-    earlier statement took effect, it removes the entry. While `removed` holds 65536 ids and the
-    target does not hold the entry, the `remove` is refused with `allow_list_full` (S11), and the
-    earlier `add` is then refused with `allow_list_full` too (E9);
+  one can still be delivered and take effect, before or after the later one. A later statement
+  (`remove`, `change` or `add`) has its effect only once the target has accepted it, that is,
+  once it passed every check of §12.3 (S1 to S13). A later statement that the target refuses
+  raises no `sequences` and adds nothing to `removed` (§4.3, §12.3), so the earlier statement can
+  still take effect within its S3 window. A refusal at S1 to S7, one while `seen` is full and one
+  with `log_write_failed` is not answered with a signed refusal (above), and a statement refused with
+  `allow_list_invalid` (S5) or `log_write_failed` (S13), or at S8 or later while `seen` is full,
+  is fetched again and decided later (§12.2). In either order of delivery of a later statement of
+  this controller:
+  - a later `remove` of the earlier statement's `entry_id` has its effect once accepted. It is
+    accepted also when the target does not hold that entry, raises `sequences`, and adds the id to
+    `removed` while `removed` holds fewer than 65536 ids (§11.2 Removal, §12.3). An earlier
+    statement delivered after the accepted `remove` is refused, at the latest at S4 (`replayed`),
+    because the `remove` raised `sequences`. An earlier statement delivered before it takes effect
+    if it passes, and holds until the `remove` is applied and ends the entry (§11.2 Removal); when
+    the `remove` comes in a later poll, that is at least one 60 s step later. While `removed`
+    holds 65536 ids and the target does not hold the entry, the `remove` is refused with
+    `allow_list_full` (S11), and the earlier `add` is then refused too, at the latest by E9;
   - a later `change` of the entry (an `entry`, never a grant, S11) that arrives after the earlier
-    statement took effect is applied after it, if it passes S5 to S13, and ends its effect. One
-    that arrives before the earlier `add` is refused with `entry_unknown`, and one that arrives
-    before an earlier `confirm`, while the entry is `suspended`, with `entry_inactive` (S11).
-    Neither raises `sequences`, so neither stops the earlier statement, which can still take
-    effect within its S3 window, with nothing narrowing it;
-  - a later `add` for the same key that arrives after the earlier `add` took effect is refused
-    with `entry_exists` (E8); one that arrives first is accepted, and the earlier `add` then fails
-    S4.
+    statement took effect is applied after it once accepted, and ends its effect. One that
+    arrives before the earlier `add`, or before an earlier `confirm` while the entry is
+    `suspended`, is refused (at S11 with `entry_unknown` or `entry_inactive`, unless an earlier
+    check refuses it); it raises no `sequences`, so the earlier statement can still take effect
+    within its S3 window, with nothing narrowing it. One that arrives before an earlier `change`
+    of the `active` entry is applied first once accepted, and the earlier `change` then fails S4;
+  - a later `add` for the same key that arrives after the earlier `add` took effect is refused, at
+    the latest by E8 (`entry_exists`); one that arrives first and is accepted makes the earlier
+    `add` fail S4, and one that arrives first and is refused leaves the earlier `add` free to
+    take effect within its S3 window.
 
   After signing a different change following a failed send, the owner uses a `remove` when the
-  earlier change must not take effect at all; otherwise the owner reads the target's allow-list
-  events in the team record once the earlier statement's window (S3) has ended or the target
-  accepted a later statement of this controller (S4), and, if the earlier change took effect,
-  narrows it with a `change` (an `entry`) or ends it with a `remove`.
+  earlier change must not stay in effect; no later statement keeps the earlier one from taking
+  effect until the later one is applied (above). The owner then confirms that the target accepted
+  the `remove`. The target's own records show it: `log/decisions.jsonl` holds one `statement`
+  line with the decision for every statement the target decided (§17.1), and `log/events.jsonl`
+  every allow-list event the target wrote (§17.3), both read in the target's key account; a
+  statement with no decision line there is not decided yet. `agent device apply --file` prints
+  the decision when the statement is delivered by file (§18.12). The team record shows an
+  accepted change only by the target's allow-list event for it, and a `remove` of an id the target
+  does not hold changes no entry and writes no such event (§17.3). The absence of an event there
+  is no proof before the target has uploaded every event written up to then: it uploads every
+  60 s and retries a failed upload at the next interval (§17.3, §19.1), an event the hub refuses
+  never reaches the team record (§17.3), and this document gives the owner no sign in the team
+  record that the uploads are complete. The absence of a signed refusal is no proof either,
+  because a refusal at S1 to S7 is never answered with one (above). If the `remove` was refused
+  or its acceptance is not confirmed, the owner signs it again (above) once the cause of the
+  refusal is gone, or removes the entry by hand on the target (§18.7). Otherwise, and also after a
+  `remove`, the owner reads the target's allow-list events or decision log on the target for what
+  took effect in between, once the earlier statement's window (S3) has ended or the target
+  accepted a later statement of this controller (S4), and, if the earlier change still holds,
+  narrows it with a `change` (an `entry`) or ends it with a `remove`, each confirmed the same way.
   A statement of the hub alone is no reason to send again (DESIGN.md §25.6). In these two steps no
   client sends again by itself; the rule binds the owner and the senders of step 4.
 
@@ -1701,7 +1730,8 @@ the file the daemon behaves as today.
 The guard handles the socket in its own thread, apart from the steps of §19.1, so that a
 connection delays a step by at most one socket operation's hold of the lock and one pause
 (§4.2): when a pause ends and a step is due, the step takes the lock before any socket
-operation. At most 8 connections are handled at once; a further connection is closed without
+operation. A key-account command that took the lock in that pause adds its own hold (§4.2). At
+most 8 connections are handled at once; a further connection is closed without
 an answer. One request per connection: one JSON object of at most 65536 bytes
 followed by a line feed, received within 5 s of the connection; one JSON object answer followed by
 a line feed; then the guard closes. A connection that has not sent its line within 5 s is closed
@@ -1943,8 +1973,9 @@ of `command`, `statement`, `hand`, `keys_file` and `revocation`. Examples:
   `test_socket_connection_limit` and `test_socket_does_not_block_fetch_steps` (eight connections
   send `inventory` requests continuously: each due 60 s and 600 s step starts within one socket
   operation's hold of the lock and one pause after it became due or, when the other step ran
-  first, within one pause after that step released the lock; and an `agent device allow remove`
-  that waits meanwhile still takes the lock in a pause);
+  first, within one pause after that step released the lock, in either case plus the hold of a
+  key-account command that took the lock in that pause; and an `agent device allow remove` that
+  waits meanwhile still takes the lock in a pause);
 - `test_cli_bridge_refuses_device`;
 - `test_daemon_starts_device_report_only_with_guard_json` and
   `test_device_report_restart_limit_does_not_stop_daemon`;
@@ -2127,7 +2158,7 @@ that reads DESIGN.md says so.
 | `session.start` names a session the device's store holds; step 4 fixes its effect on a session that is already running | §14.1 |
 | The keys-file comparison of a command's signer covers kind, `alg`, public key, principal, handle and device label, as E2 does (C15); it replaces the separate comparison of the passkey key in the certificate checks | §14.3, §15.3 |
 | Session-key algorithm P-256; statement of seven lines; signature counter not checked; fresh-value reuse refused, with `statement_hash` the hash of the statement bytes | §4.3, §15 |
-| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at`. A statement is also signed again without a signed refusal when it is a `remove`, when its send failed (§18.10) and the same change is signed again, when its `signed_at` plus 604800 s has passed, or when the target accepted a later statement of the same signer; chosen over limiting the rule to commands, because it keeps the rule for statements and adds only the cases in which the earlier statement can no longer take effect or taking effect twice changes nothing. After a failed send the hub may hold the earlier statement: a different change signed then is a new decision, and the earlier statement can take effect, before or after the later one, until S3 or S4 ends it, because a refused statement does not raise `sequences`. In either order a later `remove` of its entry id is safe (accepted also for an id not held, which it adds to `removed`, so S4 and S9 refuse the earlier statement); a later `change` applied after the earlier statement took effect ends its effect, but one that arrives before the earlier `add` (`entry_unknown`) or `confirm` (`entry_inactive`) leaves the earlier statement free to take effect within its S3 window; a later `add` after the earlier one took effect is refused with `entry_exists`. After signing a different change following a failed send, the owner uses a `remove` when the earlier change must not take effect at all; otherwise the owner reads the target's allow-list events once the earlier statement's window has ended or a later statement was accepted, and, if the earlier change took effect, narrows it with a `change` or ends it with a `remove` | §12.2, §17.2, §18.10 |
+| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at`. A statement is also signed again without a signed refusal when it is a `remove`, when its send failed (§18.10) and the same change is signed again, when its `signed_at` plus 604800 s has passed, or when the target accepted a later statement of the same signer; chosen over limiting the rule to commands, because it keeps the rule for statements and adds only the cases in which the earlier statement can no longer take effect or taking effect twice changes nothing. After a failed send the hub may hold the earlier statement: a different change signed then is a new decision, and the earlier statement can take effect, before or after the later one, until S3 or S4 ends it. A later statement has its effect only once the target accepted it (S1 to S13); one that the target refuses raises no `sequences` and adds nothing to `removed`, so the earlier statement can still take effect within its S3 window. An accepted later `remove` of its entry id (accepted also for an id not held, which it adds to `removed` while `removed` is not full) raises `sequences`, so S4 refuses the earlier statement delivered after it; one delivered before it takes effect and holds until the `remove` is applied. While `removed` is full and the id is not held, the `remove` is refused with `allow_list_full` and the earlier `add` is refused too, at the latest by E9. An accepted later `change` applied after the earlier statement took effect ends its effect; one that arrives before the earlier `add` or `confirm` is refused (`entry_unknown`, `entry_inactive`) and leaves the earlier statement free to take effect within its S3 window; one that arrives before an earlier `change` and is accepted makes S4 refuse it. A later `add` after the earlier one took effect is refused, at the latest with `entry_exists`; one that arrives first makes S4 refuse the earlier `add` only if it is accepted. After signing a different change following a failed send, the owner uses a `remove` when the earlier change must not stay in effect and confirms on the target that it was accepted (its decision log or allow-list events, or the output of `apply --file`); the team record proves an accepted change only by the target's event for it, and the absence of an event, or of a signed refusal, proves nothing, since the target uploads every 60 s and retries a failed upload, and a refusal at S1 to S7 is never signed. If the `remove` was refused or its acceptance is not confirmed, the owner signs it again or removes the entry by hand. Otherwise, and also after a `remove`, the owner reads the target's allow-list events or decision log on the target once the earlier statement's window has ended or a later statement was accepted, and, if the earlier change still holds, narrows it with a `change` or ends it with a `remove` | §12.2, §12.3, §17.1, §17.2, §17.3, §18.7, §18.10, §18.12 |
 | The decision log has the document kinds `command`, `statement`, `hand`, `signed`, `reset`, `keys_file`, `revocation` and `expiry`; a refusal before the signature verified is recorded with the document's hash only; the client never truncates the log; its remaining growth (about 30 MB a day from a hub that was taken over without its signing key, and up to 1440000 notice lines a day from a holder of that key, each of which revokes a key) is stated, not capped | §17.1 |
 | A signed refusal tells the hub and the sender the refusal value, the document's id, signer, sequence and hash, and the decision time; this is accepted as what a sender needs to decide whether to sign again | §17.2 |
 | Device events follow the record protocol and define no format here; each is signed by the device key of the writing device in its one chain; the event type is not a member of `changes`; old values come from the recorded allow list; a refused event is kept and never sent again, and later events are signed again against the last accepted one; the record protocol names every event type this document needs | §2.3, §17.3, §21.1 |
