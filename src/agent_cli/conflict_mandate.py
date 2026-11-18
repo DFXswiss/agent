@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .account_pool import select_lane_account
 from .ai_accounts import AccountError as AIAccountError
-from .ai_accounts import load_ai_accounts, load_model_configuration
+from .ai_accounts import AIAccounts, load_ai_accounts, load_model_configuration
 from .conflict_mandate_config import ConflictWorker
 from .conflict_mandate_github import (
     ConflictHeadRepositoryGone,
@@ -190,10 +191,13 @@ class _RequestRuntime:
 class _Runtime:
     account: Account
     vendor: str
+    # The configured implementer role; a pool role is resolved per lane attempt.
     binding: Any
     request: _RequestRuntime
     # The implementer's configured driver; its write hardening applies.
     driver: DriverSpec
+    # The AI configuration ``binding`` was resolved from.
+    ai: AIAccounts
 
 
 def _request_git_runner(runner: Runner) -> Runner:
@@ -306,6 +310,7 @@ def _preflight(
         binding=binding,
         request=_RequestRuntime(git=account_runner, github=account_runner),
         driver=driver,
+        ai=ai,
     )
 
 
@@ -881,6 +886,12 @@ def _run_lane_attempt(
     _verify_metadata(ctx, expected_git_file)
     index_before = index_fingerprint(git_runner, str(ctx.worktree))
     try:
+        # Each attempt is a fresh launch that finishes in this call: a pool
+        # role chooses its account here, once, and the attempt keeps it. No
+        # usable pool account is a transient failure like a failed launch.
+        binding = select_lane_account(
+            store, runtime.ai, runtime.binding, now=_now()
+        ).role
         result = launch_lane_process(
             role="implementer",
             vendor=runtime.vendor,
@@ -890,7 +901,7 @@ def _run_lane_attempt(
             tmux=False,
             config_home=store.home,
             session_id=ctx.worker.session_id,
-            binding=runtime.binding,
+            binding=binding,
         )
     except (StoreError, Exception) as exc:
         _verify_metadata(ctx, expected_git_file)

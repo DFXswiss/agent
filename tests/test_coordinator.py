@@ -7228,6 +7228,86 @@ def test_accepted_legacy_execution_binding_is_repinned_once(
         refresh_execution_binding(store, worker, migrated)
 
 
+def test_pool_member_config_dir_change_stops_an_accepted_task(tmp_path: Path) -> None:
+    """A pool role pins its members' accounts, as a single-account role pins its own."""
+    from dataclasses import asdict
+
+    from agent_cli.coordinator_runtime import (
+        _execution_binding_fields,
+        execution_binding,
+        refresh_execution_binding,
+    )
+    from driver_fixtures import pool_driver_document
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    write_drivers(store.home, pool_driver_document())
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    path = store.home / "ai-accounts.json"
+    configuration = json.loads(path.read_text())
+    configuration["models"] = {"first": "driver-a", "second": "driver-c"}
+    for seat in ("seat-1", "seat-2"):
+        configuration["accounts"][seat] = {
+            "provider": "driver-c",
+            "config_dir": f"/test/driver-c/{seat}",
+        }
+    configuration["usage_accounts"] = ["seat-1", "seat-2"]
+    configuration["roles"]["pooled-reader"] = {
+        "accounts": ["seat-1", "seat-2"],
+        "model": "driver-c-model",
+        "access": "read-only",
+    }
+    lanes = configuration["sessions"]["worker-session"]["lanes"]
+    for kind in ("pr-reviewer-quality", "pr-reviewer-logic"):
+        lanes.pop(f"driver-b:{kind}")
+        lanes[f"driver-c:{kind}"] = "pooled-reader"
+    path.write_text(json.dumps(configuration))
+
+    ai = load_ai_accounts(store.home)
+    fields = _execution_binding_fields(store, worker, repo, ai)
+    pooled = [lane for lane in fields["lanes"] if "pool_accounts" in lane]
+    assert len(pooled) == 2
+    for lane in pooled:
+        assert lane["pool_accounts"] == [
+            asdict(account)
+            for account in ai.pool_members(ai.roles["pooled-reader"])
+        ]
+    # A single-account lane keeps exactly the fields of its role.
+    single = [lane for lane in fields["lanes"] if "pool_accounts" not in lane]
+    assert single == [
+        asdict(ai.for_lane(worker.session_id, kind, "driver-a", require_execution=False))
+        for kind in ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
+    ]
+
+    tid = "aa000001-0000-4000-8000-0000000000e2"
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "open",
+            "payload": {
+                "coordinator": {
+                    "source": {"repo": repo},
+                    "execution_binding": execution_binding(store, worker, repo),
+                }
+            },
+        },
+    )
+    task = store.row("task", tid)
+    assert task is not None
+    refresh_execution_binding(store, worker, task)
+
+    configuration["accounts"]["seat-2"]["config_dir"] = "/test/driver-c/seat-2-moved"
+    path.write_text(json.dumps(configuration))
+    with pytest.raises(CoordinatorError, match="task execution configuration changed"):
+        refresh_execution_binding(store, worker, task)
+
+
 def test_preflight_refuses_command_driver_as_first_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)

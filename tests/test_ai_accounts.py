@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ from agent_cli.ai_accounts import (
     READ_ONLY_WORKFLOW_KINDS,
     AccountError,
     AIAccount,
+    AIAccountPool,
     AIAccounts,
     AIRole,
     AISubscription,
@@ -35,6 +38,7 @@ from driver_fixtures import (
     accounts_document,
     driver_document,
     windows_driver,
+    windows_usage,
     write_accounts,
     write_drivers,
 )
@@ -644,6 +648,180 @@ def test_token_keepalive_does_not_stop_task_creation(tmp_path: Path) -> None:
     write_config(tmp_path, data)
     # Task creation reads only models and implementer; the key itself is known.
     assert load_model_slots(tmp_path).as_dict()["first"] == "driver-a"
+POOL_DRIVER = "driver-p"
+
+
+def pool_driver_document() -> dict:
+    """The placeholder drivers plus ``driver-p``: a lane driver with a windows adapter."""
+    document = driver_document()
+    driver = copy.deepcopy(document["drivers"]["driver-c"])
+    usage_section = windows_usage()
+    usage_section["account_file"].pop("default_name")
+    driver.pop("home_default_dir")
+    driver.update(
+        display_name="Vendor P",
+        home_env="TOOL_P_CONFIG",
+        credential_env=["TOOL_P_API_KEY"],
+        usage=usage_section,
+    )
+    document["drivers"][POOL_DRIVER] = driver
+    return document
+
+
+def pool_config() -> dict:
+    """``sample_config`` plus three polled accounts of ``driver-p`` and a pool role."""
+    data = sample_config()
+    for name in ("seat-1", "seat-2", "seat-3"):
+        data["accounts"][name] = {
+            "provider": POOL_DRIVER,
+            "config_dir": f"/operator/path/{name}",
+        }
+    data["usage_accounts"] = ["seat-1", "seat-2", "seat-3"]
+    data["roles"]["pooled"] = {
+        "accounts": ["seat-1", "seat-2"],
+        "model": "pool-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["chosen-session"]["lanes"][f"{POOL_DRIVER}:implementer"] = "pooled"
+    return data
+
+
+def write_pool_config(home: Path, data: dict) -> None:
+    write_drivers(home, pool_driver_document())
+    write_config(home, data, drivers=False)
+
+
+def test_pool_role_parses_into_an_unselected_pool(tmp_path: Path) -> None:
+    write_pool_config(tmp_path, pool_config())
+    loaded = load_ai_accounts(tmp_path)
+    pooled = loaded.roles["pooled"]
+    assert pooled.is_pool
+    assert isinstance(pooled.account, AIAccountPool)
+    assert pooled.account == AIAccountPool(
+        name="", provider=POOL_DRIVER, config_dir="", members=("seat-1", "seat-2")
+    )
+    assert pooled.model == "pool-model"
+    assert pooled.access == "workspace-write"
+    assert loaded.pool_members(pooled) == (
+        loaded.accounts["seat-1"],
+        loaded.accounts["seat-2"],
+    )
+    # Lane resolution checks the pool's shared provider.
+    assert loaded.for_lane("chosen-session", "implementer", POOL_DRIVER) is pooled
+    # Nothing may run on the unselected pool.
+    with pytest.raises(AccountError, match="names an account pool"):
+        pooled.env_prefix(loaded.drivers)
+
+
+def test_single_account_role_is_unchanged_next_to_a_pool(tmp_path: Path) -> None:
+    write_pool_config(tmp_path, pool_config())
+    loaded = load_ai_accounts(tmp_path)
+    builder = loaded.roles["builder"]
+    assert builder == AIRole(
+        "builder",
+        AIAccount("driver-a-primary", "driver-a", "/operator/path/driver-a-primary"),
+        "operator-selected-model",
+        "workspace-write",
+    )
+    assert type(builder.account) is AIAccount
+    assert not builder.is_pool
+    assert loaded.pool_members(builder) == ()
+    # The execution binding hashes this dictionary; it keeps today's shape.
+    assert asdict(builder) == {
+        "name": "builder",
+        "account": {
+            "name": "driver-a-primary",
+            "provider": "driver-a",
+            "config_dir": "/operator/path/driver-a-primary",
+        },
+        "model": "operator-selected-model",
+        "access": "workspace-write",
+    }
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        (
+            {"account": "seat-1", "accounts": ["seat-1", "seat-2"]},
+            "Role pooled must name exactly one of account and accounts",
+        ),
+        ({}, "Role pooled must name exactly one of account and accounts"),
+        (
+            {"accounts": ["seat-1", "driver-a-primary"]},
+            "Role pooled accounts must all use one provider, found driver-a, driver-p",
+        ),
+        (
+            {"accounts": ["seat-1", "seat-1"]},
+            "Role pooled accounts contains duplicate account seat-1",
+        ),
+        (
+            {"accounts": ["seat-1", "missing"]},
+            "Role pooled references an unknown account",
+        ),
+        (
+            {"accounts": ["seat-1"]},
+            "Role pooled accounts must be a list of at least two account names",
+        ),
+        (
+            {"accounts": "seat-1"},
+            "Role pooled accounts must be a list of at least two account names",
+        ),
+        (
+            {"accounts": ["seat-1", 7]},
+            "role pooled accounts entry must be a non-empty single-line string",
+        ),
+    ],
+)
+def test_pool_role_configuration_errors(
+    tmp_path: Path, entry: dict, message: str
+) -> None:
+    data = pool_config()
+    data["roles"]["pooled"] = {
+        **entry,
+        "model": "pool-model",
+        "access": "workspace-write",
+    }
+    write_pool_config(tmp_path, data)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == message
+
+
+def test_pool_member_must_be_polled(tmp_path: Path) -> None:
+    data = pool_config()
+    data["usage_accounts"] = ["seat-1", "seat-3"]
+    write_pool_config(tmp_path, data)
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == (
+        "Role pooled pool account seat-2 is not listed in usage_accounts; "
+        "a pool member's usage must be polled"
+    )
+
+
+def test_pool_provider_needs_a_windows_adapter(tmp_path: Path) -> None:
+    data = pool_config()
+    data["roles"]["pooled"]["accounts"] = ["driver-a-primary", "driver-a-secondary"]
+    write_pool_config(tmp_path, data)
+    with pytest.raises(AccountError, match="Role pooled account pool uses driver driver-a"):
+        load_ai_accounts(tmp_path)
+
+
+def test_pool_role_cannot_be_an_interactive_role(tmp_path: Path) -> None:
+    data = pool_config()
+    data["sessions"]["chosen-session"]["interactive"] = "pooled"
+    write_pool_config(tmp_path, data)
+    with pytest.raises(AccountError, match="interactive role pooled names an account pool"):
+        load_ai_accounts(tmp_path)
+
+
+def test_role_rejects_unknown_keys_next_to_a_pool(tmp_path: Path) -> None:
+    data = pool_config()
+    data["roles"]["pooled"]["strategy"] = "round-robin"
+    write_pool_config(tmp_path, data)
+    with pytest.raises(AccountError, match="Invalid role fields for pooled"):
+        load_ai_accounts(tmp_path)
 
 
 def write_subscriptions(home: Path, data: object) -> None:

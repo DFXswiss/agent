@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -438,3 +439,89 @@ def write_accounts(home: Path, document: dict[str, Any] | None = None) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+# Pool roles of ``pool_accounts_document``.
+POOL_WRITER_ROLE = "pooled-writer"
+POOL_READER_ROLE = "pooled-reader"
+# Read-only lane kinds that ``pool_accounts_document`` binds to the reader pool.
+POOL_READ_KINDS = ("reviewer", "pr-reviewer-quality", "pr-reviewer-logic", "check")
+
+
+def pool_driver_document() -> dict[str, Any]:
+    """The placeholder drivers with a windows usage adapter on ``driver-c``."""
+    document = driver_document()
+    document["drivers"]["driver-c"]["usage"] = windows_usage()
+    return document
+
+
+def pool_accounts_document(
+    config_dirs: dict[str, str],
+    *,
+    pool: tuple[str, ...] = ("seat-1", "seat-2"),
+) -> dict[str, Any]:
+    """``ai-accounts.json`` whose ``driver-c`` lanes run on the account pool ``pool``.
+
+    Every account in ``config_dirs`` is a polled ``driver-c`` account. The
+    implementer slot binds the writable pool role ``pooled-writer``; the
+    read-only slots bind the read-only pool role ``pooled-reader``. Both pool
+    the same accounts. Use it with ``pool_driver_document``.
+    """
+    accounts = accounts_document()
+    for seat, config_dir in config_dirs.items():
+        accounts["accounts"][seat] = {"provider": "driver-c", "config_dir": config_dir}
+    accounts["usage_accounts"] = list(config_dirs)
+    for role, access in (
+        (POOL_WRITER_ROLE, "workspace-write"),
+        (POOL_READER_ROLE, "read-only"),
+    ):
+        accounts["roles"][role] = {
+            "accounts": list(pool),
+            "model": "driver-c-model",
+            "access": access,
+        }
+    accounts["lanes"]["driver-c:implementer"] = POOL_WRITER_ROLE
+    for kind in POOL_READ_KINDS:
+        accounts["lanes"][f"driver-c:{kind}"] = POOL_READER_ROLE
+    return accounts
+
+
+def write_pool_login(config_dir: Path, login: str) -> None:
+    """The login identity file the windows adapter of ``driver-c`` reads."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / WINDOWS_ACCOUNT_FILE).write_text(
+        json.dumps({"loginAccount": {"emailAddress": login}}), encoding="utf-8"
+    )
+
+
+def record_weekly_usage(store: Any, login: str, used: float) -> None:
+    """Store a ``driver-c`` window ``usage.snapshot`` with weekly load ``used``."""
+    activity_id = str(uuid.uuid4())
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": "usage-session",
+            "type": "usage.snapshot",
+            "payload": {
+                "vendor": "driver-c",
+                "provider": "driver-c",
+                "account_email": login,
+                "tier": None,
+                "windows": {
+                    "five_hour": None,
+                    "weekly": {
+                        "used_percent": used,
+                        "resets_at": "2999-01-01T00:00:00+00:00",
+                    },
+                    "weekly_models": [],
+                },
+                # Snapshots are stored only on change, so an old fetch time is
+                # still current.
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+            },
+            "execution_status": "done",
+        },
+    )

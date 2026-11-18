@@ -1188,6 +1188,28 @@ def windows_snapshot(
     }
 
 
+def window_snapshot_match(
+    vendor: str, account_email: str
+) -> Callable[[dict[str, Any]], bool]:
+    """Match the window ``usage.snapshot`` payloads of one driver login.
+
+    The vendor is equal and ``account_email`` is case-insensitively equal.
+    Polling compares a new snapshot with the newest one of this rule; a lane
+    start reads that newest snapshot to choose a pool account.
+    """
+    key = account_email.casefold()
+
+    def match(payload: dict[str, Any]) -> bool:
+        value = payload.get("account_email")
+        return (
+            payload.get("vendor") == vendor
+            and isinstance(value, str)
+            and value.casefold() == key
+        )
+
+    return match
+
+
 def scan_window_usage(
     store: Store,
     *,
@@ -1256,19 +1278,10 @@ def scan_window_usage(
             )
             key = email.casefold()
             driver = account.provider
-
-            def match(payload: dict[str, Any], key: str = key, vendor: str = driver) -> bool:
-                value = payload.get("account_email")
-                return (
-                    payload.get("vendor") == vendor
-                    and isinstance(value, str)
-                    and value.casefold() == key
-                )
-
             activity_id = _record_account_snapshot(
                 store,
                 snapshot,
-                match,
+                window_snapshot_match(driver, email),
                 provider=driver,
                 lock_key=f"usage.snapshot:{driver}:{key}",
             )

@@ -32,8 +32,12 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from driver_fixtures import (
     accounts_document,
+    pool_accounts_document,
+    pool_driver_document,
+    record_weekly_usage,
     write_accounts as write_placeholder_accounts,
     write_drivers,
+    write_pool_login,
 )
 from test_coordinator_support import (
     FakeGh,
@@ -948,11 +952,16 @@ def test_a_waived_check_starts_no_resolver(
 
 
 def _placeholder_check_context(
-    tmp_path: Path, first: str, *, accounts: dict | None = None, lanes=None
+    tmp_path: Path,
+    first: str,
+    *,
+    accounts: dict | None = None,
+    drivers: dict | None = None,
+    lanes=None,
 ) -> CheckContext:
     store = Store(tmp_path)
     write_placeholder_accounts(store.home, accounts)
-    write_drivers(store.home)
+    write_drivers(store.home, drivers)
     worker = make_order_worker(tmp_path)
     second = "driver-a" if first == "driver-b" else "driver-b"
     task = {"id": ORDER_ID, "models": {"first": first, "second": second}}
@@ -1015,3 +1024,202 @@ def test_check_lane_runs_the_driver_judgment_template(tmp_path: Path) -> None:
         "--tools", "", "--mode", "default",
     ]
     assert stdin == "Is this a duplicate?"
+
+
+def test_check_lane_of_a_pool_role_runs_on_the_chosen_account(
+    tmp_path: Path,
+) -> None:
+    logins = tmp_path / "logins"
+    config_dirs = {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    seen: list[list[str]] = []
+    result = {"type": "result", "subtype": "success", "is_error": False, "result": "RESULT: ok"}
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        return Completed(0, json.dumps(result), "")
+
+    ctx = _placeholder_check_context(
+        tmp_path,
+        "driver-c",
+        accounts=pool_accounts_document(config_dirs),
+        drivers=pool_driver_document(),
+        lanes=lane,
+    )
+    for seat, used in (("seat-1", 60.0), ("seat-2", 20.0)):
+        write_pool_login(logins / seat, f"{seat}@example.com")
+        record_weekly_usage(ctx.store, f"{seat}@example.com", used)
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    # The process ran isolated to the least-loaded member.
+    assert len(seen) == 1
+    assert f"TOOL_C_CONFIG={config_dirs['seat-2']}" in seen[0]
+    assert f"TOOL_C_CONFIG={config_dirs['seat-1']}" not in seen[0]
+    row = ctx.store.row("agent", outcome.agent_id)
+    assert row is not None
+    assert row["role"] == "check"
+    assert row["account"] == "seat-2"
+    assert row["account_choice"] == (
+        "account seat-2 chosen from the pool of role pooled-reader at load 20 % "
+        "with 0 running lanes"
+    )
+
+
+CHECK_RESULT_OK = json.dumps(
+    {"type": "result", "subtype": "success", "is_error": False, "result": "RESULT: ok"}
+)
+
+
+def _no_lane(argv: list[str], stdin: str | None = None) -> Completed:
+    raise AssertionError(f"no check lane may start: {argv}")
+
+
+def _check_rows(ctx: CheckContext) -> list[dict[str, Any]]:
+    return [row for row in ctx.store.rows("agent") if row.get("role") == "check"]
+
+
+def _check_lane_runs(ctx: CheckContext) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in ctx.store.rows("activity")
+        if row.get("type") == "lane.run"
+        and (row.get("payload") or {}).get("role") == "check"
+    ]
+
+
+def test_check_lane_refuses_a_task_without_a_model_selection(tmp_path: Path) -> None:
+    from agent_cli.model_slots import TASK_MODELS_NOT_CONFIGURED
+
+    ctx = _placeholder_check_context(tmp_path, "driver-c", lanes=_no_lane)
+    ctx = replace(ctx, task={"id": ORDER_ID})
+    with pytest.raises(CoordinatorError) as exc:
+        _run_placeholder_check(ctx)
+    assert str(exc.value) == TASK_MODELS_NOT_CONFIGURED
+    assert not ctx.store.rows("agent")
+
+
+def test_check_lane_refuses_an_invalid_account_configuration(tmp_path: Path) -> None:
+    accounts = accounts_document()
+    accounts["usage_accounts"] = ["missing-account"]
+    ctx = _placeholder_check_context(
+        tmp_path, "driver-c", accounts=accounts, lanes=_no_lane
+    )
+    with pytest.raises(CoordinatorError) as exc:
+        _run_placeholder_check(ctx)
+    assert str(exc.value) == "usage_accounts references unknown account missing-account"
+    assert not ctx.store.rows("agent")
+
+
+def test_check_lane_refuses_when_its_spec_cannot_be_written(tmp_path: Path) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-c", lanes=_no_lane)
+    # A directory occupies the spec file path.
+    spec_path = control_dir(ctx.worker, ORDER_ID) / "check-duplicates_checked-driver-c.md"
+    spec_path.mkdir(parents=True)
+    with pytest.raises(CoordinatorError) as exc:
+        _run_placeholder_check(ctx)
+    assert str(exc.value) == "cannot create a fresh check lane directory"
+    assert spec_path.is_dir()
+    assert not ctx.store.rows("agent")
+
+
+def test_check_lane_without_a_lane_runner_runs_the_bounded_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def bounded(argv: list[str], **kwargs: Any) -> Completed:
+        # The provider process is mocked; nothing is executed.
+        calls.append({"argv": list(argv), **kwargs})
+        return Completed(0, CHECK_RESULT_OK, "")
+
+    monkeypatch.setattr("agent_cli.coordinator_check_lane.run_bounded", bounded)
+    ctx = _placeholder_check_context(tmp_path, "driver-c")
+    assert ctx.lane_runner is None
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value, outcome.detail) == ("valid", "ok", "")
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["timeout"] == ctx.worker.lane_timeout
+    assert call["cwd"] == str(
+        control_dir(ctx.worker, ORDER_ID) / "checks" / "duplicates_checked" / "cwd"
+    )
+    assert call["stdin_text"] == "Is this a duplicate?"
+    assert call["argv"][call["argv"].index("tool-c") :] == [
+        "tool-c", "--print", "--model", "driver-c-model",
+        "--tools", "", "--mode", "default",
+    ]
+    rows = _check_rows(ctx)
+    assert [row["status"] for row in rows] == ["done"]
+    assert [row["payload"]["status"] for row in _check_lane_runs(ctx)] == ["complete"]
+
+
+def test_check_lane_with_empty_output_is_a_failed_attempt(tmp_path: Path) -> None:
+    ctx = _placeholder_check_context(
+        tmp_path, "driver-c", lanes=lambda _argv, _stdin=None: Completed(0, "", "")
+    )
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value, outcome.detail) == (
+        "failed",
+        None,
+        "empty output",
+    )
+    row = ctx.store.row("agent", outcome.agent_id)
+    assert row is not None
+    assert row["status"] == "done"
+    assert row["note"] == "empty output"
+    assert [run["payload"]["status"] for run in _check_lane_runs(ctx)] == ["unavailable"]
+
+
+def test_check_lane_keeps_a_row_that_was_closed_during_the_run(tmp_path: Path) -> None:
+    ctx = _placeholder_check_context(tmp_path, "driver-c")
+    closed_ids: list[str] = []
+
+    def closing_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        # Another process ends the working check row while the lane runs.
+        for row in _check_rows(ctx):
+            if row.get("status") == "working":
+                closed = strip_row(row)
+                closed["status"] = "done"
+                closed["finished_at"] = "2026-11-17T12:00:00Z"
+                closed["note"] = "closed by an operator"
+                ctx.store.write("agent", "update", str(row["id"]), closed)
+                closed_ids.append(str(row["id"]))
+        return Completed(0, CHECK_RESULT_OK, "")
+
+    outcome = _run_placeholder_check(replace(ctx, lane_runner=closing_lane))
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    assert closed_ids == [outcome.agent_id]
+    row = ctx.store.row("agent", outcome.agent_id)
+    assert row is not None
+    assert row["status"] == "done"
+    assert row["note"] == "closed by an operator"
+    assert row["finished_at"] == "2026-11-17T12:00:00Z"
+    runs = _check_lane_runs(ctx)
+    assert len(runs) == 1
+    assert runs[0]["payload"]["agent_id"] == outcome.agent_id
+    assert runs[0]["payload"]["status"] == "complete"
+
+
+def test_check_lane_output_file_removed_by_the_lane_is_a_failed_attempt(
+    tmp_path: Path,
+) -> None:
+    output_files: list[Path] = []
+
+    def removing_lane(argv: list[str], stdin: str | None = None) -> Completed:
+        wrapper = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
+        output = Path(argv[wrapper + 2])
+        output_files.append(output)
+        output.unlink()
+        return Completed(0, "", "")
+
+    ctx = _placeholder_check_context(tmp_path, "driver-d", lanes=removing_lane)
+    outcome = _run_placeholder_check(ctx)
+    assert (outcome.status, outcome.value, outcome.detail) == (
+        "failed",
+        None,
+        "lane output file is unavailable",
+    )
+    # The cleanup of the already removed output file is quiet.
+    assert output_files and not output_files[0].exists()
+    assert [run["payload"]["status"] for run in _check_lane_runs(ctx)] == ["unavailable"]
+    row = ctx.store.row("agent", outcome.agent_id)
+    assert row is not None and row["status"] == "done"

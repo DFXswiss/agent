@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .a38_review import COMPLIANCE_PROMPT
+from .account_pool import recorded_lane_role, select_lane_account
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
 from .chain import close_allowed
@@ -946,12 +947,25 @@ def _read_reviewer_spool(
     usage_payload = saved.get("usage")
     try:
         ai = load_ai_accounts(store.home)
-        selected = ai.for_lane(
+        binding = ai.for_lane(
             worker.session_id,
             str(agent.get("role") or ""),
             str(agent.get("vendor") or ""),
             require_execution=False,
         )
+    except (AIAccountError, CoordinatorError, KeyError, TypeError, ValueError):
+        return None
+    try:
+        # The spool belongs to a lane that already ran: its recorded account
+        # applies, as in _finish_captured_lane. A recorded account that is no
+        # longer configured is an error for this lane, not a reason to drop
+        # the spool and let a fresh lane choose again.
+        selected = recorded_lane_role(
+            ai, binding, agent.get("account"), lane=str(agent.get("id") or "")
+        )
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    try:
         _driver, io = _coordinator_lane_driver(ai, str(agent.get("vendor") or ""))
         usage = LaneUsage(**usage_payload) if isinstance(usage_payload, dict) else None
         result = LaneResult(
@@ -1582,8 +1596,13 @@ def _finish_captured_lane(
         raise CoordinatorError("worktree missing; cannot launch lane")
     try:
         ai = load_ai_accounts(store.home)
-        selected = ai.for_lane(
-            worker.session_id, role, vendor, require_execution=False
+        # The captured lane already ran: use its recorded account, never a
+        # new choice.
+        selected = recorded_lane_role(
+            ai,
+            ai.for_lane(worker.session_id, role, vendor, require_execution=False),
+            agent.get("account"),
+            lane=agent_id,
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
@@ -2061,11 +2080,16 @@ def launch_lane(
         raise CoordinatorError("worktree missing; cannot launch lane")
     try:
         ai = load_ai_accounts(store.home)
-        selected = ai.for_lane(
-            worker.session_id, role, vendor, require_execution=False
+        # A fresh launch: a pool role chooses its account here, once.
+        choice = select_lane_account(
+            store,
+            ai,
+            ai.for_lane(worker.session_id, role, vendor, require_execution=False),
+            now=datetime.now(timezone.utc),
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    selected = choice.role
     driver, io = _coordinator_lane_driver(ai, vendor)
 
     ctrl = control_dir(worker, task["id"])
@@ -2082,7 +2106,15 @@ def launch_lane(
 
     aid = str(uuid.uuid4())
     lane_output: str | None = None
-    leave_running = False
+
+    def _release_lane() -> None:
+        forget_lane_process(worker, str(task["id"]), aid)
+        if lane_output is not None and role != "reviewer":
+            try:
+                os.unlink(lane_output)
+            except OSError:
+                pass
+
     try:
         replay_source: str | None = None
         try:
@@ -2157,6 +2189,7 @@ def launch_lane(
                 "started_at": utcnow(),
                 "finished_at": None,
                 "note": None,
+                **choice.record_fields(),
                 **(
                     {"reviewer_output": _reviewer_output_checkpoint(aid)}
                     if role == "reviewer" and lane_output is not None
@@ -2313,17 +2346,13 @@ def launch_lane(
     except SystemExit as exc:
         # StoreError and lane failures are SystemExit too, and those lanes
         # were already stopped. Only a coordinator stop leaves the lane running.
-        if not isinstance(exc, StoreError):
-            leave_running = True
+        if isinstance(exc, StoreError):
+            _release_lane()
         raise
-    finally:
-        if not leave_running:
-            forget_lane_process(worker, str(task["id"]), aid)
-            if lane_output is not None and role != "reviewer":
-                try:
-                    os.unlink(lane_output)
-                except OSError:
-                    pass
+    except BaseException:
+        _release_lane()
+        raise
+    _release_lane()
 
     # The lane verdict is the script-owned result status. For a normal run it
     # already equals the parsed output status; an unreadable output file keeps
@@ -3225,11 +3254,17 @@ def _prepare_pr_review_agent(
         raise LaneFailedError("a lane record of an earlier tick is still open")
     try:
         ai = load_ai_accounts(store.home)
-        selected = ai.for_lane(
-            worker.session_id, role, vendor, require_execution=False
+        # A fresh launch: a pool role chooses its account here, once. The
+        # agent row below counts as a running lane for the next preparation.
+        choice = select_lane_account(
+            store,
+            ai,
+            ai.for_lane(worker.session_id, role, vendor, require_execution=False),
+            now=datetime.now(timezone.utc),
         )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    selected = choice.role
     driver, io = _coordinator_lane_driver(ai, vendor)
     ctrl = control_dir(worker, task["id"])
     if selected.access != "read-only":
@@ -3306,6 +3341,7 @@ def _prepare_pr_review_agent(
                 "started_at": utcnow(),
                 "finished_at": None,
                 "note": None,
+                **choice.record_fields(),
                 **(
                     {"reviewer_output": _reviewer_output_checkpoint(aid)}
                     if lane_output is not None

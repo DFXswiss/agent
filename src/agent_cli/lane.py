@@ -697,6 +697,9 @@ def launch(
     io = lane_io(driver, tmux=tmux)
     if binding is None:
         selected = ai.for_lane(session_id, role, vendor, require_execution=False)
+        # A pool role has no account until a coordinator lane start chooses
+        # one; refuse it before any check reads its empty config_dir.
+        selected.require_single_account()
     else:
         selected = binding
         if selected.account.provider != vendor:

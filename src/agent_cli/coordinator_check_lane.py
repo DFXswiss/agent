@@ -12,9 +12,11 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .account_pool import select_lane_account
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .coordinator_checks import CheckContext, CheckValue, Deferred
@@ -146,12 +148,18 @@ def run_check_lane(
     if driver.lane is None or driver.lane.argv_judgment is None:
         raise CoordinatorError(JUDGMENT_UNSUPPORTED.format(driver=vendor))
     try:
-        selected = ai.for_lane(
+        binding = ai.for_lane(
             worker.session_id, "check", vendor, require_execution=False
         )
         ai.require_lane_execution()
+        # Every check lane is a fresh launch that finishes in this call; a
+        # pool role chooses its account here, once.
+        choice = select_lane_account(
+            store, ai, binding, now=datetime.now(timezone.utc)
+        )
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    selected = choice.role
 
     ctrl = control_dir(worker, str(task["id"]))
     cwd = ctrl / "checks" / key / "cwd"
@@ -235,6 +243,7 @@ def run_check_lane(
                 "started_at": utcnow(),
                 "finished_at": None,
                 "note": None,
+                **choice.record_fields(),
             },
         )
 

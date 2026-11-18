@@ -20,7 +20,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
-from .ai_accounts import AIAccounts, load_ai_accounts
+from .ai_accounts import AIAccounts, AIRole, load_ai_accounts
 from .model_slots import (
     SLOT_STAGES,
     ModelSlotsError,
@@ -282,6 +282,20 @@ def execution_binding(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _lane_binding_fields(ai: AIAccounts, role: AIRole) -> dict[str, Any]:
+    """Return the binding fields of one resolved lane role.
+
+    A pool role's account names only its members, so the members' accounts
+    are added; a member's changed ``config_dir`` then changes the binding just
+    as it does for a single-account role. A single-account role keeps exactly
+    the fields of its dataclass.
+    """
+    fields = asdict(role)
+    if role.is_pool:
+        fields["pool_accounts"] = [asdict(account) for account in ai.pool_members(role)]
+    return fields
+
+
 def _execution_binding_fields(
     store: Store,
     worker: WorkerConfig,
@@ -299,13 +313,14 @@ def _execution_binding_fields(
         raise CoordinatorError(f"repository owner {owner or '?'} is no longer configured")
     github = load_accounts(store.home)
     lanes = [
-        asdict(
+        _lane_binding_fields(
+            ai,
             ai.for_lane(
                 worker.session_id,
                 slot.split(":", 1)[1],
                 slot.split(":", 1)[0],
                 require_execution=False,
-            )
+            ),
         )
         for slot in required_lane_slots(ai.models, ai.implementer)
     ]

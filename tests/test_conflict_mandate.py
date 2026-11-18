@@ -65,6 +65,12 @@ from test_coordinator_support import (
     make_session,
     write_accounts,
 )
+from driver_fixtures import (
+    pool_accounts_document,
+    pool_driver_document,
+    write_accounts as write_placeholder_accounts,
+    write_drivers,
+)
 
 
 SCRIPT_REQ = Request(
@@ -5842,6 +5848,40 @@ def test_lane_start_failure_with_unchanged_state_is_transient(
     assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
 
 
+def test_lane_attempt_without_a_usable_pool_account_is_transient_without_a_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    # The implementer role pools two accounts; neither has a login on this
+    # device, so no member can be chosen.
+    logins = tmp_path / "logins"
+    accounts = pool_accounts_document(
+        {seat: str(logins / seat) for seat in ("seat-1", "seat-2")}
+    )
+    accounts["models"] = {"first": "driver-c", "second": "driver-b"}
+    write_placeholder_accounts(store.home, accounts)
+    write_drivers(store.home, pool_driver_document())
+    launches: list[dict[str, Any]] = []
+
+    def launch(**kwargs: Any) -> Any:
+        launches.append(kwargs)
+        raise OSError("a lane started without a chosen pool account")
+
+    monkeypatch.setattr("agent_cli.conflict_mandate.launch_lane_process", launch)
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=fake.lane)
+    assert any(
+        line.startswith("transient:")
+        and "Role pooled-writer has no usable pool account "
+        "(seat-1: no login; seat-2: no login)" in line
+        for line in lines
+    )
+    assert launches == []
+    assert fake.lanes == []
+    assert fake.pr_comments == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
 def test_lane_start_failure_with_unreadable_index_posts_one_blocker_without_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6910,3 +6950,108 @@ def test_comment_route_still_reacts_and_ignores_the_new_field(
         "<!-- agent-conflicts:result:v1:7 -->"
     )
     store.close()
+
+
+CONTROL_PARTS = (".conflicts-control", "worker-session", "example__project", "pr-42-c7")
+
+
+def _lane_runs_of_worker(store: Store) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row.get("session_id") == "worker-session"
+    ]
+
+
+def test_interrupted_lane_keeps_its_interrupt_when_the_index_check_is_interrupted_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    launched = {"value": False}
+    interrupted_checks: list[list[str]] = []
+
+    def interrupted_launch(*args: Any, **kwargs: Any) -> Any:
+        launched["value"] = True
+        raise KeyboardInterrupt("lane interrupted")
+
+    def interrupted_index(argv: list[str]) -> Completed:
+        # The first index read after the interrupted launch is interrupted as
+        # well; the cleanup gives up quietly and the lane's interrupt stays.
+        if launched["value"] and "ls-files" in argv and not interrupted_checks:
+            interrupted_checks.append(list(argv))
+            raise KeyboardInterrupt("index check interrupted")
+        return fake(argv)
+
+    monkeypatch.setattr(
+        "agent_cli.conflict_mandate.launch_lane_process", interrupted_launch
+    )
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        tick(store, worker_cfg, runner=interrupted_index, lane_runner=fake.lane)
+    assert str(excinfo.value) == "lane interrupted"
+    assert len(interrupted_checks) == 1
+    assert fake.lanes == []
+    assert fake.pr_comments == []
+    assert _lane_runs_of_worker(store) == []
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_other_blocker_from_the_index_read_after_the_lane_is_raised_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.conflict_mandate import _Blocker
+
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    lane_finished = {"value": False}
+    blocked_reads: list[list[str]] = []
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        lane_finished["value"] = True
+        return completed
+
+    def blocking_index(argv: list[str]) -> Completed:
+        if lane_finished["value"] and "ls-files" in argv and not blocked_reads:
+            blocked_reads.append(list(argv))
+            raise _Blocker("index is held by another process")
+        return fake(argv)
+
+    lines = tick(store, worker_cfg, runner=blocking_index, lane_runner=lane)
+    assert "blocker posted: index is held by another process" in lines
+    assert len(blocked_reads) == 1
+    assert len(fake.lanes) == 1
+    assert len(fake.pr_comments) == 1
+    assert "`index is held by another process`" in fake.pr_comments[0]["body"]
+    # Unlike invalid UTF-8, this blocker leaves the attempt before its lane
+    # log and lane record are written.
+    assert _lane_runs_of_worker(store) == []
+    assert not (tmp_path / "work").joinpath(*CONTROL_PARTS, "lane-s1-a1.log").exists()
+    assert not any("--force-with-lease" in " ".join(call) for call in fake.calls)
+
+
+def test_unwritable_lane_log_is_visible_and_the_lane_result_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeConflictTransport(tmp_path)
+    store, worker_cfg = _ready(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr("agent_cli.conflict_mandate.run_bounded", fake.check)
+    log_path = (tmp_path / "work").joinpath(*CONTROL_PARTS, "lane-s1-a1.log")
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        completed = fake.lane(argv, stdin)
+        # A directory now occupies the lane log path, so the log cannot be
+        # written.
+        log_path.mkdir(parents=True)
+        (log_path / "occupied").write_text("occupied\n", encoding="utf-8")
+        return completed
+
+    lines = tick(store, worker_cfg, runner=fake, lane_runner=lane)
+    assert any("pushed" in line for line in lines)
+    assert any(line.startswith("lane log not written: ") for line in lines)
+    assert log_path.is_dir()
+    assert len(fake.lanes) == 1
+    assert len(fake.pr_comments) == 1
+    assert len(_lane_runs_of_worker(store)) == 1
+    assert any("--force-with-lease" in " ".join(call) for call in fake.raw_calls)
