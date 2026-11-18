@@ -1689,7 +1689,7 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `event_time_invalid` | A stored `received_at` cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — so that no record hash can be computed from it; `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. This row is decided after `chain_broken` and before `record_hash_mismatch`, so an event whose `received_at` has no form of section 2 fails here and never reaches `record_hash_mismatch`. |
 | `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6; or, in a verification that a running hub process runs on request or periodically, the record hash at the position of the head of the process's state in memory differs from the record hash of that head. |
 | `event_refused` | The state rules of section 6 refuse the event with any value other than `value_invalid`. |
-| `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
+| `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, a stored `published_at` that cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — so that no checkpoint text of section 12.2 can be formed to verify its signature, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
 
 Revocation, expiry, scopes and the other actor rules are not checked (section 6.1). Checkpoints of
 another hub key id are skipped by the hub; `verify` skips every checkpoint whose hub key id is not
@@ -1792,7 +1792,8 @@ and writes no checkpoint. An attempt is one transaction of the writer role at is
 3. It reads the newest checkpoint of its own hub key id (the one with the highest position) from
    the database and checks it as the row `checkpoint_invalid` of section 12.1 does: its position
    is not beyond the head, its record hash equals the stored record hash of the event at its
-   position, and its signature verifies with the hub's public key. When that check fails, it
+   position, its `published_at` can be written as a time of section 2, and its signature
+   verifies with the hub's public key. When that check fails, it
    writes nothing, rolls the transaction back, enters the state `record_unverified` and logs
    `record verify failed <position> checkpoint_invalid`.
 4. It writes nothing when the head of its state is position 0 (empty record), when the head
@@ -1863,9 +1864,9 @@ argument exists.
 creates `FILE` so that it fails when `FILE` exists, reads the snapshot and writes the file. When
 it fails after it created `FILE` and keeps running, it removes `FILE` before it prints its line.
 `export` does not verify the record, but it never writes a value outside the form of its member:
-when a stored `received_at` cannot be written as a time of section 2 (its year lies outside 0001
-to 9999, or it is `infinity` or `-infinity`, section 12.1), it stops, removes `FILE` and prints
-`refused time_invalid`.
+when a stored `received_at` or the stored `published_at` of a checkpoint cannot be written as a
+time of section 2 (its year lies outside 0001 to 9999, or it is `infinity` or `-infinity`, section
+12.1), it stops, removes `FILE` and prints `refused time_invalid`.
 When the process is killed or the machine stops while it writes, a partial `FILE` can remain:
 a file cut inside a line, or at the end of a line before the last event line, is refused by
 `verify` and `restore` with `file_invalid` (it lacks the final `\n`, or its header does not
@@ -1880,7 +1881,7 @@ copies a file only after that line (section 12.4). It prints one line and exits:
 | `refused file_exists` | 1 | `FILE` exists; nothing is written |
 | `refused file_write` | 1 | `FILE` cannot be created or written |
 | `refused database` | 1 | a database operation failed, also a connection that failed or that the connect timeout of section 15 ended |
-| `refused time_invalid` | 1 | a stored `received_at` of the snapshot cannot be written as a time of section 2 (the hub fails it with `event_time_invalid`, section 12.1); no file is left behind |
+| `refused time_invalid` | 1 | a stored `received_at` of the snapshot cannot be written as a time of section 2 (the hub fails it with `event_time_invalid`, section 12.1), or the stored `published_at` of a checkpoint of the snapshot cannot (the hub fails it with `checkpoint_invalid` when it checks that checkpoint, section 12.1); no file is left behind |
 
 `verify` prints one line and exits:
 
@@ -2600,8 +2601,10 @@ Integrity and backup:
   file, which stays unchanged; `refused file_write` for a directory that cannot be written;
   `refused database` for an unreachable database and for a database without the schema, with no
   file left behind; `refused time_invalid` for a stored `received_at` of `10000-01-01 00:00:00+00`
-  and, in a second run, of `infinity`, each changed as database superuser with the triggers
-  bypassed, with no file left behind; each asserts the printed line and exit 1
+  and, in a second run, of `infinity`, and for a stored `published_at` of a checkpoint of
+  `10000-01-01 00:00:00+00` and, in a further run, of `-infinity`, each changed as database
+  superuser with the triggers bypassed, with no file left behind; each asserts the printed line
+  and exit 1
 - offline `verify` of an export, with `verified <position> <record hash>` and exit 0; `refused
   config` for `--keys`, `--teams` or `--in` missing, each of them given twice, an unknown
   argument, a keys file that does not load, a teams file that does not load, a keys file whose
@@ -3108,8 +3111,9 @@ confirms or changes each one.
     because the keys file loader needs the roster; the export is verifiable offline with the
     public keys file and the public teams file (§12.3).
 57. `export` prints `exported`, `refused config`, `refused file_exists`, `refused file_write`,
-    `refused database` or `refused time_invalid`; it never writes a stored `received_at` that
-    cannot be written as a time of §2, but stops and leaves no file behind (decision 103); a
+    `refused database` or `refused time_invalid`; it never writes a stored `received_at` or a
+    stored `published_at` of a checkpoint that cannot be written as a time of §2, but stops and
+    leaves no file behind (decision 103); a
     malformed export file is refused by `verify` and `restore` with the
     failure `file_invalid`, at position `0` for a fault of the whole file (not UTF-8, empty, no
     final `\n`), of the first line (the header line, also when it is empty or not JSON) or of the
@@ -3374,4 +3378,8 @@ confirms or changes each one.
     `chain_broken` and before `record_hash_mismatch`, because no record hash can be computed from
     it. The check constraint of the column `received_at` in §11.3 does not refuse such a value: it
     requires only whole seconds, and a year after 9999, `infinity` and `-infinity` all meet it.
-    The only defence is this rule of verification (§11.3, §12.1).
+    The only defence is this rule of verification (§11.3, §12.1). The same holds for a stored
+    `published_at` of a checkpoint: the check constraint of the column `published_at` in §11.3
+    likewise requires only whole seconds, and a checked checkpoint with such a `published_at`
+    fails verification with `checkpoint_invalid`, because no checkpoint text of §12.2 can be
+    formed from it to verify its signature (§11.3, §12.1, §12.2).
