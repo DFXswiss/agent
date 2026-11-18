@@ -395,9 +395,9 @@ def _consume_mention(
     try:
         store.write("job", "update", row_id, updated)
     except (Exception, StoreConnectionError):
-        # A lost connection is retryable and an ordinary exception is a failed
-        # pass. Any other StoreError is a genuine data problem and must fail
-        # loud rather than be reported as a skip.
+        # A lost connection or any other ordinary exception returns False,
+        # which the caller counts as skipped with the thread left unread; any
+        # other StoreError propagates.
         return False
     _mark_thread_read(item, runner)
     return True
@@ -708,12 +708,14 @@ def scan_mentions(
             if (
                 head_sha is None
                 or not isinstance(old_head, str)
+                or _HEAD_SHA.fullmatch(old_head) is None
                 or old_head == head_sha
             ):
-                # Nothing moved, or it cannot be shown that it did: the request
-                # is a duplicate rather than a new generation. Record it before
-                # marking the thread read so a head change later does not
-                # replay this same comment.
+                # Only a stored commit that differs from the readable current
+                # head shows that the head moved. A missing or malformed stored
+                # value cannot show it, so the request is a duplicate rather
+                # than a new generation. Record it before marking the thread
+                # read so a head change later does not replay this comment.
                 if not _consume_mention(
                     store, row_id, existing, trigger, item, runner
                 ):
