@@ -12,6 +12,11 @@ behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 [PROTOCOL.md](PROTOCOL.md) stays the contract for everything that exists today.
+Passkey invites, sign-in and signed requests by a certified session key are specified in
+[PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md), which extends sections 2, 5 and 7 of this document,
+adds to section 3 the loader rule that fixes the device key of a device (the unrevoked `agent`
+entry of that device without `program`, if there is one), adds endpoints under `/api/key/`, and refuses a
+public URL whose host is an IP address or ends with a dot.
 The third build step, the team record and the security-issue object, is specified in
 [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
 
