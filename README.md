@@ -77,7 +77,7 @@ Sign-in with passkeys, invites and the certified session key are specified, not 
 
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
 
-The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified, not yet built, in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
+The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md). Its first change is built: the record library, the schema and `python -m agent_core.record migrate`. Of the third change, the rules of the record as a library, its storage in PostgreSQL and the commands `export`, `verify` and `restore` are built. The hub does not use the record yet.
 
 ## Control
 
@@ -107,10 +107,69 @@ Assignment and reply writes accept an optional lowercase UUID `request_id`. User
 
 Node.js is required for the dashboard and session page tests.
 
+PostgreSQL 16 (or later) is required for the team record tests. They read the connection string of
+a superuser on a throwaway local test server from `AGENT_CORE_TEST_POSTGRES`; each test creates its
+own database and roles with random names and drops them at the end, except the identifier test, which
+uses the fixed names `grant`, `select` and `order` and removes roles and a database of these names
+first. Without the variable every record
+test that uses the database fails; none is skipped. The tests of the event text and of the connection
+string need no database. The server must accept password logins over TCP on a loopback address or
+`localhost`.
+
+Use a throwaway PostgreSQL 16 instance for this and nothing else: it holds no data, the tests
+create and drop databases and roles on it, and its superuser password `postgres` is a test
+constant. It listens on the dedicated port 55432, so it never meets another PostgreSQL on 5432.
+Start it in one of two ways.
+
+With a container:
+
 ```bash
+docker run -d --rm --name agent-core-test-postgres -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 postgres:16
+# Stop and remove it afterwards: docker stop agent-core-test-postgres
+```
+
+Or with a local `initdb` of PostgreSQL 16 (its `bin` directory on `PATH`):
+
+```bash
+TESTPG="$(mktemp -d)"
+printf 'postgres\n' > "$TESTPG/password"
+initdb -D "$TESTPG/data" -U postgres --auth=scram-sha-256 --pwfile="$TESTPG/password"
+pg_ctl -D "$TESTPG/data" -l "$TESTPG/server.log" -o "-p 55432 -c listen_addresses=127.0.0.1 -k $TESTPG" start
+# Stop and remove it afterwards: pg_ctl -D "$TESTPG/data" stop && rm -rf "$TESTPG"
+```
+
+Then run the tests:
+
+```bash
+export AGENT_CORE_TEST_POSTGRES=postgresql://postgres:postgres@127.0.0.1:55432/postgres
 pip install -e ".[test]"
 pytest
 ```
+
+CI runs the same tests against a `postgres:16` service container on the same port 55432.
+
+`python -m agent_core.record migrate` applies the schema of the team record (RECORD-PROTOCOL.md
+section 11.4). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE`; the hub
+does not use the record database yet.
+
+Three further commands export, check and restore the record (RECORD-PROTOCOL.md section 12.3). None
+of them needs the hub to run, none reads `AGENT_CORE_RECORD_OWNER_DATABASE`, and each prints exactly
+one line: no value of the configuration and no message of a database error.
+
+| Command | Reads | Prints |
+|---|---|---|
+| `python -m agent_core.record export --out FILE` | `AGENT_CORE_RECORD_DATABASE` (writer role) | `exported <position> <record hash or ->` (exit 0); `refused config`, `refused file_exists`, `refused file_write`, `refused database` or `refused value_unwritable` (exit 1) |
+| `python -m agent_core.record verify --keys KEYS --teams TEAMS --in FILE [--hub-key ID=PUBLIC_KEY]...` | the files named; no variable, no database | `verified <position> <record hash or ->` (exit 0); `refused config` or `failed <position> <failure>` (exit 1) |
+| `python -m agent_core.record restore --in FILE [--hub-key ID=PUBLIC_KEY]...` | `AGENT_CORE_RECORD_DATABASE` (writer role), `AGENT_CORE_KEYS`, `AGENT_CORE_TEAMS` | `restored <position> <record hash or ->` (exit 0); `refused config`, `failed <position> <failure>`, `refused hub_key_missing`, `refused schema_missing (run python -m agent_core.record migrate first)`, `refused schema_version`, `refused writer_rights`, `refused not_empty` or `refused database` (exit 1) |
+
+`export` creates `FILE` with mode `0600`, refuses an existing `FILE`, and removes `FILE` again when it
+fails after creating it; an export counts only when it printed `exported`. The file contains security
+issues: keep it encrypted and out of every repository, issue, pull request and log (section 12.4).
+`verify` checks the file offline against the public keys file and teams file, and checks every
+checkpoint whose hub key id is given with `--hub-key`. `restore` verifies the whole file first, then
+inserts it into a migrated, empty database; run `migrate` before it, and give the public key of every
+hub key id in the file. Without a command, or with an unknown one, the program prints
+`usage: python -m agent_core.record {migrate,export,verify,restore}` to stderr and exits 2.
 
 ## License
 
