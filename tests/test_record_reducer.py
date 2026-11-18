@@ -811,9 +811,14 @@ def test_verification_outside_row_11() -> None:
         "transition_invalid", "event_refused")
     world.fold_write(BOB.id, "task", verified, [("status", "done", "in_progress")])
     world.fold_write(ALICE.id, "task", verified, [("status", "in_progress", "merged")])
-    # Row 11 with `new` `-`.
-    assert world.fold_refused(ERIN.id, "task", verified, [("status", "merged", "done"), ("verification", "Checked", None)]) == (
+    # Row 11 with `new` `-`. The state rules do not read the actor (section 6.1), so an event of an
+    # `ed25519` key passes the rows before `event_refused` of section 12.1 and reaches the reducer.
+    assert world.fold_refused(BOB.id, "task", verified, [("status", "merged", "done"), ("verification", "Checked", None)]) == (
         "transition_invalid", "event_refused")
+    # The same event signed by the staff passkey: the reducer still refuses it, but a fold stops
+    # earlier, at `key_unknown`, because a `webauthn` entry is no `ed25519` entry (section 12.1).
+    assert world.fold_refused(ERIN.id, "task", verified, [("status", "merged", "done"), ("verification", "Checked", None)]) == (
+        "transition_invalid", "key_unknown")
 
 
 # --- section 6.4: transitions that no row reaches ----------------------------------------------------
@@ -918,7 +923,9 @@ def test_assignee_rows_refused_for_others() -> None:
     world = World(STANDARD)
     work = started_work(world, [])
     assert world.refused(BOB.id, "task", work, [("status", "in_progress", "done")], EVENTS) == "change_not_allowed"
-    assert world.refused(WATCHER.id, "task", work, [("status", "in_progress", "done")], WATCH) == "change_not_allowed"
+    # A task of kind `work` without links has no repository, so the `service` key of the watcher
+    # does not see it (section 3, condition 4) and check 12 (d) answers before the actor rules.
+    assert world.refused(WATCHER.id, "task", work, [("status", "in_progress", "done")], WATCH) == "object_not_found"
     # The event changes `assignee`: nobody is the assignee for row 10.
     assert world.refused(ALICE.id, "task", work, [("status", "in_progress", "done"), ("assignee", "alice", "bob")],
                          EVENTS) == "change_not_allowed"
@@ -926,7 +933,19 @@ def test_assignee_rows_refused_for_others() -> None:
     status(world, ALICE.id, merged, "in_progress", "merged", EVENTS)
     world.write(BOB.id, "task", merged, [("completion", "verified", "merged")], EVENTS)
     assert world.refused(BOB.id, "task", merged, [("status", "merged", "done")], EVENTS) == "change_not_allowed"
-    assert world.refused(WATCHER.id, "task", merged, [("status", "merged", "done")], WATCH) == "change_not_allowed"
+    assert world.refused(WATCHER.id, "task", merged, [("status", "merged", "done")], WATCH) == "object_not_found"
+    # Rows 10 and 12 for the watcher on a task it sees: a security issue without links, whose
+    # `repository` is in the watcher's `subjects`. Without links, rows 8 and 9 do not match.
+    issue = create_security(world, ALICE.id, "login-bypass",
+                            [("assignee", None, "alice"), ("status", None, "in_progress"), ("fix", None, LINK)])
+    assert world.refused(WATCHER.id, "task", issue, [("status", "in_progress", "merged")], WATCH) == "change_not_allowed"
+    status(world, ALICE.id, issue, "in_progress", "merged", EVENTS)  # row 10
+    world.write(BOB.id, "task", issue, [("completion", "verified", "merged")], EVENTS)
+    assert world.task(issue).status == "merged"
+    assert world.refused(BOB.id, "task", issue, [("status", "merged", "done")], EVENTS) == "change_not_allowed"
+    assert world.refused(WATCHER.id, "task", issue, [("status", "merged", "done")], WATCH) == "change_not_allowed"
+    status(world, ALICE.id, issue, "merged", "done", EVENTS)  # row 12
+    assert world.task(issue).status == "done"
 
 
 def test_an_agent_without_record_write_is_no_writer() -> None:
