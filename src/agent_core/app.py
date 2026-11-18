@@ -380,7 +380,15 @@ def create_app(
         query=parse_release_query,
     )
 
-    app = FastAPI(title="agent-core", version="0.1.0", lifespan=lifespan)
+    # No generated docs pages or schema: /docs and /redoc load script from third-party hosts.
+    app = FastAPI(
+        title="agent-core",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=cfg.session_secret,
