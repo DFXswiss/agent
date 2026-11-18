@@ -519,8 +519,13 @@ def test_an_append_folds_the_events_of_another_process_before_it_checks(record_d
     with process(record_db, ring) as first, process(record_db, ring) as second:
         work = first.story()
         second.clock.now = first.clock.now
+        # bob's event chains to bob's event at position 2 and comments on a task of position 1,
+        # neither of which the state of the second process holds before its append folds them.
+        assert second.memory.head() is None
         assert isinstance(second.append(BOB, "comment", new_id(), comment_on(work)), Appended)
+        assert second.memory.head() is not None and second.memory.head().position == 4  # type: ignore[union-attr]
         first.clock.now = second.clock.now
+        assert first.memory.head() is not None and first.memory.head().position == 3  # type: ignore[union-attr]
         outcome = first.append(ALICE, "comment", new_id(), comment_on(work))
         assert isinstance(outcome, Appended) and outcome.position == 5
         with writer(record_db) as connection:
@@ -537,10 +542,18 @@ def test_an_append_whose_fold_fails_writes_nothing_and_answers_unverified(record
         assert isinstance(second.append(BOB, "comment", new_id(), comment_on(work)), Appended)
         tamper(record_db, "record.event", "UPDATE record.event SET event_id = %s WHERE position = 4", (new_id(),))
         first.clock.now = second.clock.now
+        reads = first.clock.reads
         outcome = first.append(ALICE, "comment", new_id(), comment_on(work))
         assert outcome == Unverified(Failure("row_mismatch", 4))
+        # Section 11.5, step 2: the clock is read only after a fold that succeeded, and the state
+        # lock is released when the fold fails.
+        assert first.clock.reads == reads
+        assert not first.memory.lock.locked()
         # The state keeps the events before the failing one.
         assert first.memory.head() is not None and first.memory.head().position == 3  # type: ignore[union-attr]
+        # The transaction was rolled back: the connection holds no open transaction, and with it
+        # no advisory lock of that transaction.
+        assert first.connection.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
     assert counts(record_db) == (4, 0)
 
 
@@ -795,6 +808,8 @@ def test_two_processes_in_one_hour_write_exactly_one_checkpoint_also_when_the_he
         assert isinstance(attempt(first, H1, H1), CheckpointWritten)
         second.clock.now = first.clock.now
         assert isinstance(second.append(BOB, "comment", new_id(), comment_on(work)), Appended)
+        # The head moved past the checkpoint of this hour: only its published_at stops the attempt.
+        assert second.memory.head() is not None and second.memory.head().position == 4  # type: ignore[union-attr]
         assert attempt(second, H1, H1 + 10) is None
     assert counts(record_db) == (4, 1)
 

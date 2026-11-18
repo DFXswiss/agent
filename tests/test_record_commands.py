@@ -26,7 +26,7 @@ from agent_core.record import commands, connection
 from agent_core.record.checkpoint import Checkpoint
 from agent_core.record.event import parse_event
 from agent_core.record.export import write_export
-from agent_core.record.storage import checkpoint_attempt, read_snapshot, verify_stored
+from agent_core.record.storage import Appended, CheckpointWritten, checkpoint_attempt, read_snapshot, verify_stored
 from agent_core.signing import HubSigner, b64url_encode, parse_time
 from tests.conftest import (
     DATABASES_LOCK,
@@ -394,13 +394,19 @@ def test_export_reads_one_snapshot_and_its_file_verifies_and_restores(
         original = read_snapshot
 
         def concurrent() -> None:
-            second.append(BOB, "comment", new_id(), [("task", None, work), ("body", None, "Late")])
+            # An append and a checkpoint of position 4 commit between the read of the events and
+            # the read of the checkpoints; the snapshot holds neither.
+            appended = second.append(BOB, "comment", new_id(), [("task", None, work), ("body", None, "Late")])
+            assert isinstance(appended, Appended) and appended.position == 4
             second.clock.now = H1
-            assert checkpoint_attempt(second.connection, second.memory, ring, HUB_SIGNER, H1, second.clock) is not None
+            assert checkpoint_attempt(second.connection, second.memory, ring, HUB_SIGNER, H1, second.clock) == (
+                CheckpointWritten(4, appended.record_hash)
+            )
 
         monkeypatch.setattr(commands, "read_snapshot", lambda reader: original(reader, concurrent))
         out = tmp_path / "export.jsonl"
         assert export(["--out", str(out)], {WRITER_VARIABLE: record_db.writer_url}) == (f"exported 3 {head.record_hash}", 0)
+    assert counts(record_db) == (4, 1)
     lines = [json.loads(line) for line in out.read_bytes().splitlines()]
     assert (lines[0]["position"], lines[0]["record_hash"]) == (lines[-1]["position"], lines[-1]["record_hash"]) == (3, head.record_hash)
     assert verify(key_files, out, *hub_key()) == (f"verified 3 {head.record_hash}", 0)

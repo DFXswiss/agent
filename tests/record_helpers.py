@@ -242,6 +242,9 @@ class Clock:
         return self.now
 
 
+_LAST_EVENT_OF_KEY = "SELECT event_hash FROM record.event WHERE actor_key_id = %s ORDER BY position DESC LIMIT 1"
+
+
 class Process:
     """One hub process on a test database: its writer connection, its state in memory and its clock."""
 
@@ -255,7 +258,25 @@ class Process:
     def close(self) -> None:
         self.connection.close()
 
+    def accepted_prev_hash(self, key_id: str) -> str:
+        """The `prev_hash` a writer signs against (section 4.5): the event hash of the last stored
+        event of `key_id`, as `GET /api/key/record/head` tells it (section 7.8), or `-` when the
+        key has no stored event.
+
+        It is read from the database, not from the state in memory of this process: the writer
+        knows the record of the hub, not the state of the one process that happens to take its
+        request, and that state may not yet hold the events another process committed. Reading
+        it does not change the state in memory, so an append still has to fold those events
+        itself (section 11.5, step 2) before its checks accept the event.
+        """
+        row = self.connection.execute(_LAST_EVENT_OF_KEY, (key_id,)).fetchone()
+        return "-" if row is None else row[0]
+
     def sign(self, key_id: str, object_type: str, object_id: str, changes: Changes, **options: Any) -> tuple[bytes, bytes]:
+        """A validly signed event of `key_id`, chained to the last stored event of that key unless
+        `prev_hash` is given."""
+        if "prev_hash" not in options:
+            options["prev_hash"] = self.accepted_prev_hash(key_id)
         return sign_event(self.memory.state, key_id, object_type, object_id, changes, self.clock.now, **options)
 
     def append_text(self, key_id: str, text: bytes, signature: bytes, **hooks: Callable[[], None]) -> Any:
