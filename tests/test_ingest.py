@@ -717,6 +717,65 @@ def test_a_phrase_for_a_non_allowed_queue_type_is_denied_not_defaulted(
         store.close()
 
 
+def test_an_unnamed_request_falls_back_to_the_allowed_default_skill(
+    tmp_path: Path,
+) -> None:
+    # Text naming no catalogue pattern is not a denial by itself: the policy's
+    # default supplies the skill, and its queue type is what admission checks.
+    store = Store(tmp_path)
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane can you look at this?")],
+            ),
+        )
+        assert len(created) == 1
+        assert requeued == []
+        assert skipped == 0
+        row = _jobs(store)[0]
+        assert row["job_type"] == "pr-review"
+        assert row["queue_type"] == "pr-ready"
+    finally:
+        store.close()
+
+
+def test_a_matched_skill_without_a_queue_type_is_skipped_unread(
+    tmp_path: Path,
+) -> None:
+    # A skill the catalogue names but cannot admit on has no queue type for
+    # `job_types_allow` to allow, so the request is denied rather than
+    # defaulted, and the thread stays unread.
+    store = Store(tmp_path)
+    catalog = {
+        "skills": [
+            {
+                "id": "implement-fix",
+                "body_patterns": ["please fix"],
+            }
+        ]
+    }
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please fix")],
+                calls=calls,
+            ),
+            catalog=catalog,
+        )
+        assert created == []
+        assert requeued == []
+        assert skipped == 1
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
 def test_the_same_mention_twice_is_one_job(tmp_path: Path) -> None:
     # What the identity is for: asking again must not queue the work twice.
     store = Store(tmp_path)
@@ -1243,6 +1302,68 @@ def test_a_comment_listing_that_is_not_json_is_skipped(tmp_path: Path) -> None:
     finally:
         store.close()
     assert _mark_read_calls(calls) == []
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "null",
+        "5",
+        "true",
+        "{}",
+        json.dumps([[_comment("@theo-vane please review")], {}]),
+    ],
+)
+def test_a_comment_listing_that_is_not_a_list_of_pages_is_skipped(
+    tmp_path: Path, stdout: str
+) -> None:
+    # `--slurp` promises one list per page. Anything else cannot be trusted,
+    # so the thread stays unread and no row is written.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[],
+                comments_raw=stdout,
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
+def test_a_comment_page_element_that_is_not_an_object_is_ignored(
+    tmp_path: Path,
+) -> None:
+    # A page is a list; a value in it that is not a comment object names no
+    # comment, so the one real comment still decides the request.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[],
+                comments_raw=json.dumps(
+                    [[_comment("@theo-vane please review"), "x"]]
+                ),
+                calls=calls,
+            ),
+        )
+        assert len(created) == 1
+        assert requeued == []
+        assert skipped == 0
+        assert _jobs(store)[0]["trigger"] == "comment:owner/name:7:1"
+    finally:
+        store.close()
+    assert len(_mark_read_calls(calls)) == 1
 
 
 @pytest.mark.parametrize("user", [{"login": 7}, {"login": ""}, "alice"])
