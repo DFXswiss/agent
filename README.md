@@ -109,7 +109,9 @@ Node.js is required for the dashboard and session page tests.
 
 PostgreSQL 16 (or later) is required for the team record tests. They read the connection string of
 a superuser on a throwaway local test server from `AGENT_CORE_TEST_POSTGRES`; each test creates its
-own database and roles with random names and drops them at the end. Without the variable every record
+own database and roles with random names and drops them at the end, except the identifier test, which
+uses the fixed names `grant`, `select` and `order` and removes roles and a database of these names
+first. Without the variable every record
 test that uses the database fails; none is skipped. The tests of the event text and of the connection
 string need no database. The server must accept password logins over TCP on a loopback address or
 `localhost`.

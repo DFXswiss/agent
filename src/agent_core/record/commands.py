@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from contextlib import suppress
 from pathlib import Path
-from typing import BinaryIO, Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from ..keys import KeyRing, load_keys
 from ..signing import b64url_decode, ed25519_public_key_valid, system_clock, valid_key_id
@@ -148,8 +148,20 @@ def _verification_outcome(result: FoldResult, success: str) -> Outcome:
 # --- export --------------------------------------------------------------------------------------
 
 
-def _export_into(stream: BinaryIO, writer: ConnectionString, clock: Clock) -> Outcome:
-    """Read the snapshot and write the file into the open, new `stream`."""
+def _write_all(descriptor: int, data: bytes) -> None:
+    """Write all of `data` to `descriptor` without a buffer, so that every failure of the system
+    call surfaces here and nothing is left to be written by a later close."""
+    view = memoryview(data)
+    while view:
+        count = os.write(descriptor, view)
+        if count == 0:
+            # A write that makes no progress would loop forever; it is a failed write.
+            raise OSError("write made no progress")
+        view = view[count:]
+
+
+def _export_into(descriptor: int, writer: ConnectionString, clock: Clock) -> Outcome:
+    """Read the snapshot and write the file into the open, new `descriptor`; the caller closes it."""
     try:
         with writer_connection(writer) as connection:
             snapshot = read_snapshot(connection)
@@ -161,14 +173,35 @@ def _export_into(stream: BinaryIO, writer: ConnectionString, clock: Clock) -> Ou
         return _refused(REFUSED_VALUE_UNWRITABLE)
     try:
         # The mode of os.open is narrowed by the umask; the file gets exactly 0600.
-        os.fchmod(stream.fileno(), EXPORT_MODE)
-        stream.write(data)
-        stream.flush()
-        os.fsync(stream.fileno())
+        os.fchmod(descriptor, EXPORT_MODE)
+        _write_all(descriptor, data)
+        os.fsync(descriptor)
     except OSError:
         return _refused(REFUSED_FILE_WRITE)
     last = snapshot.events[-1] if snapshot.events else None
     return f"exported {_head_words(None if last is None else Head(last.position, last.received_at, last.record_hash))}", 0
+
+
+def _closed(descriptor: int) -> bool:
+    """Close `descriptor` exactly once; whether the close succeeded. The descriptor is released
+    also when the close fails, so it is never closed a second time."""
+    try:
+        os.close(descriptor)
+    except OSError:
+        return False
+    return True
+
+
+def _remove(path: str) -> None:
+    """Remove the FILE this run created.
+
+    When the removal itself fails, the line of the failure that stopped the export is still the
+    line printed: section 12.3 gives each refusal by its cause and no line for a failed removal,
+    and section 13 allows no other output. The exit code is 1 and no `exported` is printed, so the
+    file that remains is no export (sections 12.3 and 12.4), as for a FILE left by a killed run.
+    """
+    with suppress(OSError):
+        os.unlink(path)
 
 
 def run_export(args: Sequence[str], environ: Mapping[str, str], clock: Clock = system_clock) -> Outcome:
@@ -176,8 +209,11 @@ def run_export(args: Sequence[str], environ: Mapping[str, str], clock: Clock = s
 
     The configuration first; then FILE is created exclusively with mode 0600, before any
     connection, so that an existing FILE (also a symbolic link) is refused and left unchanged;
-    then the snapshot is read and written. On every refusal after FILE was created, FILE is
-    removed before the line is printed.
+    then the snapshot is read and written without a buffer. Whatever happens after FILE was
+    created, the descriptor is closed exactly once, and FILE stays only when the outcome is
+    `exported`: on every refusal FILE is removed before the line is printed, and on an unexpected
+    exception it is removed before the exception propagates. A failed close is `refused
+    file_write`; a close that fails after an earlier refusal keeps that refusal.
     """
     try:
         values, _ = _options(args, frozenset({OPTION_OUT}), None)
@@ -193,11 +229,19 @@ def run_export(args: Sequence[str], environ: Mapping[str, str], clock: Clock = s
         return _refused(REFUSED_FILE_EXISTS)
     except OSError:
         return _refused(REFUSED_FILE_WRITE)
-    with os.fdopen(descriptor, "wb") as stream:
-        outcome = _export_into(stream, writer, clock)
+    try:
+        outcome = _export_into(descriptor, writer, clock)
+    except BaseException:
+        # No line of section 12.3 fits an unexpected exception (also an interrupt), so it
+        # propagates; the descriptor is closed and FILE removed first. A failing close here does
+        # not replace the exception.
+        _closed(descriptor)
+        _remove(path)
+        raise
+    if not _closed(descriptor) and outcome[1] == 0:
+        outcome = _refused(REFUSED_FILE_WRITE)
     if outcome[1] != 0:
-        with suppress(OSError):
-            os.unlink(path)
+        _remove(path)
     return outcome
 
 

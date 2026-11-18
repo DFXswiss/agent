@@ -9,10 +9,14 @@ real PostgreSQL of AGENT_CORE_TEST_POSTGRES.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
+import resource
 import stat
+import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +28,7 @@ from psycopg import sql
 
 from agent_core.keys import KeyRing
 from agent_core.record import commands, connection
+from agent_core.record.__main__ import main
 from agent_core.record.checkpoint import Checkpoint
 from agent_core.record.event import parse_event, record_hash
 from agent_core.record.export import write_export
@@ -75,7 +80,7 @@ from tests.record_helpers import (
     write_story_key_files,
     writer,
 )
-from tests.test_record_migrate import run_cli
+from tests.test_record_migrate import SRC, run_cli
 from tests.test_record_reducer import private
 
 EXPORTED_AT = parse_time("2026-11-18T02:00:00Z")
@@ -423,18 +428,230 @@ def test_export_refuses_a_directory_that_cannot_be_written_with_refused_file_wri
     assert no_connection == []
 
 
-def test_export_refuses_a_file_that_cannot_be_written_and_removes_it(
-    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+class ExportFile:
+    """The descriptor that `export` opens for one FILE, and every close of it.
+
+    `os.open` and `os.close` are wrapped so that a test can fail an operation on this descriptor
+    alone and see that it is closed exactly once; every other descriptor is left alone.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, out: Path) -> None:
+        self.out = out
+        self.descriptors: list[int] = []
+        self.closes: list[int] = []
+        self.close_error: OSError | None = None
+        real_open, real_close = os.open, os.close
+
+        def open_and_note(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+            if path == str(out):
+                self.descriptors.append(descriptor)
+            return descriptor
+
+        def close_and_note(descriptor: int) -> None:
+            real_close(descriptor)
+            if descriptor in self.descriptors:
+                self.closes.append(descriptor)
+                if self.close_error is not None:
+                    raise self.close_error
+
+        monkeypatch.setattr(os, "open", open_and_note)
+        monkeypatch.setattr(os, "close", close_and_note)
+
+    def mine(self, descriptor: int) -> bool:
+        return descriptor in self.descriptors
+
+    def closed_once(self) -> bool:
+        return len(self.descriptors) == 1 and self.closes == self.descriptors
+
+
+def export_main(out: Path, url: str, capsys: pytest.CaptureFixture[str]) -> tuple[str, str, int]:
+    """`export` through the entry of `python -m agent_core.record`: stdout, stderr and exit code.
+    An exception that escaped the command would end the test here, as it would print a traceback."""
+    code = main(["export", "--out", str(out)], {WRITER_VARIABLE: url})
+    stdout, stderr = capsys.readouterr()
+    return stdout, stderr, code
+
+
+FILE_WRITE_PRINTED = ("refused file_write\n", "", 1)
+
+
+def no_space(*args: Any) -> None:
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+
+def run_export_with_file_size_limit(out: Path, url: str, limit: int) -> subprocess.CompletedProcess[str]:
+    """`python -m agent_core.record export --out FILE` as its own process, whose files cannot grow
+    beyond `limit` bytes: the system call write fails there with EFBIG. Python ignores SIGXFSZ,
+    so the process sees the error instead of being ended by the signal."""
+
+    def limit_file_size() -> None:
+        _, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (limit, hard))
+
+    # Nothing but FILE is written under the limit: no bytecode, and no coverage data of a
+    # measured subprocess, whose failed write would add output of its own.
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("AGENT_CORE_RECORD", "COV_CORE_", "COVERAGE_PROCESS_START"))
+    }
+    env.update({WRITER_VARIABLE: url, "PYTHONDONTWRITEBYTECODE": "1"})
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")]))
+    return subprocess.run(
+        [sys.executable, "-m", "agent_core.record", "export", "--out", str(out)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        preexec_fn=limit_file_size,
+    )
+
+
+def test_export_whose_write_fails_on_the_disk_prints_refused_file_write_and_leaves_no_file(
+    record_db: RecordDatabase, tmp_path: Path
+) -> None:
+    # A real failure of the system call write, as on a full disk: depending on the system the first
+    # write is cut at 10 bytes and the next one fails, or the first one fails. A buffered stream
+    # that kept the rest would fail again on close, with a traceback, and leave FILE behind.
+    migrated(record_db)
+    out = tmp_path / "export.jsonl"
+    result = run_export_with_file_size_limit(out, record_db.writer_url, 10)
+    assert (result.stdout, result.stderr, result.returncode) == FILE_WRITE_PRINTED
+    assert not out.exists()
+
+
+def test_export_whose_write_fails_after_a_short_write_prints_refused_file_write_and_leaves_no_file(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     migrated(record_db)
-
-    def full(descriptor: int) -> None:
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(os, "fsync", full)
     out = tmp_path / "export.jsonl"
-    assert export(["--out", str(out)], {WRITER_VARIABLE: record_db.writer_url}) == ("refused file_write", 1)
+    file = ExportFile(monkeypatch, out)
+    real_write = os.write
+    calls: list[int] = []
+
+    def short_then_full(descriptor: int, data: Any) -> int:
+        if not file.mine(descriptor):
+            return real_write(descriptor, data)
+        calls.append(descriptor)
+        if len(calls) == 1:
+            return real_write(descriptor, data[:5])
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "write", short_then_full)
+    assert export_main(out, record_db.writer_url, capsys) == FILE_WRITE_PRINTED
+    assert len(calls) == 2
     assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_whose_write_makes_no_progress_prints_refused_file_write_and_leaves_no_file(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    migrated(record_db)
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+    real_write = os.write
+
+    def nothing_written(descriptor: int, data: Any) -> int:
+        return 0 if file.mine(descriptor) else real_write(descriptor, data)
+
+    monkeypatch.setattr(os, "write", nothing_written)
+    assert export_main(out, record_db.writer_url, capsys) == FILE_WRITE_PRINTED
+    assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_completes_a_file_written_in_short_writes(
+    record_db: RecordDatabase, ring: KeyRing, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    head = stored_story(record_db, ring)
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+    real_write = os.write
+
+    def seven_bytes(descriptor: int, data: Any) -> int:
+        return real_write(descriptor, data[:7] if file.mine(descriptor) else data)
+
+    monkeypatch.setattr(os, "write", seven_bytes)
+    assert export(["--out", str(out)], {WRITER_VARIABLE: record_db.writer_url}) == (f"exported 3 {head}", 0)
+    with writer(record_db) as reader:
+        snapshot = read_snapshot(reader)
+    assert out.read_bytes() == write_export(snapshot.events, snapshot.checkpoints, EXPORTED_AT)
+    assert file.closed_once()
+
+
+def test_export_whose_fsync_fails_prints_refused_file_write_and_leaves_no_file(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    migrated(record_db)
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+    monkeypatch.setattr(os, "fsync", no_space)
+    assert export_main(out, record_db.writer_url, capsys) == FILE_WRITE_PRINTED
+    assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_whose_close_fails_prints_refused_file_write_and_leaves_no_file(
+    record_db: RecordDatabase, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # A close can report a write that failed late, as on a network file system; the file is then
+    # no export. The descriptor is released by the failed close and never closed a second time.
+    migrated(record_db)
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+    file.close_error = OSError(errno.EIO, "Input/output error")
+    assert export_main(out, record_db.writer_url, capsys) == FILE_WRITE_PRINTED
+    assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_whose_close_fails_after_a_refusal_keeps_that_refusal(
+    no_connection: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+    file.close_error = OSError(errno.EIO, "Input/output error")
+    assert export_main(out, NO_DATABASE, capsys) == ("refused database\n", "", 1)
+    assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_interrupted_after_creating_its_file_removes_it_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No line of section 12.3 fits an interrupt; it propagates, but FILE does not stay behind.
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+
+    def interrupted(writer: Any) -> None:
+        assert out.exists()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(commands, "writer_connection", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        export(["--out", str(out)], {WRITER_VARIABLE: NO_DATABASE})
+    assert not out.exists()
+    assert file.closed_once()
+
+
+def test_export_whose_removal_fails_prints_the_refusal_of_its_cause(
+    no_connection: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # Section 12.3 gives each refusal by its cause and no line for a failed removal; section 13
+    # allows no other output. The file that remains is no export: no `exported` and exit 1.
+    out = tmp_path / "export.jsonl"
+    file = ExportFile(monkeypatch, out)
+
+    def cannot_remove(path: Any) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(os, "unlink", cannot_remove)
+    assert export_main(out, NO_DATABASE, capsys) == ("refused database\n", "", 1)
+    assert out.read_bytes() == b""
+    assert file.closed_once()
 
 
 def test_export_refuses_an_unreachable_database_and_a_database_without_the_schema(
