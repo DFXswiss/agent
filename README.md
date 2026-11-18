@@ -91,7 +91,7 @@ See [PROTOCOL.md](PROTOCOL.md).
 
 The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hub side of its first build step is built: the keys file `keys.yaml` (changed only by pull request), signed requests under `/api/key/`, the hub's signed answers, and `GET /api/key/whoami`.
 
-Sign-in with passkeys, invites and the certified session key are specified, not yet built, in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md).
+Sign-in with passkeys, invites and the certified session key are specified, not yet built, in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md). The pure verification library of that step exists in `agent_core.passkey` (encodings, passkey responses, registrations, the statement, `verify_certificate` and the command text), with the shared test vectors in `tests/vectors/passkey.json`; the hub does not use it yet.
 
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. The hub computes it from the team record (RECORD-PROTOCOL.md section 9): a pull request that no task links gets `released: false` with `task_missing`, and a hub process that found the record broken answers the signed `503` `record_unverified`. The answer is one input for a guard and replaces no review rule.
 
