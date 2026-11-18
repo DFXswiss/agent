@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -23,7 +24,6 @@ import pytest
 from psycopg import sql
 
 from agent_core.record import connection, migrate
-from agent_core.record.__main__ import USAGE
 from agent_core.record.connection import ConnectionStringError, parse_connection_string
 from agent_core.record.migrate import MIGRATE_LOCK, run_migrate, schema_statements
 from tests.conftest import RecordDatabase, schema_exists
@@ -1219,16 +1219,125 @@ def test_the_command_without_variables() -> None:
     assert (result.stdout, result.stderr, result.returncode) == ("failed config\n", "", 1)
 
 
-@pytest.mark.parametrize("args", [[], ["Export"], ["Migrate"], ["-h"]])
-def test_an_unknown_command_prints_the_usage(args: list[str]) -> None:
-    result = run_cli(args, {})
-    assert (result.stdout, result.stderr, result.returncode) == ("", USAGE + "\n", 2)
+@contextmanager
+def silent_listener() -> Iterator[tuple[int, Callable[[], int]]]:
+    """A TCP listener on 127.0.0.1 that never answers, and a count of the connections made to it.
+
+    It stands in for "a test server that logs connections" of section 14: a program that
+    connects completes the TCP handshake into the backlog of the listener, so every connection
+    is counted once the program has exited.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(16)
+        server.setblocking(False)
+
+        def connections() -> int:
+            count = 0
+            while True:
+                try:
+                    peer, _ = server.accept()
+                except BlockingIOError:
+                    return count
+                peer.close()
+                count += 1
+
+        yield server.getsockname()[1], connections
 
 
-def test_the_command_refuses_an_argument_of_migrate(record_db: RecordDatabase) -> None:
-    result = run_cli(["migrate", "--force"], record_db.migrate_env())
+def listener_env(port: int) -> dict[str, str]:
+    """Two connection strings that pass step `config` and name only the silent listener."""
+    suffix = secrets.token_hex(6)
+
+    def url(role: str) -> str:
+        return (
+            f"postgresql://{role}:{secrets.token_hex(32)}@127.0.0.1:{port}"
+            f"/t_record_{suffix}?sslmode=disable"
+        )
+
+    return {
+        "AGENT_CORE_RECORD_OWNER_DATABASE": url(f"t_owner_{suffix}"),
+        "AGENT_CORE_RECORD_DATABASE": url(f"t_writer_{suffix}"),
+    }
+
+
+def test_the_listener_counts_a_connection() -> None:
+    # The check of the tests below is only as good as the listener's count.
+    with silent_listener() as (port, connections):
+        with socket.create_connection(("127.0.0.1", port), timeout=10):
+            pass
+        assert connections() == 1
+
+
+def test_the_command_connects_to_the_listener_without_an_argument() -> None:
+    # The same configuration without an argument does reach the listener, so that the tests
+    # below show that the argument, not the configuration, keeps `migrate` from connecting.
+    with silent_listener() as (port, connections):
+        # The listener never answers; `migrate` ends by its connect timeout (section 15).
+        result = run_cli(["migrate"], listener_env(port))
+        assert (result.stdout, result.stderr, result.returncode) == ("failed owner\n", "", 1)
+        assert connections() >= 1
+
+
+# Section 14: "`migrate` with an argument after `migrate` (each of `--help`, `-h`, `x`, `migrate`
+# and an empty string, and two arguments)".
+MIGRATE_ARGUMENTS = [
+    ["migrate", "--help"],
+    ["migrate", "-h"],
+    ["migrate", "x"],
+    ["migrate", "migrate"],
+    ["migrate", ""],
+    ["migrate", "x", "x"],
+]
+MIGRATE_ARGUMENT_IDS = ["--help", "-h", "x", "migrate", "an empty string", "two arguments"]
+
+
+@pytest.mark.parametrize("args", MIGRATE_ARGUMENTS, ids=MIGRATE_ARGUMENT_IDS)
+def test_the_command_refuses_an_argument_of_migrate_without_connecting(
+    record_db: RecordDatabase, args: list[str]
+) -> None:
+    # Section 14: prints `failed config` and exits 1; no connection, and the database stays
+    # unchanged.
+    with silent_listener() as (port, connections):
+        quiet = run_cli(args, listener_env(port))
+        assert (quiet.stdout, quiet.stderr, quiet.returncode) == ("failed config\n", "", 1)
+        assert connections() == 0
+    result = run_cli(args, record_db.migrate_env())
     assert (result.stdout, result.stderr, result.returncode) == ("failed config\n", "", 1)
     assert not schema_exists(record_db)
+    with record_db.admin() as admin:
+        assert grants(admin, "database") == set()
+
+
+# Section 14: "without an argument, with an empty string as the command, with `-h`, `--help`,
+# `Migrate` and an unknown word as the command", and "after change 1 ... `export`, `verify` and
+# `restore` are unknown commands".
+UNKNOWN_COMMANDS = [[], [""], ["-h"], ["--help"], ["Migrate"], ["unknown"], ["export"], ["verify"], ["restore"]]
+UNKNOWN_COMMAND_IDS = [
+    "no argument",
+    "an empty string",
+    "-h",
+    "--help",
+    "Migrate",
+    "an unknown word",
+    "export",
+    "verify",
+    "restore",
+]
+
+
+@pytest.mark.parametrize("args", UNKNOWN_COMMANDS, ids=UNKNOWN_COMMAND_IDS)
+def test_no_or_an_unknown_command_prints_the_usage_line_without_connecting(args: list[str]) -> None:
+    # Section 14: stderr is exactly the usage line of section 11.4 for change 1 and one `\n`,
+    # stdout is empty, the exit code is 2, and no connection.
+    with silent_listener() as (port, connections):
+        result = run_cli(args, listener_env(port))
+        assert (result.stdout, result.stderr, result.returncode) == (
+            "",
+            "usage: python -m agent_core.record {migrate}\n",
+            2,
+        )
+        assert connections() == 0
 
 
 # The command's entry in process (`main` and the `__main__` guard) is tested in test_record_main.py.

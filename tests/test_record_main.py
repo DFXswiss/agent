@@ -4,25 +4,108 @@
 every line and branch of the entry runs in the test process. The same command as a separate
 process is tested in test_record_migrate.py.
 
-Two behaviours here are decisions of the implementation where RECORD-PROTOCOL.md is silent:
-`migrate` with any argument prints `failed config` and exits 1 without connecting, and no command
-or an unknown command prints the usage line to stderr and exits 2.
+RECORD-PROTOCOL.md section 11.4 and section 14 state both behaviours of the entry tested here
+(decisions 81 and 82): `migrate` with any argument prints `failed config` and exits 1 without
+connecting, and no command or an unknown command prints exactly the usage line
+`usage: python -m agent_core.record {migrate}` and one `\\n` to stderr, nothing to stdout, reads no
+environment variable, does not connect and exits 2. Every test of the usage line compares with the
+literal text of section 11.4, never with the constant of the module.
 """
 
 from __future__ import annotations
 
 import runpy
 import sys
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import psycopg
 import pytest
 
-from agent_core.record.__main__ import USAGE, main
+from agent_core.record.__main__ import main
 from tests.conftest import RecordDatabase, schema_exists
 
 PACKAGE = "agent_core.record"
 RECORD_VARIABLES = ("AGENT_CORE_RECORD_DATABASE", "AGENT_CORE_RECORD_OWNER_DATABASE")
+
+# Section 14: "`migrate` with an argument after `migrate` (each of `--help`, `-h`, `x`, `migrate`
+# and an empty string, and two arguments)".
+MIGRATE_ARGUMENTS = [
+    ["migrate", "--help"],
+    ["migrate", "-h"],
+    ["migrate", "x"],
+    ["migrate", "migrate"],
+    ["migrate", ""],
+    ["migrate", "x", "x"],
+]
+MIGRATE_ARGUMENT_IDS = ["--help", "-h", "x", "migrate", "an empty string", "two arguments"]
+
+# Section 14: "without an argument, with an empty string as the command, with `-h`, `--help`,
+# `Migrate` and an unknown word as the command", and "after change 1 ... `export`, `verify` and
+# `restore` are unknown commands". Section 11.4 compares the first argument byte for byte, so a
+# trailing space and an empty first argument before `migrate` are unknown commands too.
+UNKNOWN_COMMANDS = [
+    [],
+    [""],
+    ["-h"],
+    ["--help"],
+    ["Migrate"],
+    ["unknown"],
+    ["export"],
+    ["verify"],
+    ["restore"],
+    ["migrate "],
+    ["", "migrate"],
+]
+UNKNOWN_COMMAND_IDS = [
+    "no argument",
+    "an empty string",
+    "-h",
+    "--help",
+    "Migrate",
+    "an unknown word",
+    "export",
+    "verify",
+    "restore",
+    "trailing space",
+    "empty string before migrate",
+]
+
+
+class NoEnvironment(Mapping[str, str]):
+    """An environment that fails the test on any read of a variable (section 11.4)."""
+
+    def __getitem__(self, name: str) -> str:
+        raise AssertionError(f"the entry read the variable {name!r}")
+
+    def __iter__(self) -> Iterator[str]:
+        raise AssertionError("the entry listed the environment")
+
+    def __len__(self) -> int:
+        raise AssertionError("the entry measured the environment")
+
+
+@pytest.fixture
+def connect_attempts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Every attempt to connect, recorded instead of made; every connection goes through
+    `psycopg.connect`."""
+    attempts: list[dict[str, Any]] = []
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        attempts.append(kwargs)
+        raise psycopg.OperationalError("no connection in this test")
+
+    monkeypatch.setattr(psycopg, "connect", refuse)
+    return attempts
+
+
+def database_unchanged(db: RecordDatabase) -> bool:
+    """No schema `record`, and the database keeps the ACL it was created with."""
+    with db.admin() as admin:
+        row = admin.execute(
+            "SELECT datacl IS NULL FROM pg_database WHERE datname = current_database()"
+        ).fetchone()
+    return not schema_exists(db) and row == (True,)
 
 
 def run_as_main(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> object:
@@ -35,10 +118,6 @@ def run_as_main(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> object:
     return exited.value.code
 
 
-def test_the_usage_line() -> None:
-    assert USAGE == "usage: python -m agent_core.record migrate"
-
-
 # --- main -----------------------------------------------------------------------------------------
 
 
@@ -49,43 +128,32 @@ def test_main_runs_migrate(record_db: RecordDatabase, capsys: pytest.CaptureFixt
     assert capsys.readouterr() == ("unchanged 1\n", "")
 
 
-@pytest.mark.parametrize(
-    "args",
-    [["migrate", "--force"], ["migrate", "migrate"], ["migrate", ""], ["migrate", "a", "b"]],
-    ids=["an option", "migrate twice", "an empty argument", "two arguments"],
-)
+@pytest.mark.parametrize("args", MIGRATE_ARGUMENTS, ids=MIGRATE_ARGUMENT_IDS)
 def test_main_refuses_an_argument_of_migrate_without_connecting(
     record_db: RecordDatabase,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    connect_attempts: list[dict[str, Any]],
     args: list[str],
 ) -> None:
-    # Every connection goes through `psycopg.connect`; record each attempt instead of connecting.
-    attempts: list[dict[str, Any]] = []
-
-    def refuse(**kwargs: Any) -> None:
-        attempts.append(kwargs)
-        raise psycopg.OperationalError("no connection in this test")
-
-    monkeypatch.setattr(psycopg, "connect", refuse)
-    # With a valid configuration, so that only the argument decides.
+    # Section 14: prints `failed config` and exits 1; no connection, and the database stays
+    # unchanged. With a valid configuration, so that only the argument decides.
     assert main(args, record_db.migrate_env()) == 1
     assert capsys.readouterr() == ("failed config\n", "")
-    assert attempts == []
+    assert connect_attempts == []
     monkeypatch.undo()
-    assert not schema_exists(record_db)
+    assert database_unchanged(record_db)
 
 
-@pytest.mark.parametrize(
-    "args",
-    [[], ["export"], ["verify"], ["restore"], ["Migrate"], ["migrate "], ["--help"], ["", "migrate"]],
-    ids=["none", "export", "verify", "restore", "uppercase", "trailing space", "an option", "empty first"],
-)
+@pytest.mark.parametrize("args", UNKNOWN_COMMANDS, ids=UNKNOWN_COMMAND_IDS)
 def test_main_prints_the_usage_for_no_or_an_unknown_command(
-    capsys: pytest.CaptureFixture[str], args: list[str]
+    capsys: pytest.CaptureFixture[str], connect_attempts: list[dict[str, Any]], args: list[str]
 ) -> None:
-    assert main(args, {}) == 2
-    assert capsys.readouterr() == ("", USAGE + "\n")
+    # Section 14: stderr is exactly the usage line of section 11.4 for change 1 and one `\n`,
+    # stdout is empty, the exit code is 2, and no connection; section 11.4: no variable is read.
+    assert main(args, NoEnvironment()) == 2
+    assert capsys.readouterr() == ("", "usage: python -m agent_core.record {migrate}\n")
+    assert connect_attempts == []
 
 
 def test_main_reads_argv_and_the_environment(
@@ -114,7 +182,7 @@ def test_the_guard_exits_with_the_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert run_as_main(monkeypatch, []) == 2
-    assert capsys.readouterr() == ("", USAGE + "\n")
+    assert capsys.readouterr() == ("", "usage: python -m agent_core.record {migrate}\n")
 
 
 def test_the_guard_exits_1_without_the_variables(
@@ -131,7 +199,7 @@ def test_the_guard_exits_1_for_an_argument_of_migrate(
 ) -> None:
     for name in RECORD_VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    assert run_as_main(monkeypatch, ["migrate", "--force"]) == 1
+    assert run_as_main(monkeypatch, ["migrate", "-h"]) == 1
     assert capsys.readouterr() == ("failed config\n", "")
 
 
