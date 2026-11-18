@@ -319,8 +319,9 @@ def parse_append_body(request: KeyRequest) -> tuple[bytes, bytes] | None:
         return None
     try:
         value = json.loads(request.body.decode("utf-8"), object_pairs_hook=_unique_members)
-    except ValueError:
-        # UnicodeDecodeError and json.JSONDecodeError are both ValueError.
+    except (ValueError, RecursionError):
+        # UnicodeDecodeError and json.JSONDecodeError are both ValueError; a body nested deeper
+        # than the parser's recursion limit raises RecursionError and is no JSON object either.
         return None
     if not isinstance(value, dict) or value.keys() != {"event", "signature"}:
         return None

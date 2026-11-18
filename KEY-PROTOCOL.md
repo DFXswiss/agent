@@ -570,7 +570,8 @@ The client:
   implementation of a primitive.
 - New required environment variables of the hub: `AGENT_CORE_KEYS`, `AGENT_CORE_SIGNING_KEY` and
   `AGENT_CORE_HUB_KEY_ID`.
-  Like every `AGENT_CORE_*` variable, a missing or empty value stops the process. The list of
+  Like every `AGENT_CORE_*` variable, a missing or empty value stops a program that requires it.
+  The list of
   required variables in the README, the compose file and the configuration test is updated in
   the same change, and the image contains the keys file next to `teams.yaml`.
 - Whatever stands in front of the hub must forward path and query unchanged, without

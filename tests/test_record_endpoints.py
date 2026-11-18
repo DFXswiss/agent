@@ -321,8 +321,13 @@ def _valid_parts(hub: Hub) -> tuple[str, str]:
     return b64(text), b64(signature)
 
 
+# Far below the body limit of 1 MiB, but nested deeper than the JSON parser recurses.
+NESTED_TOO_DEEP = b"[" * 100000
+
 BODY_CASES = {
     "not JSON": lambda event, signature: b"{",
+    "nested too deep": lambda event, signature: NESTED_TOO_DEEP,
+    "objects nested too deep": lambda event, signature: b'{"event":' * 100000,
     "not UTF-8": lambda event, signature: b'{"event":"\xff"}',
     "a JSON array": lambda event, signature: body([event, signature]),
     "an extra member": lambda event, signature: body({"event": event, "signature": signature, "x": "y"}),
@@ -487,11 +492,12 @@ def test_an_already_unverified_process_answers_503_after_check_2_and_reads_nothi
     wire, answer = hub.post(key_id, f"{path}?x=1", text, signature)
     assert_signed(wire, answer, 400, NOW)
     assert answer.body == QUERY_INVALID
-    # An invalid body still gets `body_invalid`.
-    wire = hub.wire(key_id, path, method="POST", body=b"{", extra_headers=JSON)
-    answer = hub.send(wire)
-    assert_signed(wire, answer, 400, NOW)
-    assert answer.body == BODY_INVALID
+    # An invalid body, also one nested too deep, still gets `body_invalid`.
+    for raw in (b"{", NESTED_TOO_DEEP):
+        wire = hub.wire(key_id, path, method="POST", body=raw, extra_headers=JSON)
+        answer = hub.send(wire)
+        assert_signed(wire, answer, 400, NOW)
+        assert answer.body == BODY_INVALID
     # A valid body with an invalid event text gets the 503, before check 3.
     for event_text in (b"not an event", text):
         wire, answer = hub.post(key_id, path, event_text, signature)

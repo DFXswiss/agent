@@ -284,3 +284,34 @@ def test_the_record_database_service_is_postgres_16_with_a_volume_and_tls() -> N
     assert "CREATE DATABASE record OWNER record_owner;" in text
     for role in ("record_owner", "record_writer"):
         assert f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" in text
+
+
+def test_the_record_init_script_passes_no_password_as_a_process_argument() -> None:
+    """Every argument of a process shows in the process list of the database container, so psql
+    reads each secret file itself inside its SQL input, and the shell never expands a secret."""
+    init = Path(__file__).resolve().parent.parent / "deploy" / "record-init.sh"
+    lines = init.read_text(encoding="utf-8").splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("psql "))
+    psql = lines[start]
+    # One command line, no continuation that could add an argument, and a quoted here-document, so
+    # the shell expands nothing inside the SQL input.
+    assert psql.endswith("<<'SQL'")
+    assert "\\" not in psql
+    assert "-v ON_ERROR_STOP=1" in psql
+    assert psql.count(" -v ") == 1
+    for option in ("--set", "--variable", "password", "$(", "`", "/run/secrets"):
+        assert option not in psql
+    end = lines.index("SQL", start + 1)
+    assert end == len(lines) - 1
+    shell = [line for line in lines[:start] if not line.lstrip().startswith("#")]
+    for line in shell:
+        assert "$(" not in line
+        assert "`" not in line
+        assert "cat " not in line
+        assert "psql" not in line
+    sql = lines[start + 1 : end]
+    for name in ("owner", "writer"):
+        assert sql.count(f"\\set {name}_password `cat /run/secrets/record_{name}_password`") == 1
+        assert sql.index(f"\\set {name}_password `cat /run/secrets/record_{name}_password`") < sql.index(
+            f"  PASSWORD :'{name}_password';"
+        )

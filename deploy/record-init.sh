@@ -4,10 +4,20 @@
 # role from the passwords given as secrets, each with LOGIN and no other attribute, no membership
 # and no right, and the database `record` owned by the owner role. Every right of the writer comes
 # from `python -m agent_core.record migrate`.
+#
+# No password is ever an argument of a process, where the process list would show it: psql reads
+# each secret file itself, inside its SQL input, with a backquoted `\set`.
 
-psql --no-psqlrc -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
-  -v owner_password="$(cat /run/secrets/record_owner_password)" \
-  -v writer_password="$(cat /run/secrets/record_writer_password)" <<'SQL'
+for secret in /run/secrets/record_owner_password /run/secrets/record_writer_password; do
+  if [ ! -s "$secret" ]; then
+    echo "record-init: the secret $secret is missing or empty" >&2
+    exit 1
+  fi
+done
+
+psql --no-psqlrc -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<'SQL'
+\set owner_password `cat /run/secrets/record_owner_password`
+\set writer_password `cat /run/secrets/record_writer_password`
 CREATE ROLE record_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD :'owner_password';
 CREATE ROLE record_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
