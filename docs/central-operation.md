@@ -398,13 +398,19 @@ page; the page links to it.
   runner, never reads it. On the page, every row is checked against what you may see: a
   session, a mail, a ping or a usage figure appears only if you may see the login it comes
   from and every person it names. A command sent to the device, and a record of the device
-  that names who signed one, appears only if you may see the login of whoever signed it.
-  What you may not see is also left out of every count and sum, and the page does not say
+  that names who signed one, appears only if you may see the login of whoever signed it: for
+  a passkey or a session in the browser, the handle of that passkey; for a key of a device or
+  of a program on a device, the login of that device. A command signed by any other key
+  appears only to the device's own login. The device's own login sees every command sent to
+  the device and every record that names who signed one, whoever signed it: the owner signed
+  the grant, and the local dashboard names the signer anyway. What you may not see is also left out of every count and sum, and the page does not say
   that something was left out.
 - **What even the device's own login does not see there.** Someone you may not see may still
   send your session mail or a ping, and the local dashboard shows it. The device page leaves
   such a row out, also for you. After a change of the teams it also leaves out the rows you
-  may no longer see. It never shows what the device holds from the old device id it had before
+  may no longer see. Commands are not among these rows: you see every command sent to your
+  device, also one a colleague you may not see sent under your grant, and you can act on it.
+  It never shows what the device holds from the old device id it had before
   it was connected again (section 3), nor what the device recorded after its last sync.
 - **Acting** is for the device's owner, and for a colleague only within a grant of the owner.
   You act signed in with your passkey, or your AI acts through the API with a key of one of
@@ -416,7 +422,9 @@ page; the page links to it.
   because no page of the local dashboard offers it. An action on a row works only on a row of
   the device itself that you may see. Submitting an order needs no row; the page offers it on
   the new-order page, and it is the same operation as submitting an order to that device in
-  any other way (section 5). An action from the page goes through the hub as a signed command,
+  any other way (section 5). Submitting does not depend on what you may read: within a grant
+  you can submit to a device whose page you cannot open. It is still refused for a retired
+  device and for a name that is not in the device list. An action from the page goes through the hub as a signed command,
   like an order, and the device checks it itself (section 6). The page never talks to the
   device directly, and it offers no action on a row that came from another device. A command
   the hub delivered is either run by the device or recorded there with its signed refusal.
