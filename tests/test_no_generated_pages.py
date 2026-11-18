@@ -37,15 +37,21 @@ XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
 
 # The rule: a page the hub serves, and a text file under static/, contains no literal that
 # names another host, wherever it stands (attribute, style, script, string, comment, text).
-# A literal starts either with the scheme http, https, ws or wss, ":" and one or more of "/"
-# and "\" (browsers read "\" as "/"; anywhere except right after "blob:"), or with two or
-# more "/" at the start of the text or after white space, a C0 control character, a quote,
-# "(", "[", "{", "=", "," or ";". In both forms the character after the slashes must be able
-# to start a host or userinfo: a letter, a digit, "[", "%", "@" or "~". So "// note",
-# "</script>", "a//b", "https:" alone, "rows:1fr" in CSS, regular expressions such as
-# /\/+$/ and /\/api\//, strings such as "\\d+", template literals such as
-# `//${location.host}/x`, data: and blob: URLs are not literals (a data: payload that itself
-# contains a literal, such as base64 starting with "//", is reported).
+# A literal starts in one of two forms. With a scheme: http, https, ws or wss, ":" and one or
+# more of "/" and "\" (browsers read "\" as "/"; anywhere except right after "blob:"), then
+# any character except white space, a quote (", ' or `), "<", ">", "(", ")", "/", "\", "?",
+# "#" and "$". Without a scheme: two or more "/" at the start of the text or after white
+# space, a C0 control character, a quote, "(", "[", "{", "}", "=", ",", ";" or ":" (except
+# right after "blob:http:", "blob:https:", "blob:ws:" or "blob:wss:"), so a literal host after
+# an assembled scheme is found (`${location.protocol}//cdn.example`, proto + "://cdn.example").
+# In this form a letter, a digit, "_", "[", "%", "@" or "~" must follow the slashes. A URL
+# allows more characters at the start of its host or userinfo; this narrower set is the
+# check's own choice, so that ordinary script text such as "// note", "//-----" or "//." is
+# not reported. So "</script>", "a//b", "https:" alone, "rows:1fr" and "url(/x.png)" in CSS,
+# regular expressions such as /\/+$/ and /\/api\//, strings such as "\\d+", template literals
+# such as `//${location.host}/x` and `wss://${location.host}/s`, data: and blob: URLs are not
+# literals (a data: payload that itself contains a literal, such as base64 starting with "//",
+# is reported).
 # The authority runs from there to the first "/", "\", "?", "#" or the end of the text and, when
 # a quote directly precedes the literal, to the next same quote. It is read twice: with tab and
 # line breaks removed (as the URL parser does) and up to the first white space (where an
@@ -56,8 +62,12 @@ XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
 # that equals a name in XML_NAMESPACES.
 # Limits (not found), each pinned by a row in REFERENCE_CASES: a host name a script assembles
 # at run time ("https://" + cdn, `wss://${host}/s`); a scheme directly followed by the host,
-# without "/" or "\" ("wss:cdn.example"); a tab or line break inside the scheme, between the
-# slashes, or between the slashes and the authority; "\" in an address without a scheme
+# without "/" or "\" ("wss:cdn.example"); a tab or line break between the slashes, or between
+# the slashes and the authority (inside the scheme it is found when "//" follows the colon);
+# a URL without a scheme whose host or userinfo starts with a character outside the set above
+# ("//-@cdn.example", "//:@cdn.example", "//$@cdn.example", or a host that starts with a
+# non-letter Unicode character such as "//☃.example"); a URL with a scheme whose
+# authority starts with "$" ("https://$@cdn.example"); "\" in an address without a scheme
 # ("/\cdn.example", "\\cdn.example"; finding these would also report regular expressions
 # such as /\s+/); any encoding other than HTML character references, such as script or CSS
 # escapes ("\x2f\x2f", "\2f\2f "); a namespace name from XML_NAMESPACES used as a load
@@ -65,15 +75,18 @@ XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
 # Found although escaped: "\/" after a scheme ("https:\/\/cdn.example"), and a CSS-escaped
 # colon whose closing space puts "//" after white space ("https\3a //cdn.example").
 # Harmless text that is also reported, so the check fails closed: a URL in visible text, a
-# line comment with a letter or digit right after "//" ("//comment"), and the own address
-# without a path where no quote directly precedes it. A policy enforced by the browser,
-# planned with a later change, covers what reading the text cannot.
-_START = r"(?=[^\W_]|[\[%@~])"
+# line comment with a letter, digit, "_", "[", "%", "@" or "~" right after "//" ("//comment",
+# "{a:1}//note"), and the own address without a path where no quote directly precedes it and
+# further text follows. A policy enforced by the browser, planned with a later change, covers
+# what reading the text cannot.
+_AFTER_SCHEME = r"(?=[^\s\"'`<>()/\\?#$])"
+_AFTER_SLASHES = r"(?=\w|[\[%@~])"
 _URL_START = re.compile(
     r"(?<!blob:)(?:https?|wss?):[/\\]+"
-    + _START
-    + r"|(?<![^\s\x00-\x1f\"'`(\[{=,;])/{2,}"
-    + _START,
+    + _AFTER_SCHEME
+    + r"|(?<![^\s\x00-\x1f\"'`(\[{}=,;:])"
+    + r"(?<!blob:http:)(?<!blob:https:)(?<!blob:ws:)(?<!blob:wss:)/{2,}"
+    + _AFTER_SLASHES,
     re.IGNORECASE,
 )
 _LEADING = re.compile(r"(?:(?:https?|wss?):)?[/\\]*", re.IGNORECASE)
@@ -184,12 +197,20 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ('<script src="https:/cdn.example/x.js"></script>', OWN_HOST, ["https:/cdn.example/x.js"]),
     ('<img src="//[2001:db8::1]/x.png">', OWN_HOST, ["//[2001:db8::1]/x.png"]),
     ('<img src="//%63dn.example/x.png">', OWN_HOST, ["//%63dn.example/x.png"]),
+    ("s.src = `${location.protocol}//cdn.example/x.js`;", OWN_HOST, ["//cdn.example/x.js"]),
+    ('new WebSocket(proto + "://relay.example/s")', OWN_HOST, ["//relay.example/s"]),
+    ('<script src="ht\ttps://cdn.example/x.js">', OWN_HOST, ["//cdn.example/x.js"]),
+    ('<script src="https://_cdn.example/x.js">', OWN_HOST, ["https://_cdn.example/x.js"]),
+    ('<script src="https://_@cdn.example/x.js">', OWN_HOST, ["https://_@cdn.example/x.js"]),
+    ('<script src="https://:@cdn.example/x.js">', OWN_HOST, ["https://:@cdn.example/x.js"]),
+    ('<script src="//_cdn.example/x.js">', OWN_HOST, ["//_cdn.example/x.js"]),
     # Found although escaped (see the comment above).
     (r's.src = "https:\/\/cdn.example\/x.js";', OWN_HOST, [r"https:\/\/cdn.example\/x.js"]),
     (r"@import url(https\3a //cdn.example/a.css);", OWN_HOST, ["//cdn.example/a.css"]),
     # Harmless text that is reported (accepted false reports, see the comment above).
     ("<p>See https://example.org/docs</p>", OWN_HOST, ["https://example.org/docs"]),
     ("x = y //comment", OWN_HOST, ["//comment"]),
+    ("const o = {a:1}//note", OWN_HOST, ["//note"]),
     ("see https://hub.example now", OWN_HOST, ["https://hub.example now"]),
     ('<link rel="stylesheet" href="//fonts.example/a.css">', OWN_HOST, ["//fonts.example/a.css"]),
     ('@import"https://fonts.example/a.css";', OWN_HOST, ["https://fonts.example/a.css"]),
@@ -256,6 +277,8 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ('<a href="#top">Top</a>', OWN_HOST, []),
     ('<img src="data:image/png;base64,AAAA">', OWN_HOST, []),
     ('<img src="blob:https://elsewhere.example/1">', OWN_HOST, []),
+    ('<img src="blob:http://elsewhere.example/1">', OWN_HOST, []),
+    ('new WebSocket("blob:wss://elsewhere.example/1")', OWN_HOST, []),
     ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>', None, []),
     ('<div data-href="/x"></div>', OWN_HOST, []),
     ('parsed.protocol === "https:" && parsed.host === "github.com"', OWN_HOST, []),
@@ -270,6 +293,10 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ("allows:true", OWN_HOST, []),
     ("https:x", OWN_HOST, []),
     ("a // b", OWN_HOST, []),
+    ("a{background:url(/x.png)}", OWN_HOST, []),
+    ("a{grid-template-rows:1fr}", OWN_HOST, []),
+    ("//-----", OWN_HOST, []),
+    ("//.", OWN_HOST, []),
     # Ordinary script text: no host can start after the slashes, or the slashes are escaped.
     (r'path.replace(/\/+$/, "")', OWN_HOST, []),
     (r"s.split(/\//)", OWN_HOST, []),
@@ -281,9 +308,13 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     # Limits of the check (not found, see the comment above).
     ('s.src = "https://" + cdn + "/x.js";', OWN_HOST, []),
     ('new WebSocket("wss:cdn.example/s")', OWN_HOST, []),
-    ('<script src="ht\ttps://cdn.example/x.js">', OWN_HOST, []),
     ('<script src="https:/\t/cdn.example/x.js">', OWN_HOST, []),
     ('<script src="https://\ncdn.example/x.js">', OWN_HOST, []),
+    ('<script src="//-@cdn.example/x.js">', OWN_HOST, []),
+    ('<script src="//:@cdn.example/x.js">', OWN_HOST, []),
+    ('<script src="//$@cdn.example/x.js">', OWN_HOST, []),
+    ('<script src="//☃.example/x.js">', OWN_HOST, []),
+    ('<script src="https://$@cdn.example/x.js">', OWN_HOST, []),
     # Mixed or backward slashes without a scheme. Accepting "/\" would also report /\s+/.
     (r'<script src="/\cdn.example/x.js"></script>', OWN_HOST, []),
     (r'<img src="\\cdn.example/x.png">', OWN_HOST, []),
