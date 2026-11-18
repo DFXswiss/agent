@@ -383,7 +383,7 @@ def _cmd_ingest(args: list[str]) -> None:
         # skill leaves every request undecided, so both stop the pass.
         catalog = load_json(paths.skills_catalog, "skills catalog")
         if ingest.catalog_skills(catalog) is None:
-            die("skills catalog is not readable")
+            die("the catalogue cannot be read")
         if ingest.default_skill(policy, catalog) is None:
             die("policy default_skill_on_mention is not a skill in the catalogue")
         # Use the spelling GitHub reports: `outputs._is_new` compares an
@@ -468,6 +468,12 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     from .main import die
     from .runner_worker import WORKER_JOB_TYPES
 
+    # The worker this command starts runs `pr-review`, so its template is
+    # required whatever the policy allows: a queued `pr-review` row would
+    # otherwise be announced and started only to fail on the missing file.
+    prompt = paths.prompts / "pr-review.md"
+    if not prompt.is_file():
+        die(f"prompt template {prompt} is missing")
     try:
         ai = load_ai_accounts(paths.base.parent, defer_model_configuration=True)
         ai.require_model_configuration()
@@ -477,7 +483,7 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     policy = load_json(paths.policy, "policy")
     catalog = load_json(paths.skills_catalog, "skills catalog")
     if ingest.catalog_skills(catalog) is None:
-        die("skills catalog is not readable")
+        die("the catalogue cannot be read")
     allowed = policy.get("job_types_allow")
     if not isinstance(allowed, list):
         # Admission already treats a missing list as "admits nothing"; there is
@@ -489,10 +495,6 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     for skill in skills:
         if skill.id.lower() not in WORKER_JOB_TYPES:
             die(f"job type {skill.id} has no worker")
-    if any(skill.id.lower() == "pr-review" for skill in skills):
-        prompt = paths.prompts / "pr-review.md"
-        if not prompt.is_file():
-            die(f"prompt template {prompt} is missing")
 
 
 def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:

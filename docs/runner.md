@@ -191,11 +191,11 @@ prints `ingest failed: notifications listing unusable` on standard error, exits
 
 Starts queued jobs while capacity allows. Before taking the lock it checks that
 the worker can run at all: `ai-accounts.json` names models and declares
-`lane_execution`, the catalogue is readable, and every queue type in
-`policy.json` maps to a catalogue skill whose id has a worker (and, for
-`pr-review`, that `prompts/pr-review.md` exists). An allowed queue type no
-catalogue skill carries is refused here. A failure stops the command before any
-row or worktree is created. For each job it ensures the bare clone exists, fetches, creates a
+`lane_execution`, the catalogue is readable, `prompts/pr-review.md` exists,
+and every queue type in `policy.json` maps to a catalogue skill whose id has a
+worker. An allowed queue type no catalogue skill carries is refused here. A
+failure stops the command before any row or worktree is created. For each job
+it ensures the bare clone exists, fetches, creates a
 detached worktree, records an output baseline, and starts a detached tmux
 session that runs `agent runner work` with `AGENT_HOME` set. The worktree holds
 the pull-request head, checked out detached, for a pull-request job, and the

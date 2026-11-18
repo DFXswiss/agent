@@ -580,7 +580,11 @@ def scan_mentions(
             skipped += 1
             continue
         comment_id = last.get("id")
-        if isinstance(comment_id, bool) or not isinstance(comment_id, int):
+        if (
+            isinstance(comment_id, bool)
+            or not isinstance(comment_id, int)
+            or comment_id < 1
+        ):
             skipped += 1
             continue
         trigger = f"comment:{repo}:{ref}:{comment_id}"
