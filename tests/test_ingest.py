@@ -746,14 +746,20 @@ def test_a_matched_skill_without_a_queue_type_is_skipped_unread(
 ) -> None:
     # A skill the catalogue names but cannot admit on has no queue type for
     # `job_types_allow` to allow, so the request is denied rather than
-    # defaulted, and the thread stays unread.
+    # defaulted, and the thread stays unread. The policy's default skill is in
+    # the catalogue and its queue type is allowed, so a fallback to it would
+    # create a job and mark the thread read.
     store = Store(tmp_path)
     catalog = {
         "skills": [
             {
                 "id": "implement-fix",
                 "body_patterns": ["please fix"],
-            }
+            },
+            {
+                "id": "pr-review",
+                "queue_type": "pr-ready",
+            },
         ]
     }
     calls: list[list[str]] = []
