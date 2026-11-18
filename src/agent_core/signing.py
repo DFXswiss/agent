@@ -315,7 +315,11 @@ class LogArea:
 
 
 def answer_result(status: int, body: dict[str, Any]) -> str:
-    """The result of an answer without its own: `ok` for 200, otherwise the `error` of the body."""
+    """The result of an answer in a log area without its own (RECORD-PROTOCOL.md section 13): `ok`
+    for 200, otherwise the `error` of the body. A success of an area with another status, such as
+    the `201` of an append, carries its own result. Only the request line of a log area has a
+    result; the log lines of KEY-PROTOCOL.md section 5 and PASSKEY-PROTOCOL.md section 7.1 carry
+    the status alone, so the key service never derives a result outside an area."""
     if status == 200:
         return "ok"
     return str(body["error"])
@@ -561,8 +565,9 @@ class KeyService:
             (HEADER_HUB_TIME.encode("ascii"), hub_time.encode("ascii")),
             (HEADER_HUB_SIGNATURE.encode("ascii"), self.signer.sign(text).encode("ascii")),
         ]
-        if area is not None:
-            # The request line of the area replaces the line below, for every principal.
+        if area is not None and result is not None:
+            # The request line of the area replaces the line below, for every principal. `_answer`
+            # derives a result for every request in an area.
             area.log(request, status, result)
         elif request.entry.principal == "service":
             LOG.info(
@@ -690,14 +695,19 @@ class KeyService:
         )
         return _Verified(request=request, agent_time=agent_time, nonce=nonce)
 
-    async def _answer(self, request: KeyRequest, area: LogArea | None) -> tuple[int, bytes, str]:
+    async def _answer(self, request: KeyRequest, area: LogArea | None) -> tuple[int, bytes, str | None]:
         """Route, check 9, the query, check 10, and the endpoint, with the result for the request
-        line of a log area. Any failure here is a signed 500."""
+        line of a log area. Any failure here is a signed 500.
+
+        The result is derived only for a request in a log area: outside an area no line carries
+        one, so a success with a status other than 200 there, such as the `201` of
+        `POST /api/key/invites`, is answered as the endpoint returned it."""
         try:
             answer = await self._route(request)
-            return answer.status, _json_bytes(answer.body), (
-                answer.result if answer.result is not None else answer_result(answer.status, answer.body)
-            )
+            result = answer.result
+            if result is None and area is not None:
+                result = answer_result(answer.status, answer.body)
+            return answer.status, _json_bytes(answer.body), result
         except Exception:
             if area is None:
                 LOG.error("key request: the endpoint failed", exc_info=True)

@@ -38,7 +38,7 @@ from tests.passkey_hub import (
     twin,
     unb64,
 )
-from tests.test_signed_requests import Answer, assert_signed, assert_unsigned
+from tests.test_signed_requests import Answer, assert_signed, assert_unsigned, log_lines  # noqa: F401
 from tests.webauthn_authenticator import (
     BIGNUM,
     FLOAT_MINUS_7,
@@ -710,6 +710,16 @@ def test_a_successful_registration_and_its_keys_file_text(hubs: HubFactory) -> N
     # The text pasted under `keys:` is a list entry the loader reads.
     entry = yaml.safe_load("keys:\n" + item["keys_entry"])["keys"][0]
     assert entry["credential_id"] == b64(credential.credential_id) and entry["scopes"] == ["record:read", "record:write"]
+
+
+def test_a_normal_invite_writes_no_bootstrap_line_when_opened_or_received(
+    pkhub: PasskeyHub, hubs: HubFactory, log_lines: list[str]  # noqa: F811
+) -> None:
+    # Section 5.3: the lines `invite bootstrap opened` and `invite bootstrap received` are written
+    # only for a bootstrap invite.
+    _, opened = opened_invite(pkhub, admin(pkhub, hubs))
+    assert pkhub.register(stranger(), opened).status == 200
+    assert [line for line in log_lines if "invite bootstrap" in line] == []
 
 
 def test_the_proposed_id_skips_an_id_proposed_for_another_invite(pkhub: PasskeyHub, hubs: HubFactory) -> None:  # noqa: F811

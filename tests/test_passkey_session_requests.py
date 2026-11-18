@@ -87,13 +87,19 @@ def raw_signature(r: int, s: int) -> bytes:
         "session." + "A" * 32,
         "session." + "a" * 31,
         "session." + "a" * 33,
-        "session-" + "a" * 32,
         "Session." + "a" * 32,
     ],
 )
 def test_check_1_refuses_a_session_key_id_in_the_wrong_form(hub: PasskeyHub, staff: Session, key_id: str) -> None:
     wire = signed_wire(key_id, lambda text: b"\x01" * 64, time_text=hub.time())
     refused(hub.send(wire), 401, "signature_missing")
+
+
+def test_check_1_passes_an_id_that_follows_the_keys_file_id_rule_and_check_2_refuses_it(hub: PasskeyHub) -> None:
+    # `session-` and 32 letters follow the `id` rule of KEY-PROTOCOL.md section 3, so check 1
+    # passes it (section 7.1: the `id` rule or the session key id form) and check 2 finds no entry.
+    wire = signed_wire("session-" + "a" * 32, lambda text: b"\x01" * 64, time_text=hub.time())
+    refused(hub.send(wire), 401, "key_unknown")
 
 
 def test_check_1_refuses_a_der_signature_instead_of_r_and_s(hub: PasskeyHub, staff: Session) -> None:

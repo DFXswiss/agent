@@ -1181,6 +1181,28 @@ def test_a_log_area_writes_its_line_instead_of_the_service_line_and_never_a_trac
     assert [line for line in log_lines if "Traceback" in line or "failed" in line] == []
 
 
+def test_a_success_other_than_200_outside_a_log_area_is_answered_signed_as_the_endpoint_returned_it(
+    app: FastAPI, log_lines: list[str]
+) -> None:
+    # Only the request line of a log area carries a result (RECORD-PROTOCOL.md section 13); the
+    # line of section 5 carries the status alone. A `201` without `error` outside an area, as
+    # `POST /api/key/invites` answers (PASSKEY-PROTOCOL.md section 5.1), is not turned into a 500.
+    async def created(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        return 201, {"created": request.entry.id}
+
+    app.state.key_service.routes.add("POST", "/api/key/test-created", created, scope=None, subject=None)
+    for key_id in ("agent-one", "guard-one"):
+        wire = build_wire(key_id, method="POST", target="/api/key/test-created")
+        answer = send(app, wire)
+        assert_signed(wire, answer, 201, NOW)
+        assert answer.json() == {"created": key_id}
+    prefix = "uvicorn.error INFO key request "
+    assert [line[len(prefix):] for line in log_lines if line.startswith(prefix)] == [
+        "guard-one POST /api/key/test-created 201"
+    ]
+    assert [line for line in log_lines if "Traceback" in line or "failed" in line] == []
+
+
 @pytest.mark.parametrize(
     ("prefix", "message"),
     [
