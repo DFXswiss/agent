@@ -537,6 +537,11 @@ def _newest_checkpoint(connection: psycopg.Connection[Any], hub_key_id: str) -> 
     return _stored_checkpoint(row)
 
 
+def _always_verified() -> bool:
+    """The default of `checkpoint_attempt`: the caller holds no state `record_unverified`."""
+    return True
+
+
 def _checkpoint_steps(
     connection: psycopg.Connection[Any],
     memory: MemoryState,
@@ -545,9 +550,14 @@ def _checkpoint_steps(
     hour: int,
     clock: Callable[[], int],
     before_insert: Callable[[], None],
+    still_verified: Callable[[], bool],
 ) -> CheckpointWritten | None:
     """Steps 2 to 5 of section 12.2 under the state lock; `_Rollback` where the attempt writes
     nothing."""
+    if not still_verified():
+        # The process entered the state `record_unverified` while this attempt waited for its
+        # connection or the advisory lock; it makes no attempt (section 12.2).
+        raise _Rollback(None)
     failure = incremental_fold(connection, memory, keys)
     if failure is not None:
         raise _Rollback(Unverified(failure))
@@ -585,13 +595,16 @@ def checkpoint_attempt(
     hour: int,
     clock: Callable[[], int],
     before_insert: Callable[[], None] = _no_pause,
+    still_verified: Callable[[], bool] = _always_verified,
 ) -> CheckpointWritten | Unverified | None:
     """One checkpoint attempt of section 12.2 for the full hour `hour`, as one transaction at READ
     COMMITTED.
 
     1. The advisory lock 742180001.
-    2. Under the state lock, which is held until the commit, the incremental fold (`Unverified`
-       when it fails).
+    2. Under the state lock, which is held until the commit: nothing is written (None) when
+       `still_verified` is false, because the process entered the state `record_unverified` while
+       the attempt waited for its connection or the advisory lock; otherwise the incremental fold
+       (`Unverified` when it fails).
     3. The newest checkpoint of the hub's own key id, checked as the row `checkpoint_invalid` does
        against the head of the state and the stored record hash at its position (`Unverified` with
        `checkpoint_invalid` at the position it names).
@@ -601,8 +614,10 @@ def checkpoint_attempt(
        that moment and signed by `signer`, is inserted with ON CONFLICT DO NOTHING and committed;
        `CheckpointWritten` when a row was inserted, None when the conflict left it out.
 
-    `before_insert` is a test point before the insert of step 5. The caller makes no attempt in the
-    state `record_unverified`. `StorageError` with step `checkpoint` when the database fails.
+    `before_insert` is a test point before the insert of step 5. `still_verified` is read under the
+    state lock; a process enters the state `record_unverified` only under that lock, so an attempt
+    either commits before the process enters it or writes nothing. `StorageError` with step
+    `checkpoint` when the database fails.
     """
     try:
         with database_step(STEP_CHECKPOINT):
@@ -610,7 +625,9 @@ def checkpoint_attempt(
             try:
                 connection.execute(_LOCK, (APPEND_LOCK,))
                 with memory.lock:
-                    return _checkpoint_steps(connection, memory, keys, signer, hour, clock, before_insert)
+                    return _checkpoint_steps(
+                        connection, memory, keys, signer, hour, clock, before_insert, still_verified
+                    )
             except BaseException:
                 with suppress(psycopg.Error):
                     connection.execute("ROLLBACK")

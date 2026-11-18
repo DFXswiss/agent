@@ -12,27 +12,38 @@ import gzip
 import json
 import re
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, Sequence
 
 import psycopg
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 from psycopg import sql
 
 from agent_core.config import Config
 from agent_core.record import commands
 from agent_core.record.checkpoint import Checkpoint
-from agent_core.record.event import event_hash, parse_event, record_hash
+from agent_core.record.connection import parse_connection_string
+from agent_core.record.event import Change, build_event_text, event_hash, parse_event, record_hash
+from agent_core.record.runtime import RecordStartFailed
+from agent_core.record.storage import WriterPool
+from agent_core.record.verify import StoredEvent
 from agent_core.signing import HubSigner
-from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX, RecordDatabase, recreate_database
+from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX, RecordDatabase, pair_device, recreate_database
 from tests.record_helpers import (
     Parallel,
+    append_lock_held,
+    counts,
     insert_as_superuser,
     insert_checkpoint,
     migrated,
+    silent_listener,
     stored_event,
     tamper,
+    unreachable_url,
     wait_for_append_lock,
 )
 from tests.record_hub_helpers import (
@@ -45,16 +56,19 @@ from tests.record_hub_helpers import (
     JSON,
     LINK,
     OTHER_LINK,
+    OTHER_REPO,
     OTHER_TEAM,
     READER,
     RECORD_UNVERIFIED,
     REPO,
+    SEEDS,
     TEAM,
     WATCHER,
     Hub,
     Points,
     append_body,
     b64,
+    encode,
     error,
     key_entries,
     new_id,
@@ -62,7 +76,7 @@ from tests.record_hub_helpers import (
     start_hub,
     task_create,
 )
-from tests.test_signed_requests import NOW, assert_signed, fmt
+from tests.test_signed_requests import NOW, assert_refused, assert_signed, fmt, private, public_text
 from tests.test_signed_requests import log_lines  # noqa: F401 - a fixture, used by name
 
 EVENTS = "/api/key/record/events"
@@ -74,6 +88,7 @@ HEAD = "/api/key/record/head"
 VERIFY = "/api/key/record/verify"
 CHECKPOINTS = "/api/key/record/checkpoints"
 RELEASE = "/api/key/release"
+WHOAMI = "/api/key/whoami"
 QUERY_INVALID = b'{"error":"query_invalid"}'
 SCOPE_MISSING = b'{"error":"scope_missing"}'
 NOT_FOUND = b'{"error":"not_found"}'
@@ -155,6 +170,89 @@ def make_unverified(hub: Hub, db: RecordDatabase) -> None:
     assert hub.runtime.unverified
 
 
+@contextmanager
+def started(
+    db: RecordDatabase, cfg: Config, directory: Path, names: Sequence[str], **options: Any
+) -> Iterator[list[Hub]]:
+    """Several hub instances on one database, one per name, closed at the end of the block."""
+    made: list[Hub] = []
+    try:
+        for name in names:
+            made.append(start_hub(db, cfg, directory, name=name, **options))
+        yield made
+    finally:
+        for instance in made:
+            instance.close()
+
+
+def refused_restart(
+    db: RecordDatabase, cfg: Config, directory: Path, lines: list[str], position: int, failure: str, **options: Any
+) -> None:
+    """A restart on `db` refuses to start, with exactly the two lines of section 11.4, step `verify`."""
+    lines.clear()
+    with pytest.raises(RecordStartFailed) as failed:
+        start_hub(db, cfg, directory, name="restarted", **options)
+    assert failed.value.step == "verify"
+    assert record_part(lines) == [f"ERROR record verify failed {position} {failure}", "ERROR record start failed verify"]
+
+
+def withheld_at(position: int) -> bytes:
+    """The answer of section 7.9 to a failure that concerns an event, for every calling key."""
+    return body({"verified": False, "position": position, "record_hash": None, "failure": "withheld", "hub_key": HUB_KEY_ID})
+
+
+def named_at(position: int, failure: str) -> bytes:
+    """The answer of section 7.9 to a record-wide failure, named, for every calling key."""
+    return body({"verified": False, "position": position, "record_hash": None, "failure": failure, "hub_key": HUB_KEY_ID})
+
+
+def drop_constraint(db: RecordDatabase, name: str) -> None:
+    """As database superuser, drop a constraint of section 11.3 on `record.event`."""
+    with db.admin() as admin:
+        admin.execute(sql.SQL("ALTER TABLE record.event DROP CONSTRAINT {}").format(sql.Identifier(name)))
+
+
+def answers_503_everywhere(hub: Hub) -> None:
+    """The signed `503` `record_unverified` on every record endpoint and on the release query."""
+    for target in (EVENTS, f"{OBJECT}?id={new_id()}", TASKS, f"{COMMENTS}?task={new_id()}", HEAD, VERIFY, CHECKPOINTS):
+        assert hub.signed(ALICE, target, 503).body == RECORD_UNVERIFIED
+    for key_id, path, changes in (
+        (ALICE, EVENTS, task_create()),
+        (WATCHER, WATCH, [("status", "open", "done")]),
+    ):
+        wire, answer = hub.post(key_id, path, *hub.event(key_id, "task", new_id(), changes))
+        assert_signed(wire, answer, 503, hub.clock.now)
+        assert answer.body == RECORD_UNVERIFIED
+    target = f"{RELEASE}?repository={REPO.replace('/', '%2F')}&pull_request=42"
+    assert hub.signed(GUARD, target, 503).body == RECORD_UNVERIFIED
+
+
+def rest_of_the_hub_answers(hub: Hub, device_id: str) -> None:
+    """Section 12.1: `GET /api/key/whoami`, pairing, sync and the session store answer as before."""
+    assert hub.signed(ALICE, WHOAMI, 200).json()["key"] == ALICE
+    client = TestClient(hub.app)
+    token = pair_device(client, "code-alice", device_id)
+    headers = {"Authorization": f"Bearer {token}"}
+    session_id = f"session-{device_id}"
+    event = {
+        "origin_device_id": device_id,
+        "origin_seq": 1,
+        "table": "session",
+        "op": "insert",
+        "row_id": session_id,
+        "payload": {"id": session_id, "kind": "human", "status": "active"},
+        "occurred_at": "2026-08-13T12:00:00Z",
+    }
+    pushed = client.post("/sync/push", headers=headers, json={"events": [event]})
+    assert pushed.status_code == 200, pushed.text
+    assert pushed.json() == {"accepted": 1}
+    pulled = client.get("/sync/pull", headers=headers)
+    assert pulled.status_code == 200, pulled.text
+    state = client.get("/api/state")
+    assert state.status_code == 200, state.text
+    assert session_id in [row["id"] for row in state.json()["session"]]
+
+
 # --- POST /api/key/record/events (sections 6.7 and 7.2) --------------------------------------------
 
 
@@ -211,10 +309,15 @@ BODY_CASES = {
 }
 
 
+# Each append endpoint with a key that holds its scope.
+APPENDS = [(ALICE, EVENTS), (WATCHER, WATCH)]
+
+
+@pytest.mark.parametrize(("key_id", "path"), APPENDS)
 @pytest.mark.parametrize("case", sorted(BODY_CASES))
-def test_a_body_outside_check_2_gets_body_invalid(hub: Hub, case: str) -> None:
+def test_a_body_outside_check_2_gets_body_invalid(hub: Hub, case: str, key_id: str, path: str) -> None:
     raw = BODY_CASES[case](*_valid_parts(hub))
-    wire = hub.wire(ALICE, EVENTS, method="POST", body=raw, extra_headers=JSON)
+    wire = hub.wire(key_id, path, method="POST", body=raw, extra_headers=JSON)
     answer = hub.send(wire)
     assert_signed(wire, answer, 400, NOW)
     assert answer.body == BODY_INVALID
@@ -229,10 +332,13 @@ CONTENT_TYPES = {
 }
 
 
+@pytest.mark.parametrize(("key_id", "path"), APPENDS)
 @pytest.mark.parametrize("case", sorted(CONTENT_TYPES))
-def test_a_content_type_other_than_exactly_application_json_gets_body_invalid(hub: Hub, case: str) -> None:
-    text, signature = hub.event(ALICE, "task", new_id(), task_create())
-    wire = hub.wire(ALICE, EVENTS, method="POST", body=append_body(text, signature), extra_headers=CONTENT_TYPES[case])
+def test_a_content_type_other_than_exactly_application_json_gets_body_invalid(
+    hub: Hub, case: str, key_id: str, path: str
+) -> None:
+    text, signature = hub.event(key_id, "task", new_id(), task_create())
+    wire = hub.wire(key_id, path, method="POST", body=append_body(text, signature), extra_headers=CONTENT_TYPES[case])
     answer = hub.send(wire)
     assert_signed(wire, answer, 400, NOW)
     assert answer.body == BODY_INVALID
@@ -331,20 +437,35 @@ def test_after_a_refusal_the_next_event_chained_to_the_last_accepted_one_is_acce
     hub.write(ALICE, "task", work, [("title", "Fix login", "Fix it")])
 
 
+# A key without the scope of each append endpoint.
+WITHOUT_SCOPE = {EVENTS: WATCHER, WATCH: ALICE}
+# A valid change of each append endpoint's writer.
+VALID_CHANGES = {EVENTS: task_create(), WATCH: [("status", "open", "done")]}
+
+
+@pytest.mark.parametrize(("key_id", "path"), APPENDS)
 def test_an_already_unverified_process_answers_503_after_check_2_and_reads_nothing(
-    hub: Hub, record_db: RecordDatabase
+    hub: Hub, record_db: RecordDatabase, key_id: str, path: str
 ) -> None:
     make_unverified(hub, record_db)
     taken = hub.runtime.pool.taken
+    text, signature = hub.event(key_id, "task", new_id(), VALID_CHANGES[path])
+    # A key without the scope still gets `scope_missing`, and a query `query_invalid`.
+    other = WITHOUT_SCOPE[path]
+    wire, answer = hub.post(other, path, *hub.event(other, "task", new_id(), VALID_CHANGES[path]))
+    assert_signed(wire, answer, 403, NOW)
+    assert answer.body == SCOPE_MISSING
+    wire, answer = hub.post(key_id, f"{path}?x=1", text, signature)
+    assert_signed(wire, answer, 400, NOW)
+    assert answer.body == QUERY_INVALID
     # An invalid body still gets `body_invalid`.
-    wire = hub.wire(ALICE, EVENTS, method="POST", body=b"{", extra_headers=JSON)
+    wire = hub.wire(key_id, path, method="POST", body=b"{", extra_headers=JSON)
     answer = hub.send(wire)
     assert_signed(wire, answer, 400, NOW)
     assert answer.body == BODY_INVALID
     # A valid body with an invalid event text gets the 503, before check 3.
-    text, signature = hub.event(ALICE, "task", new_id(), task_create())
     for event_text in (b"not an event", text):
-        wire, answer = hub.post(ALICE, EVENTS, event_text, signature)
+        wire, answer = hub.post(key_id, path, event_text, signature)
         assert_signed(wire, answer, 503, NOW)
         assert answer.body == RECORD_UNVERIFIED
     assert hub.runtime.pool.taken == taken
@@ -840,22 +961,285 @@ def test_a_failure_that_concerns_an_event_is_withheld_for_every_key_and_logged_w
         assert hub.signed(ALICE, path, 503).body == RECORD_UNVERIFIED
 
 
-def test_a_record_wide_failure_is_named_with_its_position(hub: Hub, record_db: RecordDatabase) -> None:
-    hub.write(ALICE, "task", new_id(), task_create())
-    tamper(record_db, "record.event", "UPDATE record.event SET record_hash = %s WHERE position = 1", ("d" * 64,))
-    assert hub.signed(DAVE, VERIFY, 200).body == body(
-        {"verified": False, "position": 1, "record_hash": None, "failure": "record_hash_mismatch", "hub_key": HUB_KEY_ID}
-    )
+# Section 14, "Integrity and backup": each event failure of section 12.1 from `event_invalid` to
+# `event_refused`, except `record_hash_mismatch`.
+EVENT_FAILURES = [
+    "event_invalid",
+    "certificate_not_supported",
+    "row_mismatch",
+    "key_unknown",
+    "event_signature_invalid",
+    "event_id_taken",
+    "chain_broken",
+    "event_time_invalid",
+    "event_refused",
+]
+UNKNOWN_KEY = "zed-laptop-1"
+UNKNOWN_SEED = 99
+# The failing event is either an update of a security issue of the team `example`, which alice
+# sees and neither dave (another team) nor bob (without `record:security`) sees, or a create.
+UPDATE_OF_AN_ISSUE = "an update of a security issue"
+A_CREATE = "a create"
 
 
-def test_a_received_at_in_the_year_10000_fails_with_event_time_invalid_not_record_hash_mismatch(
-    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+def _with_title(changes: Sequence[tuple[str, str | None, str | None]], title: str) -> list[tuple[str, str | None, str | None]]:
+    return [(name, old, title) if name == "title" else (name, old, new) for name, old, new in changes]
+
+
+def _failing_event(
+    hub: Hub, db: RecordDatabase, failure: str, variant: str, issue: str, first_event_id: str
+) -> tuple[bytes, bytes, dict[str, str]]:
+    """The event text, the signature and the overridden copied columns of a row that fails
+    verification with `failure`, validly chained after alice's last event unless the failure is
+    about the chain."""
+    if variant == UPDATE_OF_AN_ISSUE:
+        object_id = issue
+        good: list[tuple[str, str | None, str | None]] = [("title", "Login bypass", "Login bypass fixed")]
+        invalid = [("title", "Login bypass", "x" * 201)]
+        refused = [("title", "Stale", "Other")]
+    else:
+        object_id = new_id()
+        good = security_create("second-bypass")
+        invalid = _with_title(good, "x" * 201)
+        refused = [*good, ("status", None, "merged")]
+    columns: dict[str, str] = {}
+    if failure == "event_invalid":
+        text, signature = hub.event(ALICE, "task", object_id, invalid)
+    elif failure == "certificate_not_supported":
+        text, signature = hub.event(ALICE, "task", object_id, good, certificate=b"cert")
+    elif failure == "row_mismatch":
+        text, signature = hub.event(ALICE, "task", object_id, good)
+        columns["event_id"] = new_id()
+    elif failure == "key_unknown":
+        text = build_event_text(
+            event_id=new_id(),
+            object_type="task",
+            object_id=object_id,
+            actor_key_id=UNKNOWN_KEY,
+            signed_at=NOW,
+            prev_hash="-",
+            changes=[Change(name, encode(old), encode(new)) for name, old, new in good],
+        )
+        signature = private(UNKNOWN_SEED).sign(text)
+    elif failure == "event_signature_invalid":
+        text, _ = hub.event(ALICE, "task", object_id, good)
+        signature = private(SEEDS[BOB]).sign(text)
+    elif failure == "event_id_taken":
+        drop_constraint(db, "event_event_id_key")
+        text, signature = hub.event(ALICE, "task", object_id, good, event_id=first_event_id)
+    elif failure == "chain_broken":
+        text, signature = hub.event(ALICE, "task", object_id, good, prev_hash="1" * 64)
+    elif failure == "event_time_invalid":
+        text, signature = hub.event(ALICE, "task", object_id, good, signed_at=NOW + 121)
+    else:
+        text, signature = hub.event(ALICE, "task", object_id, refused)
+    return text, signature, columns
+
+
+@pytest.mark.parametrize("variant", [UPDATE_OF_AN_ISSUE, A_CREATE])
+@pytest.mark.parametrize("failure", EVENT_FAILURES)
+def test_each_event_failure_is_withheld_alike_for_every_key_then_503_and_a_restart_refuses_to_start(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str], failure: str, variant: str  # noqa: F811
+) -> None:
+    migrated(record_db)
+    with started(record_db, cfg, tmp_path, ["sees", "other-team", "no-security"]) as (sees, other_team, no_security):
+        first_text, first_signature = sees.event(ALICE, "task", new_id(), task_create())
+        wire, answer = sees.post(ALICE, EVENTS, first_text, first_signature)
+        assert_signed(wire, answer, 201, NOW)
+        issue = new_id()
+        written = sees.write(ALICE, "task", issue, security_create("login-bypass"))
+        for instance in (other_team, no_security):
+            assert instance.signed(ALICE, HEAD, 200).json()["position"] == 2
+        text, signature, columns = _failing_event(sees, record_db, failure, variant, issue, parse_event(first_text).event_id)
+        insert_as_superuser(record_db, stored_event(3, NOW, text, signature, written["record_hash"]), **columns)
+        log_lines.clear()
+        for instance, key_id in ((sees, ALICE), (other_team, DAVE), (no_security, BOB)):
+            assert instance.signed(key_id, VERIFY, 200).body == withheld_at(3)
+            assert instance.runtime.unverified
+        assert request_lines(log_lines) == [
+            f"{key_id} GET {VERIFY} 200 verify_failed 3 {failure}" for key_id in (ALICE, DAVE, BOB)
+        ]
+        for instance in (sees, other_team, no_security):
+            answers_503_everywhere(instance)
+    refused_restart(record_db, cfg, tmp_path, log_lines, 3, failure)
+
+
+# A `service` key with `record:read` and `record:security` whose `subjects` hold REPO only.
+AUDITOR = "audit-one"
+AUDITOR_SEED = 38
+
+
+def _auditor_entries() -> list[dict[str, Any]]:
+    return [
+        *key_entries(),
+        {
+            "id": AUDITOR,
+            "kind": "ed25519",
+            "principal": "service",
+            "handle": "example-auditor",
+            "team": TEAM,
+            "device": f"runner-{AUDITOR_SEED}",
+            "public_key": public_text(AUDITOR_SEED),
+            "scopes": ["record:read", "record:security"],
+            "subjects": [REPO],
+            "expires": fmt(NOW + 365 * 86400),
+        },
+    ]
+
+
+def _chain_broken_over_an_unseen_earlier_event(hub: Hub) -> tuple[str, StoredEvent, str | None]:
+    """bob sees alice's task and not her security issue. alice's event on the task names as
+    `prev_hash` the event hash of her issue's create, which is not her previous event."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    issue = new_id()
+    created = hub.write(ALICE, "task", issue, security_create("login-bypass"))
+    previous = hub.write(ALICE, "task", issue, [("title", "Login bypass", "Login bypass two")])
+    text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")], prev_hash=created["event_hash"])
+    return BOB, stored_event(4, NOW, text, signature, previous["record_hash"]), "event_actor_key_id_prev_hash_key"
+
+
+def _signed_at_before_an_unseen_previous_event(hub: Hub) -> tuple[str, StoredEvent, str | None]:
+    """bob sees alice's task and not her security issue. alice's event on the task is chained to
+    her issue's create, which she signed later; its own `received_at` order and its 120-second
+    bound hold."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    hub.clock.now = NOW + 100
+    previous = hub.write(ALICE, "task", new_id(), security_create("login-bypass"))
+    text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")], signed_at=NOW + 50)
+    return BOB, stored_event(3, NOW + 100, text, signature, previous["record_hash"]), None
+
+
+def _short_name_of_an_unseen_issue(hub: Hub) -> tuple[str, StoredEvent, str | None]:
+    """The auditor sees the security issue T1 (repository REPO) and not T2 (OTHER_REPO). alice
+    sets the short name of T1 to that of T2: the reducer refuses it with `short_name_taken`."""
+    first = new_id()
+    hub.write(ALICE, "task", first, security_create("alpha"))
+    previous = hub.write(ALICE, "task", new_id(), security_create("beta", OTHER_REPO))
+    text, signature = hub.event(ALICE, "task", first, [("short_name", "alpha", "beta")])
+    return AUDITOR, stored_event(3, NOW, text, signature, previous["record_hash"]), None
+
+
+SEEN_FAILURES: dict[str, tuple[Callable[[Hub], tuple[str, StoredEvent, str | None]], str]] = {
+    "chain_broken over an earlier event the caller does not see": (_chain_broken_over_an_unseen_earlier_event, "chain_broken"),
+    "event_time_invalid over a previous event the caller does not see": (
+        _signed_at_before_an_unseen_previous_event,
+        "event_time_invalid",
+    ),
+    "short_name_taken of an issue the caller does not see": (_short_name_of_an_unseen_issue, "event_refused"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(SEEN_FAILURES))
+def test_withheld_to_a_key_that_sees_the_failing_event_byte_for_byte_as_to_another_team(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str], case: str  # noqa: F811
+) -> None:
+    build, failure = SEEN_FAILURES[case]
+    migrated(record_db)
+    options = {"entries": _auditor_entries(), "seeds": {**SEEDS, AUDITOR: AUDITOR_SEED}}
+    with started(record_db, cfg, tmp_path, ["caller", "other-team"], **options) as (caller_hub, other_team):
+        caller, stored, constraint = build(caller_hub)
+        head = caller_hub.signed(ALICE, HEAD, 200).json()["position"]
+        assert other_team.signed(DAVE, HEAD, 200).json()["position"] == head == stored.position - 1
+        if constraint is not None:
+            drop_constraint(record_db, constraint)
+        insert_as_superuser(record_db, stored)
+        log_lines.clear()
+        caller_answer = caller_hub.signed(caller, VERIFY, 200).body
+        other_answer = other_team.signed(DAVE, VERIFY, 200).body
+    assert caller_answer == other_answer == withheld_at(stored.position)
+    assert request_lines(log_lines) == [
+        f"{caller} GET {VERIFY} 200 verify_failed {stored.position} {failure}",
+        f"{DAVE} GET {VERIFY} 200 verify_failed {stored.position} {failure}",
+    ]
+
+
+@pytest.mark.parametrize("value", ["10000-01-01 00:00:00+00", "infinity"])
+def test_a_received_at_that_cannot_be_written_is_withheld_as_event_time_invalid_and_refuses_a_restart(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str], value: str  # noqa: F811
 ) -> None:
     hub.write(ALICE, "task", new_id(), task_create())
-    tamper(record_db, "record.event", "UPDATE record.event SET received_at = '10000-01-01 00:00:00+00' WHERE position = 1")
+    hub.write(ALICE, "task", new_id(), task_create())
+    tamper(record_db, "record.event", "UPDATE record.event SET received_at = %s::timestamptz WHERE position = 2", (value,))
     log_lines.clear()
-    assert hub.signed(ALICE, VERIFY, 200).json()["failure"] == "withheld"
-    assert request_lines(log_lines) == [f"{ALICE} GET {VERIFY} 200 verify_failed 1 event_time_invalid"]
+    assert hub.signed(ALICE, VERIFY, 200).body == withheld_at(2)
+    assert request_lines(log_lines) == [f"{ALICE} GET {VERIFY} 200 verify_failed 2 event_time_invalid"]
+    refused_restart(record_db, cfg, tmp_path, log_lines, 2, "event_time_invalid")
+
+
+def _gap(db: RecordDatabase) -> None:
+    tamper(db, "record.event", "UPDATE record.event SET position = 3 WHERE position = 2")
+
+
+def _changed_record_hash(db: RecordDatabase) -> None:
+    tamper(db, "record.event", "UPDATE record.event SET record_hash = %s WHERE position = 1", ("d" * 64,))
+
+
+def _changed_checkpoint_signature(db: RecordDatabase) -> None:
+    tamper(db, "record.checkpoint", "UPDATE record.checkpoint SET signature = %s", (bytes(64),))
+
+
+RECORD_WIDE: dict[str, tuple[Callable[[RecordDatabase], None], int]] = {
+    "position_gap": (_gap, 2),
+    "record_hash_mismatch": (_changed_record_hash, 1),
+    "checkpoint_invalid": (_changed_checkpoint_signature, 2),
+}
+
+
+@pytest.mark.parametrize("failure", sorted(RECORD_WIDE))
+def test_a_record_wide_failure_is_named_with_its_position_to_every_key_alike(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, failure: str
+) -> None:
+    change, position = RECORD_WIDE[failure]
+    migrated(record_db)
+    with started(record_db, cfg, tmp_path, ["team", "other-team", "service"]) as instances:
+        writer_hub = instances[0]
+        writer_hub.write(ALICE, "task", new_id(), task_create())
+        writer_hub.write(ALICE, "task", new_id(), task_create())
+        writer_hub.runtime.checkpoint()
+        for instance in instances:
+            assert instance.signed(ALICE, HEAD, 200).json()["position"] == 2
+        change(record_db)
+        answers = [instance.signed(key_id, VERIFY, 200).body for instance, key_id in zip(instances, (ALICE, DAVE, READER))]
+    assert answers == [named_at(position, failure)] * 3
+
+
+@pytest.mark.parametrize("value", ["10000-01-01 00:00:00+00", "infinity"])
+def test_an_own_checkpoint_whose_published_at_cannot_be_written_fails_verify_the_restart_and_the_next_attempt(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str], value: str  # noqa: F811
+) -> None:
+    migrated(record_db)
+    with started(record_db, cfg, tmp_path, ["asked", "running"]) as (asked, running):
+        asked.write(ALICE, "task", new_id(), task_create())
+        asked.runtime.checkpoint()
+        asked.write(ALICE, "task", new_id(), task_create())
+        assert running.signed(ALICE, HEAD, 200).json()["position"] == 2
+        # The newest checkpoint of the hub's own key id is changed while both processes run.
+        tamper(record_db, "record.checkpoint", "UPDATE record.checkpoint SET published_at = %s::timestamptz", (value,))
+        assert asked.signed(ALICE, VERIFY, 200).body == named_at(1, "checkpoint_invalid")
+        # Before its next periodic run, the other process's next attempt writes nothing.
+        running.clock.now += 3600
+        log_lines.clear()
+        running.runtime.checkpoint()
+        assert record_part(log_lines) == ["ERROR record verify failed 1 checkpoint_invalid"]
+        assert counts(record_db) == (2, 1)
+        assert running.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
+    refused_restart(record_db, cfg, tmp_path, log_lines, 1, "checkpoint_invalid")
+
+
+@pytest.mark.parametrize(
+    ("hub_key_id", "published_at"),
+    [("hub-2", "10000-01-01 00:00:00+00"), ("Hub-2", "2027-01-15 08:00:00+00")],
+)
+def test_a_checkpoint_of_another_hub_key_id_without_the_form_of_section_2_fails_verify_and_the_restart(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str],  # noqa: F811
+    hub_key_id: str, published_at: str,
+) -> None:
+    written = hub.write(ALICE, "task", new_id(), task_create())
+    insert_checkpoint(record_db, Checkpoint(hub_key_id, 1, written["record_hash"], NOW, bytes(64)), published_at=published_at)
+    assert hub.signed(ALICE, VERIFY, 200).body == named_at(1, "checkpoint_invalid")
+    refused_restart(record_db, cfg, tmp_path, log_lines, 1, "checkpoint_invalid")
 
 
 def test_a_removal_at_the_end_fails_position_gap_against_the_head_of_the_state(
@@ -945,6 +1329,26 @@ def test_a_changed_newest_checkpoint_makes_the_next_attempt_unverified(
     assert record_part(log_lines) == []
 
 
+def test_a_checkpoint_attempt_that_waits_while_the_process_enters_record_unverified_writes_nothing(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 12.2: a process in the state `record_unverified` writes no checkpoint, also when its
+    attempt started before and waited for the advisory lock while a verification on request of
+    the same process failed."""
+    hub.write(ALICE, "task", new_id(), task_create())
+    # A row before the head of the state: the fold of the attempt does not see it.
+    tamper(record_db, "record.event", "UPDATE record.event SET signature = %s WHERE position = 1", (bytes(64),))
+    log_lines.clear()
+    with append_lock_held(record_db):
+        attempt = Parallel(hub.runtime.checkpoint)
+        wait_for_append_lock(record_db, 1)
+        assert hub.signed(DAVE, VERIFY, 200).body == withheld_at(1)
+        assert hub.runtime.unverified
+    attempt.results()
+    assert counts(record_db) == (1, 0)
+    assert record_part(log_lines) == [f"INFO record request {DAVE} GET {VERIFY} 200 verify_failed 1 event_signature_invalid"]
+
+
 def test_a_database_failure_in_a_checkpoint_attempt_logs_record_database_error_checkpoint(
     hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
 ) -> None:
@@ -963,21 +1367,31 @@ def test_a_database_failure_in_a_checkpoint_attempt_logs_record_database_error_c
 def test_the_periodic_verification_runs_10_minutes_after_the_previous_run_started(
     hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
 ) -> None:
+    """State per process (section 12.1), with two instances A (`hub`) and B (`other`)."""
     other = start_hub(record_db, cfg, tmp_path, name="other")
     try:
         hub.write(ALICE, "task", new_id(), task_create())
+        assert other.signed(ALICE, HEAD, 200).json()["position"] == 1
         tamper(record_db, "record.event", "UPDATE record.event SET signature = %s WHERE position = 1", (bytes(64),))
+        # A's verification on request fails: A answers the signed 503 on every record endpoint and
+        # on the release query.
+        assert hub.signed(ALICE, VERIFY, 200).body == withheld_at(1)
+        answers_503_everywhere(hub)
+        # B keeps answering until its next periodic run.
         log_lines.clear()
         other.monotonic.now += 599
         other.runtime.periodic()
         assert record_part(log_lines) == []
         assert not other.runtime.unverified
+        assert other.signed(ALICE, HEAD, 200).json()["position"] == 1
+        log_lines.clear()
         other.monotonic.now += 1
         other.runtime.periodic()
         assert record_part(log_lines) == ["ERROR record verify failed 1 event_signature_invalid"]
-        assert other.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
-        # The rest of the hub keeps answering.
-        assert other.signed(ALICE, "/api/key/whoami", 200).json()["key"] == ALICE
+        answers_503_everywhere(other)
+        # In both instances the rest of the hub keeps answering.
+        rest_of_the_hub_answers(hub, "record-test-a")
+        rest_of_the_hub_answers(other, "record-test-b")
     finally:
         other.close()
 
@@ -991,6 +1405,23 @@ def test_a_database_failure_of_a_periodic_run_is_logged_and_does_not_enter_recor
     log_lines.clear()
     hub.runtime.periodic()
     assert_lines(record_part(log_lines), [f"ERROR record database error connect {SQLSTATE}"])
+    assert not hub.runtime.unverified
+
+
+def test_a_periodic_run_against_a_listener_that_never_answers_logs_database_error_connect_dash_within_15_seconds(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 14, the connect timeout of section 15: the connection that a periodic run opens
+    goes to a listener that accepts TCP connections and never answers."""
+    with silent_listener() as port:
+        hub.runtime.pool.close()
+        hub.runtime.pool = WriterPool(parse_connection_string(unreachable_url(record_db, port)), 3)
+        hub.monotonic.now += 600
+        log_lines.clear()
+        begun = time.monotonic()
+        hub.runtime.periodic()
+        assert time.monotonic() - begun < 15
+    assert record_part(log_lines) == ["ERROR record database error connect -"]
     assert not hub.runtime.unverified
 
 
@@ -1028,18 +1459,29 @@ def test_the_background_thread_runs_the_due_work(record_db: RecordDatabase, cfg:
 # --- 404 under /api/key/record/ and the request line (sections 7.1 and 13) -------------------------
 
 
-@pytest.mark.parametrize(
-    ("method", "target", "logged_method", "logged_path"),
-    [
-        ("PUT", EVENTS, "-", EVENTS),
-        ("DELETE", HEAD, "-", HEAD),
-        ("POST", HEAD, "POST", HEAD),
-        ("GET", WATCH, "GET", WATCH),
-        ("GET", HEAD + "/", "GET", "-"),
-        ("HEAD", HEAD, "HEAD", HEAD),
-        ("GET", "/api/key/record/marker-5d1c2b3a", "GET", "-"),
-    ],
-)
+# Every path of the endpoint table of section 7.1, and a method that no endpoint has on it.
+RECORD_PATHS = [EVENTS, WATCH, OBJECT, TASKS, COMMENTS, HEAD, VERIFY, CHECKPOINTS]
+OTHER_METHOD = {
+    EVENTS: "PUT",
+    WATCH: "GET",
+    OBJECT: "POST",
+    TASKS: "POST",
+    COMMENTS: "POST",
+    HEAD: "POST",
+    VERIFY: "POST",
+    CHECKPOINTS: "POST",
+}
+LOGGED_METHOD = {"GET": "GET", "POST": "POST", "PUT": "-"}
+NOT_FOUND_CASES = [
+    *[(OTHER_METHOD[path], path, LOGGED_METHOD[OTHER_METHOD[path]], path) for path in RECORD_PATHS],
+    ("DELETE", HEAD, "-", HEAD),
+    *[("GET", path + "/", "GET", "-") for path in RECORD_PATHS],
+    *[("HEAD", path, "HEAD", path) for path in RECORD_PATHS],
+    ("GET", "/api/key/record/marker-5d1c2b3a", "GET", "-"),
+]
+
+
+@pytest.mark.parametrize(("method", "target", "logged_method", "logged_path"), NOT_FOUND_CASES)
 def test_another_method_a_trailing_slash_head_and_an_unknown_path_get_the_signed_404(
     hub: Hub, log_lines: list[str], method: str, target: str, logged_method: str, logged_path: str  # noqa: F811
 ) -> None:
@@ -1077,29 +1519,69 @@ def test_every_request_under_the_record_writes_exactly_one_line_for_every_princi
     assert [line for line in log_lines if " key request " in line] == []
 
 
+# A watcher whose key id contains its handle and whose `subjects` hold the marker repository.
+MARKER_WATCHER = "example-watcher-1"
+MARKER_WATCHER_SEED = 39
+
+
 def test_no_log_line_holds_record_content_an_id_or_a_secret(
-    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
 ) -> None:
+    """Every endpoint of section 7, `POST /api/key/record/watch` included, with markers in every
+    text value that can be written in this step: title, description, comment body, short name,
+    source, and the repository names of links and `fix`. `verification` is written only by a staff
+    member (row 11 of section 6.4), whose key signs no event in this step (section 10)."""
     marker = "markerzq"
+    marker_repo = f"{marker}-org/{marker}-repo"
+    entries = [
+        *key_entries(),
+        {
+            "id": MARKER_WATCHER,
+            "kind": "ed25519",
+            "principal": "service",
+            "handle": "example-watcher",
+            "team": TEAM,
+            "device": "runner-marker",
+            "public_key": public_text(MARKER_WATCHER_SEED),
+            "scopes": ["record:read", "record:watch", "record:security"],
+            "subjects": [marker_repo],
+            "expires": fmt(NOW + 365 * 86400),
+        },
+    ]
+    migrated(record_db)
+    hub = start_hub(record_db, cfg, tmp_path, entries=entries, seeds={**SEEDS, MARKER_WATCHER: MARKER_WATCHER_SEED})
     work = new_id()
     issue = new_id()
     comment = new_id()
-    marker_repo = f"{marker}-org/{marker}-repo"
-    hub.write(ALICE, "task", work, [*task_create(f"{marker} title"), ("description", None, f"{marker} text")])
-    hub.write(ALICE, "task", issue, [
-        ("kind", None, "security"), ("repository", None, marker_repo), ("severity", None, "low"),
-        ("short_name", None, f"{marker}-name"), ("source", None, f"{marker}-source"), ("team", None, TEAM),
-        ("title", None, marker), ("urgency", None, "1"), ("links", None, f"{marker_repo}#1"),
-    ])
-    hub.write(ALICE, "comment", comment, [("body", None, f"{marker} body"), ("task", None, work)])
-    for target in (f"{OBJECT}?id={work}", f"{EVENTS}?object={issue}", f"{COMMENTS}?task={work}", TASKS, HEAD, VERIFY,
-                   CHECKPOINTS, f"{EVENTS}?after=0"):
-        hub.get(ALICE, target)
+    try:
+        hub.write(ALICE, "task", work, [*task_create(f"{marker} title"), ("description", None, f"{marker} text")])
+        hub.write(ALICE, "task", issue, [
+            ("kind", None, "security"), ("repository", None, marker_repo), ("severity", None, "low"),
+            ("short_name", None, f"{marker}-name"), ("source", None, f"{marker}-source"), ("team", None, TEAM),
+            ("title", None, marker), ("urgency", None, "1"), ("links", None, f"{marker_repo}#1"),
+        ])
+        hub.write(ALICE, "comment", comment, [("body", None, f"{marker} body"), ("task", None, work)])
+        hub.write(MARKER_WATCHER, "task", issue, [("fix", None, f"{marker_repo}#1"), ("status", "open", "merged")], WATCH)
+        assert task_body(hub, issue)["fix"] == f"{marker_repo}#1"
+        hub.runtime.checkpoint()
+        for key_id, target in (
+            (ALICE, f"{OBJECT}?id={work}"), (ALICE, f"{EVENTS}?object={issue}"), (ALICE, f"{COMMENTS}?task={work}"),
+            (ALICE, TASKS), (ALICE, HEAD), (ALICE, VERIFY), (ALICE, CHECKPOINTS), (ALICE, f"{EVENTS}?after=0"),
+            (MARKER_WATCHER, f"{OBJECT}?id={issue}"), (MARKER_WATCHER, f"{EVENTS}?object={issue}"),
+        ):
+            assert hub.get(key_id, target)[1].status == 200, target
+    finally:
+        hub.close()
     text = "\n".join(log_lines)
     for forbidden in (marker, work, issue, comment, *record_db.secret_values()):
         assert forbidden not in text
-    for line in request_lines(log_lines):
-        assert line.split(" ")[0] == ALICE and "alice " not in line
+    handles = {ALICE: "alice", MARKER_WATCHER: "example-watcher"}
+    lines = request_lines(log_lines)
+    assert {line.split(" ")[0] for line in lines} == set(handles)
+    for line in lines:
+        key_id, *fields = line.split(" ")
+        assert handles[key_id] in key_id
+        assert not set(fields) & set(handles.values()), line
 
 
 # --- the order of the 503 (section 7.1) --------------------------------------------------------------
@@ -1158,6 +1640,29 @@ def test_the_release_rule_over_the_record(hub: Hub) -> None:
     # A link removed again.
     hub.write(ALICE, "task", work, [("links", LINK, None)])
     assert release(hub).body == released(False, "task_missing")
+    # A linked task in `done` (row 8 by the watcher) and one in `merged` (row 9 by the watcher, under
+    # `completion` `verified`), each with an assignee.
+    done = new_id()
+    hub.write(ALICE, "task", done, [*task_create("Done"), ("assignee", None, "alice"), ("links", None, f"{REPO}#50")])
+    hub.write(WATCHER, "task", done, [("status", "open", "done")], WATCH)
+    assert task_body(hub, done)["status"] == "done"
+    assert release(hub, pull_request=50).body == released(False, "task_not_ready", 50)
+    merged = new_id()
+    hub.write(
+        ALICE,
+        "task",
+        merged,
+        [*task_create("Merged"), ("assignee", None, "alice"), ("completion", None, "verified"), ("links", None, f"{REPO}#51")],
+    )
+    hub.write(WATCHER, "task", merged, [("status", "open", "merged")], WATCH)
+    assert task_body(hub, merged)["status"] == "merged"
+    assert release(hub, pull_request=51).body == released(False, "task_not_ready", 51)
+    # A `dropped` task alone is no linked task.
+    dropped = new_id()
+    hub.write(ALICE, "task", dropped, [*task_create("Dropped"), ("links", None, f"{REPO}#52")])
+    assert release(hub, pull_request=52).body == released(False, "task_not_ready", 52)
+    hub.write(ALICE, "task", dropped, [("status", "open", "dropped")])
+    assert release(hub, pull_request=52).body == released(False, "task_missing", 52)
 
 
 def test_a_security_issue_and_a_task_of_another_team_count_as_linked_tasks(hub: Hub) -> None:
@@ -1259,7 +1764,9 @@ def test_a_get_whose_fold_runs_between_the_commit_and_step_5_folds_the_event(hub
     assert hub.signed(ALICE, VERIFY, 200).json()["verified"] is True
 
 
-def test_the_received_at_of_an_append_is_the_one_clock_reading_of_step_2(hub: Hub) -> None:
+def test_the_received_at_of_an_append_is_the_one_clock_reading_of_step_2(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
     work = new_id()
     hub.write(ALICE, "task", work, task_create())
 
@@ -1275,6 +1782,14 @@ def test_the_received_at_of_an_append_is_the_one_clock_reading_of_step_2(hub: Hu
     hub.points.append_before_insert = lambda: None
     hub.monotonic.now += 60
     assert hub.signed(ALICE, VERIFY, 200).json()["verified"] is True
+    # A restart verifies the record and starts.
+    log_lines.clear()
+    restarted = start_hub(record_db, cfg, tmp_path, name="restarted")
+    try:
+        assert record_part(log_lines) == [f"INFO record verified 2 {answer.json()['record_hash']}"]
+        assert restarted.signed(ALICE, HEAD, 200).json()["position"] == 2
+    finally:
+        restarted.close()
 
 
 def test_a_kept_received_at_refuses_a_key_revoked_before_it_with_key_not_valid_at_receipt(
@@ -1298,6 +1813,105 @@ def test_a_kept_received_at_refuses_a_key_revoked_before_it_with_key_not_valid_a
         wire, answer = made.post(ALICE, EVENTS, text, signature)
         assert_signed(wire, answer, 201, NOW)
         assert answer.json()["received_at"] == fmt(NOW + 60)
+    finally:
+        made.close()
+
+
+def _changed_entries(changes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The keys of record_hub_helpers.key_entries with the given members changed per key id."""
+    return [{**entry, **changes.get(entry["id"], {})} for entry in key_entries()]
+
+
+def test_an_event_of_a_revoked_key_and_of_an_expired_service_key_is_refused_at_the_request_checks(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    entries = _changed_entries({BOB: {"revoked": fmt(NOW - 60)}, WATCHER: {"expires": fmt(NOW - 60)}})
+    migrated(record_db)
+    made = start_hub(record_db, cfg, tmp_path, entries=entries)
+    try:
+        work = new_id()
+        made.write(ALICE, "task", work, [*task_create(), ("links", None, LINK)])
+        log_lines.clear()
+        _, answer = made.post(BOB, EVENTS, *made.event(BOB, "task", new_id(), task_create()))
+        assert_refused(answer, 401, "key_revoked")
+        _, answer = made.post(WATCHER, WATCH, *made.event(WATCHER, "task", work, [("status", "open", "done")]))
+        assert_refused(answer, 401, "key_expired")
+        # Refused at checks 1 to 8 of KEY-PROTOCOL.md section 5: no line of the record part.
+        assert record_part(log_lines) == []
+    finally:
+        made.close()
+    assert counts(record_db) == (1, 0)
+
+
+def test_an_event_signed_before_the_revocation_and_sent_after_it_is_refused_and_not_in_the_record(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path
+) -> None:
+    entries = _changed_entries({BOB: {"revoked": fmt(NOW + 30)}})
+    migrated(record_db)
+    made = start_hub(record_db, cfg, tmp_path, entries=entries)
+    try:
+        text, signature = made.event(BOB, "task", new_id(), task_create(), signed_at=NOW)
+        made.clock.now = NOW + 60
+        _, answer = made.post(BOB, EVENTS, text, signature)
+        assert_refused(answer, 401, "key_revoked")
+        page = made.signed(ALICE, f"{EVENTS}?after=0", 200).json()
+        assert (page["events"], page["head"]) == ([], 0)
+    finally:
+        made.close()
+    assert counts(record_db) == (0, 0)
+
+
+def test_check_11_with_a_request_that_waits_for_the_advisory_lock_while_the_clock_passes_the_revocation(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path
+) -> None:
+    entries = _changed_entries({BOB: {"revoked": fmt(NOW + 30)}})
+    migrated(record_db)
+    made = start_hub(record_db, cfg, tmp_path, entries=entries)
+    try:
+        text, signature = made.event(BOB, "task", new_id(), task_create())
+        # The request checks run at NOW, while bob's key is valid; the append then waits for the
+        # advisory lock, and the clock reading of step 2 of section 11.5 is after the revocation.
+        with append_lock_held(record_db):
+            waiting = Parallel(lambda: made.post(BOB, EVENTS, text, signature))
+            wait_for_append_lock(record_db, 1)
+            made.clock.now = NOW + 60
+        ((wire, answer),) = waiting.results()
+        assert_signed(wire, answer, 409, NOW + 60)
+        assert answer.body == error("key_not_valid_at_receipt")
+    finally:
+        made.close()
+    assert counts(record_db) == (0, 0)
+
+
+def test_a_clock_jump_keeps_received_at_and_refuses_a_watcher_whose_expires_lies_before_it(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path
+) -> None:
+    entries = _changed_entries({WATCHER: {"expires": fmt(NOW + 30)}})
+    migrated(record_db)
+    made = start_hub(record_db, cfg, tmp_path, entries=entries)
+    try:
+        work = new_id()
+        made.write(ALICE, "task", work, [*task_create(), ("links", None, LINK)])
+        # The clock jumps forward and back.
+        made.clock.now = NOW + 60
+        made.write(ALICE, "task", work, [("title", "Fix login", "Fix it")])
+        made.clock.now = NOW
+        text, signature = made.event(ALICE, "task", work, [("title", "Fix it", "Fix the login")], signed_at=NOW + 60)
+        wire, answer = made.post(ALICE, EVENTS, text, signature)
+        assert_signed(wire, answer, 201, NOW)
+        assert answer.json()["received_at"] == fmt(NOW + 60)
+        # The watcher's key is valid at the request checks (NOW) and expired at the kept
+        # `received_at` (NOW + 60).
+        assert made.refused(WATCHER, "task", work, [("status", "open", "done")], WATCH) == (
+            409,
+            error("key_not_valid_at_receipt"),
+        )
+        # Once the clock passes the kept value, `received_at` follows the clock again.
+        made.clock.now = NOW + 90
+        text, signature = made.event(ALICE, "task", work, [("title", "Fix the login", "Fixed")])
+        wire, answer = made.post(ALICE, EVENTS, text, signature)
+        assert_signed(wire, answer, 201, NOW + 90)
+        assert answer.json()["received_at"] == fmt(NOW + 90)
     finally:
         made.close()
 

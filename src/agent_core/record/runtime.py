@@ -216,7 +216,14 @@ class RecordRuntime:
         return self._unverified.is_set()
 
     def _enter_unverified(self) -> None:
-        self._unverified.set()
+        """Enter the state under the state lock. A checkpoint attempt holds that lock from its
+        check of the state until its commit (section 12.2), so it either commits before the
+        process enters the state or sees the state and writes nothing."""
+        with self.memory.lock:
+            self._unverified.set()
+
+    def _still_verified(self) -> bool:
+        return not self._unverified.is_set()
 
     # --- requests ---------------------------------------------------------------------------------
 
@@ -238,7 +245,8 @@ class RecordRuntime:
                     failure = incremental_fold(connection, self.memory, self.keys)
                 self.hooks.in_read_fold()
                 if failure is not None:
-                    self._enter_unverified()
+                    # The state lock is held here, as `_enter_unverified` requires.
+                    self._unverified.set()
                     return Unverified(failure)
                 return Read(reader(self.memory.state, connection))
         except StorageError as error:
@@ -351,6 +359,7 @@ class RecordRuntime:
                     hour,
                     self.clock,
                     self.hooks.checkpoint_before_insert,
+                    self._still_verified,
                 )
         except StorageError as error:
             # Section 15: also a failed connection is `record database error checkpoint -`.
