@@ -235,21 +235,41 @@ only while they hold `lock`, and `agent device verify` reads them while it holds
 therefore never interleave. The guard holds the lock for one step at a time (§19.1) and never
 while it waits for the hub inside a socket operation (§19.3). Within a step it holds the lock
 while it waits for the hub, and two limits of §5.2 bound that wait. Every hub request ends at the
-hub request deadline: a request whose whole answer has not been read 30 s after it was sent is a
-failed fetch (§19.1), and nothing of its answer is used. A step sends no hub request once 30 s
-have passed since it took the lock (the step deadline). A step also ends, sends no further request
-and releases the lock at the first hub request that fails: at the hub request deadline, by a
-transport error, or with an answer that fails K3 or that §12.2 refuses as a whole. What the step
-has not sent, the uploads of events and refusals in their order (§17.2, §17.3), waits for the
-next interval. A step therefore waits for the hub at most 60 s under the lock: its last request
-is sent less than 30 s after it took the lock and ends at most 30 s after it was sent; only the
-step's local work (checks and file writes) adds to that. A key-account command, `agent device
-allow remove` included, therefore waits for the lock at most until the running step ends, at most
-60 s plus that local work after the step took the lock. Except `guard.json`, which is read
-at start (§5.1), the guard uses no file content from an earlier step for a decision: each step
-reads the files it needs again, so that a change that a key-account command made between two
-steps (for example a new hub pin, §18.4) takes effect at the next step. The only values it keeps
-between steps are the counts that `status` shows (§19.3).
+hub request deadline: a request whose whole answer has not been read 30 s after the start of its
+connection attempt (name resolution, connect, TLS and sending the request body included) is a
+failed fetch (§19.1), and nothing of its answer is used. A step starts no hub request once 30 s
+have passed since it took the lock (the step deadline). A step also starts no further hub request
+after the first one that fails: at the hub request deadline, by a transport error, or with an
+answer that fails K3 or that §12.2 refuses as a whole. A failed request or the step deadline ends
+only the step's hub requests: the step still applies the answers it has received and runs its
+local work that needs no hub (the load of `allow-list.json` with the comparison of §11.5, the
+records §19.1 names for the first step, and removing expired grants, §13.5) before it releases
+the lock, so expired grants are removed once a minute also while the hub is unreachable. Every
+hub request the step has not sent, a fetch of §8.3, §9 or §12.2 or the uploads of events and
+refusals in their order (§17.2, §17.3), waits for the next interval of its step. A step therefore
+waits for the hub at most 60 s under the lock: its last request starts less than 30 s after it
+took the lock and ends at most 30 s after it started; only the step's local work (checks and file
+writes) adds to that. `agent device refresh` runs its hub requests as one step under the same
+rules (§18.5), so it too waits for the hub at most 60 s under the lock. Except `guard.json`,
+which is read at start (§5.1), the guard uses no file content from an earlier step for a
+decision: each step reads the files it needs again, so that a change that a key-account command
+made between two steps (for example a new hub pin, §18.4) takes effect at the next step. The only
+values it keeps between steps are the counts that `status` shows (§19.3).
+
+**The pause.** After the guard releases the lock, at the end of a step or of a socket operation,
+it does not take the lock again for the pause of §5.2 (1 s), also when its next step is already
+due and between the 60 s and the 600 s step (§19.1). `flock` gives no order among those waiting
+for the lock; the pause gives a waiting key-account command its turn, because the guard does not
+compete for the lock during it. A key-account command, `agent device allow remove` included, that
+waits for the lock while no other key-account command waits for it therefore takes the lock in
+the first pause after it started waiting. While a guard step or socket operation holds the lock,
+it waits until that hold ends and takes the lock within the following pause: at most 60 s plus
+the step's local work plus 1 s after the step took the lock. While another key-account command
+holds the lock, it waits until that command ends (for `agent device refresh` at most 60 s plus its
+local work after it took the lock), then for at most one step or socket operation of the guard,
+which can take the lock first, and takes the lock within the pause after it. Both bounds assume that the operating system runs the waiting
+command within the pause. While several key-account commands wait, one of them takes the lock in
+each pause, and `flock` does not fix which; this document then bounds no single command's wait.
 
 **Changes that span several files.** One file can be replaced atomically; several cannot. A
 change that spans several files is written under one hold of the lock in this order, unless its
@@ -471,9 +491,10 @@ it at start.
 | socket request size | 65536 bytes |
 | socket read deadline per connection | 5 s |
 | socket connections handled at once | 8 |
-| hub request deadline, for every hub request of the guard (the `inventory` socket operation included) and of a key-account command, from sending until the whole answer is read | 30 s (§4.2) |
-| step deadline: a guard step sends no hub request once this time has passed since it took the lock | 30 s (§4.2) |
-| longest wait of a guard step for the hub under the lock (step deadline plus hub request deadline), local work not included | 60 s (§4.2) |
+| hub request deadline, for every hub request of the guard (the `inventory` socket operation included) and of a key-account command, from the start of the connection attempt (name resolution, connect, TLS and sending the request body included) until the whole answer is read | 30 s (§4.2) |
+| step deadline: a guard step or `agent device refresh` starts no hub request once this time has passed since it took the lock | 30 s (§4.2) |
+| longest wait of a guard step or `agent device refresh` for the hub under the lock (step deadline plus hub request deadline), local work not included | 60 s (§4.2) |
+| pause after the guard releases the lock, in which it takes the lock neither for a step nor for a socket operation | 1 s (§4.2) |
 | inventory size | 65536 bytes |
 | revocation notices per answer | 1000 |
 | statements per answer | 100 |
@@ -1459,8 +1480,11 @@ listed below:
   different change signed after a failed send, for example a narrower `add` after a wider one
   whose send timed out, is a new decision, not a signing again: until the earlier statement's
   window ends (S3) or the target accepts a later statement of this controller (S4), the earlier
-  one can still be delivered and take effect first, and the later one is then refused (for an
-  `add`, with `entry_exists`). The owner then reads the target's allow-list events in the team
+  one can still be delivered and take effect first. A later `add` for the same key is then
+  refused with `entry_exists` (E8). A later `change` of the entry (an `entry`, never a grant,
+  S11) or `remove` of it is applied after it (S4, S9, S11) and ends the earlier change's effect,
+  so the earlier, wider change holds only in between. After a refused `add`, and while the later
+  statement is not yet delivered, the owner reads the target's allow-list events in the team
   record and, if the earlier change took effect, narrows it with a `change` (an `entry`) or ends
   it with a `remove`.
   A statement of the hub alone is no reason to send again (DESIGN.md §25.6). In these two steps no
@@ -1558,7 +1582,7 @@ Key account: §18.1 to §18.14. Session account: §18.15 and §18.16.
 | 18.2 | `agent device entry [--controller]` | prints the entry of the existing device key again; `scopes` follow `--controller` as for `init`, since the level is held by the keys file, not on the device | entry; 0 |
 | 18.3 | `agent device program-key --id ID --label LABEL` | creates a program key (§6.1): `LABEL` is the program label, and `ID` must be `program-` followed by this device's label, `-` and `LABEL`, otherwise it stops with `--id must be program-<device label>-<label>`; writes the device event `program_key.created` | its entry (§8.1); 0 |
 | 18.4 | `agent device pin-hub --id HUB_ID --public-key VALUE [--replace]` | under the lock, `keys.pin_hub_key` with `$AGENT_KEY_HOME`; without `--replace` it stops with the message of `keys.pin_hub_key` when a key is pinned. With `--replace` (after a hub takeover, DESIGN.md §25.6) it also: deletes `keys-file.json`, which was verified with the old key; sets `keys_file_serial` and `revocation_serial` to 0 and `revocations_incomplete` to `true`, so that the fetches under the new key start over; keeps `revocations.json`, every entry with its status and every other member of `state.json`; writes the device event `guard.hub_key_replaced`. These span several files and are written under one hold of the lock in this order: (1) the `hand` decision line; (2) `hub-key.json`; (3) the deletion of `keys-file.json`; (4) `state.json`; (5) the device event. From step 2 on, no copy and no notice signed by the old key verifies, so none is accepted again, whatever `state.json` holds: a stop after step 2 leaves the stored copy invalid (every command and every widening change refused with `keys_file_stale`), and the guard fetches under the new key, which reissues every notice with its old serial (§9). A stop after step 1 changes nothing. The new key must differ from the pinned one: `--replace` with the public key that is already pinned stops with `hub key HUB_ID is already pinned; nothing was written`, except when the last `hand` line of `pin-hub --replace` names this key as the new key and `log/events.jsonl` holds no `guard.hub_key_replaced` event for it after that line; the command then completes the replacement it started, writing a new `hand` line and steps 3 to 5 again. `--replace` with a public key that a `hand` line of an earlier `pin-hub --replace` names as the old key stops with `hub key HUB_ID was replaced before; nothing was written`: pinning a replaced key again would make the copies and notices it signed verify again | `pinned hub key HUB_ID`; 0 |
-| 18.5 | `agent device refresh` | one fetch of keys file, revocations and statements | `keys file serial N, age S s; revocations up to N` followed by `, incomplete` while `revocations_incomplete` is set; `statements applied N, refused N`; 0, or 1 when the hub is unreachable or not verified |
+| 18.5 | `agent device refresh` | one fetch of keys file, revocations and statements, and the application of their answers, run under the lock as one step under the rules of §4.2: each request ends at the hub request deadline, no request starts once the step deadline has passed, and no further request starts after the first that fails; the answers received before are still applied before the lock is released | `keys file serial N, age S s; revocations up to N` followed by `, incomplete` while `revocations_incomplete` is set; `statements applied N, refused N`; 0, or 1 when the hub is unreachable or not verified or a fetch was not started before the step deadline |
 | 18.6 | `agent device allow add --key-id ID --fingerprint HEX --permissions P[,P…] --repos R[,R…]\|* [--expires TIME]` | by-hand add of §11.5, under the lock, after the comparison of §11.5. It stops before any check with `key kind p256 is not supported by this client` when the copy's entry for ID has kind `p256` (§6.2). Then, in this order: the allow list is valid (`allow_list_invalid`); E1 to E10; `--fingerprint` is the fingerprint of the copy's key for ID (`key_mismatch`, as S11 `add`). The entry fields `kind`, `alg`, `public_key`, `principal`, `handle` and `device_label` come from the copy; the type follows E5; a new UUID is the entry id. Every outcome of a check writes a `hand` line | `added <entry id> <type> <key id>`, 0; or `refused: <value>`, 3 |
 | 18.7 | `agent device allow remove --entry UUID` | by-hand remove (§11.2, Removal), under the lock, after the comparison of §11.5, also of an entry id the allow list does not hold, which is then only added to `removed`; needs no keys-file copy. Refused with `allow_list_invalid` when the allow list is invalid, and with `entry_removed` when UUID is in `removed` or its entry has `status` `removed`, and with `allow_list_full` when `removed` holds 65536 ids and UUID is not in `entries` (§11.2) | `removed <entry id>`, 0; or `refused: <value>`, 3 |
 | 18.8 | `agent device allow confirm --entry UUID --fingerprint HEX` | under the lock, after the comparison of §11.5: re-activates a `suspended` entry whose key meets E1, E2 and E3 and has that fingerprint, as S11 `confirm` (`allow_list_invalid`, `entry_unknown`, `entry_not_suspended`, the values of E1 to E3, `key_mismatch`); refuses a `revoked` or `removed` entry with `entry_not_suspended`. It sets `status` `active` and `signer` to `{"by": "hand", "key_id": null, "fingerprint": null, "statement_id": null, "sequence": null}`, so that the revoked earlier signer no longer suspends the entry, neither through a copy with a higher serial nor when notices are applied again (§8.3, §9) | `confirmed <entry id>`, 0; or `refused: <value>`, 3 |
@@ -1612,12 +1636,20 @@ lock and with the files read again at each step (§4.2), the load of `allow-list
 Socket requests are handled apart from these steps (§19.3).
 
 A failed fetch is logged to standard error with its reason and retried at the next interval; it
-never stops the guard. A hub request that exceeds the hub request deadline (§5.2), fails by a
-transport error, or gets an answer that fails K3 or that §12.2 refuses as a whole is a failed
-fetch and ends its step (§4.2); an upload it carried stays unsent and is retried (§17.2, §17.3).
-A step sends no hub request once the step deadline (§5.2), 30 s after it took the lock, has
-passed; the uploads it has not sent wait for the next interval, in their order. A step therefore
-waits for the hub at most 60 s under the lock (§4.2).
+never stops the guard. A hub request that exceeds the hub request deadline (§5.2), counted from
+the start of its connection attempt, fails by a transport error, or gets an answer that fails K3
+or that §12.2 refuses as a whole is a failed fetch and ends its step's hub requests (§4.2); an
+upload it carried stays unsent and is retried (§17.2, §17.3). A step starts no hub request once
+the step deadline (§5.2), 30 s after it took the lock, has passed. Every hub request the step has
+not sent, a fetch or the uploads in their order, waits for the next interval of its step. A
+failed request or the step deadline ends only the step's hub requests: the step still applies the
+answers it has received and runs its local work that needs no hub, namely the load of
+`allow-list.json` (§11.5), the records named above for the first step and, in the 60 s step,
+removing expired grants (§13.5), before it releases the lock. A step therefore waits for the hub
+at most 60 s under the lock (§4.2). After it releases the lock, the guard does not take it again
+for the pause of §5.2 (1 s), neither for a step nor for a socket operation, also when the next
+step is already due and between the 60 s and the 600 s step; a key-account command waiting for
+the lock takes it in that pause, under the conditions §4.2 states.
 
 **Program files.** The guard stops at start with `<path> must belong to root or the key account
 and must not be writable by group or others` unless each of these belongs to root or the key
@@ -1894,10 +1926,17 @@ of `command`, `statement`, `hand`, `keys_file` and `revocation`. Examples:
   and after every notice is applied again);
 - `test_remove_and_add_for_same_key_in_one_poll_refuses_add_entry_removed`;
 - `test_hub_request_deadline_ends_step_and_releases_lock` (a hub that does not finish its answer,
-  and a hub that answers every request just inside the hub request deadline while several event
-  and refusal uploads are queued: the step sends no request 30 s after it took the lock or later,
-  leaves the remaining uploads in their order to the next step, and releases the lock within 60 s
-  plus its local work, so `agent device allow remove` waits no longer);
+  a hub that stalls the TLS handshake, a hub that reads the request body of an upload slowly, and
+  a hub that answers every request just inside the hub request deadline while several event and
+  refusal uploads are queued: each request ends 30 s after the start of its connection attempt,
+  the step starts no request 30 s after it took the lock or later, leaves the remaining uploads in
+  their order to the next step, and releases the lock within 60 s plus its local work; with that
+  last hub over several steps in a row and a 600 s step due together with a 60 s step, the guard
+  takes the lock no earlier than 1 s after it released it, and an `agent device allow remove`
+  started during any of these steps takes the lock in the pause after that step ends);
+- `test_expired_grant_is_removed_while_hub_unreachable` (a hub that refuses the connection and a
+  hub whose answer fails K3: the 60 s step still removes the expired grant with its `expiry`
+  decision line and the device event `allow_list.expired` before it releases the lock);
 - `test_program_key_whose_device_entry_is_not_usable_is_refused_unknown_key` (command and entry).
 
 ## 21. Rollout order
@@ -1983,7 +2022,7 @@ that reads DESIGN.md says so.
 | No guard state in PostgreSQL; all in files under `$AGENT_KEY_HOME` | §4.1, §20 |
 | Every file write is followed by `fsync` of the file and of its directory; `keys._write_new_file` gains the `fsync`, which changes `agent key` in durability only | §4.2, §22 |
 | A change that spans several files is written under one hold of the lock as decision line, `revocations.json`, `keys-file.json`, `allow-list.json`, device event and refusal line, `state.json` last; a stop between two steps is found at the next load as an edit outside the client and the document is checked again, so the device never obeys more. Limit: the second check can send a signed refusal for a statement whose change the first run applied | §4.2, §12.3, §14.3, §17.2 |
-| The guard reads every file except `guard.json` again at each step and never holds the lock while it waits for the hub in a socket operation. Within a step it holds the lock while it waits for the hub; every hub request ends 30 s after it was sent, body included, as a failed fetch; a step sends no hub request once 30 s have passed since it took the lock, ends at the first hub request that fails (deadline, transport error, K3), and leaves the remaining uploads of events and refusals, in their order, to the next interval. A step thus waits for the hub at most 60 s under the lock, so a slow or taken-over hub delays a key-account command by at most 60 s plus the local work of the running step. Chosen over sending the fetches without the lock, because it changes fewer rules | §4.2, §5.2, §10.3, §19.1 |
+| The guard reads every file except `guard.json` again at each step and never holds the lock while it waits for the hub in a socket operation. Within a step it holds the lock while it waits for the hub; every hub request ends 30 s after the start of its connection attempt (name resolution, connect, TLS and sending the request body included), as a failed fetch; a step starts no hub request once 30 s have passed since it took the lock, starts no further hub request after the first that fails (deadline, transport error, K3), and leaves every hub request it has not sent, fetches and the uploads of events and refusals in their order, to the next interval; its local work that needs no hub, removing expired grants included, still runs. `agent device refresh` runs its hub requests as one such step. A guard step or `agent device refresh` thus waits for the hub at most 60 s under the lock. After releasing the lock the guard does not take it again for a pause of 1 s, also when the next step is already due, and a waiting key-account command takes it in that pause, since `flock` gives no order among waiters. So, while no other key-account command waits and the operating system runs it within the pause, a slow or taken-over hub delays a key-account command by at most 60 s plus the local work of the running guard step plus 1 s, or, behind `agent device refresh`, by the refresh (60 s plus its local work), one guard step and the pause; with several key-account commands waiting, no single command's wait is bounded. Chosen over sending the fetches without the lock, because it changes fewer rules | §4.2, §5.2, §10.3, §18.5, §19.1 |
 | The administrator of a device is trusted like its owner and can change every file under `$AGENT_KEY_HOME`; the client detects only edits of `allow-list.json`. Reading of DESIGN.md §25.6 | §4.1, Words |
 | The device clock is trusted and kept correct by the administrator. Limits, stated rather than closed: a clock set back accepts certificates, grants and entries that have ended in true time and keeps the copy fresh longer; a clock set forward and then back drops replay state early, so a session-key command or a held-back statement for a removed key can pass again. No high-water mark of the clock is kept | §4.5 |
 | Replay state limits and `replay_state_full` as checks C19 and S12; `sequences` is keyed by the key id alone (an id is never given to another key, H9), so that it can be checked before the key is looked up, and is never dropped; session-key sequence numbers are dropped after the certificate's expiry | §4.3, §12.3, §14.3 |
@@ -1997,7 +2036,7 @@ that reads DESIGN.md says so.
 | A missing or invalid `revocations.json` stops the guard and every key-account command; `init --reset-state` repairs it by writing it empty and fetching every notice from serial 1 again, with entry statuses kept and `revocations_incomplete` set meanwhile. The reset writes `state.json` before `revocations.json`, so a stop leaves a file that makes the reset run again | §4.3, §4.4 |
 | A reset never clears replay protection or revocations: it refuses what was signed before `reset_at` plus the largest window (3600 s commands, 604800 s statements except `remove`, 43200 s certificates) with `signed_before_reset`, keeps the serials from the stored files and `own_sequence` from the log, marks every earlier session tainted, and treats the allow list as edited outside the client. Chosen over rebuilding `seen` and `sequences` from the decision log, because it holds also when the log is incomplete. Its consequences (no widening statement for 604800 s, no command for 3600 s, no passkey command until a certificate expires after `reset_at` plus 43200 s) are accepted | §4.4 |
 | Default and allowed ranges of the four configured times; "one working day" is 43200 s | §5.1 |
-| Fixed intervals, size limits, socket deadline 5 s, 8 socket connections, 30 s hub request deadline for every hub request, 30 s step deadline under the lock | §5.2 |
+| Fixed intervals, size limits, socket deadline 5 s, 8 socket connections, 30 s hub request deadline for every hub request, 30 s step deadline under the lock, 1 s pause of the guard after it releases the lock | §5.2 |
 | Device key id `device-<device label>`, program key id `program-<device label>-<program label>`; both are checked against the labels of the keys-file entry, and an entry that breaks them is not usable | §6.1, §8.2, §18.3 |
 | Program keys that may send commands live in the key account; keys under `$AGENT_HOME/keys` are never senders, which the guard cannot detect and the owner and the keys-file review ensure | §6.1, §11.4 |
 | The sequence counter of a program key that signs commands is fixed in step 4 | §1 |
@@ -2053,7 +2092,7 @@ that reads DESIGN.md says so.
 | `session.start` names a session the device's store holds; step 4 fixes its effect on a session that is already running | §14.1 |
 | The keys-file comparison of a command's signer covers kind, `alg`, public key, principal, handle and device label, as E2 does (C15); it replaces the separate comparison of the passkey key in the certificate checks | §14.3, §15.3 |
 | Session-key algorithm P-256; statement of seven lines; signature counter not checked; fresh-value reuse refused, with `statement_hash` the hash of the statement bytes | §4.3, §15 |
-| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at`. A statement is also signed again without a signed refusal when it is a `remove`, when its send failed (§18.10) and the same change is signed again, when its `signed_at` plus 604800 s has passed, or when the target accepted a later statement of the same signer; chosen over limiting the rule to commands, because it keeps the rule for statements and adds only the cases in which the earlier statement can no longer take effect or taking effect twice changes nothing. After a failed send the hub may hold the earlier statement: a different change signed then is a new decision, the earlier statement can take effect first until S3 or S4 ends it, and the owner checks the target's allow-list events and corrects with a `change` or `remove` | §12.2, §17.2, §18.10 |
+| Signed refusals carry `document_hash` over the whole received document, signature included; a sender signs again only after a signed refusal whose hash equals its own document's, whose value is not `replayed`, and whose `refused_at` is within 3600 s (commands) or 604800 s (statements) of the document's `signed_at`. A statement is also signed again without a signed refusal when it is a `remove`, when its send failed (§18.10) and the same change is signed again, when its `signed_at` plus 604800 s has passed, or when the target accepted a later statement of the same signer; chosen over limiting the rule to commands, because it keeps the rule for statements and adds only the cases in which the earlier statement can no longer take effect or taking effect twice changes nothing. After a failed send the hub may hold the earlier statement: a different change signed then is a new decision, and the earlier statement can take effect first until S3 or S4 ends it; a later `add` for the same key is then refused with `entry_exists`, while a later `change` or `remove` of the entry is applied after it, so the earlier, wider change holds only in between; after a refused `add`, and while the later statement is not yet delivered, the owner checks the target's allow-list events and corrects with a `change` or `remove` | §12.2, §17.2, §18.10 |
 | The decision log has the document kinds `command`, `statement`, `hand`, `signed`, `reset`, `keys_file`, `revocation` and `expiry`; a refusal before the signature verified is recorded with the document's hash only; the client never truncates the log; its remaining growth (about 30 MB a day from a hub that was taken over without its signing key, and up to 1440000 notice lines a day from a holder of that key, each of which revokes a key) is stated, not capped | §17.1 |
 | A signed refusal tells the hub and the sender the refusal value, the document's id, signer, sequence and hash, and the decision time; this is accepted as what a sender needs to decide whether to sign again | §17.2 |
 | Device events follow the record protocol and define no format here; each is signed by the device key of the writing device in its one chain; the event type is not a member of `changes`; old values come from the recorded allow list; a refused event is kept and never sent again, and later events are signed again against the last accepted one; the record protocol names every event type this document needs | §2.3, §17.3, §21.1 |
