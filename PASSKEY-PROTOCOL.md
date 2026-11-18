@@ -1036,6 +1036,10 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
   all in `src/agent_core/static/`. The pages load them with `<script src>` and
   `<link rel="stylesheet">`, and `src/agent_core/app.py` serves them under `/static/` with `GET`
   and `HEAD`. The pages keep what they show and do.
+- Precondition: a separate, smaller change of this repository, merged before this step, creates
+  the application in `src/agent_core/app.py` with `docs_url=None`, `redoc_url=None` and
+  `openapi_url=None`, so the generated documentation pages and the generated schema document are
+  off and `/docs`, `/redoc`, `/docs/oauth2-redirect` and `/openapi.json` answer `404`.
 - The pages load nothing from another origin.
 - When the statement check of section 6.3 stops a sign-in because the expiry is later than the
   browser's clock plus `SESSION_KEY_MAX_SECONDS`, `/passkey` shows "Sign-in stopped: the clock of
@@ -1429,7 +1433,11 @@ real endpoints.
   `tests/test_assignments.py`, `tests/test_prs.py`, `tests/test_usage_and_timeline.py` and
   `tests/test_newest_first.py` that read those files) read it from the script files of section
   10.1 instead, with the same assertions; their assertions on the markup still read the HTML
-  files. Every other existing test is unchanged.
+  files. The assertions on script and style text in `tests/test_brand.py`,
+  `tests/test_usage_dashboard.py` and the cases of `tests/test_usage_and_timeline.py` that read
+  the HTTP answer read the script and style files of section 10.1 instead, with the same
+  assertions; their assertions on the markup still read the HTTP answer. Every other existing test
+  is unchanged.
 
 ### 13.5 The hub, commands
 
@@ -1468,6 +1476,10 @@ real endpoints.
   (`tests/test_page_policy.py`); and each page still works without an inline script: in
   headless Chromium (section 13.8, `tests/e2e/test_passkey_e2e.py`), loading each of the three
   pages under the policy fires no `securitypolicyviolation` event and runs its script files
+- `GET /docs`, `GET /redoc`, `GET /docs/oauth2-redirect` and `GET /openapi.json` answer `404`
+  (the precondition of section 10.1); every route of the application that answers HTML carries
+  the headers of section 10.1, and no page of the origin references another host
+  (`tests/test_page_policy.py`)
 - the dashboard `/` carries the link to `/passkey` and otherwise shows and does what it did
 - the tables of section 12 are created at start, and after a full invite and sign-in no row holds
   the invite token or any private key
@@ -1685,10 +1697,14 @@ A change of the steps changes the file in the same pull request.
     `src/agent_core/static/index.js`, `src/agent_core/static/index.css`,
     `src/agent_core/static/session.js` and `src/agent_core/static/session.css` (section 10.1)
   - `tests/test_index_page_js.py`, `tests/test_session_page_js.py`, `tests/test_assignments.py`,
-    `tests/test_prs.py`, `tests/test_usage_and_timeline.py` and `tests/test_newest_first.py`: they
-    read script text from the script files (section 13.4)
+    `tests/test_prs.py`, `tests/test_usage_and_timeline.py`, `tests/test_newest_first.py`,
+    `tests/test_brand.py` and `tests/test_usage_dashboard.py`: they read script and style text
+    from the script and style files (section 13.4)
   - the new `tests/test_page_policy.py` and the page case in `tests/e2e/test_passkey_e2e.py`: the
     test of section 13.6 for the existing pages
+- Precondition, not part of this change: the separate change of section 10.1 that creates the
+  application in `src/agent_core/app.py` with `docs_url=None`, `redoc_url=None` and
+  `openapi_url=None` is merged before this step.
 - `pyproject.toml`: the dependencies above and the pytest settings of section 14.
 - The CI files and CONTRIBUTING.md of section 14: `.github/workflows/test.yml`,
   `.github/a38.json`, `.github/pr-guard.json` and the sentence in `CONTRIBUTING.md`.
@@ -1711,7 +1727,8 @@ A change of the steps changes the file in the same pull request.
    `src/agent_core/static/index.css`, `src/agent_core/static/session.js` and
    `src/agent_core/static/session.css`, `tests/test_index_page_js.py`,
    `tests/test_session_page_js.py`, `tests/test_assignments.py`, `tests/test_prs.py`,
-   `tests/test_usage_and_timeline.py`, `tests/test_newest_first.py`, the new
+   `tests/test_usage_and_timeline.py`, `tests/test_newest_first.py`, `tests/test_brand.py`,
+   `tests/test_usage_dashboard.py`, the new
    `tests/test_page_policy.py`, `tests/e2e/test_passkey_e2e.py`, `pyproject.toml`, `tests/vectors/passkey.json`, and the CI files and the sentence of
    `CONTRIBUTING.md` of section 14: `.github/workflows/test.yml`, `.github/a38.json`,
    `.github/pr-guard.json`). Both CI jobs, `pytest` and `e2e`, are green. The tables are created
