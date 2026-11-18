@@ -9,6 +9,7 @@ verification, which logs `record verify failed <position> <failure>` first; the 
 from __future__ import annotations
 
 import logging.config
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -532,15 +533,15 @@ def test_create_app_leaves_a_store_it_was_given_open_when_the_hub_cannot_be_buil
     cfg: Config, tmp_path: Path
 ) -> None:
     store = Store(str(tmp_path / "given.sqlite"))
-
-    def no_tokens() -> list[tuple[str, str]]:
-        raise RuntimeError("the store cannot be read")
-
-    store.all_oauth_tokens = no_tokens  # type: ignore[method-assign]
+    # Hub.__init__ reads every stored GitHub token from the table `oauth_token`; without that
+    # table the read fails with a real SQLite error, so the hub cannot be built.
+    store.execute("DROP TABLE oauth_token")
+    github = FakeGitHub({"code-alice": "alice"})
     try:
-        with pytest.raises(RuntimeError):
-            create_app(cfg, github=FakeGitHub({}), store=store, record=idle_record)
-        # The caller owns the store it gave: it is still open.
-        assert store.query_one("SELECT 1 AS n") is not None
+        with pytest.raises(sqlite3.OperationalError, match="no such table: oauth_token"):
+            create_app(cfg, github=github, store=store, record=idle_record)
+        # The caller owns the store it gave: it is still open and answers a real query.
+        row = store.query_one("SELECT 1 AS n")
+        assert row is not None and row["n"] == 1
     finally:
         store.close()
