@@ -80,8 +80,9 @@ class DropKeyPathFilter(logging.Filter):
     """Drop uvicorn's own HTTP access and WebSocket lines for a path under `/api/key/`.
 
     uvicorn writes the path and the full query of every request. Under `/api/key/` both can carry
-    text a client chose, such as an object id or a handle (RECORD-PROTOCOL.md section 13), and the
-    request line of KEY-PROTOCOL.md section 5 already logs these requests without the query.
+    text a client chose, such as an object id or a handle (RECORD-PROTOCOL.md section 13), so the
+    path and query of such a request must not reach the log. This filter drops uvicorn's line for
+    every such request; it adds no line in its place.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
