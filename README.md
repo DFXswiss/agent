@@ -112,6 +112,17 @@ every per-control combination would need a non-linear matcher. A response
 counts as a mandate only with a positive issue number and a
 matching HTTPS GitHub issue URL.
 
+## Key identity
+
+```bash
+agent key create --id ID                                  # Ed25519 key in $AGENT_HOME/keys/ID.key; prints only the public key for the keys file
+agent key list                                            # ids and public keys under $AGENT_HOME/keys
+agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # pins the hub key in $AGENT_HOME/hub-key.json
+agent key whoami --id ID                                  # signed GET /api/key/whoami to the configured hub; prints the verified answer
+```
+
+No key exists until `agent key create` runs. The key directory has mode `0700`, every key file and `hub-key.json` mode `0600`; an existing key file is never overwritten, and a pinned hub key is replaced only with `--replace`. `agent key whoami` uses the hub URL stored by `agent pair`, stops with `hub key is not pinned` before sending anything when no hub key is pinned, never follows a redirect, and prints the body only when the pinned hub key signed the answer to this exact request within 120 seconds of this device's clock. Otherwise it reports `hub answer not verified`; for an unsigned refusal it adds the plain `error` value of the body, marked as unverified.
+
 ## Record work
 
 ```bash

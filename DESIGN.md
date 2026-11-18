@@ -442,6 +442,10 @@ agent query --match-file PATH                  # hub POST /sync/query; prints {"
 agent subscribe list|set --file PATH|clear     # hub GET/PUT /sync/subscriptions
 agent mail pending|ingest                      # mail.reply / mail.seen via himalaya; envelope ingest
 agent pair --hub URL [--name HOST] [--timeout SEC]
+agent key create --id ID                       # Ed25519 key in $AGENT_HOME/keys/ID.key (0600); prints only the public key
+agent key list                                 # ids and public keys under $AGENT_HOME/keys
+agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # $AGENT_HOME/hub-key.json (0600); no silent replacement
+agent key whoami --id ID                       # signed GET /api/key/whoami to the configured hub; prints only a verified answer
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
@@ -1378,7 +1382,7 @@ This revision records the decision of 2026-11-17 for central operation (§25): d
 
 ## 24. Team record and key identity (decided, not implemented)
 
-Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule.
+Status: decided on 2026-11-17, not built. The team builds the record itself in agent-core; no outside tracker is used as the store or mirrored beside it. Until a part of this section ships, the rules in §§2–12 stay in force for that part. Each implementation pull request names the subsection it implements and updates the rows of §2 and §3 that it supersedes. An explanation for the whole team is in [docs/team-record.md](docs/team-record.md); this section stays the binding rule. Of the first build step (§24.10), the client commands `agent key` exist (§16), and the hub side — the keys file, the signature checks and `GET /api/key/whoami` — is built in agent-core; no key is registered in the keys file yet.
 
 Decided on 2026-11-17, after the first version of this section:
 
