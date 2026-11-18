@@ -1657,7 +1657,7 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `event_signature_invalid` | The signature does not verify. |
 | `event_id_taken` | The `event_id` of the event equals the `event_id` of an event at an earlier position. Two events with the same event text also fail here, because they have the same `event_id`. |
 | `chain_broken` | `prev_hash` is not the event hash of the previous event of the same key in position order, or `-` for its first. |
-| `event_time_invalid` | A stored `received_at` cannot be written as a time of section 2, because its year lies outside 0001 to 9999 (the column type `timestamptz` allows such years), so that no record hash can be computed from it; `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. This row is decided after `chain_broken` and before `record_hash_mismatch`, so an event whose `received_at` has no form of section 2 fails here and never reaches `record_hash_mismatch`. |
+| `event_time_invalid` | A stored `received_at` cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — so that no record hash can be computed from it; `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. This row is decided after `chain_broken` and before `record_hash_mismatch`, so an event whose `received_at` has no form of section 2 fails here and never reaches `record_hash_mismatch`. |
 | `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6; or, in a verification that a running hub process runs on request or periodically, the record hash at the position of the head of the process's state in memory differs from the record hash of that head. |
 | `event_refused` | The state rules of section 6 refuse the event with any value other than `value_invalid`. |
 | `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
@@ -2492,6 +2492,10 @@ Integrity and backup:
   superuser with the triggers bypassed: the verification on request fails with
   `event_time_invalid` at that position, not with `record_hash_mismatch`, and a restart refuses
   to start with `record verify failed <position> event_time_invalid`
+- a stored `received_at` of `infinity` at the last position, changed as database superuser with
+  the triggers bypassed: the verification on request fails with `event_time_invalid` at that
+  position, not with `record_hash_mismatch`, and a restart refuses to start with
+  `record verify failed <position> event_time_invalid`
 - removal at the end of the record: as database superuser with the triggers bypassed, the last
   two events and every checkpoint that names them are removed; instance A, whose state holds the
   removed events, fails its next verification on request with `position_gap` at the first
@@ -2581,7 +2585,7 @@ Integrity and backup:
   `failed <position> file_invalid`: an empty first line (`0`); a first line that is not JSON
   (`0`); a space between two tokens of the header (`0`); a space between two tokens of an event
   line, a space before and one after the object of an event line, an event line with its members
-  in another order, and an event line whose `event_hash` is written with an escape (`a` for
+  in another order, and an event line whose `event_hash` is written with an escape (`\u0061` for
   `a`) (each item 6, at the position of that line); a space inside the string of `event_hash` of
   an event line (item 5, at the position of that line); a header with a `format` other than
   `agent-record-export-v1` and a later event line with a space inside a string member (`0`); a
@@ -3286,7 +3290,10 @@ confirms or changes each one.
 102. Check 14 of §6.7 examines both the `old` and the `new` value token of every change; a
     malformed `old` value is refused with `value_invalid` and never reaches `state_mismatch` at
     check 15 (§6.7).
-103. A stored `received_at` that cannot be written as a time of §2, because its year lies outside
-    0001 to 9999, which `timestamptz` allows, fails verification with `event_time_invalid`, in the
-    order of the table of §12.1 after `chain_broken` and before `record_hash_mismatch`, because no
-    record hash can be computed from it (§12.1).
+103. A stored `received_at` that cannot be written as a time of §2 — its year lies outside 0001
+    to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) —
+    fails verification with `event_time_invalid`, in the order of the table of §12.1 after
+    `chain_broken` and before `record_hash_mismatch`, because no record hash can be computed from
+    it. The check constraint of the column `received_at` in §11.3 is not the defence against such
+    a value, because the owner role or a superuser can remove it; the rule of verification is
+    (§11.3, §12.1).
