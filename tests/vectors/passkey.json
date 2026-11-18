@@ -199,7 +199,7 @@
    "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
    "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
    "signature": "MEQCIEHcJ8Jc5SGUKcWnGEYzjQAg5VnPkZ0vtsdQYD76T3MAAiBqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
-   "result": "signature_invalid"
+   "result": "signature_missing"
   }
  ],
  "counters": [
@@ -563,6 +563,26 @@
    "result": "attestation_invalid"
   },
   {
+   "name": "R7 array that holds itself in attStmt (tags 28 and 29)",
+   "credential_id": "uscWQNAkxABLBFy-5ZFpiEDRbM1cX8aQA64ujJ1sP91jK3USm_gcNWXCaO1mcv4FHPX5sUF602cstL6S",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF42ByB2B0AaGF1dGhEYXRhWMC-uj8Rki2UYYM6p7P0OfpXcp1pYmkAFyn6XUy0GwJILkUAAAAAaz7n5VkpD832AOSUifysdQA8uscWQNAkxABLBFy-5ZFpiEDRbM1cX8aQA64ujJ1sP91jK3USm_gcNWXCaO1mcv4FHPX5sUF602cstL6SpQECAyYgASFYIHCRlm4w4ju1oCIMoEeZKAiyiDJBSZc5GjyTXb9RjQL6IlgghnGoej3x5lKU0TVZvl67cVV01UTzaJVVA2IvZc_jpxE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 shared array in attStmt (tags 28 and 29)",
+   "credential_id": "59fGx6xo04uRFyn8P1CxhL2B_SOefDeSe-PRqipzPPFmgSpuMQaE8N4O3sM",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF4gtgcgNgdAGhhdXRoRGF0YViwvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAHCA4vBicQvRtKWmx6zaVT8ALOfXxsesaNOLkRcp_D9QsYS9gf0jnnw3knvj0aoqczzxZoEqbjEGhPDeDt7DpQECAyYgASFYIF45-z0wHbEDeIYUTTKBtzbB34LBnGPV5FUCf2QWfQgnIlggC5NtP7wVRR7T03ABtCh9gY1nrCX19SQjos2JCVfKFbw",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
    "name": "R7 authData not bytes",
    "credential_id": "35rYlyewC_7rAQF6R88JqxUu4v-0bxo",
    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
@@ -747,6 +767,16 @@
    "credential_id": "G0am70udUGonolwd5cIfd-6uibb0LRiUehc33Vd_aCGSn4k8LJWZvyI",
    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
    "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViwvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAJw4ii0-AduEEMeltdXi7E8AKRtGpu9LnVBqJ6JcHeXCH3furom29C0YlHoXN91Xf2ghkp-JPCyVmb8ipQECAyYgASFYIOl2c6MrH3Mt3mFB3U32Ln_JuQzuTmJLzJMUvKTZmV_XIlgg4cfw-MZ82yoiwdhXr1YyVpddNG3XpYuxqgByeX3UUeqh9QE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 extensions map that holds itself (tags 28 and 29)",
+   "credential_id": "IxVLCaHXXQBE1mkcNQOYheK4W2AmAiAPPgexIqN-QxR3ax9ps2hehQOQk5_yoE0KnxUK_J-B",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjCvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAJaR1GGhzGFQg-IRFwhQQqYANiMVSwmh110ARNZpHDUDmIXiuFtgJgIgDz4HsSKjfkMUd2sfabNoXoUDkJOf8qBNCp8VCvyfgaUBAgMmIAEhWCBa-itzvS3P_dMGwdGnJ5_bpA6E2F2uV3TMWkN6_Bn3cSJYIEiBzU39Q49oNYCTkzExsLajYbRCebCGEbSGZowcaKxB2ByhYWHYHQA",
    "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
    "origin": "https://hub.example",
    "rp_id": "hub.example",
