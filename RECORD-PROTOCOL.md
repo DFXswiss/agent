@@ -153,9 +153,8 @@ A key **sees** a task when all of these hold:
 A key sees a comment when it sees the comment's task. A key sees an event when it sees the
 object of the event; for an event of a comment, that is the comment's task. Visibility is
 computed from the current state of the object and the keys file that the answering hub process
-loaded at start (section 11.6), with one exception: the answer of a failed verification on
-request (section 7.9) uses the state that the verification folded from the events before the
-failing one.
+loaded at start (section 11.6). The answer of a verification on request (section 7.9) does not
+depend on what the calling key sees.
 
 A key that sees a task sees the whole task, every link included: a `service` key that sees a
 task through one link in its `subjects` also reads the task's links into repositories outside
@@ -189,8 +188,17 @@ The three exceptions, and what they reveal:
     an entry's `team` in the keys file, it can also reveal to the new team that the key wrote
     withheld events while it belonged to the old one.
   - Verification on request. The answer of section 7.9 gives the position of a failure, also
-    when that position is a withheld event; then its `failure` is `withheld` and names nothing
-    about the event (section 7.9). The signed `429` `verify_busy` of section 7.9 tells every key
+    when that position is a withheld event. It names the failure only when it is `position_gap`,
+    `record_hash_mismatch` or `checkpoint_invalid`, which concern only the positions,
+    `received_at` values, hashes and checkpoints above. For every failure that concerns an event
+    its `failure` is `withheld`, for every calling key, also one that sees the failing event's
+    object, so the answer does not depend on what the key sees and names nothing about the event
+    or about any other event or object (section 7.9). With the position, the answer tells only
+    where the record first fails and whether that failure is one of the three record-wide values
+    or concerns the event at that position. A key that sees that event and checks it itself
+    cannot narrow the cause to one value: `row_mismatch`, which compares the stored columns
+    `event_id`, `actor_key_id` and `prev_hash` that no endpoint answers, always remains
+    possible. The signed `429` `verify_busy` of section 7.9 tells every key
     with `record:read`, of any team, that some key asked the answering process for a
     verification less than 60 seconds before, or that one runs; it names neither that key nor
     its team.
@@ -203,14 +211,17 @@ The three exceptions, and what they reveal:
 - The release rule reads the tasks of every team and of both kinds. Its yes/no can therefore
   tell a `service` key with `release:query` that a pull request in its `subjects` has a linked
   task it does not see, for example a security issue or a task of another team (`task_not_ready`
-  instead of `task_missing`, or `released` true). It never names the task.
+  instead of `task_missing`, or `released` true). It also reveals whether every such task, which
+  is not `dropped`, has an `assignee` and the status `in_progress` or `ready_for_review`, and by
+  repeated queries when that changes: when such a task is linked or unlinked, is dropped, gets or
+  loses its assignee, or enters or leaves those two statuses. It never names the task and never
+  says how many such tasks there are; a `dropped` task does not count (section 9).
 - An id the caller already holds. An event whose `object_id` is the id of an existing object the
   actor does not see is an update of that object and gets `object_not_found` (check 12 (d) of
   section 6.7), where an unused id creates the object; an event whose `event_id` a stored event
-  already uses, whichever key signed it, gets `event_id_taken` (check 8 of section 6.7). In the
-  same way, a failed verification on request that names the failure `event_id_taken` for an
-  event the key sees (section 7.9) confirms that an earlier event, possibly withheld, uses the
-  `event_id` of that event. These answers only confirm that an id the caller already holds is in
+  already uses, whichever key signed it, gets `event_id_taken` (check 8 of section 6.7). The
+  answer of a verification on request never names `event_id_taken` (section 7.9). These answers
+  only confirm that an id the caller already holds is in
   use. They reveal nothing else about the object or event behind it. Every `event_id` and `object_id` is a version-4 UUID with 122
   bits that its writer draws from a cryptographically secure random number generator (section
   2), so an id that a writer chose cannot be found by trying, and a reader cannot guess the event
@@ -218,8 +229,8 @@ The three exceptions, and what they reveal:
   rule to draw its ids at random gives up this protection for its own events; the hub cannot
   detect it.
 
-All three, with what they reveal, are decisions of section 17 (decisions 40, 41, 46, 59, 72, 73
-and 86), and so is the rule above about the time of an answer (decision 79).
+All three, with what they reveal, are decisions of section 17 (decisions 40, 41, 46, 59, 72 and
+73), and so is the rule above about the time of an answer (decision 79).
 
 A key that is revoked or expired reads and writes nothing, because the request checks of
 KEY-PROTOCOL.md section 5 refuse it. The events it signed earlier stay in the record and stay
@@ -994,7 +1005,7 @@ an empty list.
 ```
 
 Each item has the form of section 7.5. `next_before` is the `changed` position of the last task
-of this page when a further task matches, otherwise `null`. Pages are not a snapshot: a task that
+of this page when a further task that the key sees matches, otherwise `null`. Pages are not a snapshot: a task that
 changes between two pages moves to the front and can be missed or appear twice. A reader that
 needs a consistent set reads the events (section 7.4).
 
@@ -1066,19 +1077,29 @@ section 12.1 defines it, `record_hash` is `null`, and `failure` is:
 
 - the value of section 12.1, other than `file_invalid`, when the failure is `position_gap`,
   `record_hash_mismatch` or `checkpoint_invalid`, which concern only the record-wide positions,
-  hashes and checkpoints of the first exception of section 3 and nothing in an event text
-- the value of section 12.1 for every other failure, when the calling key sees the failing
-  event's object in the state that the verification folded from the events before it, by the
-  rules of section 3: for an update of a task, that task; for an event of an existing comment,
-  the comment's task; for a create of a comment, the task that its `task` value names
-- `withheld` otherwise: when the failing event creates a task, has an event text from which no
-  object can be read, or concerns an object the key does not see in that state; `withheld` names
-  nothing about the event
+  hashes and checkpoints of the first exception of section 3 and nothing in an event text: the
+  positions, `received_at` values, event hashes and record hashes of the entries of section 7.4,
+  the record head of section 7.8 and the checkpoints of section 7.10
+- `withheld` for every other failure, that is `event_invalid`, `certificate_not_supported`,
+  `row_mismatch`, `key_unknown`, `event_signature_invalid`, `event_id_taken`, `chain_broken`,
+  `event_time_invalid` and `event_refused`, for every calling key, whatever the key sees, also
+  when it sees the failing event's object; `withheld` names nothing about the event
 
-Example of a withheld failure, for a key of the team `example` and a broken event at position
-18 of the story of section 4.2:
+The answer does not depend on what the calling key sees. A failure that concerns an event can
+depend on events and objects the calling key does not see: `chain_broken` and
+`event_time_invalid` on the previous event of the same key, and `event_refused` with the
+reducer's value `short_name_taken` on another security issue of the team. A `withheld` only in
+such cases would itself tell a key that sees the event that the cause is one of them, so over
+this endpoint no failure that concerns an event is named. The kind of such a failure is for the
+operator: the request line of section 13 logs the true value and the position in every case
+(`verify_failed <position> <failure>`), and offline `verify` of an export (section 12.3), which
+the operator runs with the full file, prints it. `verified` and `position` tell every reader
+whether and where the record fails verification, which is what lets a reader detect a later
+rewrite of the record.
+
+Example of a failure that concerns an event, for every calling key and a broken event at
+position 18 of the story of section 4.2:
 `{"verified":false,"position":18,"record_hash":null,"failure":"withheld","hub_key":"hub-1"}`.
-The request line of section 13 logs the true value in every case.
 
 The status is `200` in both cases. After a failure the process that answered enters the state
 `record_unverified` of section 12.1: it answers `503` `record_unverified` to every record
@@ -1198,7 +1219,9 @@ When all hold, the answer is `"released":true,"failed":null`; otherwise `"releas
 reads: the answer is a yes or no and names no task. A security issue counts as a linked task
 (DESIGN.md §24.11). Because the rule reads every team and both kinds, its yes/no can reveal to
 the asking key that a linked task exists that the key does not see, such as a security issue or
-a task of another team; this is the second exception of section 3 and a decision of section 17.
+a task of another team, whether every such task has an `assignee` and the status `in_progress` or
+`ready_for_review`, and by repeated queries when that changes; this is the second exception of
+section 3 and a decision of section 17.
 
 From this step on, a pull request that no task links gets `task_missing`. That is the intended
 effect of DESIGN.md §24.11; the answer stays one input for a guard and replaces no review rule.
@@ -2479,15 +2502,29 @@ Integrity and backup:
   each produced by changing or inserting a row as database superuser with the triggers bypassed
   (for `event_id_taken` after dropping the unique constraint on `event_id`): each event failure
   of section 12.1 (every value from `event_invalid` to `event_refused` except
-  `record_hash_mismatch`) gives its value by name to a key that sees the object of the failing
-  event, and the record-wide failures `position_gap`, `record_hash_mismatch` and
-  `checkpoint_invalid` give their value by name to every key with `record:read`; after each, the
+  `record_hash_mismatch`) gives `withheld` with the position of the failing event, the same
+  answer to a key that sees the object of the failing event, to a key of another team, to a key
+  without `record:security` for an event on a security issue, and for a create; after each, the
   process answers `503` on every record endpoint, and a restart refuses to start. `file_invalid`
   cannot arise in the hub and is tested with `verify` and `restore`
-- `withheld` (section 7.9): the same failures at an event of another team, at an event on a
-  security issue for a key without `record:security`, and at a create, give `withheld` with the
-  position to the calling key, while `position_gap`, `record_hash_mismatch` and
-  `checkpoint_invalid` are given by name to every key; the request line logs the true value
+- the record-wide failures (section 7.9): `position_gap`, `record_hash_mismatch` and
+  `checkpoint_invalid` are given by name, with their position, to every key with `record:read`,
+  to a key of the team `example` and to a key of another team alike
+- `withheld` to a key that sees the failing event (section 7.9), each time asked by a key with
+  `record:read` that sees the object of the failing event, and built so that every rule of
+  section 12.1 that the caller can check from the data it is answered passes; each event is inserted as
+  database superuser with the triggers bypassed at the end of the record, validly signed:
+  `chain_broken`, an event of a key on a task the caller sees whose `prev_hash` is the event hash
+  of an earlier event of the same key that the caller does not see and that is not that key's
+  previous event; `event_time_invalid`, an event of a key on a task the caller sees, chained to
+  that key's previous event, which is on a security issue the caller (without `record:security`)
+  does not see and has a later `signed_at`, while the event's own `received_at` order and its
+  120-second bound hold; `event_refused` with the reducer's value `short_name_taken`, an event
+  that sets `short_name` of a security issue T1 to the short name of a security issue T2 of the
+  same team, asked by a `service` key with `record:read` and `record:security` whose `subjects`
+  hold the repository of T1 and not that of T2; each answer is `withheld` with the position, byte
+  for byte the answer to a key of another team, and the request line logs `verify_failed
+  <position> <failure>` with the true value
 - a stored `received_at` of `10000-01-01 00:00:00+00` at the last position, changed as database
   superuser with the triggers bypassed: the verification on request fails with
   `event_time_invalid` at that position, not with `record_hash_mismatch`, and a restart refuses
@@ -2866,7 +2903,7 @@ confirms or changes each one.
     the objects of its own team; a `service` key sees only tasks touching its `subjects` (§3).
     A key that sees a task sees all of it: a `service` key that sees a task through one link
     also reads its links into repositories outside its `subjects` (§3). The three exceptions are
-    decisions 40, 41 and 59, with decisions 46, 72, 73 and 86.
+    decisions 40, 41 and 59, with decisions 46, 72 and 73.
 13. New scope `record:watch` for the watcher, because a `service` key cannot hold `record:write`;
     watchers write through their own endpoint `POST /api/key/record/watch` (§3, §7.3, §8).
 14. `record:write`, `record:watch` and `record:security` require `record:read` in the keys file
@@ -2986,7 +3023,9 @@ confirms or changes each one.
     at write time, this reveals withheld events of the reader's own team, for example that a
     teammate's key wrote an event on a security issue at a given time, and, after a change of an
     entry's `team`, events of the key in its old team. The answer of §7.9 gives the position of
-    a failing withheld event (decision 73), the `429` `verify_busy` tells every key with
+    a failure, also of a failing withheld event, and names the failure only when it is
+    `position_gap`, `record_hash_mismatch` or `checkpoint_invalid`; for every failure that
+    concerns an event it answers `withheld` to every key (decision 73). The `429` `verify_busy` tells every key with
     `record:read` that some key asked the answering process for a verification less than 60
     seconds before (decision 46), and the `503` `record_unverified` tells every caller, also a key
     with only `release:query`, that the answering process found the record broken.
@@ -2995,7 +3034,11 @@ confirms or changes each one.
     review asked for (§3, §7.4, §7.9, §7.10).
 41. The release rule reads the tasks of every team and of both kinds; its yes/no can therefore
     reveal to the asking key that a linked task it does not see exists, such as a security issue
-    or a task of another team (§3, §9).
+    or a task of another team. It also reveals whether every such task, which is not `dropped`,
+    has an assignee and is in `in_progress` or `ready_for_review`, and by repeated queries when
+    that changes: when such a task is linked or unlinked, is dropped, gets or loses its assignee,
+    or enters or leaves those two statuses. It never names the task and never says how many
+    there are (§3, §9).
 42. In a process already in the state `record_unverified`, the signed `503` comes after checks 1
     to 10 of KEY-PROTOCOL.md section 5 and the query and body validation of the endpoint, and
     before any read of the record, on every record endpoint and on the release query. When the
@@ -3110,13 +3153,27 @@ confirms or changes each one.
     guessed and confirmed against its event hash. The hub checks the form, not the randomness
     (§2, §3, §4.1, §4.2).
 73. The answer of `GET /api/key/record/verify` names the `failure` only when it is
-    `position_gap`, `record_hash_mismatch` or `checkpoint_invalid`, which concern only record-wide
-    positions, hashes and checkpoints, or when the calling key sees the object of the failing
-    event in the state before it; otherwise `failure` is `withheld`, and only the position is
-    given. A failing create of a task is always `withheld` for every key except through those
-    three values. Of the two alternatives of the reviews (name the answer as part of the first exception
-    of §3, or give a neutral value), the stricter is taken. The log keeps the true value (§3,
-    §7.9, §13).
+    `position_gap`, `record_hash_mismatch` or `checkpoint_invalid`, which concern only the
+    record-wide positions, `received_at` values, hashes and checkpoints that withheld entries,
+    the record head and the checkpoints give every key with `record:read`. For every other
+    failure (`event_invalid`, `certificate_not_supported`, `row_mismatch`, `key_unknown`,
+    `event_signature_invalid`, `event_id_taken`, `chain_broken`, `event_time_invalid`,
+    `event_refused`) `failure` is `withheld`, for every calling key, whatever the key sees, also
+    when it sees the failing event's object, and only the position is given. The answer
+    therefore does not depend on what the calling key sees. The reason: a failure that concerns
+    an event can depend on events and objects the calling key does not see (`chain_broken` and
+    `event_time_invalid` on the previous event of the same key, `event_refused` with
+    `short_name_taken` on another security issue of the team), and a `withheld` only in those
+    cases would itself tell a key that sees the event that the cause is one of them. What a
+    reader no longer gets over the API: which rule of §12.1 an event failed, also for an event
+    it sees. It still gets `verified` and the position, so it can detect a later rewrite of the
+    record. Where the operator finds the kind: the request line of §13 logs `verify_failed
+    <position> <failure>` with the true value in every case, and offline `verify` of an export
+    (§12.3), run with the full file, prints `failed <position> <failure>`. Of the alternatives of
+    the reviews (name the answer as part of the first exception of §3, list the disclosures of
+    the named values there, answer `withheld` only in the cases that depend on state the caller
+    does not see, or never name a failure that concerns an event), the last is taken (§3, §7.9,
+    §12.1, §12.3, §13).
 74. A full verification that a running process runs on request or periodically also compares the
     snapshot with the head of the process's state in memory: a snapshot that ends below that head
     fails `position_gap` at the first missing position, and a stored record hash at that head
@@ -3185,9 +3242,8 @@ confirms or changes each one.
     or a new value), the new value is taken, because it names the rule exactly and is the same
     value as at write time. The state in memory holds the `event_id` of every folded event. An
     export with a repeated `event_id` therefore fails offline `verify`, and `restore` refuses it
-    at step 1 instead of at the insert. A failure `event_id_taken` named to a key that sees the
-    failing event confirms that an earlier event, possibly withheld, uses that id; this is part
-    of the third exception of §3 (§3, §4.1, §11.6, §12.1, §12.3).
+    at step 1 instead of at the insert. The answer of §7.9 never names `event_id_taken`
+    (decision 73) (§3, §4.1, §11.6, §12.1, §12.3).
 87. Every writer that sees a task (of the task's team, and for kind `security` holding
     `record:security`) may make the transitions marked "writer" in §6.4 (rows 1, 3 to 7, 13 and
     14, and row 2 for kind `work`), change every changeable field, and write comments, also on a
@@ -3217,8 +3273,8 @@ confirms or changes each one.
     file cut after its last event line lacks checkpoints and still verifies. An export counts
     only when `export` printed `exported`; the deployment keeps and copies only such a file
     (§12.3, §12.4).
-92. Visibility is computed from the current state, except in the answer of a failed verification
-    on request, which uses the state before the failing event (decision 73). The scope
+92. Visibility is computed from the current state; the answer of a verification on request
+    does not depend on what the calling key sees (decision 73). The scope
     `record:security` with `record:watch` lets a watcher write only its events of §8 on tasks of
     kind `security`, never a comment (§3, §7.9).
 93. A database failure while step `verify` of the start reads the record gives its own line
