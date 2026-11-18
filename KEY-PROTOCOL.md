@@ -19,7 +19,7 @@ adds to section 3 the loader rule that fixes the device key of a device (the unr
 entry of that device without `program`, if there is one), adds endpoints under `/api/key/`, and refuses a
 public URL whose host is an IP address or ends with a dot.
 The third build step, the team record with tasks and security issues, is specified in
-[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
+[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md) and built (section 1).
 
 ## 1. Scope of what is built now
 

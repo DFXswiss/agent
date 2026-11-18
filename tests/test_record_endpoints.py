@@ -147,6 +147,35 @@ def no_login(db: RecordDatabase) -> None:
         admin.execute(sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(db.writer_role)))
 
 
+def end_writer_connections(db: RecordDatabase) -> None:
+    """As database superuser, end every connection of the writer role: the next statement on a
+    connection the hub holds fails."""
+    with db.admin() as admin:
+        admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s", (db.writer_role,))
+
+
+# The SQLSTATE of a statement on a table on which the writer role lacks the right (insufficient_privilege).
+INSUFFICIENT_PRIVILEGE = "42501"
+
+
+def change_right(db: RecordDatabase, statement: str, table: str) -> None:
+    """Run `statement` as database superuser; its two placeholders `{}` are the table `schema.name`
+    and the writer role."""
+    schema, name = table.split(".")
+    with db.admin() as admin:
+        admin.execute(sql.SQL(statement).format(sql.Identifier(schema, name), sql.Identifier(db.writer_role)))
+
+
+def revoke_select(db: RecordDatabase, table: str) -> None:
+    """The writer role can no longer read `table`: its next statement on it fails with 42501."""
+    change_right(db, "REVOKE SELECT ON {} FROM {}", table)
+
+
+def grant_select(db: RecordDatabase, table: str) -> None:
+    """The right of section 11.2 that `revoke_select` took."""
+    change_right(db, "GRANT SELECT ON {} TO {}", table)
+
+
 def task_body(hub: Hub, object_id: str) -> dict[str, Any]:
     answer = hub.signed(ALICE, f"{OBJECT}?id={object_id}", 200)
     return answer.json()["object"]
@@ -491,13 +520,7 @@ def test_an_append_refused_at_checks_1_to_6_runs_no_fold_and_a_valid_one_gets_50
 def test_a_database_failure_in_an_append_answers_500_and_logs_only_the_request_line(
     hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
 ) -> None:
-    def end_the_connection() -> None:
-        with record_db.admin() as admin:
-            admin.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s", (record_db.writer_role,)
-            )
-
-    hub.points.append_before_insert = end_the_connection
+    hub.points.append_before_insert = lambda: end_writer_connections(record_db)
     text, signature = hub.event(ALICE, "task", new_id(), task_create())
     wire, answer = hub.post(ALICE, EVENTS, text, signature)
     assert_signed(wire, answer, 500, NOW)
@@ -518,6 +541,60 @@ def test_a_failed_connection_of_a_request_answers_500_with_database_error_connec
     assert_signed(wire, answer, 500, NOW)
     assert answer.body == INTERNAL
     assert_lines(record_part(log_lines), [f"INFO record request {ALICE} GET {HEAD} 500 database_error connect {SQLSTATE}"])
+
+
+# Every reading `GET` endpoint of section 7.1 other than verify, which runs no fold (section 7.9).
+READING_GETS = (EVENTS, OBJECT, TASKS, COMMENTS, HEAD, CHECKPOINTS)
+REQUIRED_QUERY = {OBJECT: "id", COMMENTS: "task"}
+
+
+@pytest.mark.parametrize("path", READING_GETS)
+def test_a_failed_read_of_the_fold_of_a_get_answers_a_signed_500_with_database_error_read(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], path: str  # noqa: F811
+) -> None:
+    """Sections 7.1 and 13: the signed `500` `internal`, and only the request line with
+    `database_error read`; no line `record database error`, which belongs to the periodic run, the
+    checkpoint attempt and the release query."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    target = f"{path}?{REQUIRED_QUERY[path]}={work}" if path in REQUIRED_QUERY else path
+    revoke_select(record_db, "record.event")
+    log_lines.clear()
+    wire, answer = hub.get(ALICE, target)
+    assert_signed(wire, answer, 500, NOW)
+    assert answer.body == INTERNAL
+    assert hub_lines(log_lines) == [
+        f"INFO record request {ALICE} GET {path} 500 database_error read {INSUFFICIENT_PRIVILEGE}"
+    ]
+    assert not hub.runtime.unverified
+    grant_select(record_db, "record.event")
+    hub.signed(ALICE, target, 200)
+
+
+@pytest.mark.parametrize(
+    ("path", "of_object", "table"),
+    [(EVENTS, False, "record.event"), (EVENTS, True, "record.event"), (CHECKPOINTS, False, "record.checkpoint")],
+)
+def test_a_failed_read_of_the_stored_rows_of_a_get_after_its_fold_answers_a_signed_500_with_database_error_read(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], path: str, of_object: bool, table: str  # noqa: F811
+) -> None:
+    """The endpoints that read stored rows after the fold (sections 7.4, with and without `object`,
+    and 7.10): the fold succeeds, the read of the rows fails."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    target = f"{path}?object={work}" if of_object else path
+    hub.points.in_read_fold = lambda: revoke_select(record_db, table)
+    log_lines.clear()
+    wire, answer = hub.get(ALICE, target)
+    assert_signed(wire, answer, 500, NOW)
+    assert answer.body == INTERNAL
+    assert hub_lines(log_lines) == [
+        f"INFO record request {ALICE} GET {path} 500 database_error read {INSUFFICIENT_PRIVILEGE}"
+    ]
+    assert not hub.runtime.unverified
+    hub.points.in_read_fold = lambda: None
+    grant_select(record_db, table)
+    hub.signed(ALICE, target, 200)
 
 
 # --- POST /api/key/record/watch (section 8) ---------------------------------------------------------
@@ -555,6 +632,26 @@ def test_the_refusals_of_the_watcher(hub: Hub) -> None:
         400,
         error("field_not_allowed"),
     )
+
+
+def test_a_database_failure_in_a_watcher_append_answers_a_signed_500_and_logs_only_the_request_line(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Sections 7.1, 7.3 and 13: the watcher's `service` key gets the one request line, and no
+    line of KEY-PROTOCOL.md section 5 besides it."""
+    work = new_id()
+    hub.write(ALICE, "task", work, [*task_create(), ("links", None, LINK)])
+    hub.points.append_before_insert = lambda: end_writer_connections(record_db)
+    text, signature = hub.event(WATCHER, "task", work, [("status", "open", "done")])
+    log_lines.clear()
+    wire, answer = hub.post(WATCHER, WATCH, text, signature)
+    assert_signed(wire, answer, 500, NOW)
+    assert answer.body == INTERNAL
+    assert_lines(hub_lines(log_lines), [f"INFO record request {WATCHER} POST {WATCH} 500 database_error append {SQLSTATE}"])
+    assert not hub.runtime.unverified
+    hub.points.append_before_insert = lambda: None
+    wire, answer = hub.post(WATCHER, WATCH, text, signature)
+    assert_signed(wire, answer, 201, NOW)
 
 
 # --- GET /api/key/record/events (section 7.4) ------------------------------------------------------
@@ -944,6 +1041,29 @@ def test_a_second_verification_request_while_one_runs_gets_verify_busy(hub: Hub)
     hub.points.snapshot_between_reads = second_request
     hub.signed(ALICE, VERIFY, 200)
     assert answers == [error("verify_busy")]
+
+
+def test_a_database_failure_of_the_verification_on_request_answers_a_signed_500_and_logs_only_the_request_line(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Sections 7.1, 7.9 and 13: the read of the snapshot fails. The answer is the signed `500`
+    `internal`, the only line is the request line with `database_error read`, and the process does
+    not enter the state `record_unverified`, which only a failure value of section 12.1 enters. The
+    run started, so it counts for the limit of section 7.9."""
+    written = hub.write(ALICE, "task", new_id(), task_create())
+    hub.points.snapshot_between_reads = lambda: end_writer_connections(record_db)
+    log_lines.clear()
+    wire, answer = hub.get(ALICE, VERIFY)
+    assert_signed(wire, answer, 500, NOW)
+    assert answer.body == INTERNAL
+    assert_lines(hub_lines(log_lines), [f"INFO record request {ALICE} GET {VERIFY} 500 database_error read {SQLSTATE}"])
+    assert not hub.runtime.unverified
+    hub.points.snapshot_between_reads = lambda: None
+    assert hub.signed(ALICE, VERIFY, 429).body == error("verify_busy")
+    hub.monotonic.now += 60
+    assert hub.signed(ALICE, VERIFY, 200).body == body(
+        {"verified": True, "position": 1, "record_hash": written["record_hash"], "failure": None, "hub_key": HUB_KEY_ID}
+    )
 
 
 def test_a_failure_that_concerns_an_event_is_withheld_for_every_key_and_logged_with_its_value(
@@ -1428,14 +1548,8 @@ def test_a_periodic_run_against_a_listener_that_never_answers_logs_database_erro
 def test_a_periodic_run_that_fails_to_read_logs_record_database_error_read(
     hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
 ) -> None:
-    def end_the_connection() -> None:
-        with record_db.admin() as admin:
-            admin.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s", (record_db.writer_role,)
-            )
-
     hub.write(ALICE, "task", new_id(), task_create())
-    hub.points.snapshot_between_reads = end_the_connection
+    hub.points.snapshot_between_reads = lambda: end_writer_connections(record_db)
     hub.monotonic.now += 600
     log_lines.clear()
     hub.runtime.periodic()
