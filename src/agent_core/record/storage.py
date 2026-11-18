@@ -11,7 +11,7 @@ the message, detail or hint of the database error, because such a message can ca
 from __future__ import annotations
 
 import threading
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
@@ -27,7 +27,7 @@ from .connection import ConnectionString
 from .event import STORED_INFINITY, RecordRefusal, next_received_at, parse_event
 from .failures import CHECKPOINT_INVALID
 from .migrate import KNOWN_VERSIONS, SESSION_STATEMENTS
-from .reducer import AppendContext, check_append
+from .reducer import AppendContext, check_append, check_signed_event
 from .state import EMPTY_STATE, Head, RecordState, applied_state
 from .verify import Failure, FoldResult, RowCopies, StoredEvent, fold_events, verify_record
 
@@ -293,15 +293,122 @@ def incremental_fold(connection: psycopg.Connection[Any], memory: MemoryState, k
     return result.failure
 
 
+# --- the reads of the endpoints (sections 7.4 and 7.10) ------------------------------------------
+
+
+_EVENT_PAGE = _EVENT_COLUMNS + " WHERE position > %s AND position <= %s ORDER BY position LIMIT %s"
+_EVENTS_AT = _EVENT_COLUMNS + " WHERE position = ANY(%s::bigint[]) ORDER BY position"
+# Section 7.10: newest first, by position descending and then by hub key id descending in byte order.
+_CHECKPOINT_ORDER = ' ORDER BY position DESC, hub_key_id COLLATE "C" DESC LIMIT %s'
+_CHECKPOINT_PAGE = _CHECKPOINT_COLUMNS + _CHECKPOINT_ORDER
+_CHECKPOINT_PAGE_BEFORE = (
+    _CHECKPOINT_COLUMNS
+    + ' WHERE position < %s OR (position = %s AND hub_key_id COLLATE "C" < %s)'
+    + _CHECKPOINT_ORDER
+)
+
+
+def read_events(connection: psycopg.Connection[Any], after: int, through: int, limit: int) -> tuple[StoredEvent, ...]:
+    """The stored events with a position above `after` and at most `through`, ascending, at most
+    `limit`. `StorageError` with step `read` when the database fails."""
+    with database_step(STEP_READ):
+        rows = connection.execute(_EVENT_PAGE, (after, through, limit)).fetchall()
+    return tuple(_stored_event(row) for row in rows)
+
+
+def read_events_at(connection: psycopg.Connection[Any], positions: Sequence[int]) -> tuple[StoredEvent, ...]:
+    """The stored events at the given positions, ascending. `StorageError` with step `read`."""
+    with database_step(STEP_READ):
+        rows = connection.execute(_EVENTS_AT, (list(positions),)).fetchall()
+    return tuple(_stored_event(row) for row in rows)
+
+
+def read_checkpoints(
+    connection: psycopg.Connection[Any], before: tuple[int, str] | None, limit: int
+) -> tuple[Checkpoint, ...]:
+    """A page of the checkpoints of every hub key id in the order of section 7.10: below the pair
+    `before` of a position and a hub key id when it is given, at most `limit`. `StorageError` with
+    step `read` when the database fails."""
+    with database_step(STEP_READ):
+        if before is None:
+            rows = connection.execute(_CHECKPOINT_PAGE, (limit,)).fetchall()
+        else:
+            position, hub_key_id = before
+            rows = connection.execute(_CHECKPOINT_PAGE_BEFORE, (position, position, hub_key_id, limit)).fetchall()
+    return tuple(_stored_checkpoint(row) for row in rows)
+
+
+# --- the connections of a hub process (section 11.6) ---------------------------------------------
+
+
+def _open(writer: ConnectionString) -> psycopg.Connection[Any]:
+    """A new connection of the writer role in autocommit mode, prepared as `writer_connection`
+    prepares it; closed again when the preparation fails."""
+    with database_step(STEP_CONNECT), ExitStack() as cleanup:
+        connection = writer.connect(autocommit=True)
+        cleanup.callback(connection.close)
+        prepare_session(connection)
+        cleanup.pop_all()
+    return connection
+
+
+class WriterPool:
+    """At most `size` connections of the writer role, shared by the requests and the background
+    work of one hub process (section 11.6, "Connections").
+
+    `connection()` waits for a free slot, then hands out an idle connection or opens a new one
+    (`StorageError` with step `connect` when that fails). A connection whose block ends with an
+    exception is closed, so a connection that a failure left in an unknown state is never reused.
+    `taken` counts the connections handed out; it is a test point that shows whether a request read
+    the record.
+    """
+
+    def __init__(self, writer: ConnectionString, size: int) -> None:
+        if size < 1:
+            raise ValueError("a pool holds at least one connection")
+        self._writer = writer
+        self._slots = threading.BoundedSemaphore(size)
+        self._idle: list[psycopg.Connection[Any]] = []
+        self._lock = threading.Lock()
+        self.taken = 0
+
+    @contextmanager
+    def connection(self) -> Iterator[psycopg.Connection[Any]]:
+        with self._slots:
+            with self._lock:
+                connection = self._idle.pop() if self._idle else None
+            if connection is None:
+                connection = _open(self._writer)
+            with self._lock:
+                self.taken += 1
+            try:
+                yield connection
+            except BaseException:
+                connection.close()
+                raise
+            with self._lock:
+                self._idle.append(connection)
+
+    def close(self) -> None:
+        """Close every idle connection."""
+        with self._lock:
+            idle, self._idle = self._idle, []
+        for connection in idle:
+            connection.close()
+
+
 # --- the append transaction (section 11.5) -------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Appended:
-    """Step 5: the event was committed at this position with this record hash."""
+    """Step 5: the event was committed at this position with this record hash, this event hash and
+    this `received_at` (the answer `201` of section 7.2)."""
 
     position: int
     record_hash: str
+    event_hash: str
+    received_at: int
 
 
 @dataclass(frozen=True)
@@ -339,7 +446,10 @@ def append_event(
     before_insert: Callable[[], None] = _no_pause,
     after_commit: Callable[[], None] = _no_pause,
 ) -> Appended | Refused | Unverified:
-    """The append transaction of section 11.5 for one event, after checks 1 to 6 of section 6.7.
+    """The append transaction of section 11.5 for one event, after checks 1 and 2 of section 6.7.
+
+    Checks 3 to 6 run first, without a transaction and without a fold (`Refused` when one fails),
+    so that an append refused there folds nothing (section 11.6). Then:
 
     1. BEGIN at READ COMMITTED and the advisory lock 742180001.
     2. Under the state lock, the incremental fold (`Unverified` and ROLLBACK when it fails), then the
@@ -357,6 +467,10 @@ def append_event(
     refuse a row that the checks under the lock accepted unless a role outside this document
     changes the rows, and section 11.5 answers every such failure with `500` `internal`.
     """
+    try:
+        check_signed_event(text, signature, actor)
+    except RecordRefusal as refusal:
+        return Refused(refusal.error)
     try:
         with database_step(STEP_APPEND), _transaction(connection, BEGIN_READ_COMMITTED):
             connection.execute(_LOCK, (APPEND_LOCK,))
@@ -396,7 +510,12 @@ def append_event(
         current = memory.state.head
         if (0 if current is None else current.position) + 1 == applied.head.position:
             memory.state = applied_state(memory.state, applied)
-    return Appended(position=applied.head.position, record_hash=applied.head.record_hash)
+    return Appended(
+        position=applied.head.position,
+        record_hash=applied.head.record_hash,
+        event_hash=applied.event.event_hash,
+        received_at=applied.head.received_at,
+    )
 
 
 # --- the checkpoint attempt (section 12.2) -------------------------------------------------------

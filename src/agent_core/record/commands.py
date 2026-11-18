@@ -24,6 +24,7 @@ from .connection import (
 )
 from .export import ExportInvalid, ValueUnwritable, parse_export, verify_export, write_export
 from .failures import FILE_INVALID
+from .runtime import head_words as _head_words
 from .state import Head
 from .storage import (
     SCHEMA_MISSING,
@@ -69,11 +70,6 @@ class _ConfigFault(Exception):
 
 def _refused(line: str) -> Outcome:
     return line, 1
-
-
-def _head_words(head: Head | None) -> str:
-    """`<position> <record hash or ->`, `0 -` for an empty record."""
-    return "0 -" if head is None else f"{head.position} {head.record_hash}"
 
 
 def _options(args: Sequence[str], once: frozenset[str], repeated: str | None) -> tuple[dict[str, str], list[str]]:

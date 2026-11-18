@@ -32,8 +32,14 @@ export AGENT_CORE_SIGNING_KEY="$(python3 -c 'import secrets; print(secrets.token
 export AGENT_CORE_HUB_KEY_ID=hub-local-1
 export AGENT_CORE_HOST=127.0.0.1
 export AGENT_CORE_PORT=8787
+export AGENT_CORE_RECORD_DATABASE="postgresql://record_writer:<64 hex>@127.0.0.1:5432/record?sslmode=disable"
 python -m agent_core
 ```
+
+Before the first start, create the record database and its two roles on a PostgreSQL 16 server
+(RECORD-PROTOCOL.md section 11.2) and run `python -m agent_core.record migrate` with
+`AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE` (see below). Unset
+`AGENT_CORE_RECORD_OWNER_DATABASE` again before you start the hub.
 
 Open http://127.0.0.1:8787 and sign in.
 
@@ -44,7 +50,19 @@ Every variable above is required. The process exits if one is missing.
 - `AGENT_CORE_SIGNING_KEY` is the 32-byte seed of the hub's Ed25519 signing key as 64 lowercase hex characters. It is a secret: every environment has its own seed, and the hub never logs or returns it.
 - `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters, starting and ending with a letter or digit). It is not a secret.
 
-At start the hub logs one line `hub key <id> <public key>`; callers pin that pair.
+- `AGENT_CORE_RECORD_DATABASE` is the connection string of the writer role of the team record:
+  `postgresql://<role>:<password>@<host>[:<port>]/<database>?sslmode=<mode>`, with a password of
+  64 lowercase hex characters and `sslmode` `disable` (only for a loopback address or
+  `localhost`), `require` or `verify-full` (RECORD-PROTOCOL.md section 15). It is a secret. The
+  hub refuses to start when `AGENT_CORE_RECORD_OWNER_DATABASE` is set in its environment, also
+  when it is empty.
+
+At start the hub logs one line `hub key <id> <public key>`; callers pin that pair. Before it
+serves, it checks the record database and verifies the whole record (RECORD-PROTOCOL.md section
+11.4) and logs `record verified <position> <record hash>` (`record verified 0 -` for an empty
+record). When that start fails it logs `record start failed <step>`, with `<step>` one of
+`config`, `schema`, `writer`, `verify` and `verify_read`, and exits; `record start failed verify`
+always follows a line `record verify failed <position> <failure>` that names the failure.
 
 ## Teams
 
@@ -75,9 +93,9 @@ The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hu
 
 Sign-in with passkeys, invites and the certified session key are specified, not yet built, in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md).
 
-The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
+The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. The hub computes it from the team record (RECORD-PROTOCOL.md section 9): a pull request that no task links gets `released: false` with `task_missing`, and a hub process that found the record broken answers the signed `503` `record_unverified`. The answer is one input for a guard and replaces no review rule.
 
-The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md). Its first change is built: the record library, the schema and `python -m agent_core.record migrate`. Of the third change, the rules of the record as a library, its storage in PostgreSQL and the commands `export`, `verify` and `restore` are built. The hub does not use the record yet.
+The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md) and built: the record library, the schema and `python -m agent_core.record migrate`, the commands `export`, `verify` and `restore`, and the record in the hub. The hub verifies the record at start, every 10 minutes and on request, signs a checkpoint of the record hash at every full hour, and serves the signed endpoints under `/api/key/record/` (RECORD-PROTOCOL.md section 7) to keys with the scopes `record:read`, `record:write`, `record:security` and `record:watch`.
 
 ## Control
 
@@ -149,8 +167,16 @@ pytest
 CI runs the same tests against a `postgres:16` service container on the same port 55432.
 
 `python -m agent_core.record migrate` applies the schema of the team record (RECORD-PROTOCOL.md
-section 11.4). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE`; the hub
-does not use the record database yet.
+section 11.4). It reads `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE`, and it
+runs to completion before every start of the hub; the hub itself holds only
+`AGENT_CORE_RECORD_DATABASE`.
+
+`docker-compose.yaml` runs the three pieces of RECORD-PROTOCOL.md section 15: a `postgres:16`
+service with TLS that creates the owner role `record_owner`, the writer role `record_writer` and the
+database `record` from two secrets, a one-shot `migrate` service, and the hub, which starts only
+after `migrate` completed. It needs `AGENT_CORE_RECORD_OWNER_PASSWORD`,
+`AGENT_CORE_RECORD_WRITER_PASSWORD` (each 64 lowercase hex characters) and
+`AGENT_CORE_RECORD_ADMIN_PASSWORD` (the superuser of that server) in its environment.
 
 Three further commands export, check and restore the record (RECORD-PROTOCOL.md section 12.3). None
 of them needs the hub to run, none reads `AGENT_CORE_RECORD_OWNER_DATABASE`, and each prints exactly

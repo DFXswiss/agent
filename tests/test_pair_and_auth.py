@@ -10,7 +10,7 @@ from agent_core.config import Config
 from agent_core.db import Store, utcnow
 from agent_core.github import FakeGitHub
 from agent_core.tokens import issue
-from tests.conftest import pair_device, sign_in
+from tests.conftest import idle_record, pair_device, sign_in
 
 
 def test_me_requires_login(hub: TestClient) -> None:
@@ -142,7 +142,7 @@ def test_session_cookie_is_secure_for_an_https_public_url(
 ) -> None:
     store = Store(cfg.database)
     try:
-        app = create_app(replace(cfg, public_url=public_url), github=github, store=store)
+        app = create_app(replace(cfg, public_url=public_url), github=github, store=store, record=idle_record)
         with TestClient(app, base_url=public_url.lower()) as client:
             start = client.get("/auth/github", follow_redirects=False)
     finally:

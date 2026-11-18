@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agent_core.app import create_app
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
+from tests.conftest import idle_record
 
 
 class _FailingReplicaConnection:
@@ -429,7 +430,7 @@ def test_record_web_event_for_request_rejects_owner_after_takeover(
 
 
 def test_create_app_closes_internally_created_store_after_lifespan(cfg) -> None:
-    app = create_app(cfg, github=FakeGitHub({"code-alice": "alice"}))
+    app = create_app(cfg, github=FakeGitHub({"code-alice": "alice"}), record=idle_record)
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -455,7 +456,7 @@ def test_create_app_closes_internal_store_when_hub_construction_fails(
     monkeypatch.setattr(Store, "all_oauth_tokens", fail_loading_tokens)
 
     with pytest.raises(RuntimeError, match="construction failed"):
-        create_app(cfg, github=FakeGitHub({"code-alice": "alice"}))
+        create_app(cfg, github=FakeGitHub({"code-alice": "alice"}), record=idle_record)
 
     assert len(closed) == 1
     with pytest.raises(sqlite3.ProgrammingError):

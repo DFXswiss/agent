@@ -33,10 +33,14 @@ from agent_core.record.storage import (
     Refused,
     StorageError,
     Unverified,
+    WriterPool,
     append_event,
     check_schema,
     checkpoint_attempt,
     incremental_fold,
+    read_checkpoints,
+    read_events,
+    read_events_at,
     read_snapshot,
     stored_seconds,
     verify_stored,
@@ -456,7 +460,7 @@ def test_an_append_stores_the_row_of_section_11_5_and_applies_it_to_the_state(
         outcome = hub.append_text(ALICE, text, signature)
         event = parse_event(text)
         expected_hash = record_hash(1, T0, event.event_hash, None)
-        assert outcome == Appended(1, expected_hash)
+        assert outcome == Appended(1, expected_hash, event.event_hash, T0)
         assert hub.memory.state.head == Head(1, T0, expected_hash)
     with record_db.admin() as admin:
         rows = admin.execute(
@@ -555,6 +559,105 @@ def test_an_append_whose_fold_fails_writes_nothing_and_answers_unverified(record
         # no advisory lock of that transaction.
         assert first.connection.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
     assert counts(record_db) == (4, 0)
+
+
+def test_an_append_refused_at_checks_3_to_6_runs_no_fold(record_db: RecordDatabase, ring: KeyRing) -> None:
+    # Section 11.6: with a broken row after the state, an invalid event text is refused at check 3
+    # and folds nothing; a valid event then finds the broken row in its fold.
+    migrated(record_db)
+    with process(record_db, ring) as first, process(record_db, ring) as second:
+        work = first.story()
+        second.clock.now = first.clock.now
+        assert isinstance(second.append(BOB, "comment", new_id(), comment_on(work)), Appended)
+        tamper(record_db, "record.event", "UPDATE record.event SET event_id = %s WHERE position = 4", (new_id(),))
+        text, signature = first.sign(ALICE, "comment", new_id(), comment_on(work))
+        reads = first.clock.reads
+        assert first.append_text(ALICE, b"not an event", signature) == Refused("event_invalid")
+        assert first.append_text(BOB, text, signature) == Refused("actor_mismatch")
+        assert first.clock.reads == reads
+        assert first.memory.head() is not None and first.memory.head().position == 3  # type: ignore[union-attr]
+        assert first.append_text(ALICE, text, signature) == Unverified(Failure("row_mismatch", 4))
+
+
+def test_the_reads_of_the_endpoints(record_db: RecordDatabase, ring: KeyRing) -> None:
+    migrated(record_db)
+    with process(record_db, ring) as hub:
+        hub.story()
+        snapshot = read_snapshot(hub.connection)
+        assert read_events(hub.connection, 0, 3, 2) == snapshot.events[:2]
+        assert read_events(hub.connection, 1, 2, 100) == snapshot.events[1:2]
+        assert read_events(hub.connection, 3, 3, 100) == ()
+        assert read_events_at(hub.connection, [3, 1]) == (snapshot.events[0], snapshot.events[2])
+        assert read_events_at(hub.connection, []) == ()
+    for hub_key_id, position in (("hub-2", 1), ("hub1", 1), ("hub-2", 2)):
+        insert_checkpoint(record_db, Checkpoint(hub_key_id, position, "b" * 64, T0, bytes(64)))
+    with writer(record_db) as connection:
+        assert [(item.position, item.hub_key_id) for item in read_checkpoints(connection, None, 10)] == [
+            (2, "hub-2"),
+            (1, "hub1"),
+            (1, "hub-2"),
+        ]
+        assert [(item.position, item.hub_key_id) for item in read_checkpoints(connection, (1, "hub1"), 10)] == [
+            (1, "hub-2")
+        ]
+        assert [(item.position, item.hub_key_id) for item in read_checkpoints(connection, None, 1)] == [(2, "hub-2")]
+        terminate(record_db, backend_of(connection))
+        with pytest.raises(StorageError) as failed:
+            read_checkpoints(connection, None, 1)
+        assert failed.value.step == "read"
+        with pytest.raises(StorageError):
+            read_events(connection, 0, 3, 1)
+        with pytest.raises(StorageError):
+            read_events_at(connection, [1])
+
+
+def test_the_pool_reuses_a_connection_and_drops_one_whose_block_failed(record_db: RecordDatabase) -> None:
+    migrated(record_db)
+    pool = WriterPool(parse_connection_string(record_db.writer_url), 2)
+    with pool.connection() as first:
+        backend = backend_of(first)
+        assert first.execute("SELECT current_user").fetchone() == (record_db.writer_role,)
+    with pool.connection() as again:
+        assert backend_of(again) == backend
+    with pytest.raises(RuntimeError):
+        with pool.connection() as failing:
+            raise RuntimeError("the block failed")
+    assert failing.closed
+    with pool.connection() as fresh:
+        assert backend_of(fresh) != backend
+    assert pool.taken == 4
+    pool.close()
+    assert fresh.closed
+
+
+def test_the_pool_holds_at_least_one_connection_and_waits_when_it_is_exhausted(record_db: RecordDatabase) -> None:
+    import threading
+
+    with pytest.raises(ValueError):
+        WriterPool(parse_connection_string(record_db.writer_url), 0)
+    migrated(record_db)
+    pool = WriterPool(parse_connection_string(record_db.writer_url), 1)
+    got = threading.Event()
+    with pool.connection():
+
+        def second() -> None:
+            with pool.connection():
+                got.set()
+
+        waiting = Parallel(second)
+        assert not got.wait(0.5)
+    waiting.results()
+    assert got.is_set()
+    pool.close()
+
+
+def test_a_pool_connection_that_fails_to_open_is_a_storage_error_of_step_connect(record_db: RecordDatabase) -> None:
+    pool = WriterPool(parse_connection_string(unreachable_url(record_db, closed_port())), 1)
+    with pytest.raises(StorageError) as failed:
+        with pool.connection():
+            raise AssertionError("no connection is opened")
+    assert failed.value.step == "connect"
+    assert pool.taken == 0
 
 
 def test_step_5_changes_nothing_when_a_fold_already_folded_the_event(record_db: RecordDatabase, ring: KeyRing) -> None:

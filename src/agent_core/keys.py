@@ -25,6 +25,8 @@ KIND_OF_PRINCIPAL = {"staff": "webauthn", "agent": "ed25519", "service": "ed2551
 SCOPE_HOLDERS: dict[str, frozenset[str]] = {
     "record:read": frozenset({"staff", "agent", "service"}),
     "record:write": frozenset({"staff", "agent"}),
+    "record:security": frozenset({"staff", "agent", "service"}),
+    "record:watch": frozenset({"service"}),
     "release:query": frozenset({"service"}),
     "keys:invite": frozenset({"staff"}),
     "device:executor": frozenset({"agent"}),
@@ -32,6 +34,13 @@ SCOPE_HOLDERS: dict[str, frozenset[str]] = {
 }
 DEVICE_SCOPES = frozenset({"device:executor", "device:controller"})
 INVITE_SCOPE = "keys:invite"
+READ_SCOPE = "record:read"
+# RECORD-PROTOCOL.md section 3: an entry that holds one of these also holds `record:read`. An entry
+# that holds `record:watch` holds `subjects`: only a `service` entry may hold that scope, and every
+# `service` entry requires `subjects`.
+NEEDS_READ_SCOPES = ("record:write", "record:watch", "record:security")
+# RECORD-PROTOCOL.md sections 3 and 5.2: the `team` of every entry is at most this many UTF-8 bytes.
+TEAM_MAX_BYTES = 100
 FIELDS = frozenset(
     {
         "id",
@@ -183,6 +192,8 @@ def _entry(index: int, item: Any, roster: Roster) -> KeyEntry:
     if not valid_handle(handle):
         raise KeysError(f"{where}: handle breaks the handle rule")
     team = _text(item, "team", where)
+    if len(team.encode("utf-8")) > TEAM_MAX_BYTES:
+        raise KeysError(f"{where}: team is longer than {TEAM_MAX_BYTES} bytes")
     if team not in roster.teams:
         raise KeysError(f"{where}: team {team!r} is not in the teams file")
     if principal in ("staff", "agent"):
@@ -224,6 +235,9 @@ def _entry(index: int, item: Any, roster: Roster) -> KeyEntry:
             raise KeysError(f"{where}: scope {scope!r} is not allowed for principal {principal}")
     if principal == "agent" and len(DEVICE_SCOPES.intersection(scopes)) != 1:
         raise KeysError(f"{where}: an agent key holds exactly one of {', '.join(sorted(DEVICE_SCOPES))}")
+    for scope in NEEDS_READ_SCOPES:
+        if scope in scopes and READ_SCOPE not in scopes:
+            raise KeysError(f"{where}: scope {scope!r} needs {READ_SCOPE}")
 
     subjects: tuple[str, ...] | None = None
     if "subjects" in item:

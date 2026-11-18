@@ -2,13 +2,18 @@
 
 Requests go straight to the ASGI app with the helpers of the signed-request tests, so the raw
 request target reaches the hub exactly as signed. Every key comes from a fixed seed and the hub
-clock is injected.
+clock is injected. The answer is computed from the team record (RECORD-PROTOCOL.md section 9), so
+the hub runs against the real PostgreSQL of AGENT_CORE_TEST_POSTGRES; its record is empty unless a
+test writes to it, and every valid query then gets `task_missing`.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -23,15 +28,19 @@ from agent_core.app import (
     ReleaseQuery,
     create_app,
     parse_release_query,
-    release_answer,
     release_body,
 )
 from agent_core.config import Config
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
 from agent_core.keys import SCOPE_HOLDERS
+from agent_core.record.event import Change, build_event_text
+from agent_core.record.release import release_answer
+from agent_core.record.runtime import NO_HOOKS, start_record
+from agent_core.record.state import EMPTY_STATE
 from agent_core.signing import KeyRoutes
-from tests.conftest import HUB_KEY_ID
+from tests.conftest import HUB_KEY_ID, RecordDatabase
+from tests.record_helpers import migrated
 from tests.test_signed_requests import (
     NOW,
     STRANGER_SEED,
@@ -47,6 +56,7 @@ from tests.test_signed_requests import (
     log_lines,  # noqa: F401 - a fixture, used by name
     nonce_rows,
     plain_wire,
+    private,
     public_text,
     send,
 )
@@ -60,11 +70,13 @@ READER_SEED = 21
 QUERY_INVALID = b'{"error":"query_invalid"}'
 
 
-def released_bytes(repository: str, pull_request: int) -> bytes:
+def answer_bytes(repository: str, pull_request: int) -> bytes:
+    """The `200` answer for a pull request that no task links: on the empty record of these tests
+    every valid query gets `task_missing` (RECORD-PROTOCOL.md section 9)."""
     return (
         b'{"repository":"' + repository.encode("ascii") + b'","pull_request":'
         + str(pull_request).encode("ascii")
-        + b',"released":true,"failed":null,"hub_key":"' + HUB_KEY_ID.encode("ascii") + b'"}'
+        + b',"released":false,"failed":"task_missing","hub_key":"' + HUB_KEY_ID.encode("ascii") + b'"}'
     )
 
 
@@ -94,7 +106,8 @@ def clock() -> FixedClock:
 
 
 @pytest.fixture
-def app(cfg: Config, tmp_path: Path, clock: FixedClock) -> Iterator[FastAPI]:
+def app(cfg: Config, tmp_path: Path, clock: FixedClock, record_db: RecordDatabase) -> Iterator[FastAPI]:
+    migrated(record_db)
     teams = tmp_path / "release-teams.yaml"
     teams.write_text(
         yaml.safe_dump({"teams": {"example": {"members": ["staff-a", "staff-b"]}}}),
@@ -109,9 +122,23 @@ def app(cfg: Config, tmp_path: Path, clock: FixedClock) -> Iterator[FastAPI]:
         keys_path=keys,
         database=str(tmp_path / "release.sqlite"),
     )
+    record = partial(
+        start_record,
+        {"AGENT_CORE_RECORD_DATABASE": record_db.writer_url},
+        monotonic=time.monotonic,
+        pool_size=2,
+        poll_seconds=None,
+        hooks=NO_HOOKS,
+    )
     store = Store(app_cfg.database)
     try:
-        yield create_app(app_cfg, github=FakeGitHub({"code-staff-a": "staff-a"}), store=store, clock=clock)
+        made = create_app(
+            app_cfg, github=FakeGitHub({"code-staff-a": "staff-a"}), store=store, clock=clock, record=record
+        )
+        try:
+            yield made
+        finally:
+            made.state.record.stop()
     finally:
         store.close()
 
@@ -141,7 +168,7 @@ def test_service_key_with_scope_and_subject_gets_a_signed_200(app: FastAPI) -> N
     wire = guard(VALID)
     answer = send(app, wire)
     assert_signed(wire, answer, 200, NOW)
-    assert answer.body == released_bytes(REPO, 42)
+    assert answer.body == answer_bytes(REPO, 42)
     assert answer.header("content-type") == "application/json"
     assert list(answer.json()) == ["repository", "pull_request", "released", "failed", "hub_key"]
 
@@ -161,7 +188,7 @@ def test_encoded_slash_and_both_orders_are_answered_with_a_slash(app: FastAPI, q
     wire = guard(f"{RELEASE}?{query}")
     answer = send(app, wire)
     assert_signed(wire, answer, 200, NOW)
-    assert answer.body == released_bytes(REPO, 42)
+    assert answer.body == answer_bytes(REPO, 42)
 
 
 @pytest.mark.parametrize("number", [1, 9, 10, PULL_REQUEST_MAX])
@@ -169,7 +196,7 @@ def test_pull_request_bounds_are_accepted(app: FastAPI, number: int) -> None:
     wire = guard(f"{RELEASE}?{REPO_QUERY}&pull_request={number}")
     answer = send(app, wire)
     assert_signed(wire, answer, 200, NOW)
-    assert answer.body == released_bytes(REPO, number)
+    assert answer.body == answer_bytes(REPO, number)
 
 
 # Invalid queries: a signed 400 query_invalid
@@ -389,7 +416,7 @@ def test_check_8_replayed_query_is_refused(app: FastAPI, target: str) -> None:
     first = send(app, wire)
     assert_signed(wire, first, 200, NOW)
     if target == VALID:
-        assert first.body == released_bytes(REPO, 42)
+        assert first.body == answer_bytes(REPO, 42)
     assert_unsigned_error(send(app, wire), 401, "nonce_replayed")
     assert nonce_rows(app) == 1
 
@@ -418,7 +445,7 @@ def test_one_log_line_per_service_request_without_the_query(
     ]
     answers = [send(app, wire) for wire in sent]
     assert_signed(sent[0], answers[0], 200, NOW)
-    assert answers[0].body == released_bytes(REPO, 42)
+    assert answers[0].body == answer_bytes(REPO, 42)
     assert_signed_error(sent[1], answers[1], 400, "query_invalid")
     assert_signed_error(sent[2], answers[2], 403, "subject_not_allowed")
     assert_signed_error(sent[3], answers[3], 403, "scope_missing")
@@ -437,17 +464,38 @@ def test_one_log_line_per_service_request_without_the_query(
         assert "pull_request" not in line
 
 
-# The computation of the answer is one replaceable function
+# The answer is computed from the record (RECORD-PROTOCOL.md section 9)
 
 
-def test_route_uses_release_answer(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
-    asked: list[tuple[str, int]] = []
-
-    def not_ready(repository: str, pull_request: int) -> tuple[bool, str | None]:
-        asked.append((repository, pull_request))
-        return False, "task_not_ready"
-
-    monkeypatch.setattr(app_module, "release_answer", not_ready)
+def test_route_computes_the_answer_from_the_record(app: FastAPI) -> None:
+    # agent-two holds `record:write` (tests/test_signed_requests.py). Its task links pull request 42
+    # and is open without an assignee, so the answer is `task_not_ready`.
+    text = build_event_text(
+        event_id="0b6f3c1e-8d2a-4c1b-9f3e-2a7d5c9e1f40",
+        object_type="task",
+        object_id="5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        actor_key_id="agent-two",
+        signed_at=NOW,
+        prev_hash="-",
+        changes=[
+            Change("kind", None, b"work"),
+            Change("links", None, b"example-org/example-repo#42"),
+            Change("team", None, b"example"),
+            Change("title", None, b"Fix login"),
+        ],
+    )
+    signature = private(2).sign(text)
+    payload = json.dumps(
+        {"event": b64(text), "signature": b64(signature)}, separators=(",", ":")
+    ).encode("ascii")
+    post = build_wire(
+        "agent-two",
+        method="POST",
+        target="/api/key/record/events",
+        body=payload,
+        extra_headers=((b"content-type", b"application/json"),),
+    )
+    assert_signed(post, send(app, post), 201, NOW)
     wire = guard(VALID)
     answer = send(app, wire)
     assert_signed(wire, answer, 200, NOW)
@@ -455,13 +503,16 @@ def test_route_uses_release_answer(app: FastAPI, monkeypatch: pytest.MonkeyPatch
         b'{"repository":"example-org/example-repo","pull_request":42,"released":false,'
         b'"failed":"task_not_ready","hub_key":"' + HUB_KEY_ID.encode("ascii") + b'"}'
     )
-    assert asked == [(REPO, 42)]
 
 
 def test_inconsistent_answer_gives_a_signed_500(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module, "release_answer", lambda _repository, _number: (True, "task_missing"))
+    monkeypatch.setattr(app_module, "release_answer", lambda _state, _repository, _number: (True, "task_missing"))
     wire = guard(VALID)
     assert_signed_error(wire, send(app, wire), 500, "internal")
+
+
+def b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
 # The pure functions, directly
@@ -493,8 +544,8 @@ def test_parse_release_query_refuses_a_number_with_many_digits() -> None:
 
 
 @pytest.mark.parametrize(("repository", "number"), [(REPO, 1), ("other-org/other-repo", PULL_REQUEST_MAX)])
-def test_release_answer_is_yes_until_the_task_record_exists(repository: str, number: int) -> None:
-    assert release_answer(repository, number) == (True, None)
+def test_release_answer_of_an_empty_record_is_task_missing(repository: str, number: int) -> None:
+    assert release_answer(EMPTY_STATE, repository, number) == (False, "task_missing")
 
 
 def test_release_body_released() -> None:
