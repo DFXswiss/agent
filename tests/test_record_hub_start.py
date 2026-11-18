@@ -18,10 +18,27 @@ import pytest
 from psycopg import sql
 
 import agent_core.__main__ as hub_main
+from agent_core.app import create_app
 from agent_core.config import Config
+from agent_core.db import Store
+from agent_core.github import FakeGitHub
+from agent_core.record import commands
 from agent_core.record import connection as connection_module
 from agent_core.record.runtime import RecordStartFailed
-from tests.conftest import RecordDatabase
+from agent_core.signing import HubSigner
+from tests import record_helpers as stored
+from tests.conftest import (
+    DATABASES_LOCK,
+    HUB_KEY_ID,
+    IDENTIFIER_LOCK,
+    RecordDatabase,
+    admin_params,
+    advisory_lock,
+    create_roles_and_database,
+    drop_roles_and_database,
+    idle_record,
+    record_database_for,
+)
 from tests.record_helpers import closed_port, migrated, silent_listener, tamper, unreachable_url
 from tests.record_hub_helpers import ALICE, Points, new_id, start_hub, task_create
 from tests.test_record_storage import WIDER_RIGHTS, as_superuser
@@ -242,15 +259,36 @@ def test_a_schema_other_than_version_1_fails_step_schema(
 
 # --- writer -----------------------------------------------------------------------------------------
 
+# Section 11.4 runs step `schema` before step `writer` and stops at the first failure. Row-level
+# security enabled on `record.schema_version` without a policy hides its row from the writer (the
+# writer does not own the table), so its start ends at step `schema` with a missing version. To
+# reach step `writer`, the case of the start adds a policy that lets the writer read the row; step
+# `writer` then refuses both the row-level security and the policy.
+RLS_ON_SCHEMA_VERSION = "row-level security enabled on record.schema_version"
+READABLE_VERSION_POLICY = "CREATE POLICY t_version ON record.schema_version FOR SELECT TO {writer} USING (true)"
+START_WIDER_RIGHTS: dict[str, list[str]] = {
+    **WIDER_RIGHTS,
+    RLS_ON_SCHEMA_VERSION: [*WIDER_RIGHTS[RLS_ON_SCHEMA_VERSION], READABLE_VERSION_POLICY],
+}
 
-@pytest.mark.parametrize("case", sorted(WIDER_RIGHTS))
+
+@pytest.mark.parametrize("case", sorted(START_WIDER_RIGHTS))
 def test_a_writer_with_a_right_beyond_section_11_2_fails_step_writer(
     record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str], case: str  # noqa: F811
 ) -> None:
     migrated(record_db)
-    as_superuser(record_db, WIDER_RIGHTS[case])
+    as_superuser(record_db, START_WIDER_RIGHTS[case])
     assert failed_start(record_db, cfg, tmp_path) == "writer"
     assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+def test_row_level_security_on_schema_version_without_a_policy_fails_step_schema_first(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    migrated(record_db)
+    as_superuser(record_db, WIDER_RIGHTS[RLS_ON_SCHEMA_VERSION])
+    assert failed_start(record_db, cfg, tmp_path) == "schema"
+    assert record_lines(log_lines) == ["ERROR record start failed schema"]
 
 
 def test_a_second_user_database_on_the_server_fails_step_writer(
@@ -266,6 +304,96 @@ def test_a_second_user_database_on_the_server_fails_step_writer(
         with psycopg.connect(**record_db.admin_params, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(other)))
     assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+# --- the identifier test (sections 14 and 15) ---------------------------------------------------------
+
+
+def test_the_hub_starts_and_serves_with_role_and_database_names_that_are_sql_keywords(
+    cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    # The owner role `grant`, the writer role `select` and the database `order`: every statement of
+    # the start (steps `schema`, `writer` and `verify`), of an append, of a checkpoint attempt and of
+    # a verification on request takes the names as identifiers of the driver or as values.
+    params = admin_params()
+    with advisory_lock(params, IDENTIFIER_LOCK), advisory_lock(params, DATABASES_LOCK):
+        db = record_database_for(params, "order", "grant", "select")
+        with psycopg.connect(**params, autocommit=True) as admin:
+            drop_roles_and_database(admin, db.name, (db.writer_role, db.owner_role))
+            create_roles_and_database(
+                admin, db.name, (db.owner_role, db.owner_password), (db.writer_role, db.writer_password)
+            )
+        try:
+            migrated(db)
+            hub = start_hub(db, cfg, tmp_path)
+            try:
+                assert record_lines(log_lines) == ["INFO record verified 0 -"]
+                written = hub.write(ALICE, "task", new_id(), task_create())
+                log_lines.clear()
+                hub.runtime.checkpoint()
+                assert record_lines(log_lines) == [f"INFO record checkpoint 1 {written['record_hash']}"]
+                verified = hub.signed(ALICE, "/api/key/record/verify", 200).json()
+                assert (verified["verified"], verified["position"]) == (True, 1)
+            finally:
+                hub.close()
+            log_lines.clear()
+            start_hub(db, cfg, tmp_path, name="again").close()
+            assert record_lines(log_lines) == [f"INFO record verified 1 {written['record_hash']}"]
+        finally:
+            with psycopg.connect(**params, autocommit=True) as admin:
+                drop_roles_and_database(admin, db.name, (db.writer_role, db.owner_role))
+
+
+# --- restore and a hub with its own hub key id (section 12.4) -----------------------------------------
+
+
+def test_a_hub_with_its_own_hub_key_id_and_seed_starts_on_a_restored_record_and_serves(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    key_files = stored.write_key_files(tmp_path)
+    keys, teams = key_files
+    record = stored.PureRecord(stored.load_ring(*key_files))
+    record.story()  # three events and the checkpoint of hub-1 at their head
+    head = record.events[-1]
+    export = tmp_path / "export.jsonl"
+    export.write_bytes(record.export())
+    migrated(record_db)
+    environ = {
+        "AGENT_CORE_RECORD_DATABASE": record_db.writer_url,
+        "AGENT_CORE_KEYS": str(keys),
+        "AGENT_CORE_TEAMS": str(teams),
+    }
+    arguments = ["--in", str(export), "--hub-key", stored.hub_key_argument(stored.HUB_SIGNER)]
+    assert commands.run_restore(arguments, environ, lambda: stored.T0) == (
+        f"restored {head.position} {head.record_hash}",
+        0,
+    )
+    # The restored record carries checkpoints of hub-1; the hub that starts on it has its own hub
+    # key id and its own seed.
+    own = HubSigner.from_seed_hex(cfg.hub_key_id, cfg.signing_key)
+    assert own.key_id == HUB_KEY_ID != stored.HUB
+    assert own.public_key != stored.HUB_SIGNER.public_key
+    log_lines.clear()
+    hub = start_hub(
+        record_db, cfg, tmp_path, keys_and_teams=key_files, seeds={stored.ALICE: stored.SEEDS[stored.ALICE]}
+    )
+    try:
+        # Of the checkpoint of hub-1 the start checks only the form; the record verifies.
+        assert record_lines(log_lines) == [f"INFO record verified {head.position} {head.record_hash}"]
+        listed = hub.signed(stored.ALICE, "/api/key/record/checkpoints", 200).json()["checkpoints"]
+        assert [(entry["position"], entry["signed_by"]) for entry in listed] == [(head.position, stored.HUB)]
+        log_lines.clear()
+        hub.runtime.checkpoint()
+        assert record_lines(log_lines) == [f"INFO record checkpoint {head.position} {head.record_hash}"]
+        assert hub.signed(stored.ALICE, "/api/key/record/verify", 200).json() == {
+            "verified": True,
+            "position": head.position,
+            "record_hash": head.record_hash,
+            "failure": None,
+            "hub_key": HUB_KEY_ID,
+        }
+    finally:
+        hub.close()
 
 
 # --- verify -----------------------------------------------------------------------------------------
@@ -390,3 +518,29 @@ def test_main_does_not_run_the_hub_when_the_record_start_fails(
     assert exited.value.code == 1
     assert ran == []
     assert record_lines(log_lines) == ["ERROR record start failed config"]
+
+
+def test_the_hub_signer_of_the_answers_and_checkpoints_refuses_a_bad_key_id_and_a_bad_seed() -> None:
+    with pytest.raises(ValueError):
+        HubSigner.from_seed_hex("Hub-1", "61" * 32)
+    with pytest.raises(ValueError):
+        HubSigner.from_seed_hex("hub-1", "61" * 31)
+    assert HubSigner.from_seed_hex("hub-1", "61" * 32).key_id == "hub-1"
+
+
+def test_create_app_leaves_a_store_it_was_given_open_when_the_hub_cannot_be_built(
+    cfg: Config, tmp_path: Path
+) -> None:
+    store = Store(str(tmp_path / "given.sqlite"))
+
+    def no_tokens() -> list[tuple[str, str]]:
+        raise RuntimeError("the store cannot be read")
+
+    store.all_oauth_tokens = no_tokens  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError):
+            create_app(cfg, github=FakeGitHub({}), store=store, record=idle_record)
+        # The caller owns the store it gave: it is still open.
+        assert store.query_one("SELECT 1 AS n") is not None
+    finally:
+        store.close()

@@ -15,13 +15,17 @@ import threading
 from pathlib import Path
 from typing import Any, Iterator
 
+import psycopg
 import pytest
+import yaml
 from psycopg import sql
 
 from agent_core.config import Config
+from agent_core.record import commands
 from agent_core.record.checkpoint import Checkpoint
-from agent_core.record.event import event_hash, record_hash
-from tests.conftest import HUB_KEY_ID, RecordDatabase
+from agent_core.record.event import event_hash, parse_event, record_hash
+from agent_core.signing import HubSigner
+from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX, RecordDatabase, recreate_database
 from tests.record_helpers import (
     Parallel,
     insert_as_superuser,
@@ -48,6 +52,7 @@ from tests.record_hub_helpers import (
     TEAM,
     WATCHER,
     Hub,
+    Points,
     append_body,
     b64,
     error,
@@ -1295,3 +1300,379 @@ def test_a_kept_received_at_refuses_a_key_revoked_before_it_with_key_not_valid_a
         assert answer.json()["received_at"] == fmt(NOW + 60)
     finally:
         made.close()
+
+
+# --- the hub never connects with the owner role (section 14) ------------------------------------------
+
+
+def test_the_hub_never_connects_with_the_owner_role(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A start, every endpoint and a checkpoint attempt: every session the hub opens on the real
+    server is a session of the writer role. The role of a session is the one the server reports
+    when the session starts (`session_authorization`); the pool is emptied before every step, so
+    that each step opens a session of its own."""
+    migrated(record_db)
+    real_connect = psycopg.connect
+    sessions: list[tuple[Any, Any]] = []
+
+    def observed(*args: Any, **kwargs: Any) -> Any:
+        connection = real_connect(*args, **kwargs)
+        sessions.append((kwargs.get("user"), connection.info.parameter_status("session_authorization")))
+        return connection
+
+    monkeypatch.setattr(psycopg, "connect", observed)
+    made = start_hub(record_db, cfg, tmp_path)
+    work = new_id()
+    release_target = f"{RELEASE}?repository={REPO.replace('/', '%2F')}&pull_request=42"
+    steps = [
+        lambda: made.write(ALICE, "task", work, [*task_create(), ("links", None, LINK)]),
+        lambda: made.write(WATCHER, "task", work, [("status", "open", "done")], WATCH),
+        lambda: made.signed(ALICE, f"{EVENTS}?after=0", 200),
+        lambda: made.signed(ALICE, f"{OBJECT}?id={work}", 200),
+        lambda: made.signed(ALICE, TASKS, 200),
+        lambda: made.signed(ALICE, f"{COMMENTS}?task={work}", 200),
+        lambda: made.signed(ALICE, HEAD, 200),
+        lambda: made.signed(ALICE, VERIFY, 200),
+        lambda: made.signed(ALICE, CHECKPOINTS, 200),
+        lambda: made.signed(GUARD, release_target, 200),
+        made.runtime.checkpoint,
+    ]
+    try:
+        for step in steps:
+            made.runtime.pool.close()
+            step()
+    finally:
+        made.close()
+    assert len(sessions) == 1 + len(steps)
+    assert set(sessions) == {(record_db.writer_role, record_db.writer_role)}
+    assert record_db.owner_role != record_db.writer_role
+
+
+# --- visibility: a changed handle and the `prev_hash` exception (sections 3 and 7.5) ------------------
+
+
+def test_after_a_restart_with_a_changed_handle_the_stamps_show_the_new_handle_and_the_same_key(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path
+) -> None:
+    migrated(record_db)
+    work = new_id()
+    first = start_hub(record_db, cfg, tmp_path, name="first")
+    try:
+        first.write(ALICE, "task", work, task_create())
+        first.write(ALICE, "task", work, [("title", "Fix login", "Fix it")])
+        before = task_body(first, work)
+    finally:
+        first.close()
+    assert (before["created"]["handle"], before["changed"]["handle"]) == ("alice", "alice")
+    renamed = tmp_path / "renamed"
+    renamed.mkdir()
+    entries = key_entries()
+    for entry in entries:
+        if entry["id"] == ALICE:
+            entry["handle"] = "alicia"
+    keys = renamed / "keys.yaml"
+    keys.write_text(yaml.safe_dump({"keys": entries}, sort_keys=False), encoding="utf-8")
+    teams = renamed / "teams.yaml"
+    teams.write_text(
+        yaml.safe_dump({"teams": {TEAM: {"members": ["alicia", "bob", "carol"]}, OTHER_TEAM: {"members": ["dave"]}}}),
+        encoding="utf-8",
+    )
+    second = start_hub(record_db, cfg, renamed, keys_and_teams=(keys, teams), name="second")
+    try:
+        after = task_body(second, work)
+    finally:
+        second.close()
+    assert after["created"] == {**before["created"], "handle": "alicia"}
+    assert after["changed"] == {**before["changed"], "handle": "alicia"}
+    assert (after["created"]["key"], after["changed"]["key"]) == (ALICE, ALICE)
+
+
+def test_the_prev_hash_exception_a_visible_event_names_the_event_hash_of_a_withheld_one(hub: Hub) -> None:
+    issue_text, issue_signature = hub.event(ALICE, "task", new_id(), security_create("login-bypass"))
+    wire, answer = hub.post(ALICE, EVENTS, issue_text, issue_signature)
+    assert_signed(wire, answer, 201, NOW)
+    withheld = answer.json()
+    work_text, work_signature = hub.event(ALICE, "task", new_id(), task_create())
+    wire, answer = hub.post(ALICE, EVENTS, work_text, work_signature)
+    assert_signed(wire, answer, 201, NOW)
+    visible = answer.json()
+    # bob has no `record:security`: the issue is withheld, the task of his teammate alice is not.
+    page = hub.signed(BOB, f"{EVENTS}?after=0", 200)
+    assert page.body == body(
+        {
+            "events": [
+                {
+                    "position": 1, "received_at": fmt(NOW), "event_hash": withheld["event_hash"],
+                    "record_hash": withheld["record_hash"], "event": None, "signature": None,
+                },
+                {
+                    "position": 2, "received_at": fmt(NOW), "event_hash": visible["event_hash"],
+                    "record_hash": visible["record_hash"], "event": b64(work_text), "signature": b64(work_signature),
+                },
+            ],
+            "next_after": None,
+            "head": 2,
+            "hub_key": HUB_KEY_ID,
+        }
+    )
+    # The visible event's `prev_hash` is the event hash of the withheld one, which gives no more
+    # than the members of section 7.4.
+    assert parse_event(work_text).prev_hash == withheld["event_hash"]
+    assert list(page.json()["events"][0]) == ["position", "received_at", "event_hash", "record_hash", "event", "signature"]
+
+
+# --- one snapshot (section 12.1) ------------------------------------------------------------------------
+
+
+def own_hub_key() -> str:
+    """`ID=PUBLIC_KEY` of the hub of these tests (section 12.3)."""
+    signer = HubSigner.from_seed_hex(HUB_KEY_ID, HUB_SEED_HEX)
+    return f"{signer.key_id}={signer.public_key_text}"
+
+
+def test_one_snapshot_in_the_verification_on_request_at_start_and_in_export(
+    record_db: RecordDatabase,
+    cfg: Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],  # noqa: F811
+) -> None:
+    migrated(record_db)
+    first = start_hub(record_db, cfg, tmp_path, name="first")
+    second = start_hub(record_db, cfg, tmp_path, name="second")
+    work = new_id()
+    late: list[dict[str, Any]] = []
+
+    def append_and_checkpoint() -> None:
+        # Another process appends an event through its endpoint and writes the checkpoint of the new
+        # head; both commit between the read of the events and the read of the checkpoints.
+        late.append(second.write(BOB, "comment", new_id(), [("body", None, "Late"), ("task", None, work)]))
+        second.clock.now += 3600
+        second.runtime.checkpoint()
+
+    out = tmp_path / "export.jsonl"
+    try:
+        earlier = first.write(ALICE, "task", work, task_create())
+        # The verification on request answers the head before the concurrent append.
+        first.points.snapshot_between_reads = append_and_checkpoint
+        assert first.signed(ALICE, VERIFY, 200).body == body(
+            {"verified": True, "position": 1, "record_hash": earlier["record_hash"], "failure": None, "hub_key": HUB_KEY_ID}
+        )
+        first.points.snapshot_between_reads = lambda: None
+        assert [item["position"] for item in late] == [2]
+        # The verification at start verifies and builds the state of the head before it.
+        points = Points()
+        points.snapshot_between_reads = append_and_checkpoint
+        log_lines.clear()
+        third = start_hub(record_db, cfg, tmp_path, name="third", points=points)
+        try:
+            started = [line for line in record_part(log_lines) if " record verified " in line]
+            assert started == [f"INFO record verified 2 {late[0]['record_hash']}"]
+            points.snapshot_between_reads = lambda: None
+            head = third.runtime.memory.head()
+            assert head is not None and head.position == 2
+            assert third.signed(ALICE, HEAD, 200).json()["position"] == 3
+        finally:
+            third.close()
+        assert [item["position"] for item in late] == [2, 3]
+        # `export` writes the head before the concurrent append, and its header matches its last
+        # event line.
+        original = commands.read_snapshot
+        monkeypatch.setattr(commands, "read_snapshot", lambda reader: original(reader, append_and_checkpoint))
+        exported = commands.run_export(["--out", str(out)], {"AGENT_CORE_RECORD_DATABASE": record_db.writer_url}, lambda: NOW)
+        monkeypatch.setattr(commands, "read_snapshot", original)
+        assert exported == (f"exported 3 {late[1]['record_hash']}", 0)
+        assert [item["position"] for item in late] == [2, 3, 4]
+    finally:
+        first.close()
+        second.close()
+    lines = [json.loads(line) for line in out.read_bytes().splitlines()]
+    event_lines = [line for line in lines[1:] if line["type"] == "event"]
+    assert (lines[0]["position"], lines[0]["record_hash"]) == (event_lines[-1]["position"], event_lines[-1]["record_hash"])
+    assert [line["position"] for line in lines[1:] if line["type"] == "checkpoint"] == [2, 3]
+    keys, teams = tmp_path / "hub-keys.yaml", tmp_path / "hub-teams.yaml"
+    verify_arguments = ["--keys", str(keys), "--teams", str(teams), "--in", str(out), "--hub-key", own_hub_key()]
+    assert commands.run_verify(verify_arguments, {}) == (f"verified 3 {late[1]['record_hash']}", 0)
+    recreate_database(record_db)
+    migrated(record_db)
+    environ = {
+        "AGENT_CORE_RECORD_DATABASE": record_db.writer_url,
+        "AGENT_CORE_KEYS": str(keys),
+        "AGENT_CORE_TEAMS": str(teams),
+    }
+    restored = commands.run_restore(["--in", str(out), "--hub-key", own_hub_key()], environ, lambda: NOW)
+    assert restored == (f"restored 3 {late[1]['record_hash']}", 0)
+
+
+# --- removal and replacement at the end of the record (section 12.1) ----------------------------------
+
+
+def test_a_removal_at_the_end_fails_the_verification_on_request_and_the_periodic_run_with_position_gap(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    other = start_hub(record_db, cfg, tmp_path, name="other")
+    try:
+        for index in range(2):
+            hub.write(ALICE, "task", new_id(), task_create(f"Task {index}"))
+        hub.runtime.checkpoint()
+        for index in range(2, 4):
+            hub.write(ALICE, "task", new_id(), task_create(f"Task {index}"))
+        hub.clock.now += 3600
+        hub.runtime.checkpoint()
+        assert other.signed(ALICE, HEAD, 200).json()["position"] == 4
+        # The last two events and every checkpoint that names them are removed.
+        tamper(record_db, "record.event", "DELETE FROM record.event WHERE position >= 3")
+        tamper(record_db, "record.checkpoint", "DELETE FROM record.checkpoint WHERE position >= 3")
+        assert hub.signed(ALICE, VERIFY, 200).body == body(
+            {"verified": False, "position": 3, "record_hash": None, "failure": "position_gap", "hub_key": HUB_KEY_ID}
+        )
+        other.monotonic.now += 600
+        log_lines.clear()
+        other.runtime.periodic()
+        assert record_part(log_lines) == ["ERROR record verify failed 3 position_gap"]
+        assert other.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
+    finally:
+        other.close()
+
+
+def test_the_end_replaced_by_other_valid_events_fails_record_hash_mismatch_and_a_new_hub_serves(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    other = start_hub(record_db, cfg, tmp_path, name="other")
+    try:
+        written = [hub.write(ALICE, "task", new_id(), task_create(f"Task {index}")) for index in range(4)]
+        hub.runtime.checkpoint()
+        assert other.signed(ALICE, HEAD, 200).json()["position"] == 4
+        tamper(record_db, "record.event", "DELETE FROM record.event WHERE position >= 3")
+        tamper(record_db, "record.checkpoint", "DELETE FROM record.checkpoint WHERE position >= 3")
+        # Two other events, validly signed and chained, take positions 3 and 4.
+        third_text, third_signature = hub.event(BOB, "task", new_id(), task_create("Other three"))
+        fourth_text, fourth_signature = hub.event(
+            BOB, "task", new_id(), task_create("Other four"), prev_hash=event_hash(third_text)
+        )
+        third = stored_event(3, NOW, third_text, third_signature, written[1]["record_hash"])
+        fourth = stored_event(4, NOW, fourth_text, fourth_signature, third.record_hash)
+        insert_as_superuser(record_db, third)
+        insert_as_superuser(record_db, fourth)
+        assert fourth.record_hash != written[3]["record_hash"]
+        assert hub.signed(ALICE, VERIFY, 200).body == body(
+            {"verified": False, "position": 4, "record_hash": None, "failure": "record_hash_mismatch", "hub_key": HUB_KEY_ID}
+        )
+        other.monotonic.now += 600
+        log_lines.clear()
+        other.runtime.periodic()
+        assert record_part(log_lines) == ["ERROR record verify failed 4 record_hash_mismatch"]
+    finally:
+        other.close()
+    log_lines.clear()
+    fresh = start_hub(record_db, cfg, tmp_path, name="fresh")
+    try:
+        assert record_part(log_lines) == [f"INFO record verified 4 {fourth.record_hash}"]
+        assert fresh.signed(BOB, HEAD, 200).json()["position"] == 4
+    finally:
+        fresh.close()
+
+
+# --- checkpoints: a pause across three full hours, byte order in `en_US` (sections 7.10 and 12.2) -----
+
+
+def test_after_a_pause_across_three_full_hours_one_attempt_writes_one_checkpoint_at_its_time(
+    hub: Hub, log_lines: list[str]  # noqa: F811
+) -> None:
+    hub.write(ALICE, "task", new_id(), task_create())
+    hub.runtime.checkpoint()
+    second = hub.write(ALICE, "task", new_id(), task_create())
+    # Paused across three full hours, and resumed 30 minutes after the last of them.
+    hub.clock.now += 3 * 3600 + 1800
+    taken = hub.runtime.pool.taken
+    log_lines.clear()
+    hub.runtime.checkpoint()
+    assert hub.runtime.pool.taken == taken + 1
+    assert record_part(log_lines) == [f"INFO record checkpoint 2 {second['record_hash']}"]
+    hub.runtime.checkpoint()
+    assert hub.runtime.pool.taken == taken + 1
+    page = hub.signed(ALICE, CHECKPOINTS, 200).json()
+    assert [(entry["position"], entry["published_at"]) for entry in page["checkpoints"]] == [
+        (2, fmt(hub.clock.now)),
+        (1, fmt(NOW)),
+    ]
+
+
+def test_the_checkpoint_list_pages_in_byte_order_in_a_database_with_the_collation_en_us(
+    record_db_en_us: RecordDatabase, cfg: Config, tmp_path: Path
+) -> None:
+    db = record_db_en_us
+    migrated(db)
+    with db.admin() as admin:
+        # The collation of the database orders `hub1` before `hub-2`; byte order does the opposite.
+        assert admin.execute("SELECT 'hub1' < 'hub-2', 'hub-2' < 'hub1' COLLATE \"C\"").fetchone() == (True, True)
+    made = start_hub(db, cfg, tmp_path)
+    try:
+        written = [made.write(ALICE, "task", new_id(), task_create()) for _ in range(2)]
+        for position, item in enumerate(written, start=1):
+            for hub_key_id in ("hub-2", "hub1"):
+                insert_checkpoint(db, Checkpoint(hub_key_id, position, item["record_hash"], NOW, bytes(64)))
+        seen = []
+        target = f"{CHECKPOINTS}?limit=1"
+        while True:
+            page = made.signed(ALICE, target, 200).json()
+            seen += [(entry["position"], entry["signed_by"]) for entry in page["checkpoints"]]
+            if page["next_before"] is None:
+                break
+            target = f"{CHECKPOINTS}?limit=1&before={page['next_before']}&before_key={page['next_before_key']}"
+    finally:
+        made.close()
+    assert seen == [(2, "hub1"), (2, "hub-2"), (1, "hub1"), (1, "hub-2")]
+
+
+# --- the largest valid `limit` (sections 7.4, 7.6, 7.7 and 7.10) ----------------------------------------
+
+
+def test_the_largest_limit_of_each_list_is_valid(hub: Hub) -> None:
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    hub.write(ALICE, "comment", new_id(), [("body", None, "Seen"), ("task", None, work)])
+    hub.runtime.checkpoint()
+    for target, member, cursor in (
+        (f"{EVENTS}?limit=100", "events", "next_after"),
+        (f"{TASKS}?limit=200", "tasks", "next_before"),
+        (f"{COMMENTS}?task={work}&limit=200", "comments", "next_before"),
+        (f"{CHECKPOINTS}?limit=200", "checkpoints", "next_before"),
+    ):
+        page = hub.signed(ALICE, target, 200).json()
+        assert len(page[member]) >= 1 and page[cursor] is None, target
+
+
+# --- the periodic verification of a sound record (section 12.1) --------------------------------------
+
+
+def test_a_sound_periodic_run_logs_nothing_and_a_run_longer_than_10_minutes_is_followed_at_once(
+    hub: Hub, log_lines: list[str]  # noqa: F811
+) -> None:
+    hub.write(ALICE, "task", new_id(), task_create())
+    runs: list[float] = []
+
+    def long_run() -> None:
+        runs.append(hub.monotonic.now)
+        hub.monotonic.now += 700
+
+    hub.points.snapshot_between_reads = long_run
+    hub.monotonic.now += 600
+    log_lines.clear()
+    hub.runtime.periodic()
+    assert len(runs) == 1
+    # The run lasted 700 seconds: the next one follows at once, and that one is quick.
+    hub.points.snapshot_between_reads = lambda: runs.append(hub.monotonic.now)
+    hub.runtime.periodic()
+    assert len(runs) == 2
+    hub.monotonic.now += 599
+    hub.runtime.periodic()
+    assert len(runs) == 2
+    hub.monotonic.now += 1
+    hub.runtime.periodic()
+    assert len(runs) == 3
+    assert record_part(log_lines) == []
+    assert not hub.runtime.unverified
+    # Periodic runs do not count for the limit of the verification on request (section 7.9).
+    assert hub.signed(ALICE, VERIFY, 200).json()["verified"] is True
