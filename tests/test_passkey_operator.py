@@ -14,11 +14,15 @@ import pytest
 import yaml
 
 import agent_core.__main__ as hub_main
+import agent_core.record.connection as connection_module
 from agent_core.passkey.encoding import fingerprint
 from agent_core.passkey.operator import USAGE, Streams, run_command
+from agent_core.record.connection import OWNER_VARIABLE, WRITER_VARIABLE
 from tests.passkey_hub import (
     NOW,
     ORIGIN,
+    RECORD_DATABASE_PASSWORD,
+    RECORD_DATABASE_URL,
     HubFactory,
     PasskeyHub,
     fmt,
@@ -37,6 +41,8 @@ def without_keys_invite(hubs: HubFactory) -> list[dict[str, Any]]:  # noqa: F811
 def use_env(monkeypatch: pytest.MonkeyPatch, hub: PasskeyHub) -> None:
     for name, value in hub.env.items():
         monkeypatch.setenv(name, value)
+    # The hub refuses to start when the owner's variable is set (RECORD-PROTOCOL.md section 11.4).
+    monkeypatch.delenv(OWNER_VARIABLE, raising=False)
 
 
 def run(hub: PasskeyHub, args: list[str]) -> tuple[int, str, str]:
@@ -269,6 +275,72 @@ def test_a_teams_file_that_stops_the_hub_exits_1(bootstrap_hub: PasskeyHub, monk
     code, out, err = run(bootstrap_hub, ["invite-list"])
     assert (code, out) == (1, "")
     assert "teams" in err
+
+
+# Step `config` of the record start (RECORD-PROTOCOL.md section 11.4) stops the hub, so it stops
+# both commands; the later steps need a connection and are no rule of the configuration.
+_RECORD_CONFIG_REFUSALS = [
+    pytest.param({WRITER_VARIABLE: None}, f"{WRITER_VARIABLE} is not set", id="writer-missing"),
+    pytest.param({WRITER_VARIABLE: ""}, f"{WRITER_VARIABLE} is not set", id="writer-empty"),
+    pytest.param(
+        {WRITER_VARIABLE: RECORD_DATABASE_URL.replace("localhost", "db.example")},
+        f"{WRITER_VARIABLE} does not have the form of section 15",
+        id="writer-form",
+    ),
+    pytest.param(
+        {OWNER_VARIABLE: RECORD_DATABASE_URL.replace("agent_core_writer", "agent_core_owner")},
+        f"{OWNER_VARIABLE} must not be set in the hub's environment",
+        id="owner-set",
+    ),
+    pytest.param({OWNER_VARIABLE: ""}, f"{OWNER_VARIABLE} must not be set in the hub's environment", id="owner-empty"),
+]
+
+
+@pytest.mark.parametrize("command", [BOOTSTRAP, ["invite-list"]])
+@pytest.mark.parametrize(("changes", "reason"), _RECORD_CONFIG_REFUSALS)
+def test_a_record_configuration_that_stops_the_hub_exits_1_and_writes_nothing(
+    bootstrap_hub: PasskeyHub,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    command: list[str],
+    changes: dict[str, str | None],
+    reason: str,
+) -> None:
+    database = tmp_path / "never.sqlite"
+    monkeypatch.setenv("AGENT_CORE_DATABASE", str(database))
+    for name, value in changes.items():
+        if value is None:
+            monkeypatch.delenv(name)
+        else:
+            monkeypatch.setenv(name, value)
+    code, out, err = run(bootstrap_hub, command)
+    assert (code, out, err) == (1, "", reason + "\n")
+    assert RECORD_DATABASE_PASSWORD not in err
+    assert not database.exists()
+
+
+@pytest.mark.parametrize("command", [BOOTSTRAP, ["invite-list"]])
+def test_a_libpq_below_16_stops_the_commands_as_it_stops_the_hub(
+    bootstrap_hub: PasskeyHub, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: list[str]
+) -> None:
+    database = tmp_path / "never.sqlite"
+    monkeypatch.setenv("AGENT_CORE_DATABASE", str(database))
+    monkeypatch.setattr(connection_module, "libpq_version", lambda: 150007)
+    code, out, err = run(bootstrap_hub, command)
+    assert (code, out, err) == (1, "", "the libpq that psycopg uses is older than version 16\n")
+    assert not database.exists()
+
+
+def test_the_commands_check_the_record_configuration_after_the_keys_file_as_the_hub_start_does(
+    bootstrap_hub: PasskeyHub, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    keys = tmp_path / "broken-keys.yaml"
+    keys.write_text("keys:\n  - id: Broken\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_CORE_KEYS", str(keys))
+    monkeypatch.delenv(WRITER_VARIABLE)
+    code, out, err = run(bootstrap_hub, ["invite-list"])
+    assert (code, out) == (1, "")
+    assert err.startswith("keys entry 0")
 
 
 # --- python -m agent_core ------------------------------------------------------------------------------

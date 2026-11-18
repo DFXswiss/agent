@@ -109,7 +109,7 @@ Terms:
   holds `record:write`.
 - **Watcher**: an actor with principal `service` whose key holds `record:watch` (section 8).
 - **Staff**: an actor with principal `staff`. In this step none exists, because only a session
-  key (section 10) can sign for one, and session keys are not built.
+  key (section 10) can sign for one, and section 10 is not built.
 - **Now**: the hub's clock cut to whole seconds, as in KEY-PROTOCOL.md section 2. During an
   append, the hub reads its clock exactly once, in step 2 of the append transaction (section
   11.5), and fixes `received_at` from that one reading (section 4.6); every check of that append

@@ -50,6 +50,10 @@ FINISH = "/auth/passkey/finish"
 ANONYMOUS_ROUTES = (OPEN, REGISTER, BEGIN, FINISH)
 P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 ISSUE_SECONDS = 43080
+RECORD_DATABASE_PASSWORD = "5e" * 32
+RECORD_DATABASE_URL = (
+    f"postgresql://agent_core_writer:{RECORD_DATABASE_PASSWORD}@localhost/agent_core_record?sslmode=disable"
+)
 
 ROSTER = {
     "teams": {
@@ -449,6 +453,9 @@ class HubFactory:
             "AGENT_CORE_HUB_KEY_ID": HUB_KEY_ID,
             "AGENT_CORE_HOST": "127.0.0.1",
             "AGENT_CORE_PORT": "8787",
+            # Step `config` of the record start (RECORD-PROTOCOL.md section 11.4) checks only the
+            # form; the operator commands never connect with it.
+            "AGENT_CORE_RECORD_DATABASE": RECORD_DATABASE_URL,
         }
         return PasskeyHub(app=app, store=store, clock=self.clock, cfg=cfg, env=env)
 

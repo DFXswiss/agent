@@ -157,9 +157,10 @@ Further rules:
   and is not a login in the `agents` map of that file. The `handle` of a `service` entry need not
   be in `teams.yaml`.
 - Several entries may name the same `device`. Among the `agent` and `service` entries of one
-  handle that are not revoked at start, the pair of `device` and `program` is unique; `program` is required when two such
-  entries share a `device`, except that of the `agent` entries on one `device` one may lack it: that entry is the device
-  key of the device (PASSKEY-PROTOCOL.md section 7.4).
+  handle that are not revoked at start, the pair of `device` and `program` is unique, and when two
+  or more of them share a `device`, each of those carries `program`, except that one `agent` entry
+  among them may lack it when none of them is a `service` entry: that entry is the device key of
+  the device (PASSKEY-PROTOCOL.md section 7.4).
 - An entry is revoked when its `revoked` time is at or before now, and expired when its `expires`
   time is at or before now. A time in the future has no effect yet.
 - The hub reads the keys file once, at start. A change, also a revocation, takes effect with the

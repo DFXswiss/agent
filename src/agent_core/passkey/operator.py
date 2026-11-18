@@ -1,7 +1,8 @@
 """The operator commands `invite-bootstrap` and `invite-list` (PASSKEY-PROTOCOL.md section 5.3).
 
 Both read the same environment variables as the hub and use the same database. When the
-configuration, the teams file or the keys file breaks a rule that stops the hub at start, either
+configuration (also the record's variables of step `config` of RECORD-PROTOCOL.md section 11.4),
+the teams file or the keys file breaks a rule that stops the hub at start, either
 command prints the reason to standard error, writes nothing and exits with status 1. A first
 argument other than these two, and an unknown or repeated option, is decided in
 `agent_core.__main__` (`USAGE_ERROR`, status 2) before anything is read.
@@ -10,6 +11,7 @@ argument other than these two, and an unknown or repeated option, is decided in
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import sys
@@ -19,6 +21,7 @@ from typing import Sequence, TextIO
 from ..config import Config, ConfigError
 from ..db import Store
 from ..keys import INVITE_SCOPE, KeyRing, KeysError, load_keys
+from ..record.runtime import RecordConfigError, record_config
 from ..signing import Clock, format_time
 from ..teams import Roster, TeamsError, load_roster
 from .encoding import INVITE_ID_RANDOM_BYTES, INVITE_TOKEN_BYTES, invite_id, invite_token
@@ -38,6 +41,8 @@ _SECONDS_RE = re.compile(r"0|[1-9][0-9]{0,15}")
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
+# What `_hub_inputs` raises when a rule stops the hub at start: status 1 with the reason.
+HUB_START_ERRORS = (ConfigError, TeamsError, KeysError, RecordConfigError)
 
 
 class UsageError(Exception):
@@ -71,11 +76,18 @@ def bootstrap_options(args: Sequence[str]) -> dict[str, str]:
 
 def _hub_inputs(clock: Clock) -> tuple[Config, Roster, KeyRing]:
     """The configuration, the teams file and the keys file, read and checked as at the hub's start
-    (the keys file from `AGENT_CORE_KEYS` now, not the copy a running hub loaded). Raises
-    `ConfigError`, `TeamsError` or `KeysError` with the reason."""
+    and in its order (the keys file from `AGENT_CORE_KEYS` now, not the copy a running hub loaded).
+
+    The checks are the functions the start calls: `Config.from_env` (which also holds the rules of
+    the hub key that `HubSigner.from_seed_hex` repeats), `load_roster`, `load_keys`, and step
+    `config` of the record start (`record_config`, RECORD-PROTOCOL.md section 11.4). The later
+    steps of the record start need a connection to the record database and are no rule of the
+    configuration. Raises `ConfigError`, `TeamsError`, `KeysError` or `RecordConfigError` with the
+    reason."""
     cfg = Config.from_env()
     roster = load_roster(cfg.teams_path)
     keys = load_keys(cfg.keys_path, roster, clock())
+    record_config(os.environ)
     return cfg, roster, keys
 
 
@@ -87,7 +99,7 @@ def run_bootstrap(options: dict[str, str], streams: Streams, clock: Clock) -> in
     """
     try:
         cfg, roster, keys = _hub_inputs(clock)
-    except (ConfigError, TeamsError, KeysError) as exc:
+    except HUB_START_ERRORS as exc:
         print(str(exc), file=streams.err)
         return EXIT_REFUSED
     seconds = options.get("--seconds")
@@ -136,7 +148,7 @@ def run_list(streams: Streams, clock: Clock) -> int:
     database. It is the binding source of the keys-file text (section 5.6)."""
     try:
         cfg, _, _ = _hub_inputs(clock)
-    except (ConfigError, TeamsError, KeysError) as exc:
+    except HUB_START_ERRORS as exc:
         print(str(exc), file=streams.err)
         return EXIT_REFUSED
     store = Store(cfg.database)
