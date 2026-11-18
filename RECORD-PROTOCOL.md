@@ -586,6 +586,43 @@ A status change is valid when one row of this table matches. "Before" is the sta
 event; "after" is the state after it. The column "Who" is an actor rule (section 6.5); every
 other column is a state rule.
 
+**Which state a condition reads.** The column "From" reads the status before the event and the
+column "To" the status after it. A condition of the column "Further condition" that says "before",
+"after", "before and after", "unchanged by the event" or "the event changes" reads what it says.
+Every other condition reads the state before the event, also when the same event changes the field
+it reads: "`links` has a value" (rows 8, 9 and 13), "`links` has no value" (rows 10 and 12) and
+"`links` … equals `completed_links`" (row 10) read `links` and `completed_links` as stored before
+the event. Row 14 sets `completed_links` to the value of `links` before the event; in an event
+that row 14 accepts, that value equals the value after it, because section 6.6 refuses a change of
+`links` from `merged` or `done`. Reading these conditions on the state after the event would
+accept exactly the same events: every row with a condition on `links` leads to `done` or `merged`,
+so an event that changes `links` and matches such a row has the status `done` or `merged` after it
+and is refused by section 6.6 at check 17, under either reading; an event that does not change
+`links` finds the same `links` before and after it, and `completed_links` changes only by row 14,
+which leads to `in_progress`. The two readings differ only in the error value of such a refusal;
+the state before the event is taken, because a condition on the stored object is the natural
+reading of a transition table. Where they differ, the reading before the event gives
+`transition_invalid` when the stored `links` lets no row match, and otherwise the first failing
+rule of section 6.6, at the latest `links_frozen`. The cases, each on a task of kind `work`, by a
+writer through `POST /api/key/record/events`:
+
+- under `completion` `merged`, an event that sets `links` on a task in `open` without `links` and
+  sets `done`: no row matches, `transition_invalid` (with the state after the event, row 8 would
+  match and the answer would be `links_frozen`)
+- under `completion` `merged`, an event that removes `links` from a task in `open` with an
+  assignee and sets `done`: row 8 matches by its state conditions, `links_frozen` (with the state
+  after the event, no row would match and the answer would be `transition_invalid`)
+- under `completion` `merged`, an event that sets `links` on a task in `merged` without `links`
+  and sets `done`: row 12 matches, `links_frozen` (with the state after the event, no row would
+  match and the answer would be `transition_invalid`)
+- on a task in `merged` with `links` under `completion` `verified`, an event that changes
+  `completion` from `verified` to `merged`, removes `links` and sets `done`: row 13 matches,
+  `links_frozen` (with the state after the event, no row would match and the answer would be
+  `transition_invalid`)
+
+The freeze rule of section 6.6 decides whether an event changes `links` against the same state
+before the event. This is decision 101 of section 17.
+
 | # | From | To | Who | Further condition |
 |---|---|---|---|---|
 | 1 | (create) | `open` | writer | none |
@@ -642,7 +679,9 @@ Checked at write time only. Rule 1 is checked at check 12 (c) of section 6.7, be
 that reads the state of a team, so that a create for another team never reaches a check that can
 reveal that team's state (such as `short_name_taken`). The part of rule 3 that limits an event
 through `POST /api/key/record/watch` to the fields `status` and `fix` is also checked at check 12
-(e) of section 6.7, for the same reason. Rules 2 to 6 are checked at check 18 of section 6.7, in
+(e) of section 6.7: checked there, after (a) and (d), which answer a task the watcher does not see
+exactly like a missing one, and before checks 13 to 18, which read further state of the team.
+Rules 2 to 6 are checked at check 18 of section 6.7, in
 this order:
 
 | # | Rule | Status | `error` |
@@ -703,7 +742,7 @@ State rules on the state after the event:
 | In `in_progress` and `ready_for_review`, `assignee` has a value. | 409 | `field_required` |
 | A task of kind `security` in `done` has a value in `fix`. | 409 | `field_required` |
 | `short_name` is unique among the tasks of kind `security` of the same team. | 409 | `short_name_taken` |
-| An event that changes `links` has neither before nor after it the status `merged` or `done`. | 409 | `links_frozen` |
+| An event that changes `links`, that is, whose `new` value of `links` differs from the value of `links` in the state before the event (section 6.4, "Which state a condition reads"), has the status `merged` or `done` neither in the state before the event nor in the state after it. | 409 | `links_frozen` |
 | `task` of a comment names a task. | 404 | `object_not_found` |
 
 ### 6.7 Order of the checks of one event
@@ -726,9 +765,9 @@ failure. Checks 1 to 6 need no lock; checks 7 to 18 run inside the append transa
 | 9 | `prev_hash` is the event hash of the last accepted event of this key, or `-` when there is none. | 409 | `chain_broken` |
 | 10 | `signed_at` is at most 120 seconds after the `received_at` that step 2 of section 11.5 fixed for this append (section 4.6), and not earlier than `signed_at` of the last accepted event of this key. | 400 | `event_time_invalid` |
 | 11 | The actor's key is neither revoked nor expired at `received_at`. | 409 | `key_not_valid_at_receipt` |
-| 12 | The object, in this order: (a) through the watch endpoint, an object that does not exist or is not a task, such as a comment (404 `object_not_found`); (b) a create of a task without a change of `kind`, or a create of a comment without a change of `task` (409 `field_required`); (c) a create of a task with a change of `team` whose new value differs from the actor's `team`, actor rule 1 of section 6.5 (403 `change_not_allowed`); (d) an update of an object the actor does not see, or a create of a comment whose `task` value is not a UUID, names no task or names a task the actor does not see (404 `object_not_found`); (e) through the watch endpoint, an event that names any field other than `status` or `fix`, the field limit of actor rule 3 of section 6.5, checked here before every check that reads the state of the team (403 `change_not_allowed`). | 403 / 404 / 409 | `change_not_allowed` / `object_not_found` / `field_required` |
+| 12 | The object, in this order: (a) through the watch endpoint, an object that does not exist or is not a task, such as a comment (404 `object_not_found`); (b) a create of a task without a change of `kind`, or a create of a comment without a change of `task` (409 `field_required`); (c) a create of a task with a change of `team` whose new value differs from the actor's `team`, actor rule 1 of section 6.5 (403 `change_not_allowed`); (d) an update of an object the actor does not see, or a create of a comment whose `task` value is not a UUID, names no task or names a task the actor does not see (404 `object_not_found`); (e) through the watch endpoint, an event that names any field other than `status` or `fix`, the field limit of actor rule 3 of section 6.5, checked here, after (a) and (d), which answer a task the watcher does not see exactly like a missing one, and before checks 13 to 18, which read further state of the team (403 `change_not_allowed`). | 403 / 404 / 409 | `change_not_allowed` / `object_not_found` / `field_required` |
 | 13 | A create of a task of kind `security` by an actor without `record:security`. | 403 | `scope_missing` |
-| 14 | Every value of a field that the object type of the event has is in the form of that field (section 5). | 400 | `value_invalid` |
+| 14 | Every value of a field that the object type of the event has is in the form of that field (section 5). Both the `old` and the `new` value token of every change are examined; `-` is no value and is not examined. A malformed `old` value is refused here with `value_invalid` and never reaches check 15 (`state_mismatch`). | 400 | `value_invalid` |
 | 15 | Section 6.2. | 409 | `state_mismatch` |
 | 16 | Section 6.3. | 400 / 409 | `field_not_allowed` / `field_immutable` |
 | 17 | Section 6.4 (state conditions) and section 6.6, in the order of their tables. | 404 / 409 | `409` `transition_invalid` for section 6.4; section 6.6 as given there |
@@ -1116,8 +1155,9 @@ hold; the value after each item is the refusal when the earlier checks of sectio
   at check 18)
 - it changes no other field, except `fix` of a task of kind `security`, whose new value is one of
   the task's `links` (otherwise, when it names any field other than `status` or `fix`,
-  `change_not_allowed` at check 12 (e), which runs before every check that reads the state of the
-  team, so that such an event never reaches the uniqueness of `short_name` of check 17 and never
+  `change_not_allowed` at check 12 (e), checked there, after (a) and (d), which answer a task the
+  watcher does not see exactly like a missing one, and before checks 13 to 18, which read further
+  state of the team, so that such an event never reaches the uniqueness of `short_name` of check 17 and never
   learns whether a task the watcher does not see uses a short name; for `fix`, the first refusal
   of section 6.7 that applies: for example `value_invalid` for a malformed value,
   `field_not_allowed` on a task of kind `work`, a state rule of check 17, and otherwise
@@ -1617,7 +1657,7 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `event_signature_invalid` | The signature does not verify. |
 | `event_id_taken` | The `event_id` of the event equals the `event_id` of an event at an earlier position. Two events with the same event text also fail here, because they have the same `event_id`. |
 | `chain_broken` | `prev_hash` is not the event hash of the previous event of the same key in position order, or `-` for its first. |
-| `event_time_invalid` | `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. |
+| `event_time_invalid` | A stored `received_at` cannot be written as a time of section 2, because its year lies outside 0001 to 9999 (the column type `timestamptz` allows such years), so that no record hash can be computed from it; `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. This row is decided after `chain_broken` and before `record_hash_mismatch`, so an event whose `received_at` has no form of section 2 fails here and never reaches `record_hash_mismatch`. |
 | `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6; or, in a verification that a running hub process runs on request or periodically, the record hash at the position of the head of the process's state in memory differs from the record hash of that head. |
 | `event_refused` | The state rules of section 6 refuse the event with any value other than `value_invalid`. |
 | `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
@@ -1864,32 +1904,72 @@ The export file is JSON Lines, UTF-8, one JSON object per line, written without 
    collation of the database:
    `{"type":"checkpoint","position":21,"record_hash":"…","published_at":"…","signed_by":"hub-1","signature":"<base64url>"}`
 
-Every line ends with one `\n`. `verify` and `restore` refuse a file with `failed <position>
-file_invalid` when any of these holds:
+Every line ends with one `\n`. The **writer's form** of a line is exactly the bytes that `export`
+writes for the object the line encodes: `{`, then the members in the order shown above for the
+header, an event line or a checkpoint line, each written as `"<name>":<value>` and joined by `,`,
+then `}`; a string value written as `"`, its characters without any escape, and `"`; a number
+written as its JSON integer literal; `null` written as `null`; no whitespace between tokens and none
+before or after the object. Every value that the forms below allow consists of characters from
+0x21 to 0x7E other than `"` and `\`, so the writer never escapes a character. Whitespace inside a
+JSON string is content of that member: it is judged by the rule for that member's form (item 4 or
+5 below), never by the writer's form. (Of the whitespace characters, only the space may stand
+unescaped inside a JSON string; an unescaped tab inside a string is not valid JSON and breaks item
+3.) Items 4 and 5 judge a string member by its value after JSON
+decoding.
 
-- the file is not valid UTF-8, is empty, does not end with `\n`, or holds an empty line
-- a line is not exactly one JSON object, or an object has a member twice
-- the first line is not a header: an object with exactly the members `format`, `position`,
-  `record_hash` and `exported_at`, where `format` is `agent-record-export-v1`, `position` is a
-  JSON integer literal `0` or a JSON integer literal in the form of a position (section 2),
-  `record_hash` is `null` or 64 lowercase hex characters, and `exported_at` is a time
-- a later line has a `type` other than `event` or `checkpoint`, a missing or unknown member, or a
-  member outside its form: positions as JSON integer literals in the form of a position (section
-  2), so that `1.0`, `1e0`, `-0`, `01`, `0` and a string are refused, times as in section 2, hashes as 64
-  lowercase hex characters, `event` and `signature` as canonical base64url (`signature` of 64
-  bytes), `signed_by` by the `id` rule of KEY-PROTOCOL.md section 3
-- an event line follows a checkpoint line; the checkpoint lines are not in strictly ascending
-  order of hub key id in byte order and then of position, which also refuses the same pair twice
-- the header's `position` and `record_hash` differ from the `position` and `record_hash` of the
-  last event line, or are not `0` and `null` when the file has no event line
-- a checkpoint line follows the header in a file without event lines
+`verify` and `restore` refuse a file with `failed <position> file_invalid` when any of these
+holds. The items are checked in the order of this list:
 
-`<position>` is `0` when the fault is in the whole file (it is not valid UTF-8, is empty or does
-not end with `\n`; an empty line is a fault of a line), in the header, or in the header's
-agreement with the other lines (the last two items of the list); for every other fault it is the
-number of event lines before the faulty line plus 1. When a file has several faults, the first
-item of the list that the file breaks decides, and within that item the first faulty line of the
-file.
+1. the file is not valid UTF-8, is empty, or does not end with `\n`
+2. a line is empty
+3. a line is not one JSON text (RFC 8259) whose value is an object, or an object has a member
+   twice; whitespace before, after or between the tokens of a line does not break this item
+   (item 6 refuses it)
+4. the first line is not a header: an object with exactly the members `format`, `position`,
+   `record_hash` and `exported_at`, where `format` is `agent-record-export-v1`, `position` is a
+   JSON integer literal `0` or a JSON integer literal in the form of a position (section 2),
+   `record_hash` is `null` or 64 lowercase hex characters, and `exported_at` is a time
+5. a line after the first has a `type` other than `event` or `checkpoint`, a missing or unknown
+   member, or a member outside its form: positions as JSON integer literals in the form of a
+   position (section 2), so that `1.0`, `1e0`, `-0`, `01`, `0` and a string are refused, times as
+   in section 2, hashes as 64 lowercase hex characters, `event` and `signature` as canonical
+   base64url (`signature` of 64 bytes), `signed_by` by the `id` rule of KEY-PROTOCOL.md section 3
+6. the bytes of a line differ from the writer's form of the object it encodes (above), for
+   example by whitespace between tokens or before or after the object, by members in another
+   order, or by a character written as an escape; every line that reaches this item passed items
+   3 to 5, so the object it encodes has exactly the members of a header, an event line or a
+   checkpoint line, each in its form, and its writer's form is defined
+7. an event line follows a checkpoint line; the checkpoint lines are not in strictly ascending
+   order of hub key id in byte order and then of position, which also refuses the same pair twice
+8. the header's `position` and `record_hash` differ from the `position` and `record_hash` of the
+   last event line, or are not `0` and `null` when the file has no event line
+9. a checkpoint line follows the header in a file without event lines
+
+For counting positions, an **event line** is a line after the first that is one JSON text whose
+value is an object with exactly one member `type`, and the value of that member is the string
+`event`; whitespace and the other members of the line do not matter for this. Every other line,
+also the first line, an empty line, a line that is not JSON and an object with another or a
+repeated `type`, is no event line: it counts for no position of its own and does not raise the
+position of a later line. `<position>` is, item by item:
+
+- item 1 (a fault of the whole file): `0`
+- items 2, 3 and 6: `0` when the faulty line is the first line of the file (the header line),
+  including an empty first line and a first line that is not JSON; otherwise the number of event
+  lines before the faulty line plus 1
+- item 4 (the header): `0`
+- item 5: the number of event lines before the faulty line plus 1; item 5 never concerns the first
+  line
+- item 7: the number of event lines before the faulty line plus 1, where a faulty line is an event
+  line that follows a checkpoint line, or a checkpoint line that does not come after the
+  checkpoint line before it in that order
+- items 8 and 9 (the header's agreement with the other lines): `0`
+
+When a file has several faults, the first item of this list that the file breaks decides, and
+within that item the first faulty line of the file; the position is then that of this line by the
+rule above. A file whose header has a `format` other than `agent-record-export-v1` and whose later
+line has a space inside a string member breaks item 4 before item 5, at position `0`. A file whose
+line 2 has a space inside a string member (item 5) and whose line 5 is not JSON (item 3) breaks
+item 3 first, at the position of line 5: the number of event lines among lines 2 to 4 plus 1.
 
 The export is the full event list and is verifiable offline with the public keys file and the
 public teams file alone (DESIGN.md §24.8).
@@ -1935,7 +2015,8 @@ record request <key id> <method> <path> <status> <result>
 
 `<method>` is the method of the request when it is `GET`, `POST` or `HEAD`, otherwise `-`.
 `<path>` is the raw path without the query when it equals, byte for byte, one of the paths
-of the table of section 7.1, otherwise `-`. An unknown path, a path with a trailing slash or with
+of the endpoint table of section 7.1 (the table with the columns "Endpoint", "Method and path" and
+"Scope"), otherwise `-`. An unknown path, a path with a trailing slash or with
 percent-encoding, and an unknown method can carry text that a client chose, such as an id, and
 therefore never enter the log.
 
@@ -2130,6 +2211,10 @@ The event:
   200 and 201 bytes, an invalid UTF-8 sequence, a control character, a `links` value of 20 and 21
   references, out of order or repeated, `urgency` 0, 11 and `07`, and a `short_name` of 31
   characters
+- check 14 of section 6.7 examines `old` as well as `new`: an update of a task of kind `security`
+  whose change of `urgency` has the `old` value `07` and a well-formed `new` value gets
+  `value_invalid`, not `state_mismatch`, although `07` differs from the stored value, through the
+  endpoint and in the fold directly (`value_invalid` / `event_invalid`)
 - the largest valid event of section 4.2 (an update of a security issue, every field at its
   limit, `actor_key_id` of 63 characters) is accepted, and its event text is at most 54461
   bytes, the upper bound of section 4.2
@@ -2269,6 +2354,11 @@ written `<error value>` / `<failure>`, for example `value_invalid` / `event_inva
   text (accepted); row 10 with links equal to `completed_links` (accepted) and
   after a change of links (refused); rows 11, 12 and 13 leave `completed_links` unchanged, so a
   task that never went through row 14 answers `"completed_links":[]` after each of them
+- the state before the event for the conditions of section 6.4 on `links` ("Which state a
+  condition reads"): each of the four cases listed there, by a writer through the endpoint, gets
+  the value given there (`transition_invalid`, `links_frozen`, `links_frozen`, `links_frozen`),
+  and in the fold directly the same value mapped as in section 12.1 (`transition_invalid` /
+  `event_refused`, `links_frozen` / `event_refused`)
 - `links_frozen` in `merged` and `done`; `field_required` for each required field, for
   `in_progress` without assignee, and for a security issue set to `done` without `fix`
 - `field_not_allowed` for each security field on kind `work`; `field_immutable` for `kind`,
@@ -2398,6 +2488,10 @@ Integrity and backup:
   security issue for a key without `record:security`, and at a create, give `withheld` with the
   position to the calling key, while `position_gap`, `record_hash_mismatch` and
   `checkpoint_invalid` are given by name to every key; the request line logs the true value
+- a stored `received_at` of `10000-01-01 00:00:00+00` at the last position, changed as database
+  superuser with the triggers bypassed: the verification on request fails with
+  `event_time_invalid` at that position, not with `record_hash_mismatch`, and a restart refuses
+  to start with `record verify failed <position> event_time_invalid`
 - removal at the end of the record: as database superuser with the triggers bypassed, the last
   two events and every checkpoint that names them are removed; instance A, whose state holds the
   removed events, fails its next verification on request with `position_gap` at the first
@@ -2483,6 +2577,19 @@ Integrity and backup:
   `record_hash` differs from the last event line (`0`), a header that is not `0` and `null`
   without event lines (`0`), and a checkpoint line after a header `0` and `null` in a file
   without event lines (`0`), also when its hub key id is not given with `--hub-key`
+- the writer's form and the positions of section 12.3, each from `verify` and from `restore` with
+  `failed <position> file_invalid`: an empty first line (`0`); a first line that is not JSON
+  (`0`); a space between two tokens of the header (`0`); a space between two tokens of an event
+  line, a space before and one after the object of an event line, an event line with its members
+  in another order, and an event line whose `event_hash` is written with an escape (`a` for
+  `a`) (each item 6, at the position of that line); a space inside the string of `event_hash` of
+  an event line (item 5, at the position of that line); a header with a `format` other than
+  `agent-record-export-v1` and a later event line with a space inside a string member (`0`); a
+  line 2 with a space inside a string member and a line 5 that is not JSON (the position of line
+  5, the number of event lines among lines 2 to 4 plus 1); a line 2 that is not JSON, a line 3
+  that is an event line and an empty line 4 (`2`, because line 2 is no event line); a line 2
+  that is an event line, a line 3 that is an object with `type` `x` and an empty line 4 (`2`,
+  because line 3 is no event line)
 - checkpoints of two hub key ids whose order in the collation of the test database differs from
   byte order (`hub-2` and `hub1`, in a test database created with the collation `en_US.utf8`):
   `export` writes the checkpoint lines in byte order, offline `verify` with both `--hub-key`
@@ -2940,7 +3047,8 @@ confirms or changes each one.
 57. `export` prints `exported`, `refused config`, `refused file_exists`, `refused file_write` or
     `refused database`; a malformed export file is refused by `verify` and `restore` with the
     failure `file_invalid`, at position `0` for a fault of the whole file (not UTF-8, empty, no
-    final `\n`) or of the header (§12.1, §12.3).
+    final `\n`), of the first line (the header line, also when it is empty or not JSON) or of the
+    header's agreement with the other lines (§12.1, §12.3).
 58. The event text is not bound to a hub or an environment: only the key holder can send its
     event to another hub, only where its key is registered, and the event then shows in that
     key's own chain there (§4.3).
@@ -3145,7 +3253,14 @@ confirms or changes each one.
 99. An export file with a checkpoint line but no event line is refused with `file_invalid` at
     position `0`, also when the checkpoint's hub key id is not given with `--hub-key`. When a
     file has several faults, the first item of the list of §12.3 that it breaks, and within
-    that item the first faulty line, gives the position (§12.3).
+    that item the first faulty line, gives the position. In that list, "not JSON" (item 3) comes
+    before the header (item 4), the form of a member (item 5) and the writer's form (item 6). A
+    line is refused unless its bytes equal the writer's form of the object it encodes (one JSON
+    object, no whitespace between tokens or around the object, members in the writer's order, no
+    escape); whitespace inside a JSON string is content of that member and is judged by the form
+    of that member. For counting positions, an event line is a line after the first that is a
+    JSON object with exactly one member `type` whose value is `event`; every other line, also one
+    that is not JSON, counts for no position of its own (§12.3).
 100. The PostgreSQL server that holds the record is dedicated to it: besides the record database
     it holds only `postgres`, `template0` and `template1`, and nobody creates anything in those
     three; the deployment provides this, and step `writer` of the start, and so `restore`,
@@ -3154,3 +3269,24 @@ confirms or changes each one.
     `template1` is a deployment rule; of it, the hub checks only what `pg_shdepend` records for
     the writer (ownership of an object and a privilege that names the writer, section 11.4); a
     test of the record holds the advisory lock 742180004 while its databases exist (§11.2, §11.4, §12.3, §14, §16).
+101. A condition of the column "Further condition" of §6.4 that says neither "before" nor "after"
+    reads the state before the event, also when the same event changes the field it reads:
+    "`links` has a value" (rows 8, 9, 13), "`links` has no value" (rows 10, 12) and "equals
+    `completed_links`" (row 10); the freeze rule of §6.6 decides whether an event changes `links`
+    against the same state. Both readings accept exactly the same events, because every row with
+    a condition on `links` leads to `done` or `merged`, where §6.6 refuses a change of `links`;
+    they differ only in the error value. Under the reading taken, on a task of kind `work` by a
+    writer: an event that sets `links` and moves `open` to `done` under `merged` gets
+    `transition_invalid` (the state after would give `links_frozen`); an event that removes
+    `links` and sets `done` from `open` under `merged`, with an assignee, gets `links_frozen` (the
+    state after would give `transition_invalid`); an event that sets `links` on a task in `merged`
+    without `links` under `merged` and sets `done` gets `links_frozen` (row 12); an event that
+    changes `completion` from `verified` to `merged`, removes `links` and sets `done` on a task in
+    `merged` gets `links_frozen` (row 13) (§6.4, §6.6).
+102. Check 14 of §6.7 examines both the `old` and the `new` value token of every change; a
+    malformed `old` value is refused with `value_invalid` and never reaches `state_mismatch` at
+    check 15 (§6.7).
+103. A stored `received_at` that cannot be written as a time of §2, because its year lies outside
+    0001 to 9999, which `timestamptz` allows, fails verification with `event_time_invalid`, in the
+    order of the table of §12.1 after `chain_broken` and before `record_hash_mismatch`, because no
+    record hash can be computed from it (§12.1).
