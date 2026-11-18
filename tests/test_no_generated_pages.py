@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from urllib.parse import urlsplit
 
@@ -29,56 +30,77 @@ TEXT_EXTENSIONS = frozenset(
 )
 BINARY_EXTENSIONS = frozenset({".png", ".ico"})
 
+# Literals ignored when the whole literal equals one of them (a name, not an address to load).
+XML_NAMESPACES = frozenset({"http://www.w3.org/2000/svg"})
+
 # The rule: a page the hub serves, and a text file under static/, contains no literal that
-# names another host, wherever it stands (attribute, style, script, string constant, comment).
-# A literal names a host when it is a URL with the scheme http, https, ws or wss, or a
-# protocol-relative URL; data: and blob: URLs name no other host and are not matched.
-# The only exceptions are the hub's own host, xmlns values and the href of <a> and <area>.
-# Limit: the check reads text. It does not find a host name that a script assembles at run
-# time from parts; a policy enforced by the browser, planned with a later change, covers that.
-#
-# A scheme counts only when no word character, ".", "+", "-" or ":" precedes it (so the
-# "https:" inside "blob:https://..." is not a URL of its own). A protocol-relative URL is two
-# or more of "/" and "\" (browsers read "\" as "/") at the start of the text or after a quote,
-# an opening bracket, "=", "," or white space. Both forms must be followed by a host character,
-# so a "// comment" line, "</script>" and a path such as "a//b" are not URLs.
-_HOST_AND_REST = r"[\w\[%][^\s\"'`<>()\\]*"
-_FOREIGN_URL = re.compile(
-    r"(?<![\w.+:-])(?:https?|wss?):[/\\]*" + _HOST_AND_REST
-    + r"|(?<![^\s\"'`(\[{=,])[/\\]{2,}" + _HOST_AND_REST,
+# names another host, wherever it stands (attribute, style, script, string, comment, text).
+# A literal starts with the scheme http, https, ws or wss and ":" (anywhere except right after
+# "blob:"), or with two or more of "/" and "\" (browsers read "\" as "/") at the start of the
+# text or after white space, a quote, "(", "[", "{", "=", "," or ";". A character other than
+# white space, a quote (" ' `), "<", ">", "/", "\", "?" or "#" must follow, so "// note",
+# "</script>", "a//b", "https:" alone, data: and blob: URLs are not literals (a data: payload
+# that itself contains a literal, such as base64 starting with "//", is reported).
+# The authority runs from there to the first "/", "\", "?", "#" or the end of the text and, when
+# a quote directly precedes the literal, to the next same quote. It is read twice: with tab and
+# line breaks removed (as the URL parser does) and up to the first white space (where an
+# unquoted attribute value or a srcset entry ends). In each reading the host is the part after
+# the last "@", without port, in lower case. The text is searched as it is and after
+# html.unescape, so character references are decoded. The only exceptions: a literal whose
+# hosts in both readings equal the hub's host (port and scheme are not compared), and a literal
+# that equals a name in XML_NAMESPACES.
+# Limits (not found): a host name a script assembles at run time; a tab or line break in the
+# scheme, between the slashes or right before the authority; any encoding other than HTML
+# character references, such as script or CSS escapes ("\x2f\x2f", "\/\/", "\3a "); binary
+# files. A namespace name used as a load address would pass. The check also reports harmless
+# text (a URL in visible text, a "//word" comment, "rows:1fr" in CSS, the own address without
+# a path where no quote directly precedes it); that fails closed. A policy enforced by the
+# browser, planned with a later change, covers what reading the text cannot.
+_START = r"(?=[^\s\"'`<>/\\?#])"
+_URL_START = re.compile(
+    r"(?<!blob:)(?:https?|wss?):[/\\]*" + _START + r"|(?<![^\s\"'`(\[{=,;])[/\\]{2,}" + _START,
     re.IGNORECASE,
 )
 _LEADING = re.compile(r"(?:(?:https?|wss?):)?[/\\]*", re.IGNORECASE)
-# An attribute value: double quoted, single quoted or unquoted.
-_VALUE = r"(?:\"[^\"]*\"|'[^']*'|[^\s\"'<>]+)"
-_TAG = re.compile(r"<([a-z][\w:.-]*)(\s[^<>]*)?>", re.IGNORECASE)
-_XMLNS = re.compile(r"(?<=\s)xmlns(?::[\w.-]+)?\s*=\s*" + _VALUE, re.IGNORECASE)
-_HREF = re.compile(r"(?<=\s)href\s*=\s*" + _VALUE, re.IGNORECASE)
+_AUTHORITY = re.compile(r"[^/\\?#]*")
+_REST = re.compile(r"[^\s\"'`<>()]*")
+_BREAKS = re.compile(r"[\t\n\r]")
+_PORT = re.compile(r":[^:\]]*$")
 
 
-def _without_exceptions(text: str) -> str:
-    """text with the values of xmlns attributes and of href in <a> and <area> removed."""
-
-    def strip(tag: re.Match[str]) -> str:
-        attributes = _XMLNS.sub("", tag.group(2) or "")
-        if tag.group(1).lower() in ("a", "area"):
-            attributes = _HREF.sub("", attributes)
-        return "<" + tag.group(1) + attributes + ">"
-
-    return _TAG.sub(strip, text)
+def _hosts(authority: str) -> tuple[str, str]:
+    """The host of authority with tab and line breaks removed, and up to the first white space."""
+    readings = (_BREAKS.sub("", authority), re.split(r"\s", authority, maxsplit=1)[0])
+    hosts = [_PORT.sub("", reading.rpartition("@")[2]).lower() for reading in readings]
+    return hosts[0], hosts[1]
 
 
-def _host(url: str) -> str | None:
-    leading = _LEADING.match(url)
-    rest = url[leading.end():] if leading is not None else url
-    return urlsplit("//" + rest.replace("\\", "/")).hostname
+def _host(url: str) -> str:
+    """The host of a reported literal (first reading)."""
+    return _hosts(_AUTHORITY.match(url, _LEADING.match(url).end()).group(0))[0]
 
 
 def foreign_references(text: str, own_host: str | None) -> list[str]:
     """Every URL literal in text whose host is not own_host (with None: every URL literal)."""
     own = None if own_host is None else own_host.lower()
-    urls = [m.group(0) for m in _FOREIGN_URL.finditer(_without_exceptions(text))]
-    return [url for url in urls if own is None or _host(url) != own]
+    found: dict[str, None] = {}
+    for source in (text, html.unescape(text)):
+        pos = 0
+        while (match := _URL_START.search(source, pos)) is not None:
+            start = match.end()
+            end = _AUTHORITY.match(source, start).end()
+            before = source[match.start() - 1] if match.start() > 0 else ""
+            if before in ("\"", "'", "`"):
+                quote = source.find(before, start, end)
+                end = end if quote == -1 else quote
+            literal = source[match.start():end] + _REST.match(source, end).group(0)
+            pos = match.start() + len(literal)
+            if literal in XML_NAMESPACES:
+                continue
+            if own is not None and _hosts(source[start:end]) == (own, own):
+                continue
+            found[literal] = None
+    return list(found)
 
 
 def _own_host(client: TestClient) -> str:
@@ -163,21 +185,53 @@ REFERENCE_CASES: list[tuple[str, str | None, list[str]]] = [
     ('<link rel="canonical" href="https://other.example/">', OWN_HOST, ["https://other.example/"]),
     ('<a data-href="https://other.example/">x</a>', OWN_HOST, ["https://other.example/"]),
     ('<link rel="canonical" href="https://hub.example/">', None, ["https://hub.example/"]),
+    ('<a href="https://other.example/">x</a>', OWN_HOST, ["https://other.example/"]),
+    ('<AREA HREF="//other.example/map">', OWN_HOST, ["//other.example/map"]),
+    ('<script src="//@cdn.example/x.js"></script>', OWN_HOST, ["//@cdn.example/x.js"]),
+    ('<script src="https://~@cdn.example/x.js">', OWN_HOST, ["https://~@cdn.example/x.js"]),
+    (r'const u = "\nhttps://cdn.example/x";', OWN_HOST, ["https://cdn.example/x"]),
+    ('<meta http-equiv="refresh" content="0;//evil.example/">', OWN_HOST, ["//evil.example/"]),
+    ('<script src="&#x2F;&#x2F;cdn.example/x.js">', OWN_HOST, ["//cdn.example/x.js"]),
+    (
+        '<script src="https&#58;//cdn.example/x.js">',
+        OWN_HOST,
+        ["//cdn.example/x.js", "https://cdn.example/x.js"],
+    ),
+    (
+        "<form action=\"https://hub.example'@evil.example/post\">",
+        OWN_HOST,
+        ["https://hub.example'@evil.example/post"],
+    ),
+    (
+        '<form action="https://hub.example @evil.example/post">',
+        OWN_HOST,
+        ["https://hub.example @evil.example/post"],
+    ),
+    (
+        '<img src="https://hub.example\n.evil.example/x">',
+        OWN_HOST,
+        ["https://hub.example\n.evil.example/x"],
+    ),
+    (
+        "<img data-x=' xmlns=' src=\"https://cdn.example/x.png\" data-y=' '>",
+        OWN_HOST,
+        ["https://cdn.example/x.png"],
+    ),
+    (
+        '<svg xmlns="http://www.w3.org/2000/svg.evil.example/x">',
+        OWN_HOST,
+        ["http://www.w3.org/2000/svg.evil.example/x"],
+    ),
+    ('<svg xmlns:xlink="http://www.w3.org/1999/xlink">', OWN_HOST, ["http://www.w3.org/1999/xlink"]),
     # Not reported.
     ('<link rel="canonical" href="https://hub.example/">', OWN_HOST, []),
     ('<script src="https://hub.example/app.js"></script>', OWN_HOST, []),
+    ('<script src="HTTPS://HUB.EXAMPLE:8443/app.js"></script>', OWN_HOST, []),
     ('<script src="/app.js"></script><script type="module" src="./m.js"></script>', OWN_HOST, []),
     ('<a href="#top">Top</a>', OWN_HOST, []),
     ('<img src="data:image/png;base64,AAAA">', OWN_HOST, []),
     ('<img src="blob:https://elsewhere.example/1">', OWN_HOST, []),
-    (
-        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">',
-        OWN_HOST,
-        [],
-    ),
-    ('<a href="https://example.org/help">Help</a>', OWN_HOST, []),
-    ('<area shape="default" href="https://example.org/map">', OWN_HOST, []),
-    ('<A HREF="https://example.org/help">Help</A><AREA HREF="//example.org/map">', OWN_HOST, []),
+    ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>', None, []),
     ('<div data-href="/x"></div>', OWN_HOST, []),
     ('parsed.protocol === "https:" && parsed.host === "github.com"', OWN_HOST, []),
     ('new URL("/x", location.href)', OWN_HOST, []),
