@@ -977,6 +977,37 @@ def test_a_comment_whose_id_is_a_boolean_is_skipped(tmp_path: Path) -> None:
     assert _mark_read_calls(calls) == []
 
 
+@pytest.mark.parametrize("comment_id", [0, -1])
+def test_a_comment_whose_id_is_not_positive_is_skipped(
+    tmp_path: Path, comment_id: int
+) -> None:
+    # A non-positive id is not a comment GitHub issued. `-1` would become a
+    # trigger `trigger_comment_id` cannot parse, so the thread stays unread and
+    # no row is written.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    try:
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[
+                    {
+                        "id": comment_id,
+                        "body": "@theo-vane please review",
+                        "user": {"login": "davidleomay"},
+                    }
+                ],
+                calls=calls,
+            ),
+        )
+        assert (created, requeued, skipped) == ([], [], 1)
+        assert _jobs(store) == []
+    finally:
+        store.close()
+    assert _mark_read_calls(calls) == []
+
+
 def test_an_unreadable_comment_list_leaves_the_notification_unread(
     tmp_path: Path,
 ) -> None:

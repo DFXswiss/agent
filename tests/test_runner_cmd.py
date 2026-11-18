@@ -611,7 +611,7 @@ def test_ingest_stops_when_the_catalogue_object_is_unreadable(
     )
     monkeypatch.setenv("AGENT_HOME", str(home))
 
-    with pytest.raises(SystemExit, match="skills catalog is not readable"):
+    with pytest.raises(SystemExit, match="the catalogue cannot be read"):
         cmd_runner(["ingest", "--session", "session-1"])
 
 
@@ -1108,6 +1108,51 @@ def test_dispatch_stops_before_state_without_a_prompt_template(
     _assert_dispatch_stopped_before_state(home, calls)
 
 
+def test_dispatch_stops_before_state_without_a_prompt_template_for_an_empty_allow_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An empty allow list admits no queue type, but a `pr-review` row already
+    # queued would still be started and would then fail on the missing file, so
+    # the template check does not depend on the policy.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home, job_types_allow=[])
+    (home / "runner" / "prompts" / "pr-review.md").unlink()
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="prompt template"):
+        cmd_runner(["dispatch"])
+
+    _assert_dispatch_stopped_before_state(home, calls)
+
+
+def test_dispatch_stops_before_state_without_a_prompt_template_with_other_queue_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The template is required even when no allowed queue type resolves to
+    # `pr-review`: a queued row of that skill is still started by this worker.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home, job_types_allow=["pr-mergeable"])
+    (home / "runner" / "prompts" / "pr-review.md").unlink()
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit, match="prompt template"):
+        cmd_runner(["dispatch"])
+
+    _assert_dispatch_stopped_before_state(home, calls)
+
+
 def test_dispatch_stops_before_state_for_a_skill_without_a_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1174,8 +1219,8 @@ def test_dispatch_preflight_accepts_the_queue_type_case_insensitively(
 def test_dispatch_preflight_accepts_an_uppercase_prompt_job_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The template requirement follows the skill the allowed queue type maps
-    # to, so it applies however the policy spells the queue type.
+    # The template requirement is unconditional, so the spelling of the
+    # allowed queue type does not matter.
     home = tmp_path / "home"
     _write_worker_files(home, job_types_allow=["PR-READY"])
     (home / "runner" / "prompts" / "pr-review.md").unlink()
@@ -1216,7 +1261,7 @@ def test_dispatch_preflight_refuses_an_unreadable_catalogue(
     )
     monkeypatch.setenv("AGENT_HOME", str(home))
 
-    with pytest.raises(SystemExit, match="skills catalog is not readable"):
+    with pytest.raises(SystemExit, match="the catalogue cannot be read"):
         runner_cmd._worker_preflight(runner_paths(home / "runner"))
 
 
@@ -1235,8 +1280,8 @@ def test_dispatch_preflight_accepts_a_policy_without_an_allow_list(
 def test_dispatch_preflight_accepts_an_empty_allow_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # An empty list maps to no skill at all, so neither the worker nor the
-    # prompt-template requirement applies.
+    # An empty list maps to no skill at all, so the worker check has nothing
+    # to reject. The prompt template is checked separately and is present here.
     home = tmp_path / "home"
     _write_worker_files(home, job_types_allow=[])
     monkeypatch.setenv("AGENT_HOME", str(home))
