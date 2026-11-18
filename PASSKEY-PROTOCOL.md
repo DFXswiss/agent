@@ -1478,7 +1478,9 @@ real endpoints.
   pages under the policy fires no `securitypolicyviolation` event and runs its script files
 - `GET /docs`, `GET /redoc`, `GET /docs/oauth2-redirect` and `GET /openapi.json` answer `404`
   (the precondition of section 10.1); every route of the application that answers HTML carries
-  the headers of section 10.1, and no page of the origin references another host
+  the headers of section 10.1, and no page of the origin loads a resource from another origin:
+  no `src` attribute, no `href` of a `<link>` element, no `url(` and no `@import` names another
+  host; links in `<a href>` to `https://github.com` stay (section 10.1)
   (`tests/test_page_policy.py`)
 - the dashboard `/` carries the link to `/passkey` and otherwise shows and does what it did
 - the tables of section 12 are created at start, and after a full invite and sign-in no row holds
@@ -2017,14 +2019,16 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     and styles of the existing pages move into files. Choice for the owner: of "serve the existing
     pages without the policy until the build step that reworks them" and "set the headers of
     section 10.1 for every HTML answer of the hub in this step", the stricter second is taken. Its
-    consequence: this step also reworks the existing pages. (Section 10.1, 10.2, 10.3, 13.4, 13.6,
-    15, 16)
+    consequence: this step also reworks the existing pages, and a separate change merged before
+    this step turns off the generated documentation pages and the schema document (`/docs`,
+    `/redoc`, `/docs/oauth2-redirect`, `/openapi.json` answer `404`), because they need inline
+    script and another origin. (Section 10.1, 10.2, 10.3, 13.4, 13.6, 15, 16)
 
 ### 17.2 Decisions for the human owner
 
 The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 43, 44, 45, 49,
-50, 52, 53, 55, 56 and 57 (for 57 with its consequence that this step also reworks the existing
-pages `/`, `/session` and `/pair`), and adjusts these sentences of DESIGN.md:
+50, 52, 53, 55, 56 and 57 (for 57 with its consequences that this step also reworks the existing
+pages `/`, `/session` and `/pair` and that the generated documentation pages are off), and adjusts these sentences of DESIGN.md:
 
 - §24.2: the sentence that the network edge "cannot forge a request or an answer, because both are
   signed". It holds for devices and programs, which pin the hub key; it does not hold for the
