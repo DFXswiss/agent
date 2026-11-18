@@ -606,15 +606,16 @@ The selected session must exist locally, be owned and active.
 `agent watch session-usage` records a changed period snapshot as `usage.snapshot`.
 
 The optional top-level `usage_accounts` is a list of explicitly named
-accounts whose driver has a `spend` or `windows` usage adapter. Missing/null/`[]`
-disables account polling. An account whose driver has a `windows` adapter is
-read by `agent watch window-usage`; any other selected account must have a
-`spend` adapter and is read by `agent watch account-usage`. Unknown names,
-accounts whose driver has no `spend` adapter and no `windows` adapter and
-duplicate names are rejected,
+accounts whose driver has a `spend`, `windows` or `rpc` usage adapter.
+Missing/null/`[]` disables account polling. An account whose driver has a
+`windows` or an `rpc` adapter is read by `agent watch window-usage`; any other
+selected account must have a `spend` adapter and is read by
+`agent watch account-usage`. Unknown
+names, accounts whose driver has none of these adapters and duplicate names
+are rejected,
 for example with `usage_accounts account <name> uses driver <driver>, which has
 no spend usage section in drivers.json (docs/ai-accounts.md#drivers)` or the
-same message with `windows`. `agent watch account-usage` records changed USD
+same message with `windows` or `rpc`. `agent watch account-usage` records changed USD
 key-usage values from the adapter's requests as `usage.snapshot`; it stores
 only the configured spend fields and never the key. A spend account's key is
 read from `<config_dir>/<usage.credential.file>`. With
@@ -623,10 +624,10 @@ read from `<config_dir>/<usage.credential.file>`. With
 and the bearer key cannot be routed through an intercepting proxy.
 
 The device daemon polls `usage_accounts` on the same 60-second tick as the
-period-usage read. Each scanner reads only its own accounts. A `windows`
-account is read no more often than its adapter's `poll_seconds`
+period-usage read. Each scanner reads only its own accounts. A `windows` or
+`rpc` account is read no more often than its adapter's `poll_seconds`
 (1-86400 seconds); without pacing, as in `agent watch window-usage`, every
-selected window account is read immediately. A rate-limit answer is reported as
+selected account of that kind is read immediately. A rate-limit answer is reported as
 `usage.snapshot error: <account>: <label> returned HTTP 429`, followed by
 `; retry after <N> s` when its `Retry-After` header gives a usable number of
 seconds, and postpones the next read of that account by its `Retry-After` when
@@ -674,6 +675,59 @@ from the adapter's configured requests as `usage.snapshot`:
   `used_percent` is absent, is `null`, not 0 %. `fetched_at` records the scan.
   A snapshot is stored only when a value other than `fetched_at` changed. The
   token is never stored or logged.
+
+Each `rpc` account also uses the login of its `config_dir`, but Agent sends no
+token and stores none: it asks the driver's own local JSON-RPC server, which
+authenticates itself with that login. Agent reads the account file only for
+the login identity, decoding the identity claim of the ID token without a
+signature check when one is configured. The operator logs in there with the
+driver's own tool. In the same scan as the `windows` accounts, `agent watch
+window-usage` reads every selected rpc account immediately and records changed
+usage windows as `usage.snapshot`, with the same output lines. A failing
+`windows` account does not stop the `rpc` accounts, and the reverse; any
+failure makes the command exit 1:
+
+- Identity: the adapter's `account_file`, as for `windows`. With
+  `account_file.jwt_field` and `account_file.jwt_claim` the identity is that
+  claim of the payload of the JWT stored in `jwt_field` of `account_file.object`.
+  The middle JWT segment is base64url-decoded without a signature check; the
+  token is never returned, stored, logged or put into an error. A missing file,
+  a missing `object` or an empty `jwt_field` (for example a login without an ID
+  token) skips the account quietly (`usage.snapshot skipped <account>:
+  <reason>`). A malformed file or token is an error.
+- Read: Agent starts the adapter's `argv` on stdio (JSON-RPC 2.0, one JSON
+  object per line, no shell). The driver's `home_env` names the account's
+  `config_dir`, except for the driver's `home_default_dir`, which is selected
+  by leaving the variable unset. Every configured `credential_env` and
+  `home_env` variable and the network and CA overrides are removed from the
+  server's environment. Agent sends `initialize` with `initialize_params`, the
+  `initialized` notification, and the configured `method` with `params`. It
+  reads lines until the answer to that request, ignoring notifications and
+  other answers, then terminates the process. The whole exchange is limited to
+  `timeout_seconds`. A missing program, an `error` answer (shown with its code
+  and a shortened, printable message), output that is not JSON, early exit and
+  the time-out are reported as `usage.snapshot error: <account>: <reason>` and
+  never stored as 0 %.
+- Snapshot: `vendor` and `provider` (the driver id), `account_email`, `tier`
+  (the string at `fields.plan`, or null), and `windows` with `five_hour`,
+  `weekly`, an empty `weekly_models` and `other`. Every window at a
+  `fields.windows` pointer goes to the snapshot window that its length (the
+  integer under `fields.window_minutes`) maps to in `windows_by_minutes`; an
+  unmapped length, or a second window of a length already taken, goes to
+  `other` with its `window_minutes`. Each window has `used_percent` and
+  `resets_at` (epoch seconds in the answer, stored as UTC rounded to the
+  nearest minute); a window the answer reports as null or not at all is
+  `null`, not 0 %. `limit_reached` is false when `fields.limit_reached` holds
+  false, true for any other value, and `null` when the answer reports it as
+  null or not at all. `reset_credits_available` is the non-negative integer at
+  `fields.reset_credits_count`, and `null`, not 0, when the answer reports it
+  as null or not at all. Nothing else of the answer is stored. A snapshot is stored only when
+  a value other than `fetched_at` changed.
+- Check time: every successful rpc read records the device's
+  `usage.checked.*` time for that account, like a `windows` or `spend` read,
+  also when the snapshot did not change.
+- The token keep-alive does not act on `rpc` accounts: the driver's own server
+  renews its login itself.
 
 ## Token keep-alive
 
@@ -842,9 +896,9 @@ inventory is configured. Example (operator-supplied, never installed):
 - `provider`: required lowercase token of `a-z`, `0-9` and `-`; it is not
   limited to providers with a usage reader, so other AI plans can be listed.
 - `account`: required non-empty single-line string, unique per provider
-  without regard to case. For a driver with a `windows` adapter it is the
-  login's e-mail address; for a driver with a `spend` adapter it is the account
-  name from `ai-accounts.json`.
+  without regard to case. For a driver with a `windows` or `rpc` adapter it is
+  the login's e-mail address; for a driver with a `spend` adapter it is the
+  account name from `ai-accounts.json`.
 - `label`, `status`, `note`: optional non-empty single-line strings.
 - Unknown keys are rejected with an error naming the entry.
 
@@ -854,8 +908,11 @@ status and note, joined with the newest `usage.snapshot` of the same provider
 and account (case-insensitive). A listed subscription that no paired device
 polls shows `No usage: no paired device polls this login`. Usage snapshots of
 accounts missing from the inventory are still shown and marked `not listed`.
-Windows rows show the five-hour, weekly and per-model weekly percentages with
-their reset times. `status` is shown as an icon from the dashboard's state
+Window rows (`windows` and `rpc` adapters) show the five-hour, weekly and
+per-model weekly percentages with their reset times, plus any window of another
+length as `<minutes> min`, `limit reached` when a limit is reached and
+`free resets: <N>` when free limit resets are available. `status` is shown as
+an icon from the dashboard's state
 mapping with the word as the cell's title; a word the mapping does not know
 gets the neutral fallback icon. A file that does not validate is shown as an error on that
 page; the rest of the dashboard keeps working. `/api/state` delivers the joined
@@ -873,11 +930,11 @@ with the exact UTC time as the cell's title and `—` when there is none:
   key `usage.checked.<provider>.<account name>`; the key holds the configured
   account name, never a token or an e-mail address. The identity is the
   case-folded account name of a `spend` driver or the case-folded login of a
-  `windows` driver. Skipped, failed and rate-limited reads write nothing. A
-  row gets the read time (`checked_at` in `rows`) when it shows that account:
-  a row of a `spend` driver by the account name, only for this device's
-  snapshot, a row of a `windows` driver by the identity of the account's
-  login. A check whose identity is not the account's current identity, such as
+  `windows` or `rpc` driver. Skipped, failed and rate-limited reads write
+  nothing. A row gets the read time (`checked_at` in `rows`) when it shows
+  that account: a row of a `spend` driver by the account name, only for this
+  device's snapshot, a row of a `windows` or `rpc` driver by the identity of
+  the account's login. A check whose identity is not the account's current identity, such as
   after another login in the same configuration directory, applies to no row
   until that login is read. Rows of other drivers and accounts this device
   does not poll show `—`. `/api/state` reads these values together with the
@@ -894,16 +951,18 @@ Above that table the page shows one compact line per provider: every driver of
 named by the driver's `display_name` or else by its id. The line shows the time
 until the quota resets, a bar and the used percentage of the headline window.
 The window follows the snapshot kind, read from the payload as in the table:
-`windows`: the weekly window; `period`: the period (`period_end`); `spend`: the
-key limit, when it has one. A provider whose driver has no `usage` section
-shows `not read`, unless another device recorded a snapshot for it. A provider
-with a `usage` section shows `no data` when none of its snapshots has a
+`windows` and `rpc`: the weekly window; `period`: the period (`period_end`);
+`spend`: the key limit, when it has one. A provider whose driver has no `usage`
+section shows `not read`, unless another device recorded a snapshot for it. A
+provider with a `usage` section (`period`, `spend`, `windows` or `rpc`) shows
+`no data` when none of its snapshots has a
 headline percentage or another figure; a spend snapshot without a limit shows
 its USD usage instead. Neither is shown as 0 %, and both are shown as icons of
 the dashboard's state mapping. When `drivers.json` cannot be read, the page
 lists only the recorded providers and shows none of them as `not read`.
-Opening a provider lists each quota window (`windows`: five hours, weekly and
-the weekly windows per model named in the snapshot; `period`: the period and
+Opening a provider lists each quota window (`windows` and `rpc`: five hours,
+weekly, the weekly windows per model named in the snapshot and any window of
+another length as `<minutes> min`; `period`: the period and
 each product) with its reset and bar, then each account with its own bar and
 the age of its newest snapshot (`recorded 4 min ago`). A snapshot is stored
 only when a value changed, so that age is the time of the last change. An
@@ -966,7 +1025,9 @@ also stops scrubbing its variables. A lane therefore never inherits an ambient p
 trust that could read its provider credential. There is no opt-in for this
 stripping. A usage adapter with `proxy_from_environment: false` builds its own
 HTTP client with `trust_env=False` for the same reason. A windows adapter's
-`trust_env` follows its `proxy_from_environment` key as well.
+`trust_env` follows its `proxy_from_environment` key as well. An rpc adapter
+starts its local server without these variables and without any configured
+`credential_env` or `home_env` variable other than its own `home_env`.
 
 This lane and pane list equals the role prefix's list without the `home_env`
 variables, and the role prefix runs before it, so it never changes the child's
@@ -1072,7 +1133,7 @@ rows may still hold names an earlier version wrote.
 
 ### Example
 
-The following placeholder document describes five drivers. It is an
+The following placeholder document describes six drivers. It is an
 illustration of the schema, not a working configuration for any tool.
 
 ```json
@@ -1204,12 +1265,48 @@ illustration of the schema, not a working configuration for any tool.
         }
       }
     },
-    "driver-e": {}
+    "driver-e": {},
+    "driver-r": {
+      "display_name": "Vendor R",
+      "home_env": "TOOL_R_HOME",
+      "home_default_dir": "~/.tool-r",
+      "usage": {
+        "snapshot": "rpc",
+        "label": "Vendor R usage",
+        "poll_seconds": 900,
+        "timeout_seconds": 30,
+        "argv": ["tool-r", "app-server"],
+        "initialize_params": {"clientInfo": {"name": "agent", "version": "1"}},
+        "method": "account/rateLimits/read",
+        "params": {},
+        "result_pointer": "/rateLimits",
+        "windows_by_minutes": {"300": "five_hour", "10080": "weekly"},
+        "fields": {
+          "windows": ["/primary", "/secondary"],
+          "used_percent": "usedPercent",
+          "window_minutes": "windowDurationMins",
+          "resets_at": "resetsAt",
+          "plan": "/planType",
+          "limit_reached": "/rateLimitReachedType",
+          "reset_credits_count": "/rateLimitResetCredits/availableCount"
+        },
+        "account_file": {
+          "file": "auth.json",
+          "object": "tokens",
+          "jwt_field": "id_token",
+          "jwt_claim": "email"
+        }
+      }
+    }
   },
   "recorded_slots": {"first": "driver-a", "second": "driver-b"},
   "pane_driver": "driver-a"
 }
 ```
+
+`driver-r` has only a usage section: its accounts are read through the
+driver's own local server (`tool-r app-server` in this placeholder), see
+[Usage adapters](#usage-adapters).
 
 Not every driver needs every section. `driver-e` is record-only: it may be the
 `implementer` value and be recorded by `agent agent start --role implementer`,
@@ -1231,7 +1328,7 @@ or `_`, has at most 32 characters and is neither `first` nor `second`.
 | `credential_env` | Optional list of credential variables that every lane, pane and role prefix clears. It must not name any driver's `home_env`. |
 | `lane` | Optional; how a headless lane runs. Without it the driver cannot fill a model slot or run a lane. |
 | `interactive` | Optional; how an interactive terminal session runs and how its pane is read. |
-| `usage` | Optional; the usage adapter for `usage_session` (`period`) or `usage_accounts` (`spend` or `windows`). |
+| `usage` | Optional; the usage adapter for `usage_session` (`period`) or `usage_accounts` (`spend`, `windows` or `rpc`). An `rpc` adapter requires `home_env`. |
 | `login` | Optional; how `agent account-login` drives the tool's own sign-in (see [Login section](#login-section)). Requires `home_env`. |
 
 ### Lane section
@@ -1334,14 +1431,14 @@ set by the usage adapter itself`).
 
 | Key | Meaning |
 |---|---|
-| `snapshot` | `period` (subscription period usage of the `usage_session` account), `spend` (USD key spend of each `usage_accounts` account) or `windows` (five-hour, weekly and per-model weekly windows of each `usage_accounts` account). |
+| `snapshot` | `period` (subscription period usage of the `usage_session` account), `spend` (USD key spend of each `usage_accounts` account), `windows` (five-hour, weekly and per-model weekly windows of each `usage_accounts` account) or `rpc` (the same windows read from the driver's own local server; see [rpc adapters](#rpc-adapters), whose keys differ from this table). |
 | `credential` | `period` needs `{"format": "json-entry", file, entry_prefix, token, expires_at, account}`: the first top-level key of the JSON file that starts with `entry_prefix` holds the entry, whose `token`, `expires_at` (ISO-8601 with offset) and `account` fields are read. `spend` needs `{"format": "text", file}`: the whole file is the key. `windows` needs `{"format": "oauth-file", file, label, object, token, token_name, expires_at, expires_unit, subscription, login_name, renew}`: the file holds a login object with the token, expiry and subscription fields, and `renew` names the operator's login command. An optional `multiplier` is `{plan, pattern, field}`; an optional `keychain` is `{argv, service, user_env, user_pattern, fallback_user, missing_status, platform}` plus optional `service_suffix: nfc-sha256-8`. The file lies in the account's `config_dir`. |
 | `proxy_from_environment` | Required boolean. `true` lets the requests honour proxy and CA variables from the environment; `false` builds an owned client with `trust_env=False`. |
 | `requests` | One to ten `{name, url, headers}` objects; `url` must be `https://`, `headers` is optional. Every request is sent in order. |
 | `fields` | JSON pointers (RFC 6901) whose first segment names a request. `period`: `tier`, `used_percent`, `period_type`, `period_start`, `period_end`, `products` (`list` pointer plus `product` and `used_percent` pointers inside each item), `prepaid_val`, `on_demand_cap_val`, `on_demand_used_val`. `spend`: `usage_usd`, `usage_daily_usd`, `usage_weekly_usd`, `usage_monthly_usd`, `limit_usd`, `limit_remaining_usd`, `limit_reset`. `windows`: `five_hour`, `weekly`, `limits`. |
 | `label` | Required by `windows`; a non-empty single-line display name used in its error texts. |
 | `poll_seconds` | Required by `windows`; an integer from 1 to 86400, the minimum interval between reads of one account under the daemon. |
-| `account_file` | Required by `windows`; `{file, object, field}` names the JSON file that holds the login identity. Optional `default_name` reads that file from the home directory for the driver's `home_default_dir`; `default_name` requires `home_default_dir`. |
+| `account_file` | Required by `windows` and `rpc`; `{file, object, field}` names the JSON file that holds the login identity. Instead of `field`, `jwt_field` and `jwt_claim` (always together) read the identity from that claim of the payload of the JWT in `object.jwt_field`, without a signature check. Optional `default_name` reads that file from the home directory for the driver's `home_default_dir`; `default_name` requires `home_default_dir`. |
 | `window` | Required by `windows`; `{used_percent, resets_at, round}` names the response fields of one window. `round` must be `minute`. |
 | `limits` | Required by `windows`; `{kind, weekly_all, weekly_model, used_percent, resets_at, scope, model, model_names}` names the limits list and its item fields. `model_names` is a list of display-name keys. |
 | `keepalive` | Optional, `windows` only; `{argv}` is the command the [token keep-alive](#token-keep-alive) runs to make the tool renew its login (see [Usage keep-alive](#usage-keep-alive)). Requires `home_env`. |
@@ -1391,6 +1488,40 @@ only ...`), and a missing or wrong value fails as `<path>.<key> is required`,
 `... must be an integer from 1 to 86400`, `... must be one of minute`, or
 `... must be a JSON pointer`.
 
+#### rpc adapters
+
+An `rpc` usage section makes no HTTPS request; Agent sends no token and stores
+none, and reads the account file only for the login identity, decoding the
+identity claim of the ID token without a signature check when one is
+configured. It starts the driver's own local JSON-RPC server and asks it (see
+[Required fields](#required-fields) for the exchange and the snapshot). It has
+exactly these keys, all required:
+
+| Key | Meaning |
+|---|---|
+| `snapshot` | `rpc`. |
+| `label` | Non-empty single-line display name used in its error texts. |
+| `poll_seconds` | Integer from 1 to 86400, the minimum interval between reads of one account under the daemon. |
+| `timeout_seconds` | Integer from 1 to 600, the limit of one whole exchange: start, handshake and answer. |
+| `argv` | One to 200 non-empty single-line strings: the program and arguments that serve JSON-RPC on stdio. No shell and no placeholders. |
+| `initialize_params` | JSON object sent as the `params` of `initialize` (at most 10000 characters as JSON). |
+| `method` | JSON-RPC method that returns the limits, other than `initialize` and `initialized`. |
+| `params` | JSON object sent as the `params` of `method` (at most 10000 characters as JSON). |
+| `result_pointer` | JSON pointer into the method's `result` to the limits object, which must be an object. |
+| `windows_by_minutes` | Object of one or two window lengths in minutes (decimal strings) to `five_hour` or `weekly`; each snapshot window at most once. |
+| `fields` | `windows`: one to ten distinct JSON pointers into the limits object, each to a window object or null. `used_percent`, `window_minutes` and `resets_at`: keys of a window object (a finite number, a positive integer, and epoch seconds or null). `plan` and `limit_reached`: JSON pointers into the limits object. `reset_credits_count`: JSON pointer into the whole result. |
+| `account_file` | As for `windows`; see the table above. |
+
+A step of a pointer that is null or absent reads as no value; a step that is
+neither an object nor null fails as `<label> <name> must be an object or null`.
+A window without `window_minutes` as a positive integer, a `used_percent` that
+is not a finite number, a `resets_at` that is no valid time, a `plan` that is
+not a string, and a `reset_credits_count` that is neither a non-negative
+integer nor null fail with errors naming the label and the field. A driver whose `rpc` section
+lacks `home_env` fails as `drivers.<id>.usage snapshot rpc requires home_env`.
+The lock key of an rpc snapshot is `usage.snapshot:<driver>:<email>` with the
+e-mail case-folded, as for `windows`.
+
 On the `usage_session` path, a missing credential file, a missing entry
 (`<driver> credential file has no entry that starts with <prefix>`) or an
 expired token (`<driver> credential expired; log in again`) is not a scan
@@ -1399,7 +1530,7 @@ file or entry field fails (`<driver> credential entry field <field> is missing
 or invalid`). On the `usage_accounts` path, a missing or empty key file is an
 error of that account (`<driver> key missing`); `agent watch account-usage`
 records the other accounts, prints `usage.snapshot error: ...` per failed
-account and exits 1. On the `windows` path, `agent watch window-usage` records
+account and exits 1. On the `windows` and `rpc` paths, `agent watch window-usage` records
 the other accounts, prints `usage.snapshot skipped <account>: <reason>` for a
 missing or expired login, prints `usage.snapshot error: ...` per failed account,
 and exits 1 on an error. The lock keys are `usage.snapshot:<driver>` and
@@ -1411,7 +1542,7 @@ snapshot names `account_email` and `windows`.
 
 The optional `keepalive` key of a `windows` usage adapter names the command
 that the [token keep-alive](#token-keep-alive) runs for a profile whose login is
-close to expiry. A `spend` or `period` adapter refuses the key. The following
+close to expiry. A `spend`, `period` or `rpc` adapter refuses the key. The following
 placeholder fragment shows only the new key; the rest of the `windows` adapter
 is unchanged and omitted here:
 

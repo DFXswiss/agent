@@ -7,7 +7,8 @@ field pointer names a request. A ``period`` adapter records the usage of a
 subscription period for the configured usage session; a ``spend`` adapter
 records key spend in US dollars for each configured usage account. A
 ``windows`` adapter records the login's usage windows (a short window, the
-week, and the week per model) for each configured usage account.
+week, and the week per model) for each configured usage account. An ``rpc``
+adapter asks the driver's own local server instead; ``rpc_usage`` reads it.
 
 The request semantics stay here: a bearer token, ``Accept: application/json``,
 an 8 second timeout and no redirects. Proxy and certificate settings come from
@@ -16,6 +17,8 @@ the process environment only when the adapter sets ``proxy_from_environment``.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -37,6 +40,7 @@ import httpx
 from .drivers import (
     SPEND_FIELDS,
     DriverSpec,
+    UsageAccountFile,
     UsageCredential,
     UsageKeychain,
     UsageRequest,
@@ -52,6 +56,8 @@ USAGE_TIMEOUT_SECONDS = 8.0
 KEYCHAIN_READ_TIMEOUT_SECONDS = 10
 # A bearer token must be visible ASCII: no whitespace, control or non-ASCII characters.
 _VISIBLE_ASCII = re.compile(r"[\x21-\x7e]+")
+# The payload segment of a JWT: base64url without padding.
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
 _COMPARE_KEYS = (
     "vendor",
     "provider",
@@ -660,12 +666,13 @@ def scan_account_usage(
     errors: list[str] = []
     for account_name in accounts.usage_accounts:
         account = accounts.accounts[account_name]
-        # Window accounts are read by scan_window_usage.
+        # Window accounts are read by scan_window_usage, rpc accounts by
+        # rpc_usage.scan_rpc_usage.
         configured = accounts.drivers.get(account.provider)
         if (
             configured is not None
             and configured.usage is not None
-            and configured.usage.snapshot == "windows"
+            and configured.usage.snapshot in ("windows", "rpc")
         ):
             continue
         driver = account.provider
@@ -711,7 +718,11 @@ WindowFetch = Callable[[str], dict[str, Any]]
 
 def _windows_spec(spec: DriverSpec) -> UsageSpec:
     usage = spec.usage
-    if usage is None or usage.snapshot != "windows" or usage.label is None:
+    if (
+        not isinstance(usage, UsageSpec)
+        or usage.snapshot != "windows"
+        or usage.label is None
+    ):
         raise StoreError(f"{spec.id} has no windows usage section")
     if usage.poll_seconds is None or usage.account_file is None:
         raise StoreError(f"{spec.id} windows usage section is incomplete")
@@ -946,11 +957,10 @@ def load_login_credentials(
     return _parse_login_credentials(credential, raw_file, credential.file)
 
 
-def _login_account_file(spec: DriverSpec, config_dir: str) -> Path:
-    usage = _windows_spec(spec)
-    account_file = usage.account_file
-    if account_file is None:
-        raise StoreError(f"{spec.id} windows usage section is incomplete")
+def account_file_path(
+    spec: DriverSpec, account_file: UsageAccountFile, config_dir: str
+) -> Path:
+    """The account file of ``config_dir``; ``default_name`` for the default directory."""
     if account_file.default_name is not None and is_home_default_dir(spec, config_dir):
         return Path.home() / account_file.default_name
     return Path(config_dir) / account_file.file
@@ -960,11 +970,68 @@ def load_login_account(spec: DriverSpec, config_dir: str) -> str:
     """The login's identity string from the configured account file."""
     usage = _windows_spec(spec)
     credential = usage.credential
-    account_file = usage.account_file
-    if account_file is None or credential.label is None or credential.renew is None:
-        raise StoreError(f"{spec.id} windows usage section is incomplete")
-    label = credential.label
-    path = _login_account_file(spec, config_dir)
+    # ``_windows_spec`` guarantees these fields; the asserts only narrow the types.
+    assert usage.account_file is not None
+    assert credential.label is not None and credential.renew is not None
+    return read_account_identity(
+        credential.label,
+        usage.account_file,
+        account_file_path(spec, usage.account_file, config_dir),
+        f"run {credential.renew} auth login",
+    )
+
+
+def _jwt_claim(
+    label: str,
+    account: Mapping[str, Any],
+    account_file: UsageAccountFile,
+    login_hint: str,
+) -> str:
+    """One claim of the payload of the JWT in ``account_file.jwt_field``.
+
+    The signature is not checked: the claim only names the login whose usage
+    is recorded. The token is never returned, logged, stored or put into an
+    error, and no error is chained to an exception that holds it.
+    """
+    object_key = account_file.object_key
+    jwt_field = account_file.jwt_field
+    claim = account_file.jwt_claim
+    if jwt_field is None or claim is None:
+        raise StoreError(f"{label} account file has no JWT identity configured")
+    token = account.get(jwt_field)
+    if token is None or token == "":
+        raise AuthStale(f"{label} account file holds no {object_key}.{jwt_field}; {login_hint}")
+    if not isinstance(token, str):
+        raise StoreError(f"{label} account file field {object_key}.{jwt_field} must be a string")
+    parts = token.split(".")
+    if len(parts) != 3 or not _BASE64URL.fullmatch(parts[1]):
+        raise StoreError(f"{label} account file field {object_key}.{jwt_field} is not a JWT")
+    segment = parts[1]
+    claims: Any = None
+    valid = True
+    try:
+        decoded = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        claims = json.loads(decoded.decode("utf-8"))
+    except (binascii.Error, UnicodeError, ValueError):
+        valid = False
+    if not valid:
+        raise StoreError(f"{label} {jwt_field} payload is not valid JSON")
+    if not isinstance(claims, dict):
+        raise StoreError(f"{label} {jwt_field} payload is not an object")
+    value = claims.get(claim)
+    if not isinstance(value, str) or value.strip() == "":
+        raise StoreError(f"{label} {jwt_field} has no {claim} claim")
+    return value
+
+
+def read_account_identity(
+    label: str, account_file: UsageAccountFile, path: Path, login_hint: str
+) -> str:
+    """The login identity in the account file at ``path``.
+
+    A missing file or a missing login object is ``AuthStale``; anything
+    malformed is ``StoreError``. No error carries file content.
+    """
     # Errors are raised after each ``except`` block, never chained.
     readable = True
     exists = False
@@ -991,13 +1058,16 @@ def load_login_account(spec: DriverSpec, config_dir: str) -> str:
     account = data.get(account_file.object_key)
     if account is None:
         raise AuthStale(
-            f"{label} account file has no {account_file.object_key}; "
-            f"run {credential.renew} auth login"
+            f"{label} account file has no {account_file.object_key}; {login_hint}"
         )
     if not isinstance(account, dict):
         raise StoreError(
             f"{label} account file field {account_file.object_key} must be an object"
         )
+    if account_file.jwt_field is not None:
+        return _jwt_claim(label, account, account_file, login_hint)
+    if account_file.field is None:
+        raise StoreError(f"{label} account file has no identity field configured")
     email = account.get(account_file.field)
     if not isinstance(email, str) or email.strip() == "":
         raise StoreError(

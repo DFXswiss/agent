@@ -27,12 +27,17 @@ from agent_cli.drivers import (
     NO_DRIVER_CONFIGURATION,
     PANE_KEYS,
     PERIOD_FIELDS,
+    RPC_FIELD_KEYS,
+    RPC_USAGE_KEYS,
     SPEND_FIELDS,
     USAGE_KEYS,
     DriverConfigError,
     DriverSpec,
     LoginSpec,
     RecordedNames,
+    RpcLimitFields,
+    RpcUsageSpec,
+    UsageAccountFile,
     UsageKeepalive,
     credential_dir_overlap_error,
     credential_scrub,
@@ -58,8 +63,10 @@ from agent_cli.drivers import (
 from driver_fixtures import (
     DECLARED_DRIVERS,
     LANE_DRIVERS,
+    RPC_DRIVER_ID,
     WINDOWS_DRIVER_ID,
     driver_document,
+    rpc_driver,
     windows_driver,
 )
 
@@ -605,6 +612,119 @@ def test_home_default_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert not is_home_default_dir(spec("driver-d"), str(tmp_path / ".tool-c"))
 
 
+# --- rpc usage adapter --------------------------------------------------------------
+
+
+R = f"drivers.{RPC_DRIVER_ID}"
+
+
+def _rpc_document() -> dict[str, Any]:
+    document = driver_document()
+    document["drivers"][RPC_DRIVER_ID] = rpc_driver()
+    return document
+
+
+def test_rpc_usage_section_parses() -> None:
+    usage = parse_driver_document(_rpc_document()).drivers[RPC_DRIVER_ID].usage
+    assert usage == RpcUsageSpec(
+        snapshot="rpc",
+        label="Seat usage",
+        poll_seconds=900,
+        timeout_seconds=30,
+        argv=("tool-r", "serve-rpc"),
+        initialize_params='{"clientInfo":{"name":"agent-tests","version":"1"}}',
+        method="limits/read",
+        params="{}",
+        result_pointer="/limits",
+        windows_by_minutes=((300, "five_hour"), (10080, "weekly")),
+        fields=RpcLimitFields(
+            windows=("/primary", "/secondary"),
+            used_percent="usedPercent",
+            window_minutes="windowMinutes",
+            resets_at="resetsAt",
+            plan="/plan",
+            limit_reached="/reachedType",
+            reset_credits_count="/resetCredits/availableCount",
+        ),
+        account_file=UsageAccountFile(
+            file="auth.json",
+            object_key="tokens",
+            jwt_field="id_token",
+            jwt_claim="email",
+        ),
+    )
+    assert usage.window_slot(300) == "five_hour"
+    assert usage.window_slot(1440) is None
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (_set(f"{R}.usage.extra", 1), f"{R}.usage accepts only snapshot, label"),
+        (_set(f"{R}.usage.label", ...), f"{R}.usage.label is required"),
+        (_set(f"{R}.usage.label", "a\nb"), "usage.label must be a non-empty single-line string"),
+        (_set(f"{R}.usage.poll_seconds", 0), "usage.poll_seconds must be an integer from 1 to 86400"),
+        (_set(f"{R}.usage.timeout_seconds", 601), "usage.timeout_seconds must be an integer from 1 to 600"),
+        (_set(f"{R}.usage.timeout_seconds", True), "usage.timeout_seconds must be an integer from 1 to 600"),
+        (_set(f"{R}.usage.argv", []), "usage.argv must be a list of 1 to 200 entries"),
+        (_set(f"{R}.usage.argv", ["tool-r", ""]), "usage.argv[1] must be a non-empty single-line string"),
+        (_set(f"{R}.usage.initialize_params", []), "usage.initialize_params must be an object"),
+        (_set(f"{R}.usage.initialize_params", {"x": "y" * 10001}), "initialize_params must be at most 10000 characters"),
+        (_set(f"{R}.usage.params", "x"), "usage.params must be an object"),
+        (_set(f"{R}.usage.method", "read limits"), "usage.method must be a JSON-RPC method name"),
+        (_set(f"{R}.usage.method", "initialize"), "usage.method must not be the handshake method initialize"),
+        (_set(f"{R}.usage.result_pointer", "limits"), "usage.result_pointer must be a JSON pointer"),
+        (_set(f"{R}.usage.windows_by_minutes", {}), "windows_by_minutes must be an object of 1 to 2 window lengths"),
+        (_set(f"{R}.usage.windows_by_minutes", {"05": "weekly"}), "windows_by_minutes keys must be window lengths in minutes"),
+        (_set(f"{R}.usage.windows_by_minutes", {"300": "daily"}), "windows_by_minutes.300 must be one of five_hour, weekly"),
+        (_set(f"{R}.usage.windows_by_minutes", {"300": "weekly", "600": "weekly"}), "windows_by_minutes maps two lengths to weekly"),
+        (_set(f"{R}.usage.fields.windows", []), "fields.windows must be a list of 1 to 10 entries"),
+        (_set(f"{R}.usage.fields.windows", ["/a", "/a"]), "fields.windows repeats a pointer"),
+        (_set(f"{R}.usage.fields.windows", ["primary"]), "fields.windows[0] must be a JSON pointer"),
+        (_set(f"{R}.usage.fields.plan", "plan"), "fields.plan must be a JSON pointer"),
+        (_set(f"{R}.usage.fields.reset_credits_count", ...), "fields.reset_credits_count is required"),
+        (_set(f"{R}.usage.fields.extra", "/x"), "fields accepts only windows, used_percent"),
+        (_set(f"{R}.usage.account_file.jwt_claim", ...), "account_file.jwt_field and drivers.driver-r.usage.account_file.jwt_claim must be set together"),
+        (_set(f"{R}.usage.account_file.field", "email"), "names the identity by field or by jwt_field and jwt_claim, not both"),
+        (_set(f"{R}.usage.account_file.default_name", "auth.json"), "account_file.default_name requires home_default_dir"),
+        (_set(f"{R}.usage.account_file.file", "../auth.json"), "account_file.file must be a plain file name"),
+        (_set(f"{R}.home_env", ...), f"{R}.usage snapshot rpc requires home_env"),
+        (_set(f"{R}.usage.credential", {"file": "x", "format": "text"}), f"{R}.usage accepts only snapshot, label"),
+        # The token keep-alive is a windows feature; the rpc server renews its own login.
+        (_set(f"{R}.usage.keepalive", {"argv": ["tool-r"]}), f"{R}.usage accepts only snapshot, label"),
+    ],
+)
+def test_invalid_rpc_usage_fails_with_its_path(
+    mutate: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    document = _rpc_document()
+    if "default_name requires home_default_dir" in message:
+        del document["drivers"][RPC_DRIVER_ID]["home_default_dir"]
+    mutate(document)
+    with pytest.raises(DriverConfigError) as excinfo:
+        parse_driver_document(document)
+    assert message in str(excinfo.value)
+
+
+def test_account_file_names_the_identity_by_field_or_by_jwt_claim() -> None:
+    document = driver_document()
+    document["drivers"]["driver-w"] = windows_driver()
+    account_file = parse_driver_document(document).drivers["driver-w"].usage.account_file
+    assert account_file.field == "emailAddress"
+    assert account_file.jwt_field is None and account_file.jwt_claim is None
+
+    del document["drivers"]["driver-w"]["usage"]["account_file"]["field"]
+    with pytest.raises(DriverConfigError, match=r"account_file\.field is required"):
+        parse_driver_document(document)
+
+    document["drivers"]["driver-w"]["usage"]["account_file"].update(
+        {"jwt_field": "id_token", "jwt_claim": "email"}
+    )
+    account_file = parse_driver_document(document).drivers["driver-w"].usage.account_file
+    assert account_file.field is None
+    assert (account_file.jwt_field, account_file.jwt_claim) == ("id_token", "email")
+
+
 # --- documentation ----------------------------------------------------------------
 
 
@@ -624,9 +744,10 @@ def test_documented_example_is_a_valid_driver_document() -> None:
     block = example.split("```json\n", 1)[1].split("```", 1)[0]
     config = parse_driver_document(json.loads(block))
     assert lane_driver_ids(config.drivers) == LANE_DRIVERS
-    assert declared_driver_ids(config.drivers) == DECLARED_DRIVERS
+    assert declared_driver_ids(config.drivers) == (*DECLARED_DRIVERS, RPC_DRIVER_ID)
     assert config.recorded_slots == RecordedNames("driver-a", "driver-b")
     assert config.pane_driver == "driver-a"
+    assert isinstance(config.drivers[RPC_DRIVER_ID].usage, RpcUsageSpec)
 
 
 def test_every_driver_key_is_documented() -> None:
@@ -640,6 +761,10 @@ def test_every_driver_key_is_documented() -> None:
         *USAGE_KEYS,
         *PERIOD_FIELDS,
         *SPEND_FIELDS,
+        *RPC_USAGE_KEYS,
+        *RPC_FIELD_KEYS,
+        "jwt_field",
+        "jwt_claim",
     }
     for key in sorted(keys):
         assert f"`{key}`" in section, key

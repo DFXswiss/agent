@@ -32,6 +32,7 @@ from .drivers import (
     InteractiveSpec,
     PaneMarkers,
     RecordedNames,
+    RpcUsageSpec,
     UsageSpec,
     declared_driver_ids,
     driver_refusal,
@@ -325,7 +326,7 @@ class AIAccounts:
     lane_execution: LaneExecution | None = None
     lane_execution_error: str = LANE_EXECUTION_ERROR
     model_configuration_error: str | None = None
-    # Spend accounts and window-usage accounts. Empty is unconfigured.
+    # Spend, window-usage and rpc-usage accounts. Empty is unconfigured.
     usage_accounts: tuple[str, ...] = ()
     # The validated drivers.json of the same load.
     driver_configuration: DriverConfiguration = NO_DRIVER_CONFIGURATION
@@ -640,10 +641,10 @@ def load_ai_accounts(
             if configured is not None and configured.usage is not None
             else None
         )
-        _require_usage(
+        _usage_section(
             driver_configuration,
             account.provider,
-            "windows" if snapshot == "windows" else "spend",
+            snapshot if snapshot in ("windows", "rpc") else "spend",
             f"usage_accounts account {account_name}",
         )
         if account_name in usage_accounts:
@@ -678,10 +679,10 @@ def load_ai_accounts(
     )
 
 
-def _require_usage(
+def _usage_section(
     config: DriverConfiguration, driver: str, snapshot: str, selection: str
-) -> UsageSpec:
-    """A usage selection needs its driver's usage adapter of the right shape."""
+) -> UsageSpec | RpcUsageSpec:
+    """A usage selection needs its driver's usage adapter of the right kind."""
     spec = config.drivers.get(driver)
     if spec is None or spec.usage is None or spec.usage.snapshot != snapshot:
         raise AccountError(
@@ -751,6 +752,19 @@ def _role_pool(
 def _pool_member_names(role: AIRole) -> tuple[str, ...]:
     account = role.account
     return account.members if isinstance(account, AIAccountPool) else ()
+
+
+def _require_usage(
+    config: DriverConfiguration, driver: str, snapshot: str, selection: str
+) -> UsageSpec:
+    """The HTTP usage adapter (period, spend or windows) of a selected driver."""
+    usage = _usage_section(config, driver, snapshot, selection)
+    if not isinstance(usage, UsageSpec):
+        raise AccountError(
+            f"{selection} uses driver {driver}, which has no {snapshot} usage "
+            f"section in {DRIVERS_FILE} ({DRIVERS_DOC})"
+        )
+    return usage
 
 
 def _parse_lane_execution(value: Any) -> LaneExecution | None:

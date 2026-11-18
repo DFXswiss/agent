@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -14,6 +15,7 @@ import httpx
 import pytest
 
 from agent_cli import usage
+from agent_cli.drivers import DriverSpec, UsageSpec
 from agent_cli.store import Store, StoreError
 from agent_cli.usage import (
     AccountUsageError,
@@ -45,6 +47,8 @@ from driver_fixtures import (
     WINDOWS_TOKEN_NAME,
     WINDOWS_URL,
     driver_document,
+    driver_specs,
+    rpc_driver_spec,
     windows_driver,
     windows_driver_spec,
     write_drivers,
@@ -371,6 +375,42 @@ def test_account_email_errors(tmp_path: Path) -> None:
     path.write_text(json.dumps({"loginAccount": "x"}), encoding="utf-8")
     with pytest.raises(StoreError, match="must be an object"):
         load_login_account(SPEC, str(named))
+
+
+@pytest.mark.parametrize("spec", [rpc_driver_spec(), driver_specs()["driver-d"]], ids=["rpc", "spend"])
+def test_login_account_needs_a_windows_usage_section(tmp_path: Path, spec: DriverSpec) -> None:
+    with pytest.raises(StoreError, match=f"^{spec.id} has no windows usage section$"):
+        load_login_account(spec, str(tmp_path))
+
+
+def _windows_spec_with(**changes: Any) -> DriverSpec:
+    assert ADAPTED is not None and isinstance(ADAPTED, UsageSpec)
+    return dataclasses.replace(SPEC, usage=dataclasses.replace(ADAPTED, **changes))
+
+
+def _windows_spec_with_credential(**changes: Any) -> DriverSpec:
+    assert ADAPTED is not None and isinstance(ADAPTED, UsageSpec)
+    return _windows_spec_with(credential=dataclasses.replace(ADAPTED.credential, **changes))
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [
+        (_windows_spec_with(poll_seconds=None), "windows usage section is incomplete"),
+        (_windows_spec_with(account_file=None), "windows usage section is incomplete"),
+        (_windows_spec_with(window=None), "windows usage section is incomplete"),
+        (_windows_spec_with(limits=None), "windows usage section is incomplete"),
+        (_windows_spec_with_credential(label=None), "windows credential section is incomplete"),
+        (_windows_spec_with_credential(renew=None), "windows credential section is incomplete"),
+        (_windows_spec_with_credential(token=None), "windows credential section is incomplete"),
+    ],
+    ids=["poll_seconds", "account_file", "window", "limits", "label", "renew", "token"],
+)
+def test_login_account_needs_a_complete_windows_section(
+    tmp_path: Path, spec: DriverSpec, message: str
+) -> None:
+    with pytest.raises(StoreError, match=f"^{WINDOWS_DRIVER_ID} {message}$"):
+        load_login_account(spec, str(tmp_path))
 
 
 def test_snapshot_maps_windows_and_keeps_missing_windows_null() -> None:

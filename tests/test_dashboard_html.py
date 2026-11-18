@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.ai_accounts import AISubscription
+from agent_cli.drivers import parse_driver_document
 from agent_cli.main import (
     TASK_STATES,
     _subscription_dashboard_rows,
@@ -21,16 +22,25 @@ from agent_cli.main import (
 )
 from agent_cli.order_ops import ENDED_STATES, OPEN_STATES
 from agent_cli.preconditions import CHECK_STATUSES
-from agent_cli.drivers import parse_driver_document
+from agent_cli.rpc_usage import rpc_snapshot
 from agent_cli.usage import period_snapshot, spend_snapshot
 from driver_fixtures import (
+    RPC_ACCOUNT_FILE,
+    RPC_DRIVER_ID,
+    RPC_LABEL,
     WINDOWS_ACCOUNT_FILE,
     WINDOWS_CREDENTIAL_LABEL,
     WINDOWS_DRIVER_ID,
     driver_document,
+    rpc_driver,
     windows_driver,
     write_drivers,
 )
+from test_rpc_usage import ADAPTER as RPC_ADAPTER
+from test_rpc_usage import _window as rpc_window
+from test_rpc_usage import limits as rpc_limits
+from test_rpc_usage import result as rpc_result
+from test_rpc_usage import write_auth as rpc_write_auth
 from test_usage import PERIOD_DRIVER, SPEND_DRIVER, _key_body, _period_documents, _usage
 from test_usage_windows import mapped, usage_body
 
@@ -229,6 +239,26 @@ def test_subscription_rows_join_inventory_with_newest_usage() -> None:
     assert rows[0]["status"] == "active"
     assert rows[0]["note"] == "free text"
     assert rows[-1]["label"] is None and rows[-1]["note"] is None
+
+
+def test_rpc_rows_join_by_login_email_and_share_the_window_rendering() -> None:
+    rpc = _snapshot(RPC_DRIVER_ID, "Seat-1@Example.com", tier="pro")
+    windowed = _snapshot(WINDOWS_DRIVER_ID, "seat-1@example.com")
+    usage = _usage_dashboard_rows([rpc, windowed])
+    inventory = (AISubscription(RPC_DRIVER_ID, "seat-1@example.com", "Seat 1"),)
+    rows = _subscription_dashboard_rows(inventory, usage)
+    assert [(row["provider"], row["account"], row["listed"], row["usage"]) for row in rows] == [
+        (RPC_DRIVER_ID, "seat-1@example.com", True, rpc),
+        (WINDOWS_DRIVER_ID, "seat-1@example.com", False, windowed),
+    ]
+    html = SECTION_PAGE.read_text(encoding="utf-8")
+    cells = section_function(html, "usageCells")
+    # One rendering path for every window snapshot; the driver id decides nothing.
+    assert 'if (p.windows && typeof p.windows === "object") {' in cells
+    assert cells.count("windowLines(p)") == 1
+    assert "provider" not in cells
+    assert '"limit reached"' in cells
+    assert '"free resets: "' in cells
 
 
 def test_subscription_rows_without_inventory_keep_every_snapshot() -> None:
@@ -482,6 +512,90 @@ def test_subscription_check_time_does_not_follow_a_new_login(tmp_path: Path) -> 
     ]
 
 
+def _rpc_accounts_config(home: Path, accounts: dict[str, dict[str, str]]) -> None:
+    """Placeholder drivers with an rpc driver, every given account selected."""
+    document = driver_document()
+    document["drivers"][RPC_DRIVER_ID] = rpc_driver()
+    write_drivers(home, document)
+    (home / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "accounts": accounts,
+                "usage_accounts": list(accounts),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_subscription_rows_carry_the_check_time_of_an_rpc_login(tmp_path: Path) -> None:
+    """An rpc account matches by the identity of its login, like a windows account."""
+    seat = tmp_path / "seat"
+    rpc_write_auth(seat, email="Seat-1@Example.com")
+    logged_out = tmp_path / "logged-out"
+    logged_out.mkdir()
+    _rpc_accounts_config(
+        tmp_path,
+        {
+            "seat": {"provider": RPC_DRIVER_ID, "config_dir": str(seat)},
+            "logged-out": {"provider": RPC_DRIVER_ID, "config_dir": str(logged_out)},
+        },
+    )
+    checks = _RecordingChecks(
+        {
+            f"usage.checked.{RPC_DRIVER_ID}.seat": _check(
+                "2026-11-16T12:30:00Z", "seat-1@example.com"
+            ),
+            f"usage.checked.{RPC_DRIVER_ID}.logged-out": _check(
+                "2026-11-16T12:31:00Z", "gone@example.com"
+            ),
+        }
+    )
+    # Another device's snapshot of the same login still gets this device's check.
+    seat_row = _snapshot(
+        RPC_DRIVER_ID, "seat-1@example.com", "device-b", fetched_at="2026-11-16T09:00:00Z"
+    )
+    other = _snapshot(RPC_DRIVER_ID, "seat-2@example.com", "device-a")
+
+    state = _subscriptions_dashboard(tmp_path, [seat_row, other], checks, "device-a")
+
+    assert state["check_error"] is None
+    assert [(row["account"], row["checked_at"]) for row in state["rows"]] == [
+        ("seat-1@example.com", "2026-11-16T12:30:00Z"),
+        ("seat-2@example.com", None),
+    ]
+    assert sorted(checks.keys_read) == [
+        f"usage.checked.{RPC_DRIVER_ID}.logged-out",
+        f"usage.checked.{RPC_DRIVER_ID}.seat",
+    ]
+
+    # An rpc provider is no spend provider: a listed login without a snapshot
+    # still gets its check time.
+    (tmp_path / "ai-subscriptions.json").write_text(
+        json.dumps({"subscriptions": [{"provider": RPC_DRIVER_ID, "account": "SEAT-1@example.com"}]}),
+        encoding="utf-8",
+    )
+    state = _subscriptions_dashboard(tmp_path, [], checks, "device-a")
+    assert [(row["usage"], row["checked_at"]) for row in state["rows"]] == [
+        (None, "2026-11-16T12:30:00Z")
+    ]
+    (tmp_path / "ai-subscriptions.json").unlink()
+
+    # Another login in the same directory has not been read: no row gets the old time.
+    rpc_write_auth(seat, email="seat-2@example.com")
+    state = _subscriptions_dashboard(tmp_path, [seat_row, other], checks, "device-a")
+    assert state["check_error"] is None
+    assert [row["checked_at"] for row in state["rows"]] == [None, None]
+
+    # An unreadable account file is reported, never matched.
+    (seat / RPC_ACCOUNT_FILE).write_text("{", encoding="utf-8")
+    state = _subscriptions_dashboard(tmp_path, [seat_row], checks, "device-a")
+    assert state["check_error"] is not None
+    assert state["check_error"].startswith(f"seat: {RPC_LABEL} account file")
+    assert [row["checked_at"] for row in state["rows"]] == [None]
+
+
 def test_subscription_check_time_reports_a_malformed_value(tmp_path: Path) -> None:
     _usage_accounts_config(
         tmp_path,
@@ -575,6 +689,23 @@ const windowed = {
   } },
 };
 const missing = { provider: "driver-a", account: "seat-2@example.com", label: null, status: null, note: null, listed: true, checked_at: null, usage: null };
+const rpc = {
+  provider: "driver-r", account: "seat-1@example.com", label: null, status: null, note: null, listed: true,
+  checked_at: "2026-11-16T12:04:00Z",
+  usage: { _origin_device_id: "device-a", payload: {
+    provider: "driver-r", vendor: "driver-r", account_email: "seat-1@example.com", tier: "pro", fetched_at: "2026-11-16T12:00:00Z",
+    windows: {
+      five_hour: null,
+      weekly: { used_percent: 100.0, resets_at: "2026-11-19T13:53:00+00:00" },
+      weekly_models: [],
+      other: [{ window_minutes: 1440, used_percent: 7.5, resets_at: null }],
+    },
+    limit_reached: true, reset_credits_available: 1,
+  } },
+};
+const rpcQuiet = { ...rpc, usage: { ...rpc.usage, payload: { ...rpc.usage.payload,
+  windows: { five_hour: { used_percent: 3.0, resets_at: "2026-11-16T15:00:00+00:00" }, weekly: null, weekly_models: [], other: [] },
+  limit_reached: false, reset_credits_available: 0 } } };
 const stray = { provider: "driver-d", account: "router-a", listed: false, checked_at: null,
   usage: { _origin_device_id: "device-b", payload: { provider: "driver-d", account: "router-a", usage_usd: 1.25, limit_usd: null, limit_reset: "monthly" } } };
 console.log(JSON.stringify({
@@ -589,6 +720,8 @@ console.log(JSON.stringify({
   ],
   windowed: subscriptionRowHtml(windowed, now),
   older: subscriptionRowHtml({ ...windowed, checked_at: "2026-11-14T09:00:00Z" }, now),
+  rpc: subscriptionRowHtml(rpc, now),
+  rpcQuiet: subscriptionRowHtml(rpcQuiet, now),
   missing: subscriptionRowHtml(missing, now),
   stray: subscriptionRowHtml(stray, now),
   unknownStatus: subscriptionRowHtml({ ...missing, status: "on-hold" }, now),
@@ -624,6 +757,24 @@ console.log(JSON.stringify({
     assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Model B&lt;/b&gt;: 21.5%</td>" in windowed
     assert "<td>5h: —<br>Week: 2026-11-23T10:00:00+00:00<br>Week &lt;b&gt;Model B&lt;/b&gt;: —</td>" in windowed
     assert "<b>" not in windowed
+    assert "limit reached" not in windowed and "free resets" not in windowed
+    rpc = out["rpc"]
+    assert "<td>driver-r</td>" in rpc
+    assert "<td>pro</td>" in rpc
+    assert (
+        "<td>5h: —<br>Week: 100%<br>1440 min: 7.5%<br>limit reached<br>free resets: 1</td>"
+    ) in rpc
+    assert "<td>5h: —<br>Week: 2026-11-19T13:53:00+00:00<br>1440 min: —</td>" in rpc
+    # An rpc row shows Checked and Changed like a windows row.
+    assert rpc.endswith(
+        '<td title="2026-11-16T12:04:00Z">30 s ago</td>'
+        '<td title="2026-11-16T12:00:00Z">4 min ago</td></tr>'
+    )
+    assert rpc.count("<td") == 12
+    quiet = out["rpcQuiet"]
+    assert "<td>5h: 3%<br>Week: —</td>" in quiet
+    assert "<td>5h: 2026-11-16T15:00:00+00:00<br>Week: —</td>" in quiet
+    assert "limit reached" not in quiet and "free resets" not in quiet
     assert out["cells"] == [
         '<td title="2026-11-16T12:04:00Z">30 s ago</td>',
         # A time in the future (clock skew) is never a negative age.
@@ -668,9 +819,16 @@ console.log(JSON.stringify({
 
 
 OVERVIEW_NOW = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
-# Period, spend and windows usage drivers; driver-b, driver-c and driver-e have no usage section.
+# Period, spend, windows and rpc usage drivers; driver-b, driver-c and driver-e have no usage section.
 OVERVIEW_DRIVERS = parse_driver_document(
-    {**driver_document(), "drivers": {**driver_document()["drivers"], WINDOWS_DRIVER_ID: windows_driver()}}
+    {
+        **driver_document(),
+        "drivers": {
+            **driver_document()["drivers"],
+            WINDOWS_DRIVER_ID: windows_driver(),
+            RPC_DRIVER_ID: rpc_driver(),
+        },
+    }
 ).drivers
 
 
@@ -682,8 +840,16 @@ def _spend(body: dict, fetched_at: str = "2026-11-17T09:00:00+00:00") -> dict:
     return spend_snapshot(SPEND_DRIVER, _usage(SPEND_DRIVER), "router-a", {"key": body}, fetched_at)
 
 
+def _epoch(*args: int) -> int:
+    return int(datetime(*args, tzinfo=timezone.utc).timestamp())
+
+
+def _rpc(raw: dict, email: str, fetched_at: str) -> dict:
+    return rpc_snapshot(RPC_DRIVER_ID, RPC_ADAPTER, raw, email, fetched_at)
+
+
 def _overview_rows() -> list[dict]:
-    """Subscription rows built from the payloads usage.py stores."""
+    """Subscription rows built from the payloads the usage adapters store."""
     seat_1 = mapped("seat-1@example.com", "max_20x", usage_body(), "2026-11-17T09:56:00+00:00")
     seat_3 = mapped("seat-3@example.com", "max_5x", usage_body(weekly=32.0), "2026-11-17T08:00:00+00:00")
     period = period_snapshot(
@@ -695,7 +861,15 @@ def _overview_rows() -> list[dict]:
     )
     period["period_end"] = "2026-11-20T14:00:00+00:00"
     spend = _spend(_key_body())
-    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, period, spend)])
+    rpc = _rpc(
+        rpc_result(
+            primary=rpc_window(12.5, 300, _epoch(2026, 11, 17, 12, 0)),
+            secondary=rpc_window(40, 10080, _epoch(2026, 11, 19, 10, 0)),
+        ),
+        "rpc-1@example.com",
+        "2026-11-17T09:58:00+00:00",
+    )
+    usage = _usage_dashboard_rows([_recorded(p) for p in (seat_1, seat_3, period, spend, rpc)])
     inventory = (
         AISubscription(WINDOWS_DRIVER_ID, "seat-1@example.com", "Team seat 1"),
         AISubscription(WINDOWS_DRIVER_ID, "seat-2@example.com"),
@@ -718,7 +892,15 @@ def test_usage_duration_text() -> None:
 
 def test_usage_overview_one_entry_per_provider() -> None:
     overview = _overview(_overview_rows())
-    assert list(overview) == ["driver-a", "driver-b", "driver-c", "driver-d", "driver-e", WINDOWS_DRIVER_ID]
+    assert list(overview) == [
+        "driver-a",
+        "driver-b",
+        "driver-c",
+        "driver-d",
+        "driver-e",
+        RPC_DRIVER_ID,
+        WINDOWS_DRIVER_ID,
+    ]
 
     windows = overview[WINDOWS_DRIVER_ID]
     # The name is the driver's display_name; the headline is the weekly window of the most used account.
@@ -740,6 +922,18 @@ def test_usage_overview_one_entry_per_provider() -> None:
 
     assert [a["has_snapshot"] for a in windows["accounts"]] == [True, False, True]
 
+    # An rpc adapter is read like a windows adapter, not "not read".
+    rpc = overview[RPC_DRIVER_ID]
+    assert rpc["status"] is None
+    assert rpc["summary"] == "Vendor R 40% 2 d 0 h"
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in rpc["windows"]] == [
+        ("5h", 12.5, "2 h 0 min"),
+        ("Week", 40.0, "2 d 0 h"),
+    ]
+    assert [(a["account"], a["used_percent"], a["recorded"]) for a in rpc["accounts"]] == [
+        ("rpc-1@example.com", 40.0, "2026-11-17T09:58:00+00:00")
+    ]
+
     # A driver without a usage section in drivers.json is not read.
     unread = overview["driver-b"]
     assert unread["status"] == "not read" and unread["used_percent"] is None
@@ -758,6 +952,17 @@ def test_usage_overview_one_entry_per_provider() -> None:
     assert spend["accounts"][0]["text"] == "$1.25 / $10"
 
 
+def test_usage_overview_lists_every_configured_driver_and_every_row_provider() -> None:
+    stray = _snapshot("driver-x", "seat-9@example.com")
+    rows = _subscription_dashboard_rows((), [stray])
+    overview = {entry["provider"]: entry for entry in _usage_overview(rows, OVERVIEW_NOW, {})}
+    # Without a usage section the id is the name; a recorded snapshot means the
+    # provider is read somewhere, so it is "no data" rather than "not read".
+    assert list(overview) == ["driver-x"]
+    assert overview["driver-x"]["status"] == "no data"
+    assert overview["driver-x"]["summary"] == "driver-x no data"
+
+
 def test_usage_overview_without_data_never_shows_zero() -> None:
     overview = _overview([])
     assert [(p, e["status"], e["summary"]) for p, e in overview.items()] == [
@@ -766,21 +971,31 @@ def test_usage_overview_without_data_never_shows_zero() -> None:
         ("driver-c", "not read", "Vendor C not read"),
         ("driver-d", "no data", "Vendor D no data"),
         ("driver-e", "not read", "driver-e not read"),
+        (RPC_DRIVER_ID, "no data", "Vendor R no data"),
         (WINDOWS_DRIVER_ID, "no data", "Login no data"),
     ]
     unlimited = _key_body()
     unlimited["data"].update({"limit": None, "limit_remaining": None, "limit_reset": "monthly"})
     empty = mapped("seat-1@example.com", None, {"five_hour": None, "seven_day": None}, "x")
-    rows = _subscription_dashboard_rows((), [_recorded(_spend(unlimited)), _recorded(empty)])
+    rpc_empty = _rpc(
+        {"limits": rpc_limits(primary=None, secondary=None, plan=None, reached=None)},
+        "rpc-1@example.com",
+        "x",
+    )
+    rows = _subscription_dashboard_rows(
+        (), [_recorded(_spend(unlimited)), _recorded(empty), _recorded(rpc_empty)]
+    )
     overview = _overview(rows)
     spend = overview["driver-d"]
     assert spend["used_percent"] is None and spend["status"] is None
     assert spend["summary"] == "Vendor D $1.25 / unlimited (monthly)"
-    windows = overview[WINDOWS_DRIVER_ID]
-    assert windows["status"] == "no data"
-    assert windows["accounts"][0]["used_percent"] is None
-    assert windows["accounts"][0]["status"] == "no data"
-    assert windows["accounts"][0]["recorded"] is None
+    # A window snapshot without any window is no data, for the windows and the rpc adapter alike.
+    for provider in (WINDOWS_DRIVER_ID, RPC_DRIVER_ID):
+        entry = overview[provider]
+        assert entry["status"] == "no data"
+        assert entry["accounts"][0]["used_percent"] is None
+        assert entry["accounts"][0]["status"] == "no data"
+        assert entry["accounts"][0]["recorded"] is None
 
 
 def test_usage_overview_without_readable_drivers_claims_no_provider_unread() -> None:
@@ -802,20 +1017,61 @@ def test_usage_overview_windows_headline_is_weekly_only() -> None:
     body = usage_body(five_hour={"utilization": 80.0, "resets_at": "2026-11-17T12:00:00+00:00"})
     body.update({"seven_day": None, "limits": []})
     only_five_hour = mapped("seat-1@example.com", None, body, "2026-11-17T09:56:00+00:00")
-    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour)])
-    windows = _overview(rows)[WINDOWS_DRIVER_ID]
-    # The five-hour window is shown, but never as the weekly headline.
-    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in windows["windows"]] == [
-        ("5h", 80.0, "2 h 0 min")
-    ]
-    assert windows["used_percent"] is None and windows["window"] is None
-    assert windows["status"] == "no data" and windows["summary"] == "Login no data"
-    assert windows["accounts"][0]["used_percent"] is None
-    assert windows["accounts"][0]["status"] == "no data"
+    rpc_five_hour = _rpc(
+        rpc_result(primary=rpc_window(80, 300, _epoch(2026, 11, 17, 12, 0))),
+        "rpc-1@example.com",
+        "2026-11-17T09:56:00+00:00",
+    )
+    rows = _subscription_dashboard_rows((), [_recorded(only_five_hour), _recorded(rpc_five_hour)])
+    overview = _overview(rows)
+    for provider, name in ((WINDOWS_DRIVER_ID, "Login"), (RPC_DRIVER_ID, "Vendor R")):
+        entry = overview[provider]
+        # The five-hour window is shown, but never as the weekly headline.
+        assert [(w["name"], w["used_percent"], w["resets_in"]) for w in entry["windows"]] == [
+            ("5h", 80.0, "2 h 0 min")
+        ]
+        assert entry["used_percent"] is None and entry["window"] is None
+        assert entry["status"] == "no data" and entry["summary"] == f"{name} no data"
+        assert entry["accounts"][0]["used_percent"] is None
+        assert entry["accounts"][0]["status"] == "no data"
 
     weekly = mapped("seat-2@example.com", None, usage_body(), "2026-11-17T09:56:00+00:00")
     rows = _subscription_dashboard_rows((), [_recorded(only_five_hour), _recorded(weekly)])
     assert _overview(rows)[WINDOWS_DRIVER_ID]["summary"] == "Login 14% 6 d 0 h"
+
+
+def test_usage_overview_names_windows_of_other_lengths() -> None:
+    rpc = _rpc(
+        rpc_result(primary=rpc_window(7.5, 1440, None), secondary=rpc_window(40, 10080, None)),
+        "rpc-1@example.com",
+        "2026-11-17T09:56:00+00:00",
+    )
+    entry = _overview(_subscription_dashboard_rows((), [_recorded(rpc)]))[RPC_DRIVER_ID]
+    assert [(w["name"], w["used_percent"], w["resets_in"]) for w in entry["windows"]] == [
+        ("Week", 40.0, None),
+        ("1440 min", 7.5, None),
+    ]
+    assert entry["summary"] == "Vendor R 40%"
+
+
+def test_usage_overview_skips_malformed_windows_of_other_lengths() -> None:
+    """Replicated data may hold anything; only integer window lengths are named."""
+    rpc = _rpc(
+        rpc_result(primary=rpc_window(40, 10080, None)),
+        "rpc-1@example.com",
+        "2026-11-17T09:56:00+00:00",
+    )
+    rpc["windows"]["other"] = [
+        "junk",
+        {"window_minutes": True, "used_percent": 2},
+        {"window_minutes": "300", "used_percent": 3},
+        {"window_minutes": 1440, "used_percent": 1},
+    ]
+    entry = _overview(_subscription_dashboard_rows((), [_recorded(rpc)]))[RPC_DRIVER_ID]
+    assert [(w["name"], w["used_percent"]) for w in entry["windows"]] == [
+        ("Week", 40.0),
+        ("1440 min", 1.0),
+    ]
 
 
 def test_usage_overview_ignores_times_outside_the_utc_range() -> None:
@@ -889,12 +1145,17 @@ console.log(JSON.stringify({{
     assert completed.returncode == 0, completed.stderr
     out = json.loads(completed.stdout)
     closed = out["closed"]
-    assert closed.count('<details class="usage-provider"') == 6
+    assert closed.count('<details class="usage-provider"') == 7
     assert " open>" not in closed
     assert (
         '<summary><span class="usage-line"><span><b>Login</b></span><span>6 d 0 h</span>'
         '<meter min="0" max="100" low="70" high="90" optimum="0" value="32" title="32%"></meter>'
         "<span>32%</span></span></summary>"
+    ) in closed
+    assert (
+        '<summary><span class="usage-line"><span><b>Vendor R</b></span><span>2 d 0 h</span>'
+        '<meter min="0" max="100" low="70" high="90" optimum="0" value="40" title="40%"></meter>'
+        "<span>40%</span></span></summary>"
     ) in closed
     not_read = state_icons(html)["not read"]
     assert (
@@ -919,9 +1180,9 @@ console.log(JSON.stringify({{
     assert "&lt;b&gt;seat&lt;/b&gt;" in closed and "<b>seat</b>" not in closed
     assert '<details class="usage-provider" data-provider="driver-w" open>' in out["open"]
     assert out["open"].count(" open>") == 1
-    assert out["detailed"].count(" open>") == 6
+    assert out["detailed"].count(" open>") == 7
     order = re.findall(r'data-provider="([a-z-]+)"', out["sorted"])
-    assert order == ["driver-w", "driver-d", "driver-a", "driver-b", "driver-c", "driver-e"]
+    assert order == ["driver-r", "driver-w", "driver-d", "driver-a", "driver-b", "driver-c", "driver-e"]
     assert out["none"] == '<p class="usage-muted">—</p>'
 
 
@@ -1032,7 +1293,7 @@ console.log(JSON.stringify({{
     )
     assert out["line"] == (
         f"Vendor A 0% 3 d 4 h · Vendor B {icon} · Vendor C {icon}"
-        f" · Vendor D 12.5% 13 d 14 h · driver-e {icon} · Login 32% 6 d 0 h"
+        f" · Vendor D 12.5% 13 d 14 h · driver-e {icon} · Vendor R 40% 2 d 0 h · Login 32% 6 d 0 h"
     )
     assert out["none"] == "—"
 

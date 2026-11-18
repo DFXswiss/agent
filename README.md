@@ -47,7 +47,8 @@ period-usage reads are disabled until
 `usage_session` is explicitly configured. Key-spend reads are
 disabled until `usage_accounts` explicitly names one or more accounts whose
 driver has a spend usage adapter. Window-usage reads stay disabled until
-`usage_accounts` names an account whose driver has a windows usage adapter. The optional
+`usage_accounts` names an account whose driver has a windows usage adapter, and
+rpc-usage reads until it names one whose driver has an rpc usage adapter. The optional
 `ai-subscriptions.json` inventory lists every known subscription on the
 dashboard's Subscriptions page.
 
@@ -211,7 +212,7 @@ agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon c
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch session-usage # one scan of the usage session's period usage into usage.snapshot
 agent watch account-usage # one scan of the configured usage accounts' key USD usage
-agent watch window-usage # one scan of configured window usage (5h, weekly, per model)
+agent watch window-usage # one scan of configured window usage (5h, weekly, per model; windows and rpc adapters)
 agent watch token-keepalive # one keep-alive pass over window-usage accounts; needs token_keepalive
 agent account-login ACCOUNT --email ADDRESS [--no-mailbox] # sign a subscription into the account's profile
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
@@ -221,7 +222,7 @@ agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HO
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each window-usage account no more often than its configured poll_seconds; token keep-alive (at most every 5 minutes, when `token_keepalive` is set)
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s; each window-usage and rpc-usage account no more often than its configured poll_seconds; token keep-alive (at most every 5 minutes, when `token_keepalive` is set)
 ```
 
 The token keep-alive and `agent account-login` are described in [docs/ai-accounts.md](docs/ai-accounts.md#token-keep-alive).
@@ -277,7 +278,11 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from their driver's `spend` usage
 adapter. `agent watch window-usage` reads the login of each selected account
 whose driver has a `windows` usage adapter and stores changed five-hour, weekly
-and per-model weekly percentages;
+and per-model weekly percentages. In the same scan it asks the driver's own
+local JSON-RPC server for each selected account whose driver has an `rpc` usage
+adapter and stores the same windows; Agent sends no token for it and stores
+none, and reads the account file only to decode the identity claim of the ID
+token, without a signature check;
 see [AI accounts](docs/ai-accounts.md). Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final

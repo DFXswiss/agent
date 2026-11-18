@@ -14,6 +14,7 @@ Pure module: no Postgres, no network, no subprocess.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -168,8 +169,46 @@ KEYCHAIN_REQUIRED = (
     "missing_status",
     "platform",
 )
-ACCOUNT_FILE_KEYS = ("file", "object", "field", "default_name")
-ACCOUNT_FILE_REQUIRED = ("file", "object", "field")
+RPC_USAGE_KEYS = (
+    "snapshot",
+    "label",
+    "poll_seconds",
+    "timeout_seconds",
+    "argv",
+    "initialize_params",
+    "method",
+    "params",
+    "result_pointer",
+    "windows_by_minutes",
+    "fields",
+    "account_file",
+)
+RPC_FIELD_KEYS = (
+    "windows",
+    "used_percent",
+    "window_minutes",
+    "resets_at",
+    "plan",
+    "limit_reached",
+    "reset_credits_count",
+)
+# Snapshot windows an rpc adapter may fill by window length.
+RPC_WINDOW_SLOTS = ("five_hour", "weekly")
+RPC_WINDOW_MINUTES_RE = re.compile(r"[1-9][0-9]{0,6}")
+RPC_METHOD_RE = re.compile(r"[A-Za-z0-9_./$-]{1,200}")
+# One exchange with the local server may take at most this many seconds.
+RPC_TIMEOUT_SECONDS_MAX = 600
+RPC_PARAMS_LIMIT = 10000
+RPC_WINDOW_LIMIT = 10
+ACCOUNT_FILE_KEYS = (
+    "file",
+    "object",
+    "field",
+    "default_name",
+    "jwt_field",
+    "jwt_claim",
+)
+ACCOUNT_FILE_REQUIRED = ("file", "object")
 WINDOW_FIELD_KEYS = ("used_percent", "resets_at", "round")
 LIMIT_FIELD_KEYS = (
     "kind",
@@ -209,7 +248,7 @@ SPEC_MODES = ("stdin", "file-arg")
 OUTPUT_MODES = ("event-stream", "last-message-file")
 LANE_MODES = ("read", "write")
 SESSION_ID_FORMATS = ("uuid",)
-USAGE_SNAPSHOTS = ("period", "spend", "windows")
+USAGE_SNAPSHOTS = ("period", "spend", "windows", "rpc")
 USAGE_CREDENTIAL_FORMATS = {
     "period": "json-entry",
     "spend": "text",
@@ -366,12 +405,19 @@ class UsageCredential:
 
 @dataclass(frozen=True)
 class UsageAccountFile:
-    """JSON file that names the login; ``object_key`` is the JSON key ``object``."""
+    """JSON file that names the login; ``object_key`` is the JSON key ``object``.
+
+    The identity is either the string ``field`` of that object, or the claim
+    ``jwt_claim`` of the payload of the JWT in its ``jwt_field``. The JWT is
+    decoded without a signature check and is never kept.
+    """
 
     file: str
     object_key: str
-    field: str
+    field: str | None = None
     default_name: str | None = None
+    jwt_field: str | None = None
+    jwt_claim: str | None = None
 
 
 @dataclass(frozen=True)
@@ -465,6 +511,56 @@ class LoginSpec:
 
 
 @dataclass(frozen=True)
+class RpcLimitFields:
+    """Where an rpc answer keeps its windows and flags.
+
+    ``windows``, ``plan`` and ``limit_reached`` are JSON pointers into the
+    limits object; ``used_percent``, ``window_minutes`` and ``resets_at`` are
+    keys of one window object; ``reset_credits_count`` is a JSON pointer into
+    the whole result.
+    """
+
+    windows: tuple[str, ...]
+    used_percent: str
+    window_minutes: str
+    resets_at: str
+    plan: str
+    limit_reached: str
+    reset_credits_count: str
+
+
+@dataclass(frozen=True)
+class RpcUsageSpec:
+    """A usage adapter that asks the driver's own local JSON-RPC server.
+
+    ``argv`` starts the server on stdio. ``initialize_params`` and ``params``
+    are the JSON texts of the ``initialize`` and ``method`` parameters.
+    ``result_pointer`` names the limits object inside the method's result.
+    ``windows_by_minutes`` maps a window length in minutes to a snapshot window.
+    """
+
+    snapshot: str
+    label: str
+    poll_seconds: int
+    timeout_seconds: int
+    argv: tuple[str, ...]
+    initialize_params: str
+    method: str
+    params: str
+    result_pointer: str
+    windows_by_minutes: tuple[tuple[int, str], ...]
+    fields: RpcLimitFields
+    account_file: UsageAccountFile
+
+    def window_slot(self, minutes: int) -> str | None:
+        """The snapshot window of a window length, or ``None`` when unmapped."""
+        for length, slot in self.windows_by_minutes:
+            if length == minutes:
+                return slot
+        return None
+
+
+@dataclass(frozen=True)
 class DriverSpec:
     id: str
     display_name: str | None = None
@@ -473,7 +569,7 @@ class DriverSpec:
     credential_env: tuple[str, ...] = ()
     lane: LaneSpec | None = None
     interactive: InteractiveSpec | None = None
-    usage: UsageSpec | None = None
+    usage: UsageSpec | RpcUsageSpec | None = None
     login: LoginSpec | None = None
 
 
@@ -1072,11 +1168,30 @@ def _parse_account_file(
         default_name = _dot_file_name(account_file["default_name"], f"{path}.default_name")
         if home_default_dir is None:
             _fail(f"{path}.default_name requires home_default_dir")
+    has_field = account_file.get("field") is not None
+    has_jwt_field = account_file.get("jwt_field") is not None
+    has_jwt_claim = account_file.get("jwt_claim") is not None
+    if has_jwt_field != has_jwt_claim:
+        _fail(f"{path}.jwt_field and {path}.jwt_claim must be set together")
+    if has_field and has_jwt_field:
+        _fail(f"{path} names the identity by field or by jwt_field and jwt_claim, not both")
+    field: str | None = None
+    jwt_field: str | None = None
+    jwt_claim: str | None = None
+    if has_jwt_field:
+        jwt_field = _line(account_file["jwt_field"], f"{path}.jwt_field")
+        jwt_claim = _line(account_file["jwt_claim"], f"{path}.jwt_claim")
+    elif has_field:
+        field = _line(account_file["field"], f"{path}.field")
+    else:
+        _fail(f"{path}.field is required")
     return UsageAccountFile(
         file=_dot_file_name(account_file["file"], f"{path}.file"),
         object_key=_line(account_file["object"], f"{path}.object"),
-        field=_line(account_file["field"], f"{path}.field"),
+        field=field,
         default_name=default_name,
+        jwt_field=jwt_field,
+        jwt_claim=jwt_claim,
     )
 
 
@@ -1190,9 +1305,100 @@ def _parse_windows_usage(
     )
 
 
-def _parse_usage(raw: Any, path: str, home_default_dir: str | None) -> UsageSpec:
+def _json_object_text(value: Any, path: str) -> str:
+    """A JSON object from the document, kept as compact JSON text."""
+    if not isinstance(value, dict):
+        _fail(f"{path} must be an object")
+    text = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    if len(text) > RPC_PARAMS_LIMIT:
+        _fail(f"{path} must be at most {RPC_PARAMS_LIMIT} characters as JSON")
+    return text
+
+
+def _rpc_argv(value: Any, path: str) -> tuple[str, ...]:
+    items = _list(value, path, limit=ARGV_LIMIT)
+    return tuple(_line(item, f"{path}[{i}]") for i, item in enumerate(items))
+
+
+def _parse_windows_by_minutes(raw: Any, path: str) -> tuple[tuple[int, str], ...]:
+    if not isinstance(raw, dict) or not raw or len(raw) > len(RPC_WINDOW_SLOTS):
+        _fail(
+            f"{path} must be an object of 1 to {len(RPC_WINDOW_SLOTS)} window lengths"
+        )
+    mapping: list[tuple[int, str]] = []
+    for minutes, slot in raw.items():
+        if not isinstance(minutes, str) or RPC_WINDOW_MINUTES_RE.fullmatch(minutes) is None:
+            _fail(f"{path} keys must be window lengths in minutes")
+        name = _choice(slot, f"{path}.{minutes}", RPC_WINDOW_SLOTS)
+        if any(existing == name for _length, existing in mapping):
+            _fail(f"{path} maps two lengths to {name}")
+        mapping.append((int(minutes), name))
+    return tuple(mapping)
+
+
+def _parse_rpc_fields(raw: Any, path: str) -> RpcLimitFields:
+    fields = _object(raw, path, RPC_FIELD_KEYS, RPC_FIELD_KEYS)
+    windows = _list(fields["windows"], f"{path}.windows", limit=RPC_WINDOW_LIMIT)
+    pointers = tuple(
+        _pointer(item, f"{path}.windows[{i}]") for i, item in enumerate(windows)
+    )
+    if len(set(pointers)) != len(pointers):
+        _fail(f"{path}.windows repeats a pointer")
+    return RpcLimitFields(
+        windows=pointers,
+        used_percent=_line(fields["used_percent"], f"{path}.used_percent"),
+        window_minutes=_line(fields["window_minutes"], f"{path}.window_minutes"),
+        resets_at=_line(fields["resets_at"], f"{path}.resets_at"),
+        plan=_pointer(fields["plan"], f"{path}.plan"),
+        limit_reached=_pointer(fields["limit_reached"], f"{path}.limit_reached"),
+        reset_credits_count=_pointer(
+            fields["reset_credits_count"], f"{path}.reset_credits_count"
+        ),
+    )
+
+
+def _parse_rpc_usage(
+    raw: dict[str, Any], path: str, home_default_dir: str | None
+) -> RpcUsageSpec:
+    usage = _object(raw, path, RPC_USAGE_KEYS, RPC_USAGE_KEYS)
+    method = usage["method"]
+    if not isinstance(method, str) or RPC_METHOD_RE.fullmatch(method) is None:
+        _fail(f"{path}.method must be a JSON-RPC method name")
+    if method in ("initialize", "initialized"):
+        _fail(f"{path}.method must not be the handshake method {method}")
+    return RpcUsageSpec(
+        snapshot="rpc",
+        label=_line(usage["label"], f"{path}.label"),
+        poll_seconds=_bounded_int(
+            usage["poll_seconds"], f"{path}.poll_seconds", 1, POLL_SECONDS_MAX
+        ),
+        timeout_seconds=_bounded_int(
+            usage["timeout_seconds"], f"{path}.timeout_seconds", 1, RPC_TIMEOUT_SECONDS_MAX
+        ),
+        argv=_rpc_argv(usage["argv"], f"{path}.argv"),
+        initialize_params=_json_object_text(
+            usage["initialize_params"], f"{path}.initialize_params"
+        ),
+        method=method,
+        params=_json_object_text(usage["params"], f"{path}.params"),
+        result_pointer=_pointer(usage["result_pointer"], f"{path}.result_pointer"),
+        windows_by_minutes=_parse_windows_by_minutes(
+            usage["windows_by_minutes"], f"{path}.windows_by_minutes"
+        ),
+        fields=_parse_rpc_fields(usage["fields"], f"{path}.fields"),
+        account_file=_parse_account_file(
+            usage["account_file"], f"{path}.account_file", home_default_dir
+        ),
+    )
+
+
+def _parse_usage(
+    raw: Any, path: str, home_default_dir: str | None
+) -> UsageSpec | RpcUsageSpec:
     if not isinstance(raw, dict):
         _fail(f"{path} must be an object")
+    if raw.get("snapshot") == "rpc":
+        return _parse_rpc_usage(raw, path, home_default_dir)
     if raw.get("snapshot") == "windows":
         return _parse_windows_usage(raw, path, home_default_dir)
     usage = _object(raw, path, USAGE_KEYS, USAGE_KEYS)
@@ -1281,7 +1487,10 @@ def _parse_driver(driver_id: str, raw: Any) -> DriverSpec:
         if driver.get("usage") is not None
         else None
     )
-    if usage is not None and usage.keepalive is not None and home_env is None:
+    if isinstance(usage, RpcUsageSpec) and home_env is None:
+        # The server reads the account's login from the directory in home_env.
+        _fail(f"{path}.usage snapshot rpc requires home_env")
+    if isinstance(usage, UsageSpec) and usage.keepalive is not None and home_env is None:
         # The run must select the account's directory like a role prefix does.
         _fail(f"{path}.usage.keepalive requires home_env")
     login: LoginSpec | None = None

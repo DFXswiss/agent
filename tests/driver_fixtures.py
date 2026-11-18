@@ -5,7 +5,8 @@ section and a period usage adapter. ``driver-b``: spec on stdin, final message
 in an output file, may run commands. ``driver-c``: spec on stdin, event stream,
 extra read directories and a judgment template. ``driver-d``: like ``driver-c``
 plus a key file, a fixed child environment and a spend usage adapter.
-``driver-e``: record-only (no lane, no account).
+``driver-e``: record-only (no lane, no account). ``driver-w`` and ``driver-r``
+(added by the tests that need them): a windows and an rpc usage adapter.
 """
 
 from __future__ import annotations
@@ -430,6 +431,63 @@ def windows_driver() -> dict[str, Any]:
 def windows_driver_spec() -> DriverSpec:
     config = parse_driver_document({"drivers": {WINDOWS_DRIVER_ID: windows_driver()}})
     return config.drivers[WINDOWS_DRIVER_ID]
+
+
+RPC_DRIVER_ID = "driver-r"
+RPC_LABEL = "Seat usage"
+RPC_HOME_ENV = "TOOL_R_HOME"
+RPC_HOME_DIR = "~/.tool-r"
+RPC_ACCOUNT_FILE = "auth.json"
+RPC_METHOD = "limits/read"
+RPC_POLL_SECONDS = 900
+RPC_TIMEOUT_SECONDS = 30
+
+
+def rpc_usage() -> dict[str, Any]:
+    """A valid ``rpc`` usage section. Method and field names are placeholders."""
+    return {
+        "snapshot": "rpc",
+        "label": RPC_LABEL,
+        "poll_seconds": RPC_POLL_SECONDS,
+        "timeout_seconds": RPC_TIMEOUT_SECONDS,
+        "argv": ["tool-r", "serve-rpc"],
+        "initialize_params": {"clientInfo": {"name": "agent-tests", "version": "1"}},
+        "method": RPC_METHOD,
+        "params": {},
+        "result_pointer": "/limits",
+        "windows_by_minutes": {"300": "five_hour", "10080": "weekly"},
+        "fields": {
+            "windows": ["/primary", "/secondary"],
+            "used_percent": "usedPercent",
+            "window_minutes": "windowMinutes",
+            "resets_at": "resetsAt",
+            "plan": "/plan",
+            "limit_reached": "/reachedType",
+            "reset_credits_count": "/resetCredits/availableCount",
+        },
+        "account_file": {
+            "file": RPC_ACCOUNT_FILE,
+            "object": "tokens",
+            "jwt_field": "id_token",
+            "jwt_claim": "email",
+        },
+    }
+
+
+def rpc_driver() -> dict[str, Any]:
+    """A record-only driver whose usage section is an rpc adapter."""
+    return {
+        "display_name": "Vendor R",
+        "home_env": RPC_HOME_ENV,
+        "home_default_dir": RPC_HOME_DIR,
+        "credential_env": ["TOOL_R_API_KEY"],
+        "usage": rpc_usage(),
+    }
+
+
+def rpc_driver_spec() -> DriverSpec:
+    config = parse_driver_document({"drivers": {RPC_DRIVER_ID: rpc_driver()}})
+    return config.drivers[RPC_DRIVER_ID]
 
 
 def write_accounts(home: Path, document: dict[str, Any] | None = None) -> Path:
