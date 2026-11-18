@@ -1096,8 +1096,10 @@ this endpoint no failure that concerns an event is named. The kind of such a fai
 operator: the request line of section 13 logs the true value and the position in every case
 (`verify_failed <position> <failure>`), and offline `verify` of an export (section 12.3), which
 the operator runs with the full file, prints it, except a `row_mismatch` of the stored columns
-`event_id`, `actor_key_id` or `prev_hash`: an export does not carry those columns (section
-12.3), so only the log line names it. `verified` and `position` tell every reader whether and
+`event_id`, `actor_key_id` or `prev_hash`, which an export does not carry, and an
+`event_time_invalid` of a stored `received_at` that cannot be written as a time of section 2,
+which an export cannot carry (`export` refuses such a record, section 12.3); for these two only
+the log line names the failure. `verified` and `position` tell every reader whether and
 where the record fails verification, which is what lets a reader detect a later rewrite of the
 record.
 
@@ -1860,6 +1862,10 @@ argument exists.
 `export` checks its configuration, then refuses an existing `FILE` before it connects, then
 creates `FILE` so that it fails when `FILE` exists, reads the snapshot and writes the file. When
 it fails after it created `FILE` and keeps running, it removes `FILE` before it prints its line.
+`export` does not verify the record, but it never writes a value outside the form of its member:
+when a stored `received_at` cannot be written as a time of section 2 (its year lies outside 0001
+to 9999, or it is `infinity` or `-infinity`, section 12.1), it stops, removes `FILE` and prints
+`refused time_invalid`.
 When the process is killed or the machine stops while it writes, a partial `FILE` can remain:
 a file cut inside a line, or at the end of a line before the last event line, is refused by
 `verify` and `restore` with `file_invalid` (it lacks the final `\n`, or its header does not
@@ -1874,6 +1880,7 @@ copies a file only after that line (section 12.4). It prints one line and exits:
 | `refused file_exists` | 1 | `FILE` exists; nothing is written |
 | `refused file_write` | 1 | `FILE` cannot be created or written |
 | `refused database` | 1 | a database operation failed, also a connection that failed or that the connect timeout of section 15 ended |
+| `refused time_invalid` | 1 | a stored `received_at` of the snapshot cannot be written as a time of section 2 (the hub fails it with `event_time_invalid`, section 12.1); no file is left behind |
 
 `verify` prints one line and exits:
 
@@ -2592,7 +2599,9 @@ Integrity and backup:
   and malformed, and a reported libpq version below 16; `refused file_exists` for an existing
   file, which stays unchanged; `refused file_write` for a directory that cannot be written;
   `refused database` for an unreachable database and for a database without the schema, with no
-  file left behind; each asserts the printed line and exit 1
+  file left behind; `refused time_invalid` for a stored `received_at` of `10000-01-01 00:00:00+00`
+  and, in a second run, of `infinity`, each changed as database superuser with the triggers
+  bypassed, with no file left behind; each asserts the printed line and exit 1
 - offline `verify` of an export, with `verified <position> <record hash>` and exit 0; `refused
   config` for `--keys`, `--teams` or `--in` missing, each of them given twice, an unknown
   argument, a keys file that does not load, a teams file that does not load, a keys file whose
@@ -3098,8 +3107,10 @@ confirms or changes each one.
 56. Offline `verify` takes the teams file (`--teams`) and `restore` reads `AGENT_CORE_TEAMS`,
     because the keys file loader needs the roster; the export is verifiable offline with the
     public keys file and the public teams file (§12.3).
-57. `export` prints `exported`, `refused config`, `refused file_exists`, `refused file_write` or
-    `refused database`; a malformed export file is refused by `verify` and `restore` with the
+57. `export` prints `exported`, `refused config`, `refused file_exists`, `refused file_write`,
+    `refused database` or `refused time_invalid`; it never writes a stored `received_at` that
+    cannot be written as a time of §2, but stops and leaves no file behind (decision 103); a
+    malformed export file is refused by `verify` and `restore` with the
     failure `file_invalid`, at position `0` for a fault of the whole file (not UTF-8, empty, no
     final `\n`), of the first line (the header line, also when it is empty or not JSON) or of the
     header's agreement with the other lines (§12.1, §12.3).
@@ -3178,7 +3189,9 @@ confirms or changes each one.
     <position> <failure>` with the true value in every case, and offline `verify` of an export
     (§12.3), run with the full file, prints `failed <position> <failure>`, except for a
     `row_mismatch` of the stored columns `event_id`, `actor_key_id` or `prev_hash`, which an
-    export does not carry, so that only the log line names it. Of the alternatives of the
+    export does not carry, and an `event_time_invalid` of a stored `received_at` that cannot be
+    written as a time of §2, which an export cannot carry (`export` refuses such a record,
+    §12.3); for these two only the log line names the failure. Of the alternatives of the
     reviews (name the answer as part of the first exception of §3, list the disclosures of the
     named values there, answer `withheld` only in the cases that depend on state the caller does
     not see, or never name a failure that concerns an event), the last is taken (§3, §7.9,
