@@ -41,6 +41,9 @@ from tests.webauthn_authenticator import (
     BIGNUM,
     FLOAT_MINUS_7,
     NULL,
+    SHARED_ARRAY,
+    SHARED_ARRAY_CYCLE,
+    SHARED_MAP_CYCLE,
     SIMPLE_VALUE,
     TRUE,
     UNDEFINED,
@@ -252,6 +255,53 @@ def test_cbor_booleans_accepted_only_as_values_where_allowed() -> None:
         decode_cbor_item(cbor_map([(TRUE, cbor(1))], width=None), 0, booleans=True)
     with pytest.raises(CborInvalid):
         decode_cbor_item(cbor_map([(cbor("x"), NULL)], width=None), 0, booleans=True)
+
+
+def _shared_arrays(depth: int) -> bytes:
+    """Arrays of two references to one shared array, `depth` levels deep: 2**depth paths to `[]`."""
+    raw = cbor([])
+    for index in reversed(range(depth)):
+        raw = bytes.fromhex("82d81c") + raw + bytes.fromhex("d81d") + cbor(index)
+    return raw
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        SHARED_ARRAY_CYCLE,
+        SHARED_MAP_CYCLE,
+        cbor_map([(cbor("x"), SHARED_ARRAY_CYCLE)], width=None),
+        SHARED_ARRAY,
+        _shared_arrays(64),
+        bytes.fromhex("82d81c50") + bytes(16) + bytes.fromhex("d81d00"),
+        bytes.fromhex("82d81c70") + b"a" * 16 + bytes.fromhex("d81d00"),
+    ],
+    ids=[
+        "array that holds itself",
+        "map that holds itself",
+        "cycle inside a map",
+        "shared array",
+        "shared arrays 64 deep",
+        "shared byte string",
+        "shared text",
+    ],
+)
+def test_cbor_shared_value_refused_by_the_type_check(raw: bytes) -> None:
+    """Tags 28 and 29 decode to one array or map object met twice or inside itself, or to strings
+    longer in total than the item's bytes. Check 2 refuses it at once (the message names it),
+    before check 1 would encode the item again."""
+    assert _shared_arrays(1) == SHARED_ARRAY
+    for booleans in (False, True):
+        with pytest.raises(CborInvalid, match="shared value"):
+            decode_cbor_item(raw, 0, booleans=booleans)
+
+
+def test_cbor_strings_filling_the_item_exactly_accepted() -> None:
+    """The string lengths of a tag-free item never exceed its bytes, also when the data ends with
+    the item."""
+    raw = cbor([bytes(16), "a" * 16])
+    assert decode_cbor_item(raw, 0, booleans=False) == ([bytes(16), "a" * 16], len(raw))
+    assert decode_cbor_item(b"\xff" + cbor(""), 1, booleans=False) == ("", 2)
 
 
 @pytest.mark.parametrize("raw", [b"", bytes.fromhex("a1"), bytes.fromhex("5803ab"), bytes.fromhex("1c")], ids=["empty", "truncated map", "truncated bytes", "reserved"])

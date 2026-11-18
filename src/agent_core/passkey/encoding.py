@@ -220,27 +220,46 @@ def json_integer(value: object) -> bool:
     return type(value) is int
 
 
-def _cbor_types_valid(item: object, *, booleans: bool) -> bool:
+def _cbor_types_valid(item: object, *, booleans: bool, size: int) -> bool:
     """Checks 2 and 3 of "CBOR items", at every depth, without recursion.
 
     `booleans` admits `true` and `false` as values, never as map keys: only for the extensions map.
+
+    `cbor2` resolves the value-sharing tags 28 and 29, so one decoded value can stand for several
+    places of the item. A tag-free item never does, so two refusals follow and lose no valid item:
+    - An array or map object met a second time (also inside itself) is refused: a tag-free item
+      decodes to a tree of fresh arrays and maps. The walk visits each container once and ends.
+    - `size` is the number of bytes from the item's first byte to the end of the data. A tag-free
+      item writes every text and byte string out in those bytes, so the lengths of all of them
+      together never exceed `size`; a larger total comes from a shared string and is refused. Check
+      1 therefore never encodes more than a small multiple of `size` bytes.
     """
     pending: list[tuple[object, bool]] = [(item, False)]
+    seen: set[int] = set()
+    remaining = size
     while pending:
         value, is_key = pending.pop()
         kind = type(value)
         if kind is int:
             if not CBOR_INT_MIN <= value <= CBOR_INT_MAX:  # type: ignore[operator]
                 return False
-        elif kind is list:
-            pending.extend((element, False) for element in value)  # type: ignore[attr-defined]
-        elif kind is dict:
-            for key, element in value.items():  # type: ignore[attr-defined]
-                pending.append((key, True))
-                pending.append((element, False))
+        elif kind is list or kind is dict:
+            if id(value) in seen:
+                return False
+            seen.add(id(value))
+            if kind is list:
+                pending.extend((element, False) for element in value)  # type: ignore[attr-defined]
+            else:
+                for key, element in value.items():  # type: ignore[attr-defined]
+                    pending.append((key, True))
+                    pending.append((element, False))
         elif kind is bool and booleans and not is_key:
             continue
-        elif kind is not bytes and kind is not str:
+        elif kind is bytes or kind is str:
+            remaining -= len(value)  # type: ignore[arg-type]
+            if remaining < 0:
+                return False
+        else:
             return False
     return True
 
@@ -265,8 +284,8 @@ def decode_cbor_item(data: bytes, start: int, *, booleans: bool) -> tuple[object
         item = cbor2.CBORDecoder(stream).decode()
     except _CBOR_DECODE_FAILURES as exc:
         raise CborInvalid("the bytes are no CBOR item") from exc
-    if not _cbor_types_valid(item, booleans=booleans):
-        raise CborInvalid("the CBOR item holds a type or an integer that is not allowed")
+    if not _cbor_types_valid(item, booleans=booleans, size=len(data) - start):
+        raise CborInvalid("the CBOR item holds a type, an integer or a shared value not allowed")
     canonical = cbor2.dumps(item, canonical=True)
     end = start + len(canonical)
     if data[start:end] != canonical:

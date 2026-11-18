@@ -19,7 +19,7 @@ from agent_core.passkey.encoding import fingerprint, session_key_id, verify_sess
 from agent_core.passkey.errors import PasskeyRefusal
 from agent_core.passkey.relying_party import RelyingParty, relying_party
 from agent_core.passkey.webauthn import check_counter, verify_registration
-from agent_core.signing import parse_time, request_text
+from agent_core.signing import SIGNATURE_BYTES, parse_time, request_text
 from tests.passkey_vectors import VECTORS_PATH, generate, render, unb64
 
 OK = "ok"
@@ -120,12 +120,22 @@ def test_command_text_vectors() -> None:
     assert results == {OK, "command_invalid"}
 
 
+def _session_signature_outcome(vector: dict[str, Any]) -> str:
+    """Section 7.1: a signature that is not 64 bytes fails check 1 (`signature_missing`), as in
+    KEY-PROTOCOL.md section 5; every other one is verified by check 7 (`signature_invalid`)."""
+    signature = unb64(vector["signature"])
+    if len(signature) != SIGNATURE_BYTES:
+        return "signature_missing"
+    valid = verify_session_signature(unb64(vector["public_key"]), signature, vector["text"].encode("utf-8"))
+    return OK if valid else "signature_invalid"
+
+
 def test_session_signature_vectors() -> None:
+    results = set()
     for vector in _vectors()["session_signatures"]:
-        valid = verify_session_signature(
-            unb64(vector["public_key"]), unb64(vector["signature"]), vector["text"].encode("utf-8")
-        )
-        assert (OK if valid else "signature_invalid") == vector["result"], vector["name"]
+        assert _session_signature_outcome(vector) == vector["result"], vector["name"]
+        results.add(vector["result"])
+    assert results == {OK, "signature_missing", "signature_invalid"}
 
 
 def test_counter_vectors() -> None:

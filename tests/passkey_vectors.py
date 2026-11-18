@@ -38,6 +38,9 @@ from tests.webauthn_authenticator import (
     FLOAT_ONE,
     NULL,
     P256_ORDER,
+    SHARED_ARRAY,
+    SHARED_ARRAY_CYCLE,
+    SHARED_MAP_CYCLE,
     SIMPLE_VALUE,
     TRUE,
     UNDEFINED,
@@ -323,6 +326,16 @@ def _registration_cases(challenge_text: str) -> list[RegistrationCase]:
             "R7 undefined in attStmt", "attestation_invalid", Settings(attestation_object=_attestation_with_statement(UNDEFINED))
         ),
         RegistrationCase(
+            "R7 array that holds itself in attStmt (tags 28 and 29)",
+            "attestation_invalid",
+            Settings(attestation_object=_attestation_with_statement(SHARED_ARRAY_CYCLE)),
+        ),
+        RegistrationCase(
+            "R7 shared array in attStmt (tags 28 and 29)",
+            "attestation_invalid",
+            Settings(attestation_object=_attestation_with_statement(SHARED_ARRAY)),
+        ),
+        RegistrationCase(
             "R7 authData not bytes",
             "attestation_invalid",
             Settings(attestation_object=lambda data: cbor({"fmt": "none", "attStmt": {}, "authData": "text"})),
@@ -390,6 +403,11 @@ def _registration_cases(challenge_text: str) -> list[RegistrationCase]:
             "R12 extensions map with a boolean key",
             "authenticator_data_invalid",
             Settings(ed=True, extensions=cbor_map([(TRUE, cbor(1))], width=None)),
+        ),
+        RegistrationCase(
+            "R12 extensions map that holds itself (tags 28 and 29)",
+            "authenticator_data_invalid",
+            Settings(ed=True, extensions=SHARED_MAP_CYCLE),
         ),
         RegistrationCase(
             "R12 extensions item not a map", "authenticator_data_invalid", Settings(ed=True, extensions=cbor([1]))
@@ -723,7 +741,8 @@ def _session_signatures(
         ("r of n", text, n + low.to_bytes(32, "big"), "signature_invalid"),
         ("s of n", text, r_bytes + n, "signature_invalid"),
         ("another text", text + b"x", r_bytes + low.to_bytes(32, "big"), "signature_invalid"),
-        ("DER instead of r || s", text, der, "signature_invalid"),
+        # Section 13.4: a signature that is not 64 bytes fails check 1 of section 7.1.
+        ("DER instead of r || s", text, der, "signature_missing"),
     ]
     public = b64(point_of(session_private))
     return [

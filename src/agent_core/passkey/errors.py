@@ -1,7 +1,7 @@
 """The failure values of PASSKEY-PROTOCOL.md that the pure functions of this package return.
 
-Each value is defined once, with the spelling of the specification. This module imports nothing,
-so that every other module of the package can import it.
+Each value is defined once, with the spelling of the specification. This module imports no module
+of this package, so that every other module of the package can import it.
 """
 
 from __future__ import annotations

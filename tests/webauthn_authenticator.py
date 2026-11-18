@@ -151,6 +151,10 @@ UNDEFINED = bytes.fromhex("f7")
 SIMPLE_VALUE = bytes.fromhex("f0")  # simple value 16
 UNKNOWN_TAG = bytes.fromhex("d9fde8") + cbor(1)  # tag 65000 around 1
 BIGNUM = bytes.fromhex("c2") + cbor(b"\x01" + b"\x00" * 8)  # tag 2: 2**64
+# Value sharing: tag 28 marks an array or map as shareable, tag 29 refers to it by its index.
+SHARED_ARRAY_CYCLE = bytes.fromhex("d81c81d81d00")  # an array that holds itself
+SHARED_MAP_CYCLE = bytes.fromhex("d81ca16161d81d00")  # a map whose value of "a" is the map itself
+SHARED_ARRAY = bytes.fromhex("82d81c80d81d00")  # an array whose two elements are one shared array
 
 
 def non_canonical_der(signature: bytes) -> bytes:
