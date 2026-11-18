@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TextIO
+from typing import Any, Callable, Mapping, NoReturn, Sequence, TextIO
 
 PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 LOCK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -533,6 +533,9 @@ class JobRuntime:
         self._prev_signals: dict[int, Any] = {}
         self.images: dict[str, str] = {}
         self.env: dict[str, str] = {}
+        # Set when npm must run under <agent home>/a38-node/<major>/bin.
+        # refresh_configured_env reapplies configured PATH and would drop it.
+        self._node_major_path_entry: str | None = None
         self.mapping: dict[str, str] = {}
         self.work: Path | None = None
         self.artifacts: Path | None = None
@@ -639,6 +642,8 @@ class JobRuntime:
         self.ensure_image_placeholders(list(self.common.env.values()))
         for key, value in self.common.env.items():
             self.env[key] = expand_placeholders(value, mapping=self.mapping, images=self.images)
+        if self._node_major_path_entry is not None:
+            self._prepend_path_entry(self._node_major_path_entry)
 
     def set_job_cleanup(self, hook: Callable[[int], int]) -> None:
         self._job_cleanup = hook
@@ -977,21 +982,75 @@ class JobRuntime:
         self._held_locks = [item for item in self._held_locks if item != name]
         _print_best_effort(f"a38: released lock {name}")
 
+    def _prepend_path_entry(self, entry: str) -> None:
+        if "PATH" not in self.env or self.env["PATH"] == "":
+            self.env["PATH"] = entry
+            return
+        current = self.env["PATH"]
+        first, _separator, _rest = current.partition(os.pathsep)
+        if first == entry:
+            return
+        self.env["PATH"] = entry + os.pathsep + current
+
+    def _agent_node_major_bin(self, major: int) -> Path:
+        from ..main import home
+
+        return home() / "a38-node" / str(major) / "bin"
+
+    def _reported_node_major(self, node: str) -> str:
+        return self.run_argv(
+            [node, "-p", 'process.versions.node.split(".")[0]'],
+            check=True,
+        ).stdout.strip()
+
+    def _raise_node_major_unavailable(
+        self, major: int, path_major: str | None, bin_dir: Path
+    ) -> NoReturn:
+        if path_major is None:
+            raise JobError(
+                f"Node major must be {major}; node not found on PATH; expected {bin_dir}"
+            )
+        raise JobError(
+            f"Node major must be {major}; got {path_major} on PATH; expected {bin_dir}"
+        )
+
+    def _use_node_major_bin(
+        self, major: int, bin_dir: Path, path_major: str | None
+    ) -> tuple[str, str]:
+        selected_node = shutil.which("node", path=str(bin_dir))
+        if not selected_node:
+            self._raise_node_major_unavailable(major, path_major, bin_dir)
+        reported = self._reported_node_major(selected_node)
+        if reported != str(major):
+            raise JobError(f"Node major must be {major}; got {reported} from {bin_dir}")
+        selected_npm = shutil.which("npm", path=str(bin_dir))
+        if not selected_npm:
+            raise JobError("required command not found: node/npm")
+        self._node_major_path_entry = str(bin_dir)
+        self._prepend_path_entry(self._node_major_path_entry)
+        return selected_node, selected_npm
+
+    def _resolve_job_node(self, major: int) -> tuple[str, str]:
+        path_node = shutil.which("node", path=self.env.get("PATH"))
+        path_npm = shutil.which("npm", path=self.env.get("PATH"))
+        path_major: str | None = None
+        if path_node:
+            path_major = self._reported_node_major(path_node)
+            if path_major == str(major):
+                if not path_npm:
+                    raise JobError("required command not found: node/npm")
+                return path_node, path_npm
+        bin_dir = self._agent_node_major_bin(major)
+        if not bin_dir.is_dir():
+            self._raise_node_major_unavailable(major, path_major, bin_dir)
+        return self._use_node_major_bin(major, bin_dir, path_major)
+
     def ensure_node_modules(self) -> None:
         if self.common.npm is None:
             return
         major = int(self.common.npm["node_major"])
         canaries: list[str] = list(self.common.npm["canaries"])
-        node = shutil.which("node", path=self.env.get("PATH"))
-        npm = shutil.which("npm", path=self.env.get("PATH"))
-        if not node or not npm:
-            raise JobError("required command not found: node/npm")
-        reported = self.run_argv(
-            [node, "-p", 'process.versions.node.split(".")[0]'],
-            check=True,
-        ).stdout.strip()
-        if reported != str(major):
-            raise JobError(f"Node major must be {major}; got {reported}")
+        node, npm = self._resolve_job_node(major)
         lock_file = self.root / "package-lock.json"
         if not lock_file.is_file():
             raise JobError("package-lock.json missing at repository root")

@@ -89,6 +89,24 @@ Every adapter accepts these optional keys:
 `unset_prefixes` remove additional inherited values, after which configured `env`
 values are deliberately applied. Configured values may use placeholders.
 
+`npm.node_major` is the Node major for the dependency install and for every later
+step of that job. The adapter runs the first `node` on the job `PATH`. When that
+program already reports major N, the job keeps this `PATH` and does not need another
+installation. When it reports a different major, or when `node` is not on the job
+`PATH`, the adapter uses `<agent home>/a38-node/<N>/bin` if that directory exists:
+it prepends the directory to the job `PATH` before `npm ci`, and later steps inherit
+that same `PATH`, so `node`, `npm`, and `npx` resolve from it. `<agent home>` is the
+directory the CLI already resolves from `AGENT_HOME`, or `~/.local/share/agent` when
+`AGENT_HOME` is unset. A device provides major N by installing that major so
+`<agent home>/a38-node/<N>/bin` contains `node` and `npm`. A symlink
+`<agent home>/a38-node/<N>` to that installation prefix, the directory that contains
+`bin`, is enough. The adapter does not download or install Node. The selected `node`
+must report major N; if it does not,
+the job fails and names N, the major that program reported, and the directory. If
+neither the job `PATH` nor that directory provides major N, the job fails and names
+N, the major found on `PATH`, and the expected directory. There is no fallback to
+another major. The `node_modules` stamp records the version of this selected `node`.
+
 `lock` uses an atomic directory and an owner token. Waiting is finite; an abandoned
 lock is never reclaimed automatically. Waiting ends early when the process recorded
 in the `holder` file is proven not to exist, and the resulting error identifies that
@@ -304,7 +322,9 @@ become ownership, and cleanup addresses only IDs returned by successful creates.
 
 - Python 3.11 or newer and Git are required.
 - npm lifecycle use requires `node`, `npm`, a root `package-lock.json`, and configured
-  canaries that npm installs as regular files.
+  canaries that npm installs as regular files. The major comes from the job `PATH` when
+  that `node` already reports `npm.node_major`; otherwise the device provides it at
+  `<agent home>/a38-node/<N>/bin` as described under Common keys.
 - Postgres, Compose, and HTTP-smoke lifecycle use requires a local Docker daemon.
 - Compose requires the companion checkout and ref selector environment described in
   its config. Private registry login must be performed outside the adapter; credentials
