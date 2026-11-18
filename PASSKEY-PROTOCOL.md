@@ -39,6 +39,9 @@ Built in this step:
   client repository can build it without asking, except the allow-list checks 1 and 7 of section
   9, whose format the build steps of the allow list and of grants fix
 - the pages `/passkey` and `/invite` of the website (section 10)
+- the headers of section 10.1 on every HTML answer of the hub, and the move of the inline scripts
+  and styles of the existing pages `/`, `/session` and `/pair` into files under `/static/`
+  (section 10.1, decision 57)
 - the tests of section 13, including an end-to-end test in headless Chromium in CI (section 14)
 
 Not built in this step:
@@ -1035,7 +1038,9 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
   the `<style>` elements and `style` attributes of both pages into `index.css` and `session.css`,
   all in `src/agent_core/static/`. The pages load them with `<script src>` and
   `<link rel="stylesheet">`, and `src/agent_core/app.py` serves them under `/static/` with `GET`
-  and `HEAD`. The pages keep what they show and do.
+  and `HEAD`, without a sign-in (decision 28), because the pages that load them answer without a
+  sign-in today. Like `/static/passkey.js`, they are served with `Referrer-Policy: no-referrer`
+  and `Cache-Control: no-store`. The pages keep what they show and do.
 - Precondition: a separate, smaller change of this repository, merged before this step, creates
   the application in `src/agent_core/app.py` with `docs_url=None`, `redoc_url=None` and
   `openapi_url=None`, so the generated documentation pages and the generated schema document are
@@ -1114,8 +1119,8 @@ What the network edge can do, in full:
 
 What an edge that changes the page code can do in addition, in full:
 
-- It can use the signed-in person's session key, through the page, for as long as the page is open
-  and the key is valid (not ended, not past its expiry, its passkey not revoked), within that
+- It can use the signed-in person's session key, through any open page of the origin, for as long
+  as such a page is open and the key is valid (not ended, not past its expiry, its passkey not revoked), within that
   session's rights: every signed request the scopes of the person's passkey entry allow (for an
   administrator, creating invites), and `noop` commands to the person's own devices.
 - At a sign-in it can certify a session key of its own instead of the browser's. It then holds a
@@ -1166,12 +1171,6 @@ detects a changed page or a substituted key before that. The owner decides wheth
 this is acceptable until the published hash of the website exists, or whether a later build step
 adds a countermeasure (decision 17).
 
-**After a compromise of the network edge**, every passkey that was used for a sign-in or
-registered through an invite during it is revoked and removed from the allow lists, as after a hub
-takeover (DESIGN.md §25.6). No keys-file pull request is merged for an invite that was created,
-opened or received during it; a person who still needs a passkey gets a new invite after the
-compromise ended.
-
 **The other pages of the origin.** The session key in IndexedDB is reachable by every page of the
 hub's origin, not only by `/passkey` and `/invite` (section 10.2). Script that runs on any page of
 the origin can use the non-extractable key directly with `crypto.subtle.sign`, past `signText`,
@@ -1180,6 +1179,12 @@ allow (for an administrator, creating invites), and `noop` commands to the perso
 Every HTML answer of the hub, including the existing pages `/`, `/session` and `/pair`, is served
 with the policy of section 10.1 and runs no inline script (decision 57), so only script files that
 the hub delivers run on a page of the origin.
+
+**After a compromise of the network edge**, every passkey that was used for a sign-in or
+registered through an invite during it is revoked and removed from the allow lists, as after a hub
+takeover (DESIGN.md §25.6). No keys-file pull request is merged for an invite that was created,
+opened or received during it; a person who still needs a passkey gets a new invite after the
+compromise ended.
 
 This contradicts DESIGN.md §24.2, §25.6 and §25.16 as written; section 17.2 names the sentences
 the owner adjusts.
@@ -1419,7 +1424,7 @@ real endpoints.
   line
 - sign-out: signed `200`, then `key_unknown`; a keys-file key gets `session_key_required`
 - every existing test of KEY-PROTOCOL.md section 10 still passes, except the one case named
-  below. One existing fixture and one existing test case change: the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of
+  below. Of those tests, one existing fixture and one existing test case change: the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of
   `tests/test_config.py`, from `http://127.0.0.1:8787` to `http://localhost:8787` (section 15);
   and in `tests/test_keys_file.py` the case `(agent(program="agent-cli"), _second_agent(),
   "each needs a program")` of `test_device_and_program_pair_must_be_unique`, an `agent` entry with
@@ -1476,12 +1481,12 @@ real endpoints.
   (`tests/test_page_policy.py`); and each page still works without an inline script: in
   headless Chromium (section 13.8, `tests/e2e/test_passkey_e2e.py`), loading each of the three
   pages under the policy fires no `securitypolicyviolation` event and runs its script files
-- `GET /docs`, `GET /redoc`, `GET /docs/oauth2-redirect` and `GET /openapi.json` answer `404`
-  (the precondition of section 10.1); every route of the application that answers HTML carries
+- `GET /docs`, `GET /redoc`, `GET /docs/oauth2-redirect` and `GET /openapi.json` answer `404`:
+  this test belongs to the separate change of section 10.1 and exists there; this change keeps
+  it green. Every route of the application that answers HTML carries
   the headers of section 10.1, and no page of the origin loads a resource from another origin:
   no `src` attribute, no `href` of a `<link>` element, no `url(` and no `@import` names another
-  host; links in `<a href>` to `https://github.com` stay (section 10.1)
-  (`tests/test_page_policy.py`)
+  host (`tests/test_page_policy.py`)
 - the dashboard `/` carries the link to `/passkey` and otherwise shows and does what it did
 - the tables of section 12 are created at start, and after a full invite and sign-in no row holds
   the invite token or any private key
@@ -1546,6 +1551,10 @@ The negative paths, each in its own context:
 - no credential: a context whose authenticator holds no credential; the sign-in fails in the
   page, no session exists, and the pending sign-in stays unconsumed
 - an invite link opened a second time shows `invite_used`
+
+The existing pages, in their own context (section 13.6): loading `/`, `/session` and `/pair`
+under the policy of section 10.1 fires no `securitypolicyviolation` event, and each page runs its
+script files.
 
 What this test does not cover: browsers other than Chromium (Firefox, Safari), real platform
 authenticators and their biometric or PIN prompts, security keys over USB or NFC, sign-in from a
@@ -1721,7 +1730,11 @@ A change of the steps changes the file in the same pull request.
 1. Check that the public URL of every environment has a host name, not an IP address, and that
    the host name does not end with a dot. A hub whose public URL breaks either rule does not start
    with this change.
-2. Merge the change, together with the edits of section 15 (`src/agent_core/config.py`,
+2. Merge the separate change of section 10.1, with its own test that `GET /docs`, `GET /redoc`,
+   `GET /docs/oauth2-redirect` and `GET /openapi.json` answer `404`, and deploy it. Step 3
+   needs it: step 3 puts the headers of section 10.1 on every HTML answer, and the generated
+   documentation pages run inline script or load from another origin (decision 57).
+3. Merge the change, together with the edits of section 15 (`src/agent_core/config.py`,
    `src/agent_core/__main__.py`, `src/agent_core/keys.py`, `docker-compose.yaml`,
    `tests/test_config.py`, `tests/test_keys_file.py`, `README.md`, `src/agent_core/app.py`,
    `src/agent_core/static/index.html`, `src/agent_core/static/session.html`, the new
@@ -1735,12 +1748,12 @@ A change of the steps changes the file in the same pull request.
    `CONTRIBUTING.md` of section 14: `.github/workflows/test.yml`, `.github/a38.json`,
    `.github/pr-guard.json`). Both CI jobs, `pytest` and `e2e`, are green. The tables are created
    at start.
-3. The operator runs `invite-bootstrap` for the administrator. The administrator creates the
+4. The operator runs `invite-bootstrap` for the administrator. The administrator creates the
    passkey and compares the fingerprint with the output of `invite-list`. The pull request adds
    the `keys_entry` that `invite-list` prints, which carries `keys:invite`; the operator compares
    its `credential_id` and `public_key` with that output; the reviewers confirm the GitHub login
    of the handle (section 5.6); the team reviews it.
-4. After that pull request is deployed, the administrator invites every other staff member
+5. After that pull request is deployed, the administrator invites every other staff member
    (DESIGN.md §25.15). Each passkey counts after its own pull request is deployed; for each, the
    operator compares the pull request with `invite-list`, and the administrator confirms the
    GitHub login of the handle (section 5.6).
@@ -1894,7 +1907,10 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     open by the registration id); `POST /auth/passkey/begin` (hands out a challenge, unavoidable
     because the passkey signs only after it); `POST /auth/passkey/finish` (authenticated by the
     passkey); `GET` and `HEAD` on `/passkey`, `/invite` and `/static/passkey.js` (static code
-    without data). Owner decision. (Section 5.4, 5.5, 6.1, 6.3, 10.1)
+    without data); `GET` and `HEAD` on `/static/index-theme.js`, `/static/index.js`,
+    `/static/index.css`, `/static/session.js` and `/static/session.css` (static code without data,
+    moved out of the existing pages `/`, `/session` and `/pair`, which already answer without a
+    sign-in). Owner decision. (Section 5.4, 5.5, 6.1, 6.3, 10.1, 15, decision 57)
 29. `COMMAND_TIME_WINDOW` is 120 seconds, like the request time window; `SEQUENCE_MAX` is
     9007199254740991, the largest integer JavaScript represents exactly. (Section 2, 8)
 30. The session key is kept in IndexedDB across browser restarts, with the next sequence number in
@@ -2024,14 +2040,15 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     `/redoc`, `/docs/oauth2-redirect`, `/openapi.json` answer `404`). The pages `/docs`, `/redoc`
     and `/docs/oauth2-redirect` are turned off because they run inline script or load script and
     styles from another origin; the schema document `/openapi.json` is turned off because nothing
-    but those pages reads it and the application serves it without a sign-in. (Section 10.1,
-    10.2, 10.3, 13.4, 13.6, 15, 16)
+    but those pages reads it and the application serves it without a sign-in. (Section 1, 10.1,
+    10.2, 10.3, 11, 13.4, 13.6, 15, 16)
 
 ### 17.2 Decisions for the human owner
 
 The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 43, 44, 45, 49,
 50, 52, 53, 55, 56 and 57 (for 57 with its consequences that this step also reworks the existing
-pages `/`, `/session` and `/pair` and that the generated documentation pages are off), and adjusts these sentences of DESIGN.md:
+pages `/`, `/session` and `/pair` and that the generated documentation pages and the generated
+schema document are off), and adjusts these sentences of DESIGN.md:
 
 - §24.2: the sentence that the network edge "cannot forge a request or an answer, because both are
   signed". It holds for devices and programs, which pin the hub key; it does not hold for the
