@@ -1095,11 +1095,11 @@ such cases would itself tell a key that sees the event that the cause is one of 
 this endpoint no failure that concerns an event is named. The kind of such a failure is for the
 operator: the request line of section 13 logs the true value and the position in every case
 (`verify_failed <position> <failure>`), and offline `verify` of an export (section 12.3), which
-the operator runs with the full file, prints it, except a `row_mismatch` of the stored columns
-`event_id`, `actor_key_id` or `prev_hash`, which an export does not carry, and an
-`event_time_invalid` of a stored `received_at` that cannot be written as a time of section 2,
-which an export cannot carry (`export` refuses such a record, section 12.3); for these two only
-the log line names the failure. `verified` and `position` tell every reader whether and
+the operator runs with the full file, prints the true failure when an export can be written. It
+cannot for a `row_mismatch` of the three stored columns `event_id`, `actor_key_id` and
+`prev_hash`, which an export does not carry, and there is no export at all when `export` refuses
+with `refused value_unwritable` (section 12.3); in those cases only the log line names the
+failure. `verified` and `position` tell every reader whether and
 where the record fails verification, which is what lets a reader detect a later rewrite of the
 record.
 
@@ -1689,11 +1689,13 @@ file, loaded with the teams file by the loader of KEY-PROTOCOL.md section 3:
 | `event_time_invalid` | A stored `received_at` cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — so that no record hash can be computed from it; `received_at` is earlier than at the previous position, `signed_at` is later than `received_at` plus 120 seconds, or `signed_at` is earlier than that of the previous event of the same key. This row is decided after `chain_broken` and before `record_hash_mismatch`, so an event whose `received_at` has no form of section 2 fails here and never reaches `record_hash_mismatch`. |
 | `record_hash_mismatch` | A stored record hash differs from the one computed by section 4.6; or, in a verification that a running hub process runs on request or periodically, the record hash at the position of the head of the process's state in memory differs from the record hash of that head. |
 | `event_refused` | The state rules of section 6 refuse the event with any value other than `value_invalid`. |
-| `checkpoint_invalid` | A checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, a stored `published_at` that cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — so that no checkpoint text of section 12.2 can be formed to verify its signature, or a signature that does not verify with the public key of its hub key id. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. |
+| `checkpoint_invalid` | Any stored checkpoint, also one whose signature is not checked, has a `published_at` that cannot be written as a time of section 2 — its year lies outside 0001 to 9999, or it is `infinity` or `-infinity` (the column type `timestamptz` allows both) — or a hub key id that breaks the `id` rule of KEY-PROTOCOL.md section 3; these two checks need no key, and an export cannot carry such a checkpoint (`refused value_unwritable`, section 12.3). Or a checked checkpoint has a position beyond the head, a record hash that differs from the record hash at its position, or a signature that does not verify with the public key of its hub key id; for a `published_at` without the form of section 2 no checkpoint text of section 12.2 could be formed to verify the signature. A checkpoint is checked by the hub when its hub key id is the hub's own, and by `verify` and `restore` when its hub key id is given with `--hub-key`. In `verify` and `restore`, item 5 of the file format of section 12.3 refuses both forms first, as `file_invalid`. |
 
-Revocation, expiry, scopes and the other actor rules are not checked (section 6.1). Checkpoints of
-another hub key id are skipped by the hub; `verify` skips every checkpoint whose hub key id is not
-given with `--hub-key`, and `restore` refuses such a file (section 12.3). No row compares
+Revocation, expiry, scopes and the other actor rules are not checked (section 6.1). Of a
+checkpoint of another hub key id the hub checks only the form of its `published_at` and of its hub
+key id (row `checkpoint_invalid`) and skips the rest of that row; `verify` skips the rest of that
+row for every checkpoint whose hub key id is not given with `--hub-key`, and `restore` refuses such
+a file (section 12.3). No row compares
 `published_at` with a `received_at` or with the `published_at` of another checkpoint (section
 12.2).
 
@@ -1795,7 +1797,9 @@ and writes no checkpoint. An attempt is one transaction of the writer role at is
    position, its `published_at` can be written as a time of section 2, and its signature
    verifies with the hub's public key. When that check fails, it
    writes nothing, rolls the transaction back, enters the state `record_unverified` and logs
-   `record verify failed <position> checkpoint_invalid`.
+   `record verify failed <position> checkpoint_invalid`. It checks no other checkpoint; every
+   full verification of section 12.1 checks the form of every stored checkpoint, also of one of
+   another hub key id.
 4. It writes nothing when the head of its state is position 0 (empty record), when the head
    position equals the position of that newest checkpoint (the head did not move since the last
    checkpoint), or when that checkpoint has a `published_at` at or after `H` (another process
@@ -1863,10 +1867,21 @@ argument exists.
 `export` checks its configuration, then refuses an existing `FILE` before it connects, then
 creates `FILE` so that it fails when `FILE` exists, reads the snapshot and writes the file. When
 it fails after it created `FILE` and keeps running, it removes `FILE` before it prints its line.
-`export` does not verify the record, but it never writes a value outside the form of its member:
-when a stored `received_at` or the stored `published_at` of a checkpoint cannot be written as a
-time of section 2 (its year lies outside 0001 to 9999, or it is `infinity` or `-infinity`, section
-12.1), it stops, removes `FILE` and prints `refused time_invalid`.
+`export` does not verify the record, but it never writes a stored value outside the form that
+items 4 and 5 of the file format below give its member. `format`, `type` and `exported_at` come
+from no stored column. Of the other members, all but three have their form guaranteed by the
+column types and `CHECK`s of section 11.3: `position` (`bigint` with `CHECK (position >= 1)`,
+whose upper end 9223372036854775807 is that of a position of section 2; the header's `0` of an
+empty record is written by rule),
+`record_hash` and `event_hash` (64 lowercase hex characters; the header's `record_hash` is that
+of the last event, or `null`), `event` (`event_text` of 1 to 65536 bytes, which has a canonical
+base64url form whatever its bytes) and `signature` (64 bytes). The three it checks before it
+writes them are: a stored `received_at` and the stored `published_at` of a checkpoint, whose
+`CHECK` requires only whole seconds, can be written as a time of section 2 (not when its year
+lies outside 0001 to 9999, or it is `infinity` or `-infinity`, section 12.1); and the stored
+`hub_key_id` of a checkpoint, written as `signed_by`, whose column has no `CHECK`, follows the
+`id` rule of KEY-PROTOCOL.md section 3. At the first stored value, in the order of the file, that
+fails its check, it stops, removes `FILE` and prints `refused value_unwritable`.
 When the process is killed or the machine stops while it writes, a partial `FILE` can remain:
 a file cut inside a line, or at the end of a line before the last event line, is refused by
 `verify` and `restore` with `file_invalid` (it lacks the final `\n`, or its header does not
@@ -1881,7 +1896,7 @@ copies a file only after that line (section 12.4). It prints one line and exits:
 | `refused file_exists` | 1 | `FILE` exists; nothing is written |
 | `refused file_write` | 1 | `FILE` cannot be created or written |
 | `refused database` | 1 | a database operation failed, also a connection that failed or that the connect timeout of section 15 ended |
-| `refused time_invalid` | 1 | a stored `received_at` of the snapshot cannot be written as a time of section 2 (the hub fails it with `event_time_invalid`, section 12.1), or the stored `published_at` of a checkpoint of the snapshot cannot (the hub fails it with `checkpoint_invalid` when it checks that checkpoint, section 12.1); no file is left behind |
+| `refused value_unwritable` | 1 | a stored value of the snapshot cannot be written in the form of its member (above): a `received_at` that is no time of section 2 (the hub fails it with `event_time_invalid` unless an earlier failure ends its run, section 12.1), or a checkpoint's `published_at` that is no time of section 2 or `hub_key_id` outside the `id` rule (the hub fails it with `checkpoint_invalid` unless an earlier failure ends its run, section 12.1); no file is left behind |
 
 `verify` prints one line and exits:
 
@@ -2548,6 +2563,18 @@ Integrity and backup:
   `record_hash_mismatch`, and the request line logs `verify_failed <position>
   event_time_invalid`; a restart refuses to start with `record verify failed <position>
   event_time_invalid`
+- a stored `published_at` of `10000-01-01 00:00:00+00` and, in a second run, of `infinity` on the
+  newest checkpoint of the hub's own key id, changed as database superuser with the triggers
+  bypassed: the verification on request answers `verified` false with `checkpoint_invalid` and
+  the position the checkpoint names; a restart refuses to start with `record verify failed
+  <position> checkpoint_invalid`; in a further run, with the row changed while the process runs
+  and before its next periodic run, the next checkpoint attempt writes nothing, logs `record
+  verify failed <position> checkpoint_invalid`, and the process answers `503`
+- a checkpoint of another hub key id, inserted by the writer role at a position of the record
+  with a `published_at` of `10000-01-01 00:00:00+00`, and in a second run one with the hub key id
+  `Hub-2`, outside the `id` rule: the verification on request answers `verified` false with
+  `checkpoint_invalid` and the position that checkpoint names; a restart refuses to start with
+  `record verify failed <position> checkpoint_invalid`
 - removal at the end of the record: as database superuser with the triggers bypassed, the last
   two events and every checkpoint that names them are removed; instance A, whose state holds the
   removed events, fails its next verification on request with `position_gap` at the first
@@ -2600,11 +2627,12 @@ Integrity and backup:
   and malformed, and a reported libpq version below 16; `refused file_exists` for an existing
   file, which stays unchanged; `refused file_write` for a directory that cannot be written;
   `refused database` for an unreachable database and for a database without the schema, with no
-  file left behind; `refused time_invalid` for a stored `received_at` of `10000-01-01 00:00:00+00`
-  and, in a second run, of `infinity`, and for a stored `published_at` of a checkpoint of
-  `10000-01-01 00:00:00+00` and, in a further run, of `-infinity`, each changed as database
-  superuser with the triggers bypassed, with no file left behind; each asserts the printed line
-  and exit 1
+  file left behind; `refused value_unwritable` for a stored `received_at` of `10000-01-01
+  00:00:00+00` and, in a second run, of `infinity`, and for a stored `published_at` of a checkpoint
+  of `10000-01-01 00:00:00+00` and, in a further run, of `-infinity`, each changed as database
+  superuser with the triggers bypassed, and for a checkpoint whose stored `hub_key_id` `hub"2`
+  breaks the `id` rule, inserted by the writer role, each with no file left behind; each asserts
+  the printed line and exit 1
 - offline `verify` of an export, with `verified <position> <record hash>` and exit 0; `refused
   config` for `--keys`, `--teams` or `--in` missing, each of them given twice, an unknown
   argument, a keys file that does not load, a teams file that does not load, a keys file whose
@@ -3111,10 +3139,11 @@ confirms or changes each one.
     because the keys file loader needs the roster; the export is verifiable offline with the
     public keys file and the public teams file (§12.3).
 57. `export` prints `exported`, `refused config`, `refused file_exists`, `refused file_write`,
-    `refused database` or `refused time_invalid`; it never writes a stored `received_at` or a
-    stored `published_at` of a checkpoint that cannot be written as a time of §2, but stops and
-    leaves no file behind (decision 103); a
-    malformed export file is refused by `verify` and `restore` with the
+    `refused database` or `refused value_unwritable`; it never writes a stored value outside the
+    form of its member: it checks a stored `received_at` and the stored `published_at` and
+    `hub_key_id` of a checkpoint, the only stored members whose form no column type or `CHECK` of
+    §11.3 guarantees, and at the first that fails it stops and leaves no file behind (§12.3,
+    decision 103); a malformed export file is refused by `verify` and `restore` with the
     failure `file_invalid`, at position `0` for a fault of the whole file (not UTF-8, empty, no
     final `\n`), of the first line (the header line, also when it is empty or not JSON) or of the
     header's agreement with the other lines (§12.1, §12.3).
@@ -3191,11 +3220,11 @@ confirms or changes each one.
     it sees. It still gets `verified` and the position, so it can detect a later rewrite of the
     record. Where the operator finds the kind: the request line of §13 logs `verify_failed
     <position> <failure>` with the true value in every case, and offline `verify` of an export
-    (§12.3), run with the full file, prints `failed <position> <failure>`, except for a
-    `row_mismatch` of the stored columns `event_id`, `actor_key_id` or `prev_hash`, which an
-    export does not carry, and an `event_time_invalid` of a stored `received_at` that cannot be
-    written as a time of §2, which an export cannot carry (`export` refuses such a record,
-    §12.3); for these two only the log line names the failure. Of the alternatives of the
+    (§12.3), which the operator runs with the full file, prints the true failure when an export
+    can be written. It cannot for a `row_mismatch` of the three stored columns `event_id`,
+    `actor_key_id` and `prev_hash`, which an export does not carry, and there is no export at all
+    when `export` refuses with `refused value_unwritable` (§12.3); in those cases only the log
+    line names the failure. Of the alternatives of the
     reviews (name the answer as part of the first exception of §3, list the disclosures of the
     named values there, answer `withheld` only in the cases that depend on state the caller does
     not see, or never name a failure that concerns an event), the last is taken (§3, §7.9,
@@ -3380,6 +3409,11 @@ confirms or changes each one.
     requires only whole seconds, and a year after 9999, `infinity` and `-infinity` all meet it.
     The only defence is this rule of verification (§11.3, §12.1). The same holds for a stored
     `published_at` of a checkpoint: the check constraint of the column `published_at` in §11.3
-    likewise requires only whole seconds, and a checked checkpoint with such a `published_at`
-    fails verification with `checkpoint_invalid`, because no checkpoint text of §12.2 can be
-    formed from it to verify its signature (§11.3, §12.1, §12.2).
+    likewise requires only whole seconds, and the column `hub_key_id` has no `CHECK`. The hub
+    therefore checks, for every stored checkpoint, also one of another hub key id whose signature
+    it does not check, that its `published_at` can be written as a time of §2 and that its hub
+    key id follows the `id` rule of KEY-PROTOCOL.md section 3; neither check needs a key, and a
+    violation fails verification with `checkpoint_invalid` at the position that checkpoint names.
+    `export` refuses the same values and an unwritable `received_at` with `refused
+    value_unwritable`, so a record that cannot be exported for such a value also fails the hub's
+    verification, which names the cause (§11.3, §12.1, §12.2, §12.3).
