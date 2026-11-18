@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 import json
 import re
+from collections.abc import Callable
+from typing import TypeVar
 
 import cbor2
 from cryptography.exceptions import InvalidSignature
@@ -60,6 +62,7 @@ CBOR_INT_MAX = 2**64 - 1
 
 _SESSION_KEY_ID_RE = re.compile(r"session\.[0-9a-f]{32}")
 _SCALAR_BYTES = 32
+_T = TypeVar("_T")
 
 
 class JsonInvalid(ValueError):
@@ -117,12 +120,23 @@ def ceremony_id(random_bytes: bytes) -> str:
 
 
 def p256_point_valid(raw: bytes) -> bool:
-    """A 65-byte uncompressed point on P-256 (the session public key and the passkey public key)."""
+    """A 65-byte uncompressed point on P-256 (the session public key and the passkey public key).
+
+    The only form of a P-256 public key in this protocol (section 2; KEY-PROTOCOL.md section 2):
+    a compressed or hybrid point, another length, the point at infinity and a point off the curve
+    are all refused.
+    """
     return p256_public_key_valid(raw)
 
 
-def _public_key(point: bytes) -> ec.EllipticCurvePublicKey:
-    """The key object of a point; a point that is not valid raises `ValueError`."""
+def _public_key(point: bytes) -> ec.EllipticCurvePublicKey | None:
+    """The key object of a point that passes `p256_point_valid`; None for every other byte string.
+
+    Every place of this package that turns bytes into a key does it here, so no other form (a
+    33-byte compressed point in particular, which `from_encoded_point` would accept) becomes a key.
+    """
+    if not p256_point_valid(point):
+        return None
     return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), point)
 
 
@@ -143,14 +157,15 @@ def session_signature_scalars(signature: bytes) -> tuple[int, int] | None:
 def verify_session_signature(public_key: bytes, signature: bytes, text: bytes) -> bool:
     """ECDSA over P-256 with SHA-256 by a session key over `text` (sections 7 and 8).
 
-    `public_key` is a valid 65-byte point (the caller holds it validated); the signature has the
-    session key signature encoding of section 2.
+    The signature has the session key signature encoding of section 2. A `public_key` that is not
+    a valid 65-byte uncompressed point verifies nothing: the result is False, never an exception.
     """
+    key = _public_key(public_key)
     scalars = session_signature_scalars(signature)
-    if scalars is None:
+    if key is None or scalars is None:
         return False
     try:
-        _public_key(public_key).verify(
+        key.verify(
             encode_dss_signature(*scalars), text, ec.ECDSA(hashes.SHA256())
         )
     except InvalidSignature:
@@ -175,13 +190,16 @@ def verify_passkey_signature(
 ) -> bool:
     """Section 4.3: the assertion signature over `authenticator_data ‖ SHA-256(client_data_json)`.
 
-    `public_key` is the 65-byte point of the keys-file entry, valid by the loader.
+    `public_key` is the 65-byte point of the keys-file entry or of a device's allow-list. A value
+    that is not a valid 65-byte uncompressed point verifies nothing: the result is False (V10,
+    `signature_invalid`), never an exception.
     """
-    if not passkey_signature_canonical(signature):
+    key = _public_key(public_key)
+    if key is None or not passkey_signature_canonical(signature):
         return False
     signed = authenticator_data + sha256(client_data_json)
     try:
-        _public_key(public_key).verify(signature, signed, ec.ECDSA(hashes.SHA256()))
+        key.verify(signature, signed, ec.ECDSA(hashes.SHA256()))
     except InvalidSignature:
         return False
     return True
@@ -203,7 +221,10 @@ def _refuse_constant(name: str) -> object:
 def parse_json(raw: bytes) -> object:
     """The JSON rule of section 2: UTF-8, Python's `json`, no repeated key and no constant.
 
-    Raises `JsonInvalid` for every text that breaks the rule.
+    Raises `JsonInvalid` for every text that breaks the rule. The refusal is raised after the
+    failure is handled, so it has neither `__cause__` nor `__context__`: the failure of `json`
+    (`JSONDecodeError.doc`, `UnicodeDecodeError.object`) holds the input, which can carry an invite
+    token (section 5.1: never logged) or a body (section 7.1: never logged).
     """
     try:
         return json.loads(
@@ -211,8 +232,9 @@ def parse_json(raw: bytes) -> object:
             object_pairs_hook=_object_without_repeated_key,
             parse_constant=_refuse_constant,
         )
-    except (ValueError, RecursionError) as exc:
-        raise JsonInvalid("the text breaks the JSON rule of section 2") from exc
+    except (ValueError, RecursionError):
+        pass
+    raise JsonInvalid("the text breaks the JSON rule of section 2")
 
 
 def json_integer(value: object) -> bool:
@@ -264,29 +286,43 @@ def _cbor_types_valid(item: object, *, booleans: bool, size: int) -> bool:
     return True
 
 
-# What `cbor2` raises for bytes that are no CBOR item: its decode errors (including the end of the
-# data) and the plain errors a semantic tag decoder or a nesting depth can raise.
-_CBOR_DECODE_FAILURES = (cbor2.CBORDecodeError, ValueError, TypeError, OverflowError, RecursionError)
+def _cbor_step(step: Callable[[], _T], message: str) -> _T:
+    """One step of `cbor2` on attacker bytes; every `Exception` but `MemoryError` is the refusal.
+
+    `cbor2` parses the bytes and runs semantic tag decoders on them (a rational with denominator 0,
+    a bigfloat with a huge exponent, a regular expression that does not compile), and both the
+    decoder and the encoder recurse once per nesting level (`RecursionError`). No closed list of
+    exception types covers that. `MemoryError` and every `BaseException` that is no `Exception`
+    (`KeyboardInterrupt`, `SystemExit`) pass unchanged. The refusal is raised after the failure is
+    handled, so it chains no exception that could hold the bytes.
+    """
+    try:
+        return step()
+    except MemoryError:
+        raise
+    except Exception:
+        pass
+    raise CborInvalid(message)
 
 
 def decode_cbor_item(data: bytes, start: int, *, booleans: bool) -> tuple[object, int]:
     """Decode one CBOR item at `start` and run the three checks of "CBOR items" (section 2).
 
-    Returns the item and the position after it; raises `CborInvalid`. The item is decoded with
-    `cbor2.CBORDecoder` over an `io.BytesIO` positioned at `start`. Check 1 compares the bytes at
-    `start` with `cbor2.dumps(item, canonical=True)`: CBOR is self-delimiting, so those bytes
-    equal the canonical form exactly when the item's own bytes do, and the item then ends where
-    the canonical form ends.
+    Returns the item and the position after it; raises `CborInvalid` and no other `Exception` but
+    `MemoryError`, for every byte string. The item is decoded with `cbor2.CBORDecoder` over an
+    `io.BytesIO` positioned at `start`. Check 1 compares the bytes at `start` with
+    `cbor2.dumps(item, canonical=True)`: CBOR is self-delimiting, so those bytes equal the
+    canonical form exactly when the item's own bytes do, and the item then ends where the
+    canonical form ends.
     """
     stream = io.BytesIO(data)
     stream.seek(start)
-    try:
-        item = cbor2.CBORDecoder(stream).decode()
-    except _CBOR_DECODE_FAILURES as exc:
-        raise CborInvalid("the bytes are no CBOR item") from exc
+    item = _cbor_step(lambda: cbor2.CBORDecoder(stream).decode(), "the bytes are no CBOR item")
     if not _cbor_types_valid(item, booleans=booleans, size=len(data) - start):
         raise CborInvalid("the CBOR item holds a type, an integer or a shared value not allowed")
-    canonical = cbor2.dumps(item, canonical=True)
+    canonical = _cbor_step(
+        lambda: cbor2.dumps(item, canonical=True), "the CBOR item cannot be encoded again"
+    )
     end = start + len(canonical)
     if data[start:end] != canonical:
         raise CborInvalid("the CBOR item is not in canonical form")

@@ -72,6 +72,26 @@ def point_of(private_key: ec.EllipticCurvePrivateKey) -> bytes:
     )
 
 
+def other_point_forms(private_key: ec.EllipticCurvePrivateKey) -> list[tuple[str, bytes]]:
+    """Every form of a P-256 public key other than the 65-byte uncompressed point of section 2:
+    the same key compressed (33 bytes, which `from_encoded_point` accepts) and hybrid, the point
+    without or with an extra byte, empty, the point at infinity, and points off the curve."""
+    point = point_of(private_key)
+    compressed = private_key.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.CompressedPoint
+    )
+    return [
+        ("compressed", compressed),
+        ("hybrid", bytes([0x06 | (point[-1] & 1)]) + point[1:]),
+        ("64 bytes without the prefix", point[1:]),
+        ("66 bytes", point + b"\x00"),
+        ("empty", b""),
+        ("point at infinity", b"\x00"),
+        ("zero coordinates", b"\x04" + bytes(64)),
+        ("off the curve", point[:64] + bytes([point[64] ^ 1])),
+    ]
+
+
 # --- raw CBOR pieces -----------------------------------------------------------------------------
 
 

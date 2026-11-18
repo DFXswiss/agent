@@ -27,7 +27,7 @@ from agent_core.passkey.command import (
 from agent_core.passkey.encoding import SEQUENCE_MAX
 from agent_core.passkey.errors import PasskeyRefusal
 from tests.passkey_vectors import NOW, b64, time_text
-from tests.webauthn_authenticator import point_of
+from tests.webauthn_authenticator import other_point_forms, point_of
 
 SENDER = "session." + "5d1c" * 8
 OTHER_SENDER = "session." + "0" * 32
@@ -248,6 +248,15 @@ def test_c4_signature_of_another_key_is_command_signature_invalid() -> None:
     other = ec.derive_private_key(54321, ec.SECP256R1())
     with _refusal("command_signature_invalid"):
         verify_command_signature(_command(), _sign(command_text(_command())), point_of(other))
+
+
+def test_c4_session_public_key_in_another_form_is_command_signature_invalid() -> None:
+    """Section 2 fixes the 65-byte uncompressed point; the session key in any other form,
+    compressed included, verifies nothing and never raises another exception."""
+    signature = _sign(command_text(_command()))
+    for _, form in other_point_forms(SESSION_KEY):
+        with _refusal("command_signature_invalid"):
+            verify_command_signature(_command(), signature, form)
 
 
 # --- device check 5, the content -------------------------------------------------------------------

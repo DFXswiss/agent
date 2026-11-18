@@ -134,7 +134,8 @@ def verify_certificate(
     """Section 6.4: the steps V1 to V11 in this order; raises the `error` of the first that fails.
 
     `passkey_public_key` is the 65-byte point to verify with (the keys-file entry on the hub, the
-    allow-list entry on a device); `now` is the verifier's clock in whole seconds; `max_lifetime`
+    allow-list entry on a device); any other form, a compressed point included, fails V10 with
+    `signature_invalid`. `now` is the verifier's clock in whole seconds; `max_lifetime`
     is `SESSION_KEY_MAX_SECONDS` on the hub and the configured lifetime on a device. The expected
     challenge is SHA-256 over the statement bytes, computed here. The credential id is part of the
     certificate but no step reads it: the caller found the public key by it.

@@ -30,7 +30,14 @@ from tests.passkey_vectors import (
     statement_lines,
     time_text,
 )
-from tests.webauthn_authenticator import Settings, SoftAuthenticator, corrupt, point_of, private_key_from
+from tests.webauthn_authenticator import (
+    Settings,
+    SoftAuthenticator,
+    corrupt,
+    other_point_forms,
+    point_of,
+    private_key_from,
+)
 
 PARTY = RelyingParty(origin=ORIGIN, rp_id=RP_ID)
 EXPIRES = NOW + SESSION_KEY_ISSUE_SECONDS
@@ -229,6 +236,17 @@ def test_steps_run_in_order_and_the_first_failure_wins() -> None:
     broken = _certificate(passkey, STATEMENT, settings=Settings(signature=corrupt))
     with _refusal("signature_invalid"):
         _verify(passkey, broken, now=EXPIRES, max_lifetime=43200)
+
+
+def test_v10_a_passkey_public_key_in_another_form_is_signature_invalid() -> None:
+    """Section 2 fixes the 65-byte uncompressed point; the same passkey's key in any other form,
+    compressed included, fails V10 with `signature_invalid` and never with another exception."""
+    passkey = _passkey()
+    certificate = _certificate(passkey, STATEMENT)
+    _verify(passkey, certificate, now=NOW, max_lifetime=43200)
+    for _, form in other_point_forms(passkey.credentials[0].private_key):
+        with _refusal("signature_invalid"):
+            _verify(passkey, certificate, now=NOW, max_lifetime=43200, public_key=form)
 
 
 def test_verify_certificate_does_not_check_the_counter() -> None:

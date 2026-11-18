@@ -5,7 +5,9 @@ Pure functions: these tests need no database and no hub.
 
 from __future__ import annotations
 
+import decimal
 import hashlib
+import re
 
 import cbor2
 import pytest
@@ -51,6 +53,7 @@ from tests.webauthn_authenticator import (
     cbor,
     cbor_map,
     non_canonical_der,
+    other_point_forms,
     point_of,
 )
 
@@ -138,6 +141,27 @@ def test_p256_point_must_lie_on_the_curve() -> None:
     assert not p256_point_valid(b"\x02" + point[1:])
 
 
+FORM_KEY = ec.derive_private_key(7, ec.SECP256R1())
+OTHER_FORMS = other_point_forms(FORM_KEY)
+
+
+@pytest.mark.parametrize("form", [form for _, form in OTHER_FORMS], ids=[name for name, _ in OTHER_FORMS])
+def test_a_key_in_another_form_verifies_no_signature(form: bytes) -> None:
+    """Section 2: a P-256 public key is the 65-byte uncompressed point only. Every other form,
+    the same key compressed included, is no valid point and verifies a valid signature by that
+    key to False, never to True or an exception."""
+    assert not p256_point_valid(form)
+    text = b"agent-command-v1\nexample"
+    r, s = decode_dss_signature(FORM_KEY.sign(text, ec.ECDSA(hashes.SHA256())))
+    session_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    assert verify_session_signature(point_of(FORM_KEY), session_signature, text)
+    assert verify_session_signature(form, session_signature, text) is False
+    data, client = b"authenticator data", b"{}"
+    der = FORM_KEY.sign(data + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
+    assert verify_passkey_signature(point_of(FORM_KEY), der, data, client)
+    assert verify_passkey_signature(form, der, data, client) is False
+
+
 # --- the JSON rule -------------------------------------------------------------------------------
 
 
@@ -164,6 +188,29 @@ def test_json_rule_parses_an_object() -> None:
 def test_json_rule_refuses(raw: bytes) -> None:
     with pytest.raises(JsonInvalid):
         parse_json(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"token":"SECRET-TOKEN-\xff"}',
+        b'{"token":"SECRET-TOKEN",',
+        b'{"token":"SECRET-TOKEN","token":"SECRET-TOKEN"}',
+        b'{"token":"SECRET-TOKEN","n":NaN}',
+        b'[{"token":"SECRET-TOKEN"}' + b"[" * 200000,
+    ],
+    ids=["not UTF-8", "truncated", "repeated key", "NaN", "deep"],
+)
+def test_json_refusal_chains_no_exception_and_holds_no_input(raw: bytes) -> None:
+    """The failure of `json` holds the input (`JSONDecodeError.doc`, `UnicodeDecodeError.object`);
+    the refusal chains none, so no traceback or log of it can show an invite token or a body."""
+    with pytest.raises(JsonInvalid) as refused:
+        parse_json(raw)
+    assert refused.value.__cause__ is None
+    assert refused.value.__context__ is None
+    for shown in (str(refused.value), repr(refused.value)):
+        assert "SECRET" not in shown and "xff" not in shown
+    assert str(refused.value) == "the text breaks the JSON rule of section 2"
 
 
 def test_json_integer_is_exactly_int() -> None:
@@ -308,6 +355,128 @@ def test_cbor_strings_filling_the_item_exactly_accepted() -> None:
 def test_cbor_bytes_that_are_no_item_refused(raw: bytes) -> None:
     with pytest.raises(CborInvalid):
         decode_cbor_item(raw, 0, booleans=False)
+
+
+# The innermost item `18 00` is the integer 0 in a non-canonical form: it passes the type check, so
+# a nesting the decoder accepts reaches `cbor2.dumps` at the full depth.
+NON_CANONICAL_ZERO = bytes.fromhex("1800")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\x81" * 400 + NON_CANONICAL_ZERO,
+        b"\x81" * 400 + NULL,
+        b"\x81" * 400,
+        b"\x81" * 60000 + NON_CANONICAL_ZERO,
+        b"\x81" * 60000,
+        b"\xa1\x00" * 400 + NON_CANONICAL_ZERO,
+        b"\xa1\x00" * 400 + NULL,
+        b"\xa1\x00" * 60000 + NON_CANONICAL_ZERO,
+        b"\xa1\x00" * 60000,
+        b"\x81\xa1\x00" * 30000 + NON_CANONICAL_ZERO,
+    ],
+    ids=[
+        "400 arrays",
+        "400 arrays around null",
+        "400 arrays truncated",
+        "60000 arrays",
+        "60000 arrays truncated",
+        "400 maps",
+        "400 maps around null",
+        "60000 maps",
+        "60000 maps truncated",
+        "60000 arrays and maps",
+    ],
+)
+def test_cbor_deep_nesting_refused(raw: bytes) -> None:
+    """Whatever depth the decoder or the encoder of `cbor2` refuses with `RecursionError`, the
+    item is refused with `CborInvalid`; every item here is also invalid at any depth they accept."""
+    for booleans in (False, True):
+        with pytest.raises(CborInvalid):
+            decode_cbor_item(raw, 0, booleans=booleans)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        bytes.fromhex("d81e820100"),
+        bytes.fromhex("c5821b7fffffffffffffff01"),
+        bytes.fromhex("c4821b7fffffffffffffff01"),
+        bytes.fromhex("d8236128"),
+        bytes.fromhex("d825420000"),
+    ],
+    ids=["rational with denominator 0", "bigfloat with a huge exponent", "decimal with a huge exponent", "regular expression that does not compile", "uuid of 2 bytes"],
+)
+def test_cbor_semantic_tag_whose_decoder_fails_refused(raw: bytes) -> None:
+    """A known tag whose decoder in `cbor2` fails, with an exception that need not be a
+    `CBORDecodeError` or a `ValueError`, or that decodes to a type outside check 2."""
+    with pytest.raises(CborInvalid):
+        decode_cbor_item(raw, 0, booleans=True)
+
+
+class _FailingDecoder:
+    """Stands in for `cbor2.CBORDecoder` and raises the given exception from `decode`."""
+
+    failure: BaseException
+
+    def __init__(self, stream: object) -> None:
+        self.stream = stream
+
+    def decode(self) -> object:
+        raise self.failure
+
+
+DECODER_FAILURES = [
+    RecursionError(),
+    ZeroDivisionError(),
+    decimal.Overflow(),
+    re.error("x"),
+    LookupError(),
+    AttributeError(),
+    TypeError(),
+    cbor2.CBORDecodeError(),
+]
+
+
+@pytest.mark.parametrize("failure", DECODER_FAILURES, ids=lambda failure: type(failure).__name__)
+def test_cbor_every_decoder_exception_is_the_refusal(failure: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_FailingDecoder, "failure", failure, raising=False)
+    monkeypatch.setattr(cbor2, "CBORDecoder", _FailingDecoder)
+    with pytest.raises(CborInvalid, match="^the bytes are no CBOR item$") as refused:
+        decode_cbor_item(cbor([1]), 0, booleans=False)
+    assert refused.value.__cause__ is None and refused.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "failure", [RecursionError(), cbor2.CBOREncodeError(), ValueError(), ZeroDivisionError()], ids=lambda failure: type(failure).__name__
+)
+def test_cbor_every_encoder_exception_is_the_refusal(failure: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cbor2.dumps` of check 1 recurses once per nesting level, like the decoder."""
+
+    def dumps(item: object, **options: object) -> bytes:
+        raise failure
+
+    monkeypatch.setattr(cbor2, "dumps", dumps)
+    with pytest.raises(CborInvalid, match="^the CBOR item cannot be encoded again$") as refused:
+        decode_cbor_item(bytes.fromhex("8101"), 0, booleans=False)
+    assert refused.value.__cause__ is None and refused.value.__context__ is None
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), SystemExit(1), MemoryError()], ids=lambda failure: type(failure).__name__)
+def test_cbor_interrupt_exit_and_memory_error_pass(failure: BaseException, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_FailingDecoder, "failure", failure, raising=False)
+    with monkeypatch.context() as patch:
+        patch.setattr(cbor2, "CBORDecoder", _FailingDecoder)
+        with pytest.raises(type(failure)):
+            decode_cbor_item(cbor([1]), 0, booleans=False)
+
+    def dumps(item: object, **options: object) -> bytes:
+        raise failure
+
+    monkeypatch.setattr(cbor2, "dumps", dumps)
+    with pytest.raises(type(failure)):
+        decode_cbor_item(bytes.fromhex("8101"), 0, booleans=False)
 
 
 def test_cbor_float_shortest_form_reencodes_equal_so_only_the_type_check_refuses_it() -> None:
