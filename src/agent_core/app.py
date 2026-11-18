@@ -33,6 +33,10 @@ from .github import (
     valid_repository_name,
 )
 from .keys import KeyEntry, KeyRing, load_keys, valid_subject
+from .passkey.encoding import valid_session_key_id, verify_session_signature
+from .passkey.http import PasskeyRoutes, session_whoami_body
+from .passkey.relying_party import relying_party
+from .passkey.storage import PasskeyStore
 from .record.endpoints import register_record, release_refusal
 from .record.release import release_answer
 from .record.runtime import Read, RecordRuntime
@@ -44,6 +48,7 @@ from .signing import (
     KeyRequest,
     KeyRoutes,
     KeyService,
+    SessionKeys,
     format_time,
     system_clock,
 )
@@ -353,6 +358,7 @@ def create_app(
                 app_store.close()
 
     key_routes = KeyRoutes()
+    passkey_store = PasskeyStore(app_store)
     key_service = KeyService(
         keys=keys,
         store=app_store,
@@ -360,9 +366,18 @@ def create_app(
         host=key_host,
         clock=clock,
         routes=key_routes,
+        # PASSKEY-PROTOCOL.md section 7.1: requests signed by a session key.
+        sessions=SessionKeys(
+            valid_id=valid_session_key_id,
+            find=passkey_store.find_session,
+            verify=verify_session_signature,
+        ),
     )
 
     async def key_whoami(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        if request.session is not None:
+            # PASSKEY-PROTOCOL.md section 7.2.
+            return 200, session_whoami_body(request.entry, request.session, signer.key_id)
         return 200, whoami_body(request.entry, signer.key_id)
 
     key_routes.add("GET", "/api/key/whoami", key_whoami, scope=None, subject=None)
@@ -414,6 +429,19 @@ def create_app(
     app.state.hub = hub
     app.state.key_service = key_service
     app.state.record = runtime
+    # PASSKEY-PROTOCOL.md sections 5 to 8: the routes without a registered key and the routes
+    # under /api/key/ of the passkey step.
+    passkey_routes = PasskeyRoutes(
+        store=passkey_store,
+        keys=keys,
+        roster=roster,
+        relying_party=relying_party(cfg.public_url),
+        host=key_host,
+        hub_key=signer.key_id,
+        clock=clock,
+    )
+    passkey_routes.register(app, key_routes)
+    app.state.passkey = passkey_routes
 
     @app.exception_handler(HTTPException)
     async def http_exception_response(request: Request, exc: HTTPException) -> JSONResponse:

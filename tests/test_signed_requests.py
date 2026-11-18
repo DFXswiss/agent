@@ -539,11 +539,13 @@ def test_signed_whoami_through_the_http_test_client(app: FastAPI) -> None:
 
 
 def test_production_app_ships_whoami_release_and_the_record_endpoints(cfg: Config) -> None:
-    # KEY-PROTOCOL.md sections 7 and 8 and the endpoint table of RECORD-PROTOCOL.md section 7.1.
+    # KEY-PROTOCOL.md sections 7 and 8, the endpoint table of RECORD-PROTOCOL.md section 7.1 and
+    # the routes under /api/key/ of PASSKEY-PROTOCOL.md sections 5.1, 5.2, 7.3 and 8.2.
     store = Store(cfg.database)
     try:
         app = create_app(cfg, github=FakeGitHub({"code-alice": "alice"}), store=store, record=idle_record)
         assert app.state.key_service.routes.registered() == [
+            ("GET", "/api/key/invites"),
             ("GET", "/api/key/record/checkpoints"),
             ("GET", "/api/key/record/comments"),
             ("GET", "/api/key/record/events"),
@@ -553,8 +555,11 @@ def test_production_app_ships_whoami_release_and_the_record_endpoints(cfg: Confi
             ("GET", "/api/key/record/verify"),
             ("GET", "/api/key/release"),
             ("GET", WHOAMI),
+            ("POST", "/api/key/commands"),
+            ("POST", "/api/key/invites"),
             ("POST", "/api/key/record/events"),
             ("POST", "/api/key/record/watch"),
+            ("POST", "/api/key/session/end"),
         ]
     finally:
         store.close()

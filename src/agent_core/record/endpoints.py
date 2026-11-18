@@ -600,7 +600,7 @@ def request_line(request: KeyRequest, status: int, result: str) -> None:
     `GET`, `POST` and `HEAD`, and for a raw path that is not byte for byte a path of section 7.1."""
     method = request.method if request.method in LOGGED_METHODS else "-"
     path = request.raw_path if request.raw_path in RECORD_PATHS else "-"
-    LOG.info("record request %s %s %s %d %s", request.entry.id, method, path, status, result)
+    LOG.info("record request %s %s %s %d %s", request.key_id, method, path, status, result)
 
 
 # --- the release query (section 9) ----------------------------------------------------------------
