@@ -397,8 +397,10 @@ page; the page links to it.
   the login of its own device may see; the key of an external program, for example on a CI
   runner, never reads it. On the page, every row is checked against what you may see: a
   session, a mail, a ping or a usage figure appears only if you may see the login it comes
-  from and every person it names. What you may not see is also left out of every count and
-  sum, and the page does not say that something was left out.
+  from and every person it names. A command sent to the device, and a record of the device
+  that names who signed one, appears only if you may see the login of whoever signed it.
+  What you may not see is also left out of every count and sum, and the page does not say
+  that something was left out.
 - **What even the device's own login does not see there.** Someone you may not see may still
   send your session mail or a ping, and the local dashboard shows it. The device page leaves
   such a row out, also for you. After a change of the teams it also leaves out the rows you
