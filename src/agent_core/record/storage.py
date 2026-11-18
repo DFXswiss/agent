@@ -426,6 +426,21 @@ class Unverified:
     failure: Failure
 
 
+@dataclass(frozen=True)
+class EnteredUnverified:
+    """The process entered the state `record_unverified` while the append waited for its
+    connection or the advisory lock; nothing was read or written, and the request gets the `503`
+    of a process that is in that state (section 12.1)."""
+
+
+ENTERED_UNVERIFIED = EnteredUnverified()
+
+
+def _always_verified() -> bool:
+    """The default of `still_verified`: the caller holds no state `record_unverified`."""
+    return True
+
+
 class _Rollback(Exception):
     """Ends a transaction with ROLLBACK and gives its outcome to the caller."""
 
@@ -445,15 +460,19 @@ def append_event(
     clock: Callable[[], int],
     before_insert: Callable[[], None] = _no_pause,
     after_commit: Callable[[], None] = _no_pause,
-) -> Appended | Refused | Unverified:
+    still_verified: Callable[[], bool] = _always_verified,
+) -> Appended | Refused | Unverified | EnteredUnverified:
     """The append transaction of section 11.5 for one event, after checks 1 and 2 of section 6.7.
 
     Checks 3 to 6 run first, without a transaction and without a fold (`Refused` when one fails),
     so that an append refused there folds nothing (section 11.6). Then:
 
     1. BEGIN at READ COMMITTED and the advisory lock 742180001.
-    2. Under the state lock, the incremental fold (`Unverified` and ROLLBACK when it fails), then the
-       one clock reading of the append, which fixes `received_at` (section 4.6).
+    2. Under the state lock: `EnteredUnverified` and ROLLBACK, with nothing read, when
+       `still_verified` is false, because the process entered the state `record_unverified` while
+       the append waited for its connection or the advisory lock (section 12.1); otherwise the
+       incremental fold (`Unverified` and ROLLBACK when it fails), then the one clock reading of
+       the append, which fixes `received_at` (section 4.6).
     3. Checks 7 to 18 of section 6.7 by the reducer (`Refused` and ROLLBACK); the state lock is
        released.
     4. The INSERT of the row at the next position, with that `received_at`, the hashes and the three
@@ -462,7 +481,9 @@ def append_event(
        the head of the state plus 1.
 
     `clock` is read exactly once. `before_insert` (between steps 3 and 4) and `after_commit`
-    (between the commit and the apply of step 5) are test points. `StorageError` with step
+    (between the commit and the apply of step 5) are test points. `still_verified` is read under the
+    state lock; a process enters the state `record_unverified` only under that lock, so an append
+    either ran its step 2 before the process entered it or reads and writes nothing. `StorageError` with step
     `append` for every failure of the database, unique constraints and triggers included: none can
     refuse a row that the checks under the lock accepted unless a role outside this document
     changes the rows, and section 11.5 answers every such failure with `500` `internal`.
@@ -475,6 +496,8 @@ def append_event(
         with database_step(STEP_APPEND), _transaction(connection, BEGIN_READ_COMMITTED):
             connection.execute(_LOCK, (APPEND_LOCK,))
             with memory.lock:
+                if not still_verified():
+                    raise _Rollback(ENTERED_UNVERIFIED)
                 failure = incremental_fold(connection, memory, keys)
                 if failure is not None:
                     raise _Rollback(Unverified(failure))
@@ -535,11 +558,6 @@ def _newest_checkpoint(connection: psycopg.Connection[Any], hub_key_id: str) -> 
     if row is None:
         return None
     return _stored_checkpoint(row)
-
-
-def _always_verified() -> bool:
-    """The default of `checkpoint_attempt`: the caller holds no state `record_unverified`."""
-    return True
 
 
 def _checkpoint_steps(

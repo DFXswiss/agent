@@ -1430,16 +1430,22 @@ def test_a_checkpoint_whose_published_at_cannot_be_written_answers_500(
     assert record_part(log_lines) == [f"INFO record request {ALICE} GET {CHECKPOINTS} 500 internal"]
 
 
+@pytest.mark.parametrize(("column", "value"), [("record_hash", "d" * 64), ("signature", bytes(64))])
 def test_a_changed_newest_checkpoint_makes_the_next_attempt_unverified(
-    hub: Hub, record_db: RecordDatabase, log_lines: list[str]  # noqa: F811
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], column: str, value: Any  # noqa: F811
 ) -> None:
+    """Section 12.2, "checkpoints sign only a checked head": the newest checkpoint of the hub's own
+    key id changed as database superuser, by its record hash and in a second run by its signature;
+    the head moved, so without the change the attempt would write."""
     hub.write(ALICE, "task", new_id(), task_create())
     hub.runtime.checkpoint()
-    tamper(record_db, "record.checkpoint", "UPDATE record.checkpoint SET signature = %s", (bytes(64),))
+    hub.write(ALICE, "task", new_id(), task_create())
+    tamper(record_db, "record.checkpoint", f"UPDATE record.checkpoint SET {column} = %s", (value,))
     hub.clock.now += 3600
     log_lines.clear()
     hub.runtime.checkpoint()
     assert record_part(log_lines) == ["ERROR record verify failed 1 checkpoint_invalid"]
+    assert counts(record_db) == (2, 1)
     assert hub.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
     # In the state `record_unverified` no attempt and no periodic run.
     hub.clock.now += 3600
@@ -1467,6 +1473,271 @@ def test_a_checkpoint_attempt_that_waits_while_the_process_enters_record_unverif
     attempt.results()
     assert counts(record_db) == (1, 0)
     assert record_part(log_lines) == [f"INFO record request {DAVE} GET {VERIFY} 200 verify_failed 1 event_signature_invalid"]
+
+
+def wait_until(condition: Callable[[], bool]) -> None:
+    """Wait until `condition` holds, at most 60 seconds."""
+    deadline = time.monotonic() + 60
+    while not condition():
+        assert time.monotonic() < deadline, "the condition never held"
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize(("key_id", "path"), APPENDS)
+def test_an_append_that_waits_while_the_process_enters_record_unverified_answers_503_and_writes_nothing(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], key_id: str, path: str  # noqa: F811
+) -> None:
+    """Section 12.1: from the moment the process enters the state `record_unverified` it answers
+    the signed `503` on every record endpoint. An append that passed the first test of the state
+    and waited for the advisory lock while a verification on request of the same process failed
+    reads and writes nothing once it holds the lock."""
+    hub.write(ALICE, "task", new_id(), task_create())
+    # A row before the head of the state: the fold of the append does not see it.
+    tamper(record_db, "record.event", "UPDATE record.event SET signature = %s WHERE position = 1", (bytes(64),))
+    text, signature = hub.event(key_id, "task", new_id(), VALID_CHANGES[path])
+    log_lines.clear()
+    with append_lock_held(record_db):
+        appending = Parallel(lambda: hub.post(key_id, path, text, signature))
+        wait_for_append_lock(record_db, 1)
+        assert hub.signed(DAVE, VERIFY, 200).body == withheld_at(1)
+        assert hub.runtime.unverified
+    ((wire, answer),) = appending.results()
+    assert_signed(wire, answer, 503, NOW)
+    assert answer.body == RECORD_UNVERIFIED
+    assert counts(record_db) == (1, 0)
+    assert request_lines(log_lines) == [
+        f"{DAVE} GET {VERIFY} 200 verify_failed 1 event_signature_invalid",
+        f"{key_id} POST {path} 503 record_unverified",
+    ]
+
+
+RELEASE_TARGET = f"{RELEASE}?repository={REPO.replace('/', '%2F')}&pull_request=42"
+# A read that waits for the state lock, and the hub lines it writes, as `LEVEL text`. A request
+# answers `(wire, answer)`; the periodic run answers nothing.
+WAITING_READS: dict[str, tuple[Callable[[Hub], Any], list[str]]] = {
+    "a GET endpoint": (
+        lambda hub: hub.get(BOB, HEAD),
+        [f"INFO record request {BOB} GET {HEAD} 503 record_unverified"],
+    ),
+    "the release query": (
+        lambda hub: hub.get(GUARD, RELEASE_TARGET),
+        [f"INFO key request {GUARD} GET {RELEASE} 503"],
+    ),
+    "the verification on request": (
+        lambda hub: hub.get(DAVE, VERIFY),
+        [f"INFO record request {DAVE} GET {VERIFY} 503 record_unverified"],
+    ),
+    "a periodic verification": (lambda hub: hub.runtime.periodic(), []),
+}
+
+
+@pytest.mark.parametrize("case", sorted(WAITING_READS))
+def test_a_read_that_waits_for_the_state_lock_while_the_process_enters_record_unverified_reads_nothing(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], case: str  # noqa: F811
+) -> None:
+    """Section 12.1: a `GET` endpoint, the release query, a verification on request or a periodic
+    run that passed the first test of the state and took its connection waits for the state lock,
+    while the request that holds it enters the state `record_unverified`. The waiting read then
+    reads nothing, and a request answers the signed `503`: the writer role can no longer read
+    `record.event` at that point, so any read would answer `500` or log `record database error`."""
+    read, lines = WAITING_READS[case]
+    hub.monotonic.now += 600
+    hub.write(ALICE, "task", new_id(), task_create())
+    break_after_the_state(hub, record_db)
+    in_fold = threading.Event()
+    release_fold = threading.Event()
+
+    def hold() -> None:
+        in_fold.set()
+        assert release_fold.wait(60)
+
+    hub.points.in_read_fold = hold
+    log_lines.clear()
+    first = Parallel(lambda: hub.get(ALICE, HEAD))
+    assert in_fold.wait(60)
+    hub.points.in_read_fold = lambda: None
+    taken = hub.runtime.pool.taken
+    second = Parallel(lambda: read(hub))
+    # The second read holds its connection and waits for the state lock.
+    wait_until(lambda: hub.runtime.pool.taken == taken + 1)
+    revoke_select(record_db, "record.event")
+    revoke_select(record_db, "record.checkpoint")
+    release_fold.set()
+    answered = first.results() + [item for item in second.results() if item is not None]
+    for wire, answer in answered:
+        assert_signed(wire, answer, 503, NOW)
+        assert answer.body == RECORD_UNVERIFIED
+    assert sorted(hub_lines(log_lines)) == sorted(
+        [f"INFO record request {ALICE} GET {HEAD} 503 verify_failed 2 row_mismatch", *lines]
+    )
+
+
+def _fold_gap(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """A row at position 3 after a head at 1: the first missing position is 2."""
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Gap"))
+    insert_as_superuser(db, stored_event(3, NOW, text, signature, previous))
+    return 2, "position_gap"
+
+
+def _fold_received_at_earlier(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """A `received_at` one second earlier than at the previous position."""
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Earlier"))
+    insert_as_superuser(db, stored_event(2, NOW - 1, text, signature, previous))
+    return 2, "event_time_invalid"
+
+
+def _fold_signed_at_late(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """A `signed_at` 121 seconds after its `received_at`."""
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Late"), signed_at=NOW + 121)
+    insert_as_superuser(db, stored_event(2, NOW, text, signature, previous))
+    return 2, "event_time_invalid"
+
+
+def _fold_event_id_column(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """An `event_id` column that differs from the event text."""
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Column"))
+    insert_as_superuser(db, stored_event(2, NOW, text, signature, previous), event_id=new_id())
+    return 2, "row_mismatch"
+
+
+def _fold_event_id_used(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """An event of another key, validly signed and chained, whose `event_id` the event at position
+    1 already has; the unique constraint on `event_id` is dropped first."""
+    drop_constraint(db, "event_event_id_key")
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Taken"), event_id=first_event_id)
+    insert_as_superuser(db, stored_event(2, NOW, text, signature, previous))
+    return 2, "event_id_taken"
+
+
+def _fold_certificate(hub: Hub, db: RecordDatabase, first_event_id: str, previous: str) -> tuple[int, str]:
+    """An event of a registered `ed25519` key, validly signed and chained, whose `key_certificate`
+    is `=` followed by a value (section 14, `certificate_not_supported`)."""
+    text, signature = hub.event(BOB, "task", new_id(), task_create("Certified"), certificate=b"cert")
+    insert_as_superuser(db, stored_event(2, NOW, text, signature, previous))
+    return 2, "certificate_not_supported"
+
+
+FOLD_FAILURES: dict[str, Callable[[Hub, RecordDatabase, str, str], tuple[int, str]]] = {
+    "position_gap": _fold_gap,
+    "event_time_invalid by a received_at earlier than at the previous position": _fold_received_at_earlier,
+    "event_time_invalid by a signed_at more than 120 seconds after received_at": _fold_signed_at_late,
+    "row_mismatch of the event_id column": _fold_event_id_column,
+    "event_id_taken by an event of another key": _fold_event_id_used,
+    "certificate_not_supported": _fold_certificate,
+}
+
+
+@pytest.mark.parametrize("case", sorted(FOLD_FAILURES))
+def test_the_incremental_fold_of_a_checkpoint_attempt_checks_every_row_writes_nothing_and_the_process_answers_503(
+    hub: Hub, record_db: RecordDatabase, log_lines: list[str], case: str  # noqa: F811
+) -> None:
+    """Section 14: after the state of instance A a row is inserted as database superuser; A's next
+    checkpoint attempt writes nothing and logs the failure with its position, and A's next
+    `GET /api/key/record/head` answers the signed `503`."""
+    text, signature = hub.event(ALICE, "task", new_id(), task_create())
+    wire, answer = hub.post(ALICE, EVENTS, text, signature)
+    assert_signed(wire, answer, 201, NOW)
+    position, failure = FOLD_FAILURES[case](hub, record_db, parse_event(text).event_id, answer.json()["record_hash"])
+    log_lines.clear()
+    hub.runtime.checkpoint()
+    assert counts(record_db) == (2, 0)
+    assert record_part(log_lines) == [f"ERROR record verify failed {position} {failure}"]
+    assert hub.runtime.unverified
+    log_lines.clear()
+    assert hub.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
+    assert request_lines(log_lines) == [f"{ALICE} GET {HEAD} 503 record_unverified"]
+
+
+def test_a_row_that_another_instance_appended_and_that_was_then_changed_makes_the_next_attempt_unverified(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 14, "checkpoints sign only a checked head": between two attempts of instance A,
+    instance B appends an event and that row is then changed as database superuser."""
+    other = start_hub(record_db, cfg, tmp_path, name="other")
+    try:
+        hub.write(ALICE, "task", new_id(), task_create())
+        hub.runtime.checkpoint()
+        assert counts(record_db) == (1, 1)
+        assert other.write(BOB, "task", new_id(), task_create())["position"] == 2
+        tamper(record_db, "record.event", "UPDATE record.event SET signature = %s WHERE position = 2", (bytes(64),))
+        hub.clock.now += 3600
+        log_lines.clear()
+        hub.runtime.checkpoint()
+        assert counts(record_db) == (2, 1)
+        assert record_part(log_lines) == ["ERROR record verify failed 2 event_signature_invalid"]
+        assert hub.signed(ALICE, HEAD, 503).body == RECORD_UNVERIFIED
+    finally:
+        other.close()
+
+
+def test_an_instance_in_record_unverified_writes_no_checkpoint_at_the_next_full_hour_also_when_the_head_moved(
+    hub: Hub, record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 12.2: instance A enters the state `record_unverified`; instance B then moves the
+    head. A makes no attempt at the next full hour, which would otherwise write the first
+    checkpoint."""
+    other = start_hub(record_db, cfg, tmp_path, name="other")
+    try:
+        hub.write(ALICE, "task", new_id(), task_create())
+        assert other.signed(ALICE, HEAD, 200).json()["position"] == 1
+        # A row before the head of both states: B's appends do not fold it.
+        tamper(record_db, "record.event", "UPDATE record.event SET signature = %s WHERE position = 1", (bytes(64),))
+        assert hub.signed(DAVE, VERIFY, 200).body == withheld_at(1)
+        assert hub.runtime.unverified
+        assert other.write(BOB, "task", new_id(), task_create())["position"] == 2
+        hub.clock.now += 3600
+        hub.monotonic.now += 600
+        taken = hub.runtime.pool.taken
+        log_lines.clear()
+        hub.runtime.tick()
+        assert hub.runtime.pool.taken == taken
+        assert counts(record_db) == (2, 0)
+        assert record_part(log_lines) == []
+    finally:
+        other.close()
+
+
+def test_a_checkpoint_after_the_clock_was_set_back_below_the_head_is_published_earlier_and_verifies(
+    hub: Hub, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 12.2, `published_at`: the clock is set back below the `received_at` of the head and
+    then passes a full hour that no checkpoint of the hub key id covers yet; the checkpoint has a
+    `published_at` earlier than that `received_at`, and the next verification on request answers
+    `verified` true. While the newest checkpoint has a `published_at` at or after a full hour
+    reached again, an attempt for that hour writes nothing."""
+    hub.write(ALICE, "task", new_id(), task_create("First"))
+    hub.runtime.checkpoint()
+    hub.clock.now = NOW + 7200
+    head = hub.write(BOB, "task", new_id(), task_create("Second"))
+    assert head["received_at"] == fmt(NOW + 7200)
+    # Set back below the head's `received_at`, then past the full hour NOW + 3600.
+    hub.clock.now = NOW + 3600 + 60
+    log_lines.clear()
+    hub.runtime.checkpoint()
+    assert record_part(log_lines) == [f"INFO record checkpoint 2 {head['record_hash']}"]
+    page = hub.signed(ALICE, CHECKPOINTS, 200).json()
+    assert [(entry["position"], entry["published_at"]) for entry in page["checkpoints"]] == [
+        (2, fmt(NOW + 3600 + 60)),
+        (1, fmt(NOW)),
+    ]
+    assert hub.signed(ALICE, VERIFY, 200).body == body(
+        {"verified": True, "position": 2, "record_hash": head["record_hash"], "failure": None, "hub_key": HUB_KEY_ID}
+    )
+    # The head moves; the clock reaches the full hours NOW and NOW + 3600 again: each attempt runs
+    # and writes nothing, because the newest checkpoint was published after both.
+    third = hub.write(ALICE, "task", new_id(), task_create("Third"))
+    assert third["received_at"] == fmt(NOW + 7200)
+    for again in (NOW + 1800, NOW + 3600 + 30):
+        hub.clock.now = again
+        taken = hub.runtime.pool.taken
+        log_lines.clear()
+        hub.runtime.checkpoint()
+        assert hub.runtime.pool.taken == taken + 1
+        assert record_part(log_lines) == []
+    # The next full hour that no checkpoint covers writes the checkpoint of the moved head.
+    hub.clock.now = NOW + 7200
+    hub.runtime.checkpoint()
+    assert record_part(log_lines) == [f"INFO record checkpoint 3 {third['record_hash']}"]
 
 
 def test_a_database_failure_in_a_checkpoint_attempt_logs_record_database_error_checkpoint(

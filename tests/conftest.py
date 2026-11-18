@@ -40,14 +40,15 @@ DATABASES_LOCK = 742180004
 IDENTIFIER_LOCK = 742180003
 
 
-# A writer connection string whose server never answers: the discard port of the loopback address.
+# A writer connection string that no database server serves: port 9 (discard) of the loopback
+# address, on which no PostgreSQL listens, so every connection to it fails.
 IDLE_RECORD_URL = "postgresql://idle_writer:" + "0" * 64 + "@127.0.0.1:9/idle_record?sslmode=disable"
 
 
 def idle_record(keys: KeyRing, signer: HubSigner, clock: Clock) -> RecordRuntime:
     """The record part of a hub for the tests of the session store, pairing, sync and signed
     requests, which never reach the record: an empty state, no start of RECORD-PROTOCOL.md section
-    11.4 and no background thread. Its database never answers, so a test that reached the record by
+    11.4 and no background thread. No database server serves it, so a test that reached the record by
     mistake would get `500` instead of an answer. The hub itself always starts the record through
     `start_record` (agent_core.__main__); the record tests do so against PostgreSQL."""
     return RecordRuntime(

@@ -37,6 +37,7 @@ from .storage import (
     STEP_READ,
     Appended,
     CheckpointWritten,
+    EnteredUnverified,
     MemoryState,
     Refused,
     StorageError,
@@ -218,7 +219,9 @@ class RecordRuntime:
     def _enter_unverified(self) -> None:
         """Enter the state under the state lock. A checkpoint attempt holds that lock from its
         check of the state until its commit (section 12.2), so it either commits before the
-        process enters the state or sees the state and writes nothing."""
+        process enters the state or sees the state and writes nothing; a reading request and an
+        append test the state again once they hold that lock, so neither starts its fold after the
+        process entered it."""
         with self.memory.lock:
             self._unverified.set()
 
@@ -233,14 +236,18 @@ class RecordRuntime:
         """A `GET` endpoint or the release query (sections 7.1, 9 and 11.6).
 
         In the state `record_unverified` nothing is read. Otherwise the connection is taken from
-        the pool before the state lock; under the state lock the incremental fold runs, and then
-        `reader` reads the answer from the state, through that connection where it needs stored
-        rows. A failed fold enters the state `record_unverified`.
+        the pool before the state lock. Under the state lock the state is tested again, because the
+        process can have entered it while this request waited for its connection or the lock (section
+        12.1); then the incremental fold runs, and `reader` reads the answer from the state, through
+        that connection where it needs stored rows. A failed fold enters the state
+        `record_unverified`.
         """
         if self.unverified:
             return ALREADY_UNVERIFIED
         try:
             with self.pool.connection() as connection, self.memory.lock:
+                if self._unverified.is_set():
+                    return ALREADY_UNVERIFIED
                 with database_step(STEP_READ):
                     failure = incremental_fold(connection, self.memory, self.keys)
                 self.hooks.in_read_fold()
@@ -258,8 +265,10 @@ class RecordRuntime:
         """An append endpoint after checks 1 and 2 of section 6.7.
 
         The `503` of a process already in the state `record_unverified` comes before check 3;
-        checks 3 to 6 need no connection; then the append transaction of section 11.5. A failed
-        fold in its step 2 enters the state `record_unverified`.
+        checks 3 to 6 need no connection; then the append transaction of section 11.5. Its step 2
+        tests the state again under the state lock and answers that same `503` when the process
+        entered it while the append waited. A failed fold in its step 2 enters the state
+        `record_unverified`.
         """
         if self.unverified:
             return ALREADY_UNVERIFIED
@@ -280,9 +289,12 @@ class RecordRuntime:
                     self.clock,
                     self.hooks.append_before_insert,
                     self.hooks.append_after_commit,
+                    self._still_verified,
                 )
         except StorageError as error:
             return _database_failed(error)
+        if isinstance(outcome, EnteredUnverified):
+            return ALREADY_UNVERIFIED
         if isinstance(outcome, Unverified):
             self._enter_unverified()
         return outcome
@@ -305,12 +317,18 @@ class RecordRuntime:
             with self._limit:
                 self._request_running = False
 
-    def _full_verification(self) -> Verified | DatabaseFailed:
+    def _full_verification(self) -> Verified | AlreadyUnverified | DatabaseFailed:
         """A full verification of a running process (section 12.1): the head of the state, read
-        under the state lock, then the snapshot. A failure enters the state `record_unverified`."""
+        under the state lock, then the snapshot. Under that lock the state `record_unverified` is
+        tested again, because the process can have entered it while this run waited for its
+        connection or the lock; then nothing is read. A failure enters the state
+        `record_unverified`."""
         try:
             with self.pool.connection() as connection:
-                memory_head = self.memory.head()
+                with self.memory.lock:
+                    if self._unverified.is_set():
+                        return ALREADY_UNVERIFIED
+                    memory_head = self.memory.state.head
                 result = verify_stored(
                     connection, self.keys, self.hub_keys, memory_head, self.hooks.snapshot_between_reads
                 )
@@ -336,7 +354,9 @@ class RecordRuntime:
         if isinstance(outcome, DatabaseFailed):
             log_database_error(outcome.step, outcome.sqlstate)
             return
-        failure = outcome.result.failure
+        # A run that finds the process already in the state `record_unverified` reads nothing and
+        # logs nothing (section 12.1).
+        failure = outcome.result.failure if isinstance(outcome, Verified) else None
         if failure is not None:
             log_verify_failed(failure.position, failure.failure)
 

@@ -48,8 +48,10 @@ Not built yet:
 - the allow list on a device, grants, and the orders and questions of the team record
 - the client command for the release query
 
-No existing endpoint changes its behaviour: GitHub sign-in, device pairing and device tokens
-work as before. The hub additionally requires three new environment variables at start
+No endpoint that existed before the first build step changes its behaviour: GitHub sign-in,
+device pairing and device tokens work as before. The third build step changes only the answer of
+`GET /api/key/release`, which it computes from the team record and which can be the signed `503`
+`record_unverified` (RECORD-PROTOCOL.md sections 1 and 7.1). The hub additionally requires three new environment variables at start
 (section 11); section 12 gives the order in which they are rolled out. The release query needs
 no environment variable of its own and no change to the keys file; from the third build step on
 it reads the team record, whose database the hub reaches through `AGENT_CORE_RECORD_DATABASE`
