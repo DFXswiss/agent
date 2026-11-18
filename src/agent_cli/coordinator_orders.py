@@ -17,10 +17,13 @@ from .coordinator_checks import (
     CheckValue,
     Deferred,
     TaskFacts,
+    action_checks,
     apply_second_review_waiver,
     checks_satisfied,
+    current_phase,
     record_check,
     registry_row_id,
+    remedy_running,
     resolve_action,
     resume_after_second_review_waiver,
 )
@@ -324,8 +327,70 @@ def phase_accept_order(
     return [*skip_lines, f"order accepted {order_id(task)}"]
 
 
-def order_state(task: dict[str, Any]) -> str:
-    """merged | done | cancelled | failed | queued | waiting | ready | running; derived, never stored."""
+def _held_step(task: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """Action of the phase a reply resumes, and the task viewed in that phase.
+
+    The same anchor as ``op_show``: while the phase is ``ask`` or ``blocked``,
+    the next step is ``resume_phase``. The view carries that phase so a
+    ``phase:`` requirement applies to the step, not to the stored phase.
+    """
+    phase = current_phase(task)
+    anchor = phase
+    if phase in ("ask", "blocked"):
+        resume = coord(task).get("resume_phase")
+        if not isinstance(resume, str) or not resume:
+            return None, task
+        anchor = resume
+    action = PHASE_ACTION.get(anchor)
+    if action is None or anchor == phase:
+        return action, task
+    view = copy.deepcopy(task)
+    coord(view)["phase"] = anchor
+    return action, view
+
+
+def nein_holding_check(store: Store, task: dict[str, Any]) -> str | None:
+    """First check of the next step whose recorded status is ``nein``."""
+    action, view = _held_step(task)
+    if action is None:
+        return None
+    for check, value in action_checks(TaskFacts(store, view), view, action):
+        if value.status == "nein":
+            return check.key
+    return None
+
+
+def order_work_running(store: Store, task: dict[str, Any]) -> bool:
+    """True while a lane or check job of this order is recorded as running.
+
+    Reads ``lane_wait``, a remedy state ``running``, and an agent row
+    ``working``. Does not probe processes and does not close a stale row.
+    """
+    if coord(task).get("lane_wait") is True:
+        return True
+    for check in CHECKS.values():
+        if remedy_running(task, check):
+            return True
+    task_id = task["id"]
+    for row in store.rows("agent"):
+        if row.get("task_id") == task_id and row.get("status") == "working":
+            return True
+    return False
+
+
+def order_holding_check(store: Store, task: dict[str, Any]) -> str | None:
+    """Check named while the order shows ``waiting``, else None."""
+    if order_state(task, store) != "waiting":
+        return None
+    return nein_holding_check(store, task)
+
+
+def order_state(task: dict[str, Any], store: Store | None) -> str:
+    """merged | done | cancelled | failed | queued | waiting | ready | running; derived, never stored.
+
+    ``store`` supplies the checklist and the lane rows. A caller that has no
+    store passes None, and the result then follows the phase only.
+    """
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     if task.get("state") == "done":
@@ -349,6 +414,10 @@ def order_state(task: dict[str, Any]) -> str:
         and evidence.get("ready_head")
     ):
         return "ready"
+    if store is not None:
+        held = nein_holding_check(store, task)
+        if held is not None and not order_work_running(store, task):
+            return "waiting"
     return "running"
 
 
@@ -646,7 +715,7 @@ def reconcile_order_events(
         if task.get("state") == "failed" and isinstance(marked, dict):
             post(kind="done", occurrence="", digest=done_digest(marked))
     elif phase in ("ask", "blocked") or c.get("binding_blocker"):
-        if order_state(task) == "failed":
+        if order_state(task, store) == "failed":
             kind = "failed"
         elif phase == "ask" or (
             phase == "blocked"
@@ -961,7 +1030,7 @@ def consume_order_intents(
         by = str(payload.get("by") or "")
         c = coord(task)
         kind = payload.get("kind")
-        if kind == "done" and order_state(task) not in ("done", "merged"):
+        if kind == "done" and order_state(task, store) not in ("done", "merged"):
             mark_order_done(store, task, intent)
             lines.append(f"order done {oid}")
             continue
@@ -969,7 +1038,7 @@ def consume_order_intents(
             _finish_intent(
                 store,
                 intent,
-                error=f"order is already {order_state(task)}",
+                error=f"order is already {order_state(task, store)}",
             )
             continue
         if kind not in ("reply", "override", "cancel"):

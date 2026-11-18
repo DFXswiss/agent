@@ -1047,7 +1047,8 @@ def test_list_and_show_are_bounded(device, capsys) -> None:
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
     order("list", "--json")
     listed = json.loads(capsys.readouterr().out)
-    assert all(len(item) == 9 for item in listed)
+    assert all(len(item) == 10 for item in listed)
+    assert all("holding_check" in item for item in listed)
 
     order("show", "--id", str(first["id"]))
     text = capsys.readouterr().out
@@ -1694,7 +1695,7 @@ def test_done_inserts_an_intent_for_an_open_order(device, capsys, state: str) ->
             device.store, device.worker, order_id, **OPEN_ORDER_SEEDS[state]
         )
     unchanged = device.store.row("task", order_id)
-    assert order_state(unchanged) == state
+    assert order_state(unchanged, None) == state
     order("done", "--id", order_id, "--reason", "Delivered elsewhere")
     output = capsys.readouterr().out
     intent_id = output.split()[1]
@@ -1727,7 +1728,7 @@ def test_done_marks_an_ended_order_at_once(
 ) -> None:
     order_id = str(uuid.uuid4())
     task = ended_order(device, order_id, failed_kind)
-    assert order_state(task) == state
+    assert order_state(task, None) == state
     assert coord(task)["order"]["closed"] is True
     order("done", "--id", order_id, "--reason", "Merged by hand elsewhere")
     output = capsys.readouterr().out
@@ -1793,7 +1794,7 @@ def test_done_ends_a_failed_order_that_no_reply_can_resume_at_once(
     event_id = coord(task)["order"]["checkpoint"]["event_id"]
     assert task["state"] == "open"
     assert "resume_phase" not in coord(task)
-    assert order_state(task) == "failed"
+    assert order_state(task, None) == "failed"
     activities = {row["id"] for row in device.store.rows("activity")}
 
     order("done", "--id", order_id, "--reason", "Merged by hand elsewhere")
@@ -1801,7 +1802,7 @@ def test_done_ends_a_failed_order_that_no_reply_can_resume_at_once(
     intent_id = output.split()[1]
     assert output == f"done {intent_id} order {order_id} state done\n"
     saved = device.store.row("task", order_id)
-    assert order_state(saved) == "done"
+    assert order_state(saved, None) == "done"
     c = coord(saved)
     assert saved["state"] == "failed"
     assert c["phase"] == "blocked"
@@ -1908,7 +1909,7 @@ def test_done_during_a_tick_leaves_an_ended_order_to_the_next_tick(
     intent_id = outputs[0].split()[1]
     assert outputs == [f"done {intent_id} order {order_id} state cancelled\n"]
     saved = device.store.row("task", order_id)
-    assert order_state(saved) == "cancelled"
+    assert order_state(saved, None) == "cancelled"
     assert "marked_done" not in coord(saved)
     assert coord(saved)["order"]["closed"] is True
     assert device.store.row("activity", intent_id)["execution_status"] == "pending"
@@ -1925,7 +1926,7 @@ def test_done_during_a_tick_leaves_an_ended_order_to_the_next_tick(
     for _ in range(2):
         saved = device.store.row("task", order_id)
         c = coord(saved)
-        assert order_state(saved) == "done"
+        assert order_state(saved, None) == "done"
         assert c["failed_kind"] == "cancelled"
         assert c["marked_done"]["intent_id"] == intent_id
         assert c["marked_done"]["reason"] == "Shipped by hand"

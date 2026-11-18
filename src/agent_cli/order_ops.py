@@ -34,6 +34,7 @@ from .coordinator_orders import (
     latest_order_intent,
     list_orders,
     mark_order_done,
+    order_holding_check,
     order_state,
     own_order_events,
     serves_repo,
@@ -225,7 +226,7 @@ def event_view(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def order_summary(task: dict[str, Any]) -> dict[str, Any]:
+def order_summary(store: Store, task: dict[str, Any]) -> dict[str, Any]:
     checkpoint = coord(task)
     source = (
         checkpoint.get("source")
@@ -234,8 +235,9 @@ def order_summary(task: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "order_id": str(task["id"]),
-        "state": order_state(task),
+        "state": order_state(task, store),
         "phase": current_phase(task),
+        "holding_check": order_holding_check(store, task),
         "round": int(task.get("current_round") or 0),
         "repo": target_repo(task),
         "title": str(source.get("title") or ""),
@@ -349,7 +351,7 @@ def op_submit(
     return {
         "order_id": str(task["id"]),
         "repo": target_repo(task),
-        "state": order_state(task),
+        "state": order_state(task, store),
         "worker": selected.session_id,
         "round_limit": round_limit_view(c),
         "skipped_checks": skipped_checks_view(source),
@@ -359,7 +361,7 @@ def op_submit(
 def op_list(
     store: Store, home: Path, *, open_only: bool = False
 ) -> dict[str, Any]:
-    orders = [order_summary(task) for task in list_orders(store)]
+    orders = [order_summary(store, task) for task in list_orders(store)]
     if open_only:
         orders = [item for item in orders if item["state"] in OPEN_STATES]
     return {"orders": orders}
@@ -455,12 +457,13 @@ def op_show(store: Store, home: Path, *, order_id: str) -> dict[str, Any]:
         if key in used_overrides
     ]
 
-    summary = order_summary(task)
+    summary = order_summary(store, task)
     return {
         **{key: summary[key] for key in (
             "order_id",
             "state",
             "phase",
+            "holding_check",
             "round",
             "repo",
         )},
@@ -528,7 +531,7 @@ def op_reply(
     store: Store, home: Path, *, by: str, order_id: str, body: str
 ) -> dict[str, Any]:
     task = need_order(store, order_id)
-    state = order_state(task)
+    state = order_state(task, store)
     if state == "done":
         raise OrderError(f"order {order_id} is already {state}")
     checkpoint_data = coord(task)
@@ -578,7 +581,7 @@ def op_override(
     if not declared_check.overridable:
         raise OrderError(f"check {check} cannot be overridden")
     task = need_order(store, order_id)
-    state = order_state(task)
+    state = order_state(task, store)
     if state in ENDED_STATES:
         raise OrderError(f"order {order_id} is already {state}")
     row = store.row("checklist_item", registry_row_id(order_id, check))
@@ -618,7 +621,7 @@ def op_cancel(
     reason: str,
 ) -> dict[str, Any]:
     task = need_order(store, order_id)
-    state = order_state(task)
+    state = order_state(task, store)
     if state in ENDED_STATES:
         raise OrderError(f"order {order_id} is already {state}")
     require_reason(reason)
@@ -654,7 +657,7 @@ def op_done(
     with store.try_exclusive(f"{LOCK_PREFIX}{task['session_id']}") as held:
         if held:
             task = need_order(store, order_id)
-        state = order_state(task)
+        state = order_state(task, store)
         if state in ("done", "merged"):
             raise OrderError(f"order {order_id} is already {state}")
         require_reason(reason)
@@ -672,7 +675,7 @@ def op_done(
         if held and state in ("failed", "cancelled"):
             # Nothing in the coordinator can still move this order; no pass is needed.
             mark_order_done(store, task, store.row("activity", intent_id))
-    return {"intent": intent_id, "order_id": order_id, "state": order_state(task)}
+    return {"intent": intent_id, "order_id": order_id, "state": order_state(task, store)}
 
 
 def op_report(store, home, *, order_id) -> dict:
@@ -749,6 +752,7 @@ OPERATIONS: tuple[Operation, ...] = (
                 "order_id",
                 "state",
                 "phase",
+                "holding_check",
                 "round",
                 "repo",
                 "title",
@@ -769,6 +773,7 @@ OPERATIONS: tuple[Operation, ...] = (
             "order_id",
             "state",
             "phase",
+            "holding_check",
             "round",
             "repo",
             "base",

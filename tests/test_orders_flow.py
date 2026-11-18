@@ -499,7 +499,7 @@ def test_done_on_an_open_order_stops_all_further_work(
     else:
         pytest.fail("the order did not reach the tests phase")
     task = store.row("task", order["id"])
-    assert order_state(task) == "running"
+    assert order_state(task, None) == "running"
     assert fake.pr_created is True
     assert fake.launched[:2] == ["implementer", "reviewer"]
 
@@ -548,7 +548,7 @@ def test_done_on_an_open_order_stops_all_further_work(
         tick(store, worker, runner=fake, lane_runner=lane)
 
     task = store.row("task", order["id"])
-    assert order_state(task) == "done"
+    assert order_state(task, None) == "done"
     assert task["state"] == "failed"
     assert coord(task)["failed_kind"] == "done"
     assert coord(task)["marked_done"]["reason"] == "Finished by hand"
