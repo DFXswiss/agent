@@ -3,9 +3,8 @@
 Both read the same environment variables as the hub and use the same database. When the
 configuration (also the record's variables of step `config` of RECORD-PROTOCOL.md section 11.4),
 the teams file or the keys file breaks a rule that stops the hub at start, either
-command prints the reason to standard error, writes nothing and exits with status 1. A first
-argument other than these two, and an unknown or repeated option, is decided in
-`agent_core.__main__` (`USAGE_ERROR`, status 2) before anything is read.
+command prints the reason to standard error, writes nothing and exits with status 1. A usage
+error is decided in `run_command` (`UsageError`, `EXIT_USAGE`, status 2) before anything is read.
 """
 
 from __future__ import annotations
