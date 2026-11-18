@@ -178,3 +178,20 @@ def kill_session_argv(socket: str, session: str) -> list[str]:
 def is_bare_argv(bare: str) -> list[str]:
     """Check whether `bare` is a bare Git repository."""
     return ["git", f"--git-dir={bare}", "rev-parse", "--is-bare-repository"]
+
+
+def rev_parse_argv(bare: str, ref: str) -> list[str]:
+    """Resolve `ref` to the commit id it names.
+
+    Dispatch calls this after adding a pull-request worktree to record the
+    commit that was actually checked out: the ref may have moved between
+    ingest's scan and this fetch. `^{commit}` peels anything that is not a
+    commit, so only an object id is printed.
+    """
+    return [
+        "git",
+        f"--git-dir={bare}",
+        "rev-parse",
+        "--verify",
+        f"{ref}^{{commit}}",
+    ]
