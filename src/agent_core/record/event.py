@@ -52,7 +52,9 @@ ERROR_CHAIN_BROKEN = "chain_broken"
 ERROR_EVENT_TIME_INVALID = "event_time_invalid"
 
 _LINE_RE = re.compile(rb"[\x21-\x7e]+")
-_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# Section 2: version 4 (the 15th character is `4`) of the RFC 9562 variant (the 20th character is
+# one of `8`, `9`, `a`, `b`); every other version or variant, and so the nil UUID, breaks the form.
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _HASH_RE = re.compile(r"[0-9a-f]{64}")
 _COUNT_RE = re.compile(r"[1-9][0-9]?")
 
@@ -106,7 +108,7 @@ class ChainHead:
 
 
 def valid_uuid(value: object) -> bool:
-    """Section 2: lowercase 8-4-4-4-12 hex, any version, not the nil UUID."""
+    """Section 2: lowercase 8-4-4-4-12 hex of version 4 and the RFC 9562 variant, not the nil UUID."""
     return isinstance(value, str) and _UUID_RE.fullmatch(value) is not None and value != NIL_UUID
 
 
