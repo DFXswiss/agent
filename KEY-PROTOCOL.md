@@ -17,6 +17,8 @@ Passkey invites, sign-in and signed requests by a certified session key are spec
 adds to section 3 the loader rule that fixes the device key of a device (the unrevoked `agent`
 entry of that device without `program`, if there is one), adds endpoints under `/api/key/`, and refuses a
 public URL whose host is an IP address or ends with a dot.
+The third build step, the team record and the security-issue object, is specified in
+[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
 
 ## 1. Scope of what is built now
 

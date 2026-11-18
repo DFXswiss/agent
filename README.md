@@ -77,6 +77,8 @@ Sign-in with passkeys, invites and the certified session key are specified, not 
 
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. Until the team record is built, the hub answers `released: true` for every valid query. The answer is one input for a guard and replaces no review rule.
 
+The team record (third build step: signed events in PostgreSQL, tasks and security issues) is specified, not yet built, in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
+
 ## Control
 
 Anyone who can see a session may watch its live terminal on the website. Start, stop, type, and resize are allowed only when the session's origin device row exists, is not revoked, and its `github_login` either equals the signed-in actor or is an agent login that actor owns; the origin device must also have a control-ready WebSocket. The hub relays control and terminal bytes; it does not run processes and does not author session rows. Details are in [PROTOCOL.md](PROTOCOL.md).
