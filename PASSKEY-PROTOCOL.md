@@ -565,7 +565,7 @@ DESIGN.md §24.2, and `keys:invite` is never proposed. For a bootstrap invite th
 `pull_request_body` for a normal invite, exactly (lines joined by `\n`):
 
 ```text
-Adds the passkey received through invite <invite id> to keys.yaml.
+Adds the passkey received through invite <invite id> to keys.yaml. Before merging, the administrator compares the fingerprint below with <handle> over a channel other than the invite link (PASSKEY-PROTOCOL.md section 5.5). An operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). Before merging, the administrator confirms that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged.
 
 - Handle: <handle>
 - Team: <team>
@@ -573,15 +573,13 @@ Adds the passkey received through invite <invite id> to keys.yaml.
 - Fingerprint: <fingerprint>
 - Received: <received time>
 
-Before merging, the administrator compares this fingerprint with <handle> over a channel other than the invite link (PASSKEY-PROTOCOL.md section 5.5), and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6).
-
-While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Before merging, the administrator confirms that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged. Only after that confirmation, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
+While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Only after the confirmation above, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
 ```
 
 `pull_request_body` for a bootstrap invite, exactly (lines joined by `\n`):
 
 ```text
-Adds the administrator passkey received through bootstrap invite <invite id> to keys.yaml, with keys:invite.
+Adds the administrator passkey received through bootstrap invite <invite id> to keys.yaml, with keys:invite. Before merging, <handle> compares the fingerprint below with the one shown when the passkey was created. An operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). Before merging, the reviewers confirm that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged.
 
 - Handle: <handle>
 - Team: <team>
@@ -589,9 +587,9 @@ Adds the administrator passkey received through bootstrap invite <invite id> to 
 - Fingerprint: <fingerprint>
 - Received: <received time>
 
-Before merging, <handle> compares this fingerprint with the one shown when the passkey was created, and an operator compares credential_id and public_key in this pull request with the output of invite-list on the hub host (PASSKEY-PROTOCOL.md section 5.6). The review of this pull request is the control over who becomes administrator.
+The review of this pull request is the control over who becomes administrator.
 
-While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Before merging, the reviewers confirm that the GitHub account with exactly the login <handle> exists and belongs to the person who created this passkey (PASSKEY-PROTOCOL.md section 5.6); without that confirmation this pull request is not merged. Only after that confirmation, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
+While GitHub sign-in exists, every member of a team in teams.yaml is a GitHub login that reads the whole team's data. Only after the confirmation above, and only if <handle> is not yet a member of <team> in teams.yaml, this pull request adds the membership.
 ```
 
 `<received time>` has the time form of KEY-PROTOCOL.md section 2.
@@ -1045,6 +1043,11 @@ when the certificate was signed; DESIGN.md §25.6 states the consequence.
   non-extractable `CryptoKey` without exposing its bytes. The record survives a browser restart,
   so a session lasts until sign-out, its expiry, or one of the refusals of the next point
   (decision 30). A new sign-in replaces the record.
+- IndexedDB belongs to the origin, not to a page. Every page of the hub's origin can reach the
+  record and use the session key with `crypto.subtle.sign`, without `signText`; rule 1 of section
+  8.3 binds only `passkey.js`. Until the build step that reworks them, the existing pages `/`,
+  `/session` and `/pair` are served without the policy of section 10.1. Section 10.3 states the
+  consequence; the owner decides it (section 17.2).
 - The page deletes the record on sign-out, when the expiry passed, and when a signed request is
   refused with `key_unknown`, `key_revoked`, `key_expired` or `certificate_invalid`.
 - The next command sequence number is kept in the same record and incremented in one IndexedDB
@@ -1105,13 +1108,21 @@ What an edge that changes the page code can do in addition, in full:
   session is ended, or the passkey is revoked. The person cannot end that session from the
   website, because the website is the edge's code.
 - At an invite it can substitute the received key, as stated above.
+- It can have the person's passkey sign a statement the edge wrote, with a session key of its own
+  and an expiry far in the future. The hub refuses that statement (S6), but a device verifies the
+  certificate offline (section 9, V11) and accepts it during the last L seconds before that
+  expiry. The edge thereby obtains a certificate over its own statement whose validity begins
+  later, usable at a device for at most one session-key lifetime at a time it chooses, until the
+  passkey is revoked. Using it needs a delivery path to the device, which this build step does
+  not fix (DESIGN.md §25.6).
 
 What it cannot do:
 
-- It cannot extend the lifetime. The hub writes the expiry into the statement and verifies the
-  assertion against the statement it stored (S6), so a changed statement is refused; every
-  verifier refuses an expiry later than now plus `SESSION_KEY_MAX_SECONDS` (V11), a device one
-  later than now plus its configured L.
+- It cannot make any certificate usable for longer than L at a device or
+  `SESSION_KEY_MAX_SECONDS` at the hub. The hub writes the expiry into the statement and verifies
+  the assertion against the statement it stored (S6), so a changed statement is refused at the
+  hub; every verifier refuses an expiry later than now plus `SESSION_KEY_MAX_SECONDS` (V11), a
+  device one later than now plus its configured L.
 - It cannot create a session without the person's passkey confirmation: each certificate needs one
   assertion with user verification (V8). The changed page code can ask for that confirmation at a
   moment the person did not expect.
@@ -1123,8 +1134,9 @@ What it cannot do:
   session key's certificate itself (section 9), against the passkey public key its owner
   confirmed.
 
-What bounds the damage is the lifetime of a session key (at most `SESSION_KEY_MAX_SECONDS`), the
-rights of a session key (the scopes of its passkey entry: in this build step creating and listing
+What bounds the damage is the lifetime of a session key (at most `SESSION_KEY_MAX_SECONDS` at the
+hub, at most L at a device, at a time the edge chooses for a certificate over its own
+statement), the rights of a session key (the scopes of its passkey entry: in this build step creating and listing
 invites for an administrator, `noop` commands only to the person's own device keys, nothing that
 changes rights), and the record of every command: the hub's log line for every request of a
 session key (section 7.1), which names the session key and the passkey, and, once commands are
@@ -1144,6 +1156,15 @@ registered through an invite during it is revoked and removed from the allow lis
 takeover (DESIGN.md §25.6). No keys-file pull request is merged for an invite that was created,
 opened or received during it; a person who still needs a passkey gets a new invite after the
 compromise ended.
+
+**The other pages of the origin.** The session key in IndexedDB is reachable by every page of the
+hub's origin, not only by `/passkey` and `/invite` (section 10.2). Script that runs on any page of
+the origin can use the non-extractable key directly with `crypto.subtle.sign`, past `signText`,
+for as long as the key is valid: every signed request the scopes of the person's passkey entry
+allow (for an administrator, creating invites), and `noop` commands to the person's own devices.
+The existing pages `/`, `/session` and `/pair` run inline script and are served without the policy
+of section 10.1 until the build step that reworks them. Whether that is accepted until then is a
+decision for the owner (decision 57).
 
 This contradicts DESIGN.md §24.2, §25.6 and §25.16 as written; section 17.2 names the sentences
 the owner adjusts.
@@ -1290,9 +1311,9 @@ real endpoints.
   `keys_entry`, `pull_request_title` and `pull_request_body`, and the proposed id skipping an id in
   the keys file and an id proposed for another invite; two parallel registrations of two invites
   for one handle get different proposed ids
-- the `pull_request_body` of a normal and of a bootstrap invite holds the GitHub login
-  confirmation step of section 5.6, and the sentence that adds the membership comes after it and
-  depends on it
+- the `pull_request_body` of a normal and of a bootstrap invite begins with exactly the four
+  summary sentences of section 5.6 (CONTRIBUTING.md), the fourth of which is the GitHub login
+  confirmation step, and the sentence that adds the membership comes after it and depends on it
 - the list: newest first by the latest change of section 5.2, every status of section 5.2, no
   token or token hash in the answer; a `failed` invite sorts above an invite that was opened
   after the failed invite was opened and before the failed invite's registration finished, and
@@ -1381,10 +1402,17 @@ real endpoints.
 - the log line of section 7.1 for a session key, and no certificate, signature or body in any log
   line
 - sign-out: signed `200`, then `key_unknown`; a keys-file key gets `session_key_required`
-- every existing test of KEY-PROTOCOL.md section 10 still passes. The only existing test fixture
-  that changes is the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of `tests/test_config.py`, from
-  `http://127.0.0.1:8787` to `http://localhost:8787` (section 15); every other existing test is
-  unchanged.
+- every existing test of KEY-PROTOCOL.md section 10 still passes, except the one case named
+  below. Two existing tests change: the base `AGENT_CORE_PUBLIC_URL` in `_full_env` of
+  `tests/test_config.py`, from `http://127.0.0.1:8787` to `http://localhost:8787` (section 15);
+  and in `tests/test_keys_file.py` the case `(agent(program="agent-cli"), _second_agent(),
+  "each needs a program")` of `test_device_and_program_pair_must_be_unique`, an `agent` entry with
+  `program` next to an `agent` entry without `program` on one device, which moves from that
+  refused list to the allowed pairs, because section 7.4 makes that pair load. The other cases of
+  `test_device_and_program_pair_must_be_unique` that expect "each needs a program" (two `agent`
+  entries without `program`; an `agent` entry without `program` next to a `service` entry; an
+  `agent` entry without `program` next to one whose `revoked` time is in the future) stay
+  refused. Every other existing test is unchanged.
 
 ### 13.5 The hub, commands
 
@@ -1475,7 +1503,7 @@ The positive path, in one test:
 
 The negative paths, each in its own context:
 
-- user verification refused: `WebAuthn.setUserVerified {"isUserVerified": false}` before the
+- user verification refused: `WebAuthn.setUserVerified {"authenticatorId": <the context's authenticator>, "isUserVerified": false}` before the
   sign-in; the page shows that sign-in failed, the database has no session, IndexedDB has no
   record
 - no credential: a context whose authenticator holds no credential; the sign-in fails in the
@@ -1622,6 +1650,9 @@ A change of the steps changes the file in the same pull request.
     public URL.
 - `src/agent_core/__main__.py`: the dispatch of section 5.3; without an argument it still starts
   the hub.
+- `src/agent_core/keys.py`: the loader rule of section 7.4.
+- `tests/test_keys_file.py`: the case of section 13.4 that moves from the refused pairs to the
+  allowed pairs.
 - `pyproject.toml`: the dependencies above and the pytest settings of section 14.
 - The CI files and CONTRIBUTING.md of section 14: `.github/workflows/test.yml`,
   `.github/a38.json`, `.github/pr-guard.json` and the sentence in `CONTRIBUTING.md`.
@@ -1637,7 +1668,8 @@ A change of the steps changes the file in the same pull request.
    the host name does not end with a dot. A hub whose public URL breaks either rule does not start
    with this change.
 2. Merge the change, together with the edits of section 15 (`src/agent_core/config.py`,
-   `src/agent_core/__main__.py`, `docker-compose.yaml`, `tests/test_config.py`, `README.md`,
+   `src/agent_core/__main__.py`, `src/agent_core/keys.py`, `docker-compose.yaml`,
+   `tests/test_config.py`, `tests/test_keys_file.py`, `README.md`,
    `pyproject.toml`, `tests/vectors/passkey.json`, and the CI files and the sentence of
    `CONTRIBUTING.md` of section 14: `.github/workflows/test.yml`, `.github/a38.json`,
    `.github/pr-guard.json`). Both CI jobs, `pytest` and `e2e`, are green. The tables are created
@@ -1735,8 +1767,11 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     use the signed-in person's session key for as long as the page is open and the key is valid,
     within that session's rights; at a sign-in it can get a session key of its own certified,
     which it then holds within the same rights until that key expires, its session is ended or its
-    passkey is revoked; at an invite it can substitute the received key. It cannot extend the
-    lifetime, cannot create a session without the person's passkey confirmation, cannot sign
+    passkey is revoked; at an invite it can substitute the received key; it can obtain a
+    certificate over its own statement whose validity begins later, usable at a device for at
+    most one session-key lifetime at a time it chooses, until the passkey is revoked. It cannot
+    make any certificate usable for longer than L at a device or `SESSION_KEY_MAX_SECONDS` at the
+    hub, cannot create a session without the person's passkey confirmation, cannot sign
     anything that changes rights, and cannot forge an answer to a device or a program; a device
     verifies every command and certificate itself. The damage is bounded by the lifetime of a
     session key, the rights of a session key, and the record of every command (the hub's log line
@@ -1916,6 +1951,13 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
 56. The shared test vectors make the hub and a device agree on every input the vectors hold, not
     on every possible input; where the two differ on another input, the steps of section 4 and
     6.4 decide. This is a limit. (Section 4, 13.10)
+57. The session key in IndexedDB is reachable by every page of the hub's origin, and any script
+    that runs there can use it with `crypto.subtle.sign`, past `signText`, within the session's
+    rights. The existing pages `/`, `/session` and `/pair` run inline script and are served without
+    the policy of section 10.1 until the build step that reworks them. Owner decision, not taken
+    in this document: either accept this until the build step that reworks the existing pages, or
+    set the headers of section 10.1 for every HTML answer of the hub in this step, which requires
+    reworking the inline scripts of the existing pages. (Section 10.2, 10.3)
 
 ### 17.2 Decisions for the human owner
 
@@ -1929,7 +1971,9 @@ The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 4
 - §25.16, the last row of its table, which says the same about the edge.
 - §25.16, the row "The website shows one command and signs another, or certifies a key of the
   attacker at sign-in | Possible while the hub is taken over …": it is also possible while the
-  network edge is compromised (decision 17, section 10.3).
+  network edge is compromised, and the edge, like a taken-over hub, can obtain a certificate over
+  its own statement whose validity begins later, usable at a device for at most one session-key
+  lifetime at a time it chooses, until the passkey is revoked (decision 17, section 10.3).
 - §25.6 "One limit remains: the hub delivers the website, so … a hub that was taken over can get
   commands signed in that person's name": the network edge is a second such limit, because it can
   change the page code as well. Together with that sentence, the rule for a hub takeover gets its
@@ -1941,3 +1985,9 @@ The owner confirms decisions 2, 8, 12, 15, 17, 24, 25, 26, 28, 36, 37, 38, 40, 4
   bootstrap invite is created without an administrator's signature (decision 15).
 - §24.2 "Every request is authenticated", with opening an invite link as the only exception: the
   list of decision 28 replaces that exception.
+
+The owner also chooses for decision 57, which this document leaves open: either accept that every
+page of the hub's origin can reach and use the session key, while the existing pages `/`,
+`/session` and `/pair` are served without the policy of section 10.1, until the build step that
+reworks the existing pages; or set the headers of section 10.1 for every HTML answer of the hub
+in this step, which requires reworking the inline scripts of the existing pages.
