@@ -1893,6 +1893,36 @@ def test_a_done_job_is_a_duplicate_when_the_head_did_not_move(
     assert len(_mark_read_calls(calls)) == 1
 
 
+@pytest.mark.parametrize("stored", ["", "not-a-commit", "A" * 40])
+def test_a_done_job_with_a_malformed_stored_head_is_a_duplicate(
+    tmp_path: Path, stored: str
+) -> None:
+    # A stored head that is not a commit cannot show that the head moved, so
+    # the mention is consumed as a duplicate instead of starting a new
+    # generation and discarding the previous evidence.
+    store = Store(tmp_path)
+    calls: list[list[str]] = []
+    seen: list[Any] = []
+    try:
+        row = _insert(store, state="done", attempts=1, head_sha=stored)
+        created, requeued, skipped = _scan(
+            store,
+            _runner(
+                notifications=[_notification()],
+                comments=[_comment("@theo-vane please review", comment_id=1)],
+                head_sha=HEAD,
+                calls=calls,
+            ),
+            requeue=_requeue_into(store, seen),
+        )
+        assert (created, requeued, skipped) == ([], [], 0)
+        assert seen == []
+        assert store.row("job", row["id"])["trigger"] == "comment:owner/name:7:1"
+    finally:
+        store.close()
+    assert len(_mark_read_calls(calls)) == 1
+
+
 @pytest.mark.parametrize(
     "answer,returncode",
     [
