@@ -4,12 +4,14 @@
 every line and branch of the entry runs in the test process. The same command as a separate
 process is tested in test_record_migrate.py.
 
-RECORD-PROTOCOL.md section 11.4 and section 14 state both behaviours of the entry tested here
+RECORD-PROTOCOL.md section 11.4 and section 14 state the behaviours of the entry tested here
 (decisions 81 and 82): `migrate` with any argument prints `failed config` and exits 1 without
-connecting, and no command or an unknown command prints exactly the usage line
-`usage: python -m agent_core.record {migrate}` and one `\\n` to stderr, nothing to stdout, reads no
-environment variable, does not connect and exits 2. Every test of the usage line compares with the
-literal text of section 11.4, never with the constant of the module.
+connecting; `export`, `verify` and `restore` (change 3) are dispatched to their commands; and no
+command or an unknown command prints exactly the usage line of section 11.4 after change 3,
+`usage: python -m agent_core.record {migrate,export,verify,restore}`, and one `\\n` to stderr,
+nothing to stdout, reads no environment variable, does not connect and exits 2. Every test of the
+usage line compares with the literal text of section 11.4, never with the constant of the module
+alone.
 """
 
 from __future__ import annotations
@@ -22,10 +24,12 @@ from typing import Any
 import psycopg
 import pytest
 
-from agent_core.record.__main__ import main
+from agent_core.record.__main__ import USAGE, main
 from tests.conftest import RecordDatabase, schema_exists
 
 PACKAGE = "agent_core.record"
+# The usage line of section 11.4 after change 3, literally.
+USAGE_LINE = "usage: python -m agent_core.record {migrate,export,verify,restore}"
 RECORD_VARIABLES = ("AGENT_CORE_RECORD_DATABASE", "AGENT_CORE_RECORD_OWNER_DATABASE")
 
 # Section 14: "`migrate` with an argument after `migrate` (each of `--help`, `-h`, `x`, `migrate`
@@ -41,9 +45,10 @@ MIGRATE_ARGUMENTS = [
 MIGRATE_ARGUMENT_IDS = ["--help", "-h", "x", "migrate", "an empty string", "two arguments"]
 
 # Section 14: "without an argument, with an empty string as the command, with `-h`, `--help`,
-# `Migrate` and an unknown word as the command", and "after change 1 ... `export`, `verify` and
-# `restore` are unknown commands". Section 11.4 compares the first argument byte for byte, so a
-# trailing space and an empty first argument before `migrate` are unknown commands too.
+# `Migrate` and an unknown word as the command". After change 3, `export`, `verify` and `restore`
+# are commands (test_main_runs_the_commands_of_change_3). Section 11.4 compares the first argument
+# byte for byte, so `Export`, a trailing space and an empty first argument before `migrate` are
+# unknown commands too.
 UNKNOWN_COMMANDS = [
     [],
     [""],
@@ -51,9 +56,8 @@ UNKNOWN_COMMANDS = [
     ["--help"],
     ["Migrate"],
     ["unknown"],
-    ["export"],
-    ["verify"],
-    ["restore"],
+    ["import"],
+    ["Export"],
     ["migrate "],
     ["", "migrate"],
 ]
@@ -64,9 +68,8 @@ UNKNOWN_COMMAND_IDS = [
     "--help",
     "Migrate",
     "an unknown word",
-    "export",
-    "verify",
-    "restore",
+    "import",
+    "Export",
     "trailing space",
     "empty string before migrate",
 ]
@@ -118,6 +121,10 @@ def run_as_main(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> object:
     return exited.value.code
 
 
+def test_the_usage_line_names_the_four_commands_of_change_3() -> None:
+    assert USAGE == "usage: python -m agent_core.record {migrate,export,verify,restore}"
+
+
 # --- main -----------------------------------------------------------------------------------------
 
 
@@ -149,11 +156,18 @@ def test_main_refuses_an_argument_of_migrate_without_connecting(
 def test_main_prints_the_usage_for_no_or_an_unknown_command(
     capsys: pytest.CaptureFixture[str], connect_attempts: list[dict[str, Any]], args: list[str]
 ) -> None:
-    # Section 14: stderr is exactly the usage line of section 11.4 for change 1 and one `\n`,
+    # Section 14: stderr is exactly the usage line of section 11.4 for change 3 and one `\n`,
     # stdout is empty, the exit code is 2, and no connection; section 11.4: no variable is read.
     assert main(args, NoEnvironment()) == 2
-    assert capsys.readouterr() == ("", "usage: python -m agent_core.record {migrate}\n")
+    assert capsys.readouterr() == ("", USAGE_LINE + "\n")
     assert connect_attempts == []
+
+
+@pytest.mark.parametrize("command", ["export", "verify", "restore"])
+def test_main_runs_the_commands_of_change_3(capsys: pytest.CaptureFixture[str], command: str) -> None:
+    # Without arguments and variables each known command refuses its configuration with exit 1.
+    assert main([command], {}) == 1
+    assert capsys.readouterr() == ("refused config\n", "")
 
 
 def test_main_reads_argv_and_the_environment(
@@ -182,7 +196,7 @@ def test_the_guard_exits_with_the_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert run_as_main(monkeypatch, []) == 2
-    assert capsys.readouterr() == ("", "usage: python -m agent_core.record {migrate}\n")
+    assert capsys.readouterr() == ("", USAGE_LINE + "\n")
 
 
 def test_the_guard_exits_1_without_the_variables(
