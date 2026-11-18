@@ -374,6 +374,13 @@ INVALID: list[tuple[str, Callable[[], object]]] = [
     ("object_id in uppercase", lambda: replaced(3, OBJECT_ID.upper())),
     ("object_id with groups of the wrong size", lambda: replaced(3, "5d1c2b3a4-e5f-4a6b-8c7d-9e0f1a2b3c4d")),
     ("nil object_id", lambda: replaced(3, "00000000-0000-0000-0000-000000000000")),
+    ("event_id of version 1", lambda: replaced(1, "0b6f3c1e-8d2a-1c1b-9f3e-2a7d5c9e1f40")),
+    ("event_id of version 5", lambda: replaced(1, "0b6f3c1e-8d2a-5c1b-9f3e-2a7d5c9e1f40")),
+    ("event_id of variant c", lambda: replaced(1, "0b6f3c1e-8d2a-4c1b-cf3e-2a7d5c9e1f40")),
+    ("event_id of variant 7", lambda: replaced(1, "0b6f3c1e-8d2a-4c1b-7f3e-2a7d5c9e1f40")),
+    ("object_id of version 1", lambda: replaced(3, "5d1c2b3a-4e5f-1a6b-8c7d-9e0f1a2b3c4d")),
+    ("object_id of version 5", lambda: replaced(3, "5d1c2b3a-4e5f-5a6b-8c7d-9e0f1a2b3c4d")),
+    ("object_id of variant 0", lambda: replaced(3, "5d1c2b3a-4e5f-4a6b-0c7d-9e0f1a2b3c4d")),
     ("actor_key_id too short", lambda: replaced(4, "ex")),
     ("actor_key_id in uppercase", lambda: replaced(4, "Example-staff-laptop-1")),
     ("actor_key_id starting with -", lambda: replaced(4, "-example")),
@@ -569,6 +576,13 @@ def test_build_event_text_writes_a_signed_at_with_four_year_digits(signed_at: in
 
 def test_uuid_and_hash_forms() -> None:
     assert valid_uuid(EVENT_ID)
+    for variant in "89ab":
+        assert valid_uuid(f"0b6f3c1e-8d2a-4c1b-{variant}f3e-2a7d5c9e1f40")
+    for version in "01235678f":
+        assert not valid_uuid(f"0b6f3c1e-8d2a-{version}c1b-9f3e-2a7d5c9e1f40")
+    for variant in "0123456789abcdef":
+        if variant not in "89ab":
+            assert not valid_uuid(f"0b6f3c1e-8d2a-4c1b-{variant}f3e-2a7d5c9e1f40")
     assert not valid_uuid("00000000-0000-0000-0000-000000000000")
     assert not valid_uuid(EVENT_ID.upper())
     assert not valid_uuid(None)

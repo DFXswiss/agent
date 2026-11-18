@@ -1310,9 +1310,10 @@ def test_the_command_refuses_an_argument_of_migrate_without_connecting(
 
 
 # Section 14: "without an argument, with an empty string as the command, with `-h`, `--help`,
-# `Migrate` and an unknown word as the command", and "after change 1 ... `export`, `verify` and
-# `restore` are unknown commands".
-UNKNOWN_COMMANDS = [[], [""], ["-h"], ["--help"], ["Migrate"], ["unknown"], ["export"], ["verify"], ["restore"]]
+# `Migrate` and an unknown word as the command". From change 3 on, `export`, `verify` and
+# `restore` are commands (section 12.3); their call without arguments is tested in
+# test_record_main.py (test_main_runs_the_commands_of_change_3).
+UNKNOWN_COMMANDS = [[], [""], ["-h"], ["--help"], ["Migrate"], ["unknown"]]
 UNKNOWN_COMMAND_IDS = [
     "no argument",
     "an empty string",
@@ -1320,21 +1321,18 @@ UNKNOWN_COMMAND_IDS = [
     "--help",
     "Migrate",
     "an unknown word",
-    "export",
-    "verify",
-    "restore",
 ]
 
 
 @pytest.mark.parametrize("args", UNKNOWN_COMMANDS, ids=UNKNOWN_COMMAND_IDS)
 def test_no_or_an_unknown_command_prints_the_usage_line_without_connecting(args: list[str]) -> None:
-    # Section 14: stderr is exactly the usage line of section 11.4 for change 1 and one `\n`,
+    # Section 14: stderr is exactly the usage line of section 11.4 for change 3 and one `\n`,
     # stdout is empty, the exit code is 2, and no connection.
     with silent_listener() as (port, connections):
         result = run_cli(args, listener_env(port))
         assert (result.stdout, result.stderr, result.returncode) == (
             "",
-            "usage: python -m agent_core.record {migrate}\n",
+            "usage: python -m agent_core.record {migrate,export,verify,restore}\n",
             2,
         )
         assert connections() == 0

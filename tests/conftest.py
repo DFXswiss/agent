@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,6 +26,21 @@ HUB_KEY_ID = "hub-test-1"
 # RECORD-PROTOCOL.md section 14: the administrator connection string of a PostgreSQL 16 test server.
 TEST_POSTGRES = "AGENT_CORE_TEST_POSTGRES"
 LOOPBACK_HOSTS = ("localhost", "::1")
+# Section 14: held as a session advisory lock on an administrator connection from before a test
+# creates its first database until after it drops its last one, because step `writer` refuses a
+# server with a second user database (section 11.4).
+DATABASES_LOCK = 742180004
+# Section 14: held while the roles and the database of the identifier test, whose names are fixed
+# SQL keywords, exist.
+IDENTIFIER_LOCK = 742180003
+
+
+@contextmanager
+def advisory_lock(params: dict[str, Any], number: int) -> Iterator[None]:
+    """A session advisory lock on its own administrator connection, held for the block."""
+    with psycopg.connect(**params, autocommit=True) as holder:
+        holder.execute("SELECT pg_advisory_lock(%s)", (number,))
+        yield
 
 
 def _admin_params() -> dict[str, Any]:
@@ -58,6 +74,8 @@ class RecordDatabase:
     host: str
     port: int
     sslmode: str
+    # The collation and character type of the database, None for the default of the server.
+    locale: str | None = None
 
     def url(
         self,
@@ -101,48 +119,105 @@ class RecordDatabase:
 @pytest.fixture
 def record_db() -> Iterator[RecordDatabase]:
     """A fresh database, owned by a fresh owner role, and a fresh writer role, dropped at the end."""
-    params = _admin_params()
+    yield from _record_database(None)
+
+
+@pytest.fixture
+def record_db_en_us() -> Iterator[RecordDatabase]:
+    """As `record_db`, in a database created with the collation `en_US.utf8` (section 14)."""
+    yield from _record_database("en_US.utf8")
+
+
+def record_database_for(
+    params: dict[str, Any], name: str, owner_role: str, writer_role: str, locale: str | None = None
+) -> RecordDatabase:
+    """The description of a test database on the server of `params`, with fresh passwords."""
     host = str(params["host"])
     loopback = host in LOOPBACK_HOSTS or host.startswith("127.")
-    suffix = secrets.token_hex(6)
-    database = RecordDatabase(
+    return RecordDatabase(
         admin_params=params,
-        name=f"t_record_{suffix}",
-        owner_role=f"t_owner_{suffix}",
-        writer_role=f"t_writer_{suffix}",
+        name=name,
+        owner_role=owner_role,
+        writer_role=writer_role,
         owner_password=secrets.token_hex(32),
         writer_password=secrets.token_hex(32),
         host=f"[{host}]" if ":" in host else host,
         port=int(params.get("port") or 5432),
         sslmode="disable" if loopback else "require",
+        locale=locale,
     )
-    attributes = sql.SQL("LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
-    try:
-        with psycopg.connect(**params, autocommit=True) as admin:
-            if admin.info.server_version < 160000:
-                pytest.fail("the record tests need PostgreSQL 16 or later", pytrace=False)
-            for role, password in (
-                (database.owner_role, database.owner_password),
-                (database.writer_role, database.writer_password),
-            ):
-                admin.execute(
-                    sql.SQL("CREATE ROLE {} {} PASSWORD {}").format(
-                        sql.Identifier(role), attributes, sql.Literal(password)
-                    )
+
+
+def admin_params() -> dict[str, Any]:
+    return _admin_params()
+
+
+def _record_database(locale: str | None) -> Iterator[RecordDatabase]:
+    params = _admin_params()
+    suffix = secrets.token_hex(6)
+    database = record_database_for(params, f"t_record_{suffix}", f"t_owner_{suffix}", f"t_writer_{suffix}", locale)
+    with advisory_lock(params, DATABASES_LOCK):
+        try:
+            with psycopg.connect(**params, autocommit=True) as admin:
+                if admin.info.server_version < 160000:
+                    pytest.fail("the record tests need PostgreSQL 16 or later", pytrace=False)
+                create_roles_and_database(
+                    admin,
+                    database.name,
+                    (database.owner_role, database.owner_password),
+                    (database.writer_role, database.writer_password),
+                    locale,
                 )
-            admin.execute(
-                sql.SQL("CREATE DATABASE {} OWNER {}").format(
-                    sql.Identifier(database.name), sql.Identifier(database.owner_role)
-                )
+            yield database
+        finally:
+            with psycopg.connect(**params, autocommit=True) as admin:
+                drop_roles_and_database(admin, database.name, (database.writer_role, database.owner_role))
+
+
+ROLE_ATTRIBUTES = sql.SQL("LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
+
+
+def create_roles_and_database(
+    admin: psycopg.Connection[Any],
+    name: str,
+    owner: tuple[str, str],
+    writer: tuple[str, str],
+    locale: str | None = None,
+) -> None:
+    """Section 11.2: both roles with LOGIN and no other attribute, the database owned by the owner."""
+    for role, password in (owner, writer):
+        admin.execute(
+            sql.SQL("CREATE ROLE {} {} PASSWORD {}").format(
+                sql.Identifier(role), ROLE_ATTRIBUTES, sql.Literal(password)
             )
-        yield database
-    finally:
-        with psycopg.connect(**params, autocommit=True) as admin:
-            admin.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database.name))
-            )
-            for role in (database.writer_role, database.owner_role):
-                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+        )
+    create_database(admin, name, owner[0], locale)
+
+
+def create_database(admin: psycopg.Connection[Any], name: str, owner: str, locale: str | None) -> None:
+    statement = sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(name), sql.Identifier(owner))
+    if locale is not None:
+        statement = sql.SQL("{} TEMPLATE template0 LC_COLLATE {} LC_CTYPE {}").format(
+            statement, sql.Literal(locale), sql.Literal(locale)
+        )
+    admin.execute(statement)
+
+
+def recreate_database(db: RecordDatabase) -> None:
+    """Drop the test database and create it again, empty, with the same name, owner and locale.
+
+    For a test that exports from one database and restores into an empty one: the roles stay, and
+    the server never holds two user databases at once (section 14).
+    """
+    with psycopg.connect(**db.admin_params, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db.name)))
+        create_database(admin, db.name, db.owner_role, db.locale)
+
+
+def drop_roles_and_database(admin: psycopg.Connection[Any], name: str, roles: tuple[str, ...]) -> None:
+    admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
+    for role in roles:
+        admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
 def schema_exists(db: RecordDatabase) -> bool:
