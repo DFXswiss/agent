@@ -9,6 +9,7 @@ verification, which logs `record verify failed <position> <failure>` first; the 
 from __future__ import annotations
 
 import logging.config
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -305,6 +306,74 @@ def test_a_second_user_database_on_the_server_fails_step_writer(
         with psycopg.connect(**record_db.admin_params, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(other)))
     assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+def test_a_writer_that_is_a_member_of_a_role_without_any_right_fails_step_writer(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    migrated(record_db)
+    other = f"t_empty_{secrets.token_hex(6)}"
+    with record_db.admin() as admin:
+        admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(other)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(other), sql.Identifier(record_db.writer_role)))
+    try:
+        assert failed_start(record_db, cfg, tmp_path) == "writer"
+    finally:
+        with record_db.admin() as admin:
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(other)))
+    assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+def test_a_writer_with_connect_granted_by_name_on_the_database_postgres_fails_step_writer(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    migrated(record_db)
+    as_superuser(record_db, ["GRANT CONNECT ON DATABASE postgres TO {writer}"], "postgres")
+    try:
+        assert failed_start(record_db, cfg, tmp_path) == "writer"
+    finally:
+        as_superuser(record_db, ["REVOKE CONNECT ON DATABASE postgres FROM {writer}"], "postgres")
+    assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+def test_a_writer_that_owns_a_table_in_the_database_postgres_fails_step_writer(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    migrated(record_db)
+    table = f"t_owned_{secrets.token_hex(6)}"
+    as_superuser(
+        record_db,
+        [f"CREATE TABLE public.{table} (id integer)", f"ALTER TABLE public.{table} OWNER TO {{writer}}"],
+        "postgres",
+    )
+    try:
+        assert failed_start(record_db, cfg, tmp_path) == "writer"
+    finally:
+        as_superuser(record_db, [f"DROP TABLE public.{table}"], "postgres")
+    assert record_lines(log_lines) == ["ERROR record start failed writer"]
+
+
+def test_the_hub_starts_after_migrate_ran_under_default_privileges_to_public(
+    record_db: RecordDatabase, cfg: Config, tmp_path: Path, log_lines: list[str]  # noqa: F811
+) -> None:
+    """Section 14, "the `migrate` command": run after `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>
+    GRANT ALL ON TABLES TO PUBLIC`, `migrate` leaves `PUBLIC` no right on the record tables, and the
+    hub starts."""
+    with record_db.admin() as admin:
+        admin.execute(
+            sql.SQL("ALTER DEFAULT PRIVILEGES FOR ROLE {} GRANT ALL ON TABLES TO PUBLIC").format(
+                sql.Identifier(record_db.owner_role)
+            )
+        )
+    migrated(record_db)
+    hub = start_hub(record_db, cfg, tmp_path)
+    try:
+        assert record_lines(log_lines) == ["INFO record verified 0 -"]
+        assert not hub.runtime.unverified
+        written = hub.write(ALICE, "task", new_id(), task_create())
+        assert written["position"] == 1
+    finally:
+        hub.close()
 
 
 # --- the identifier test (sections 14 and 15) ---------------------------------------------------------

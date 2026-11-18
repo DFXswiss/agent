@@ -29,9 +29,9 @@ from agent_core.record.checkpoint import Checkpoint
 from agent_core.record.connection import parse_connection_string
 from agent_core.record.event import Change, build_event_text, event_hash, parse_event, record_hash
 from agent_core.record.runtime import RecordStartFailed
-from agent_core.record.storage import WriterPool
+from agent_core.record.storage import WriterPool, verify_stored
 from agent_core.record.verify import StoredEvent
-from agent_core.signing import HubSigner
+from agent_core.signing import HubSigner, b64url_encode
 from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX, RecordDatabase, pair_device, recreate_database
 from tests.record_helpers import (
     Parallel,
@@ -46,6 +46,7 @@ from tests.record_helpers import (
     unreachable_url,
     wait_for_append_lock,
 )
+from tests.record_helpers import writer as writer_connection
 from tests.record_hub_helpers import (
     ALICE,
     BOB,
@@ -428,23 +429,24 @@ def test_the_refusals_of_section_6_7_keep_their_status_and_value(hub: Hub) -> No
     work = new_id()
     hub.write(ALICE, "task", work, task_create())
     # Check 3, the form of the event text.
+    def refusal(key_id: str, text: bytes, signature: bytes, status: int, value: str) -> None:
+        wire, answer = hub.post(key_id, EVENTS, text, signature)
+        assert_signed(wire, answer, status, NOW)
+        assert answer.body == error(value)
+
     text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")])
-    assert hub.post(ALICE, EVENTS, text.replace(b"agent-event-v1", b"agent-event-v2"), signature)[1].body == error(
-        "event_invalid"
-    )
+    refusal(ALICE, text.replace(b"agent-event-v1", b"agent-event-v2"), signature, 400, "event_invalid")
     # Check 4, the actor; check 5, the certificate; check 6, the signature.
     text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")])
-    wire, answer = hub.post(BOB, EVENTS, text, signature)
-    assert_signed(wire, answer, 403, NOW)
-    assert answer.body == error("actor_mismatch")
+    refusal(BOB, text, signature, 403, "actor_mismatch")
     text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")], certificate=b"cert")
-    assert hub.post(ALICE, EVENTS, text, signature)[1].body == error("certificate_not_supported")
+    refusal(ALICE, text, signature, 400, "certificate_not_supported")
     text, _ = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")])
-    assert hub.post(ALICE, EVENTS, text, bytes(64))[1].body == error("event_signature_invalid")
+    refusal(ALICE, text, bytes(64), 400, "event_signature_invalid")
     # Check 9, the chain, and check 17 by status and value.
     assert hub.refused(ALICE, "task", work, [("title", "Fix", "Other")]) == (409, error("state_mismatch"))
     text, signature = hub.event(ALICE, "task", work, [("title", "Fix login", "Fix it")], prev_hash="1" * 64)
-    assert hub.post(ALICE, EVENTS, text, signature)[1].body == error("chain_broken")
+    refusal(ALICE, text, signature, 409, "chain_broken")
     # Check 12 (d): a comment on a task of another team.
     other = new_id()
     hub.write(DAVE, "task", other, task_create("Other", OTHER_TEAM))
@@ -723,21 +725,31 @@ def test_paging_of_the_events(hub: Hub) -> None:
     assert page["events"] == []
 
 
+# A well-formed task id, so that a query that names it is invalid only by the case under test.
+SOME_TASK = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
 INVALID_QUERIES = {
     EVENTS: [
         "after=01", "after=-1", "after=9223372036854775808", "limit=0", "limit=101", "limit=1000",
         "object=x", "x=1", "after=1&after=2", "after=", "after", "&after=1", "after=1&", "after=1&&limit=1",
         "after=+1", "after=%31", "object=5D1C2B3A-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
     ],
-    OBJECT: ["", "id=x", "id=" + "0" * 36, "x=1"],
+    OBJECT: ["", "id=x", "id=" + "0" * 36, "x=1", f"id={SOME_TASK}&x=1", f"id={SOME_TASK}&id={SOME_TASK}", "id="],
     TASKS: [
         "kind=other", "status=open2", "assignee=Alice", "assignee=--", "repository=example-org",
         "repository=example-org%2fx%2fy", "repository=example-org%3Fx", "before=0", "limit=201", "limit=0",
+        "x=1", "kind=work&kind=security", "kind=",
     ],
-    COMMENTS: ["", "before=1", "task=x", "task=5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d&limit=201"],
+    COMMENTS: [
+        "", "before=1", "task=x", f"task={SOME_TASK}&limit=201", f"task={SOME_TASK}&limit=0",
+        f"task={SOME_TASK}&x=1", f"task={SOME_TASK}&task={SOME_TASK}", "task=", f"task={SOME_TASK}&before=",
+    ],
     HEAD: ["x=1", "a"],
     VERIFY: ["x=1"],
-    CHECKPOINTS: ["before=1", "before_key=hub-1", "before=1&before_key=Hub", "limit=201", "before=0&before_key=hub-1"],
+    CHECKPOINTS: [
+        "before=1", "before_key=hub-1", "before=1&before_key=Hub", "limit=201", "before=0&before_key=hub-1",
+        "limit=0", "x=1", "limit=1&limit=1", "limit=",
+    ],
 }
 
 
@@ -856,6 +868,120 @@ def test_the_comment_list_pages_newest_first(hub: Hub) -> None:
     assert [item["id"] for item in page["comments"]] == [comments[2], comments[1]] and page["next_before"] == 3
     page = hub.signed(ALICE, f"{COMMENTS}?task={work}&before=3", 200).json()
     assert [item["id"] for item in page["comments"]] == [comments[0]] and page["next_before"] is None
+
+
+def test_the_task_list_filter_status_selects_each_status_value(hub: Hub) -> None:
+    """Section 14, "Paging and queries": the filter `status` alone, for each status of section 5.2,
+    against tasks that do and do not match."""
+    by_status = {status: new_id() for status in ("open", "in_progress", "ready_for_review", "merged", "done", "dropped")}
+    assigned = [("assignee", None, "alice"), ("status", None, "in_progress")]
+    hub.write(ALICE, "task", by_status["open"], task_create("Open"))
+    hub.write(ALICE, "task", by_status["in_progress"], [*task_create("Started"), *assigned])
+    review = by_status["ready_for_review"]
+    hub.write(ALICE, "task", review, [*task_create("Review"), *assigned])
+    hub.write(ALICE, "task", review, [("status", "in_progress", "ready_for_review")])
+    merged = by_status["merged"]
+    hub.write(ALICE, "task", merged, [*task_create("Merged"), ("completion", None, "verified"), ("links", None, LINK)])
+    hub.write(WATCHER, "task", merged, [("status", "open", "merged")], WATCH)
+    done = by_status["done"]
+    hub.write(ALICE, "task", done, [*task_create("Done"), ("links", None, LINK)])
+    hub.write(WATCHER, "task", done, [("status", "open", "done")], WATCH)
+    dropped = by_status["dropped"]
+    hub.write(ALICE, "task", dropped, task_create("Dropped"))
+    hub.write(ALICE, "task", dropped, [("status", "open", "dropped")])
+    for status, task in by_status.items():
+        assert task_body(hub, task)["status"] == status
+        answer = hub.signed(ALICE, f"{TASKS}?status={status}", 200)
+        assert answer.body == body({"tasks": [task_body(hub, task)], "next_before": None, "hub_key": HUB_KEY_ID}), status
+
+
+def test_the_task_list_with_limit_1_exactly_limit_remaining_and_an_empty_page_at_the_cursor(hub: Hub) -> None:
+    """Section 14, "Paging and queries", for the task list: `limit` 1, a page with exactly `limit`
+    remaining tasks has a `null` cursor, one more task gives a cursor, the cursor at the last task
+    gives an empty page; newest first by the position of `changed`."""
+    tasks = [new_id() for _ in range(3)]
+    for index, task in enumerate(tasks):
+        hub.write(ALICE, "task", task, task_create(f"Task {index}"))
+    shown = {task: task_body(hub, task) for task in tasks}
+
+    def page(items: list[str], cursor: int | None) -> bytes:
+        return body({"tasks": [shown[task] for task in items], "next_before": cursor, "hub_key": HUB_KEY_ID})
+
+    assert hub.signed(ALICE, f"{TASKS}?limit=1", 200).body == page([tasks[2]], 3)
+    assert hub.signed(ALICE, f"{TASKS}?before=3&limit=1", 200).body == page([tasks[1]], 2)
+    assert hub.signed(ALICE, f"{TASKS}?before=2&limit=1", 200).body == page([tasks[0]], None)
+    assert hub.signed(ALICE, f"{TASKS}?before=3&limit=2", 200).body == page([tasks[1], tasks[0]], None)
+    assert hub.signed(ALICE, f"{TASKS}?limit=2", 200).body == page([tasks[2], tasks[1]], 2)
+    assert hub.signed(ALICE, f"{TASKS}?before=1", 200).body == page([], None)
+    assert hub.signed(ALICE, f"{TASKS}?before=1&limit=1", 200).body == page([], None)
+
+
+def test_the_comment_list_with_limit_1_exactly_limit_remaining_and_an_empty_page_at_the_cursor(hub: Hub) -> None:
+    """Section 14, "Paging and queries", for the comment list: `limit` 1, a page with exactly
+    `limit` remaining comments has a `null` cursor, one more comment gives a cursor, the cursor at
+    the last comment gives an empty page; newest first by position."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    comments = [new_id() for _ in range(3)]
+    for comment in comments:
+        hub.write(ALICE, "comment", comment, [("body", None, "x"), ("task", None, work)])
+    shown = {comment: hub.signed(ALICE, f"{OBJECT}?id={comment}", 200).json()["object"] for comment in comments}
+
+    def page(items: list[str], cursor: int | None) -> bytes:
+        return body({"comments": [shown[item] for item in items], "next_before": cursor, "hub_key": HUB_KEY_ID})
+
+    target = f"{COMMENTS}?task={work}"
+    assert hub.signed(ALICE, f"{target}&limit=1", 200).body == page([comments[2]], 4)
+    assert hub.signed(ALICE, f"{target}&before=4&limit=1", 200).body == page([comments[1]], 3)
+    assert hub.signed(ALICE, f"{target}&before=3&limit=1", 200).body == page([comments[0]], None)
+    assert hub.signed(ALICE, f"{target}&before=4&limit=2", 200).body == page([comments[1], comments[0]], None)
+    assert hub.signed(ALICE, f"{target}&limit=2", 200).body == page([comments[2], comments[1]], 3)
+    assert hub.signed(ALICE, f"{target}&before=2", 200).body == page([], None)
+    assert hub.signed(ALICE, f"{target}&before=1&limit=1", 200).body == page([], None)
+
+
+def test_the_checkpoint_list_with_limit_1_exactly_limit_remaining_and_an_empty_page_at_the_cursor(
+    hub: Hub, record_db: RecordDatabase
+) -> None:
+    """Section 14, "Paging and queries", for the checkpoint list: `limit` 1, a page with exactly
+    `limit` remaining checkpoints has `null` cursors, one more checkpoint gives cursors, the cursor
+    at the last checkpoint gives an empty page; the order of section 7.10."""
+    written = [hub.write(ALICE, "task", new_id(), task_create()) for _ in range(2)]
+    for position, item in enumerate(written, start=1):
+        for hub_key_id in ("hub-2", "hub1"):
+            insert_checkpoint(record_db, Checkpoint(hub_key_id, position, item["record_hash"], NOW, bytes(64)))
+
+    def entry(position: int, hub_key_id: str) -> dict[str, Any]:
+        return {
+            "position": position,
+            "record_hash": written[position - 1]["record_hash"],
+            "published_at": fmt(NOW),
+            "signed_by": hub_key_id,
+            "signature": b64url_encode(bytes(64)),
+        }
+
+    def page(items: list[tuple[int, str]], cursor: tuple[int, str] | None) -> bytes:
+        return body(
+            {
+                "checkpoints": [entry(*item) for item in items],
+                "next_before": None if cursor is None else cursor[0],
+                "next_before_key": None if cursor is None else cursor[1],
+                "hub_key": HUB_KEY_ID,
+            }
+        )
+
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?limit=1", 200).body == page([(2, "hub1")], (2, "hub1"))
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?limit=3", 200).body == page(
+        [(2, "hub1"), (2, "hub-2"), (1, "hub1")], (1, "hub1")
+    )
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?before=1&before_key=hub1&limit=1", 200).body == page(
+        [(1, "hub-2")], None
+    )
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?before=2&before_key=hub-2&limit=2", 200).body == page(
+        [(1, "hub1"), (1, "hub-2")], None
+    )
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?before=1&before_key=hub-2", 200).body == page([], None)
+    assert hub.signed(ALICE, f"{CHECKPOINTS}?before=1&before_key=hub-2&limit=1", 200).body == page([], None)
 
 
 def test_the_head_of_the_record_and_of_the_own_chain(hub: Hub) -> None:
@@ -2153,6 +2279,40 @@ def test_a_get_whose_fold_runs_between_the_commit_and_step_5_folds_the_event(hub
     hub.write(ALICE, "task", work, [("title", "Fix it", "Fixed")])
     hub.monotonic.now += 60
     assert hub.signed(ALICE, VERIFY, 200).json()["verified"] is True
+
+
+def test_two_appends_of_one_instance_whose_steps_5_and_folds_interleave(hub: Hub, record_db: RecordDatabase) -> None:
+    """Section 14, "the state lock": between the commit and step 5 of a first append, a second
+    append of the same instance runs completely; its fold of step 2 folds the first event, its step
+    5 applies its own, and the step 5 of the first append then changes nothing."""
+    work = new_id()
+    hub.write(ALICE, "task", work, task_create())
+    inner: list[dict[str, Any]] = []
+
+    def second_append() -> None:
+        hub.points.append_after_commit = lambda: None
+        inner.append(hub.write(BOB, "task", work, [("title", "Fix login", "Fix it")]))
+
+    hub.points.append_after_commit = second_append
+    first = hub.write(ALICE, "comment", new_id(), [("body", None, "a"), ("task", None, work)])
+    (second,) = inner
+    assert (first["position"], second["position"]) == (2, 3)
+    head = hub.runtime.memory.head()
+    assert head is not None and (head.position, head.record_hash) == (3, second["record_hash"])
+    # The state equals the fold of the stored record.
+    with writer_connection(record_db) as connection:
+        stored = verify_stored(connection, hub.runtime.keys, {}, None)
+    assert stored.failure is None
+    assert hub.runtime.memory.state == stored.state
+    # The next append and the next checkpoint attempt succeed.
+    after = hub.write(ALICE, "task", work, [("title", "Fix it", "Fixed")])
+    assert after["position"] == 4
+    hub.runtime.checkpoint()
+    assert counts(record_db) == (4, 1)
+    hub.monotonic.now += 60
+    assert hub.signed(ALICE, VERIFY, 200).body == body(
+        {"verified": True, "position": 4, "record_hash": after["record_hash"], "failure": None, "hub_key": HUB_KEY_ID}
+    )
 
 
 def test_the_received_at_of_an_append_is_the_one_clock_reading_of_step_2(
