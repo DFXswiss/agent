@@ -41,11 +41,26 @@ NONCE_BYTES = 16
 SEED_BYTES = 32
 PUBLIC_KEY_BYTES = 32
 SIGNATURE_BYTES = 64
-WHOAMI_METHOD = "GET"
+HUB_METHOD = "GET"
 WHOAMI_TARGET = "/api/key/whoami"
+RELEASE_PATH = "/api/key/release"
+RELEASE_FIELDS = ("repository", "pull_request", "released", "failed", "hub_key")
+RELEASE_FAILURES = ("task_missing", "task_not_ready", "question_unanswered")
+MAX_PULL_REQUEST = 2147483647
+# Repository rule of the keys file: owner in the form of a handle, name of
+# lowercase letters, digits, '.', '_' and '-'.
+OWNER_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}")
+REPOSITORY_NAME_PATTERN = re.compile(r"[a-z0-9._-]{1,100}")
+PULL_REQUEST_PATTERN = re.compile(r"[1-9][0-9]{0,9}")
+REPOSITORY_RULE = (
+    "OWNER/NAME in lowercase: OWNER 1 to 39 letters, digits or '-', not starting or ending "
+    "with '-' and without '--'; NAME 1 to 100 letters, digits, '.', '_' or '-', not '.' or '..'"
+)
+PULL_REQUEST_RULE = f"a number from 1 to {MAX_PULL_REQUEST} without sign or leading zero"
 HUB_HEADERS = ("Agent-Hub-Key", "Agent-Hub-Time", "Agent-Hub-Signature")
 NOT_VERIFIED = "hub answer not verified"
 NOT_PINNED = "hub key is not pinned"
+UNEXPECTED_FORM = "hub answer has an unexpected form"
 HUB_KEY_FILE = "hub-key.json"
 KEYS_DIR = "keys"
 KEY_SUFFIX = ".key"
@@ -487,19 +502,21 @@ def verify_answer(
         )
 
 
-def whoami(
+def _signed_get(
     agent_home: Path,
     key_id: str,
     pin: HubPin,
     hub_url: str,
     client: httpx.Client,
     clock: Callable[[], str],
-) -> dict[str, Any]:
-    """Send a signed ``GET /api/key/whoami`` to the configured hub and return the verified answer.
+    target: str,
+) -> tuple[int, bytes]:
+    """Send a signed ``GET`` of ``target`` to the configured hub; return the status and body of the verified answer.
 
-    ``client`` carries the HTTP transport and ``clock`` gives the device's time
-    as ``YYYY-MM-DDTHH:MM:SSZ``. A redirect is never followed, and the body of
-    an answer that does not verify is never used.
+    ``target`` is the raw request target the signature covers. ``client``
+    carries the HTTP transport and ``clock`` gives the device's time as
+    ``YYYY-MM-DDTHH:MM:SSZ``. A redirect is never followed, and an answer that
+    does not verify raises before its body is returned.
     """
     _require_id(key_id, "ID", writes=False)
     origin = hub_origin(hub_url)
@@ -508,9 +525,9 @@ def whoami(
     nonce = b64url_encode(secrets.token_bytes(NONCE_BYTES))
     text = request_text(
         key_id,
-        WHOAMI_METHOD,
+        HUB_METHOD,
         origin.host,
-        WHOAMI_TARGET,
+        target,
         request_time,
         nonce,
         sha256_hex(b""),
@@ -523,7 +540,7 @@ def whoami(
         "Agent-Signature": signature,
         "Accept-Encoding": "identity",
     }
-    request = client.build_request(WHOAMI_METHOD, origin.base_url + WHOAMI_TARGET, headers=headers)
+    request = client.build_request(HUB_METHOD, origin.base_url + target, headers=headers)
     try:
         response = client.send(request, stream=True, follow_redirects=False)
     except httpx.HTTPError as exc:
@@ -544,10 +561,33 @@ def whoami(
         body=body,
         now=_clock_time(clock),
     )
+    return status, body
+
+
+def _hub_refusal(target: str, status: int, body: bytes) -> KeyProtocolError:
+    """The report of a verified answer that is not 200, with its plain ``error`` value when it has one."""
+    error = _error_value(body)
+    detail = "" if error is None else error
+    return KeyProtocolError(f"hub {HUB_METHOD} {target} → HTTP {status}: {detail}")
+
+
+def whoami(
+    agent_home: Path,
+    key_id: str,
+    pin: HubPin,
+    hub_url: str,
+    client: httpx.Client,
+    clock: Callable[[], str],
+) -> dict[str, Any]:
+    """Send a signed ``GET /api/key/whoami`` to the configured hub and return the verified answer.
+
+    ``client`` carries the HTTP transport and ``clock`` gives the device's time
+    as ``YYYY-MM-DDTHH:MM:SSZ``. A redirect is never followed, and the body of
+    an answer that does not verify is never used.
+    """
+    status, body = _signed_get(agent_home, key_id, pin, hub_url, client, clock, WHOAMI_TARGET)
     if status != 200:
-        error = _error_value(body)
-        detail = "" if error is None else error
-        raise KeyProtocolError(f"hub {WHOAMI_METHOD} {WHOAMI_TARGET} → HTTP {status}: {detail}")
+        raise _hub_refusal(WHOAMI_TARGET, status, body)
     try:
         answer = json.loads(body)
     except (ValueError, RecursionError):
@@ -555,3 +595,89 @@ def whoami(
     if not isinstance(answer, dict):
         raise KeyProtocolError("hub answer is not a JSON object")
     return answer
+
+
+def valid_repository(value: str) -> bool:
+    """True when ``value`` is ``owner/name`` by the repository rule of the keys file."""
+    owner, slash, name = value.partition("/")
+    return (
+        slash == "/"
+        and OWNER_PATTERN.fullmatch(owner) is not None
+        and REPOSITORY_NAME_PATTERN.fullmatch(name) is not None
+        and name not in (".", "..")
+    )
+
+
+def check_release_args(repository: str, pull_request: str) -> int:
+    """Check ``--repo`` and ``--pr`` by the hub's rules before anything is sent; return the number."""
+    if not valid_repository(repository):
+        raise KeyProtocolError(f"--repo must be {REPOSITORY_RULE}; nothing was sent")
+    if PULL_REQUEST_PATTERN.fullmatch(pull_request) is None or int(pull_request) > MAX_PULL_REQUEST:
+        raise KeyProtocolError(f"--pr must be {PULL_REQUEST_RULE}; nothing was sent")
+    return int(pull_request)
+
+
+def release_target(repository: str, number: int) -> str:
+    """The signed request target of the release query: ``/`` of the repository as ``%2F``."""
+    return f"{RELEASE_PATH}?repository={repository.replace('/', '%2F')}&pull_request={number}"
+
+
+class _Members(list[tuple[str, Any]]):
+    """The members of one JSON object in the order written, repeated names included."""
+
+
+def _release_answer(body: bytes, repository: str, number: int, pin: HubPin) -> dict[str, Any]:
+    """The verified 200 answer when it has exactly the form of the hub's release answer for this query.
+
+    The body is UTF-8 and one object with exactly the fields of the hub's answer,
+    each once and in the hub's order; a repeated name is refused, not resolved.
+    """
+    try:
+        members = json.loads(body.decode("utf-8"), object_pairs_hook=_Members)
+    except (ValueError, RecursionError):
+        raise KeyProtocolError(UNEXPECTED_FORM) from None
+    if not isinstance(members, _Members) or tuple(name for name, _ in members) != RELEASE_FIELDS:
+        raise KeyProtocolError(UNEXPECTED_FORM)
+    answer = dict(members)
+    released = answer["released"]
+    failed = answer["failed"]
+    if (
+        answer["repository"] != repository
+        or type(answer["pull_request"]) is not int
+        or answer["pull_request"] != number
+        or not isinstance(released, bool)
+        or answer["hub_key"] != pin.key_id
+    ):
+        raise KeyProtocolError(UNEXPECTED_FORM)
+    if released:
+        form_ok = failed is None
+    else:
+        form_ok = isinstance(failed, str) and failed in RELEASE_FAILURES
+    if not form_ok:
+        raise KeyProtocolError(UNEXPECTED_FORM)
+    return answer
+
+
+def release_query(
+    agent_home: Path,
+    key_id: str,
+    pin: HubPin,
+    hub_url: str,
+    client: httpx.Client,
+    clock: Callable[[], str],
+    repository: str,
+    pull_request: str,
+) -> dict[str, Any]:
+    """Ask the configured hub with a signed ``GET /api/key/release`` whether a pull request may leave draft.
+
+    ``repository`` and ``pull_request`` are checked before anything is sent.
+    The verified answer is returned only when it has exactly the release
+    answer's form for this query and the pinned hub key id; a signed but
+    malformed answer is refused and never counts as a release.
+    """
+    number = check_release_args(repository, pull_request)
+    target = release_target(repository, number)
+    status, body = _signed_get(agent_home, key_id, pin, hub_url, client, clock, target)
+    if status != 200:
+        raise _hub_refusal(target, status, body)
+    return _release_answer(body, repository, number, pin)

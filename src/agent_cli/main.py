@@ -6275,7 +6275,8 @@ def cmd_pr_guard(args: list[str]) -> None:
 
 KEY_USAGE = (
     "Usage: agent key create --id ID | list | "
-    "pin-hub --id HUB_ID --public-key VALUE [--replace] | whoami --id ID"
+    "pin-hub --id HUB_ID --public-key VALUE [--replace] | whoami --id ID | "
+    "release --id ID --repo OWNER/NAME --pr NUMBER"
 )
 
 
@@ -6301,7 +6302,12 @@ def _key_args(args: list[str], valued: tuple[str, ...], switches: tuple[str, ...
 
 
 def cmd_key(args: list[str]) -> None:
-    """Key identity: create a key, pin the hub key, ask the hub which key signed a request."""
+    """Key identity: create a key, pin the hub key, ask the hub which key signed a request
+    and whether a pull request may leave draft.
+
+    ``release`` exits 0 when the verified answer releases the pull request, 3
+    when it does not, and 1 (``die``) for every error.
+    """
     import httpx
 
     from . import keys
@@ -6327,9 +6333,17 @@ def cmd_key(args: list[str]) -> None:
             )
             print(f"pinned hub key {hub_id}")
             return
-        if sub == "whoami":
-            _key_args(rest, ("--id",), ())
-            key_id = require_flag(rest, "--id")
+        if sub in ("whoami", "release"):
+            release = sub == "release"
+            if release:
+                _key_args(rest, ("--id", "--repo", "--pr"), ())
+                key_id = require_flag(rest, "--id")
+                repository = require_flag(rest, "--repo")
+                pull_request = require_flag(rest, "--pr")
+                keys.check_release_args(repository, pull_request)
+            else:
+                _key_args(rest, ("--id",), ())
+                key_id = require_flag(rest, "--id")
             pin = keys.load_hub_pin(home())
             store = open_store()
             try:
@@ -6339,8 +6353,19 @@ def cmd_key(args: list[str]) -> None:
             if not hub_url:
                 die("device is not paired")
             with httpx.Client(timeout=30.0, follow_redirects=False) as client:
-                answer = keys.whoami(home(), key_id, pin, hub_url, client, utcnow)
-            print(json.dumps(answer, indent=2))
+                if not release:
+                    answer = keys.whoami(home(), key_id, pin, hub_url, client, utcnow)
+                else:
+                    answer = keys.release_query(
+                        home(), key_id, pin, hub_url, client, utcnow, repository, pull_request
+                    )
+            if not release:
+                print(json.dumps(answer, indent=2))
+                return
+            print(json.dumps(answer, sort_keys=True))
+            if not answer["released"]:
+                print(f"not released: {answer['failed']}", file=sys.stderr)
+                raise SystemExit(3)
             return
     except keys.KeyProtocolError as exc:
         die(str(exc))

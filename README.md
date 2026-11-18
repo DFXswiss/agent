@@ -8,7 +8,7 @@ This device is the write owner of its own rows. The local store is PostgreSQL on
 
 The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code. The detached job runner is documented in [docs/runner.md](docs/runner.md).
 
-The planned team record (tasks, security issues and discussions with signed history and key-pair identity) is explained for the whole team in [docs/team-record.md](docs/team-record.md); the binding rules are DESIGN.md §24. How the team works through the hub (devices, handing work over, watching sessions, one overview) is explained in [docs/central-operation.md](docs/central-operation.md); the binding rules are DESIGN.md §25.
+The planned team record (tasks, security issues and discussions with signed history and key-pair identity) is explained for the whole team in [docs/team-record.md](docs/team-record.md); the binding rules are DESIGN.md §24. How the team works through the hub (devices, handing work over, watching sessions, one overview) is explained in [docs/central-operation.md](docs/central-operation.md); the binding rules are DESIGN.md §25. The technical specification of device keys, levels, the allow list and grants is [docs/device-protocol.md](docs/device-protocol.md).
 
 The required GitHub issue-to-PR workflow is defined in
 [DESIGN.md §19.7](DESIGN.md#197-issue-assignment-to-human-merge), together with the
@@ -120,9 +120,12 @@ agent key create --id ID                                  # Ed25519 key in $AGEN
 agent key list                                            # ids and public keys under $AGENT_HOME/keys
 agent key pin-hub --id HUB_ID --public-key VALUE [--replace] # pins the hub key in $AGENT_HOME/hub-key.json
 agent key whoami --id ID                                  # signed GET /api/key/whoami to the configured hub; prints the verified answer
+agent key release --id ID --repo OWNER/NAME --pr NUMBER   # signed GET /api/key/release; may the pull request leave draft? exit 0 yes, 3 no, 1 error
 ```
 
 No key exists until `agent key create` runs. The key directory has mode `0700`, every key file and `hub-key.json` mode `0600`; an existing key file is never overwritten, and a pinned hub key is replaced only with `--replace`. `agent key whoami` uses the hub URL stored by `agent pair`, stops with `hub key is not pinned` before sending anything when no hub key is pinned, never follows a redirect, and prints the body only when the pinned hub key signed the answer to this exact request within 120 seconds of this device's clock. Otherwise it reports `hub answer not verified`; for an unsigned refusal it adds the plain `error` value of the body, marked as unverified.
+
+`agent key release` asks the hub whether one pull request may leave draft, for example `agent key release --id example-ci-1 --repo example-org/example-repo --pr 42`. It checks `--repo` (lowercase `owner/name` by the rule of the keys file) and `--pr` (1 to 2147483647, without sign or leading zero) before anything is sent, then sends the same signed request and verifies the answer exactly as `agent key whoami` does; the signed request target is `/api/key/release?repository=OWNER%2FNAME&pull_request=NUMBER`. A verified answer is used only when it has exactly the fields `repository`, `pull_request`, `released`, `failed` and `hub_key`, each once and in this order, names the asked repository and pull request and the pinned hub key id, and has `failed` `null` exactly when `released` is true and otherwise `task_missing`, `task_not_ready` or `question_unanswered`; any other answer is refused as `hub answer has an unexpected form` and never counts as a release. The verified answer is printed as one line of JSON with sorted keys. Exit codes for external programs: `0` the pull request may leave draft; `3` it may not (stdout still carries the answer, stderr one line `not released: <failed>`); `1` every error, including a signed refusal of the hub (`hub GET <target> → HTTP <status>: <error>`) and an answer that does not verify. Only a `service` key with the scope `release:query` and the repository among its subjects gets an answer.
 
 ## Record work
 

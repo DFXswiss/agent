@@ -403,7 +403,7 @@ tests for every refusal path, not only the success path.
 | Step | What | Status |
 |---|---|---|
 | 1 | Keys file with scopes, and signature checking in the hub | built; no key registered yet |
-| 2 | Release query for external programs, with a hub-signed answer | not started |
+| 2 | Release query for external programs, with a hub-signed answer | hub endpoint and client command (`agent key release`) built; the guard does not use it yet |
 | 3 | Team record in PostgreSQL and the security-issue object | not started |
 | 4 | Dashboard with the time axis | not started |
 | 5 | Discussions and tasks | not started |
