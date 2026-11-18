@@ -2021,8 +2021,11 @@ website has an unrevoked passkey entry in the deployed keys file (decision 36).
     section 10.1 for every HTML answer of the hub in this step", the stricter second is taken. Its
     consequence: this step also reworks the existing pages, and a separate change merged before
     this step turns off the generated documentation pages and the schema document (`/docs`,
-    `/redoc`, `/docs/oauth2-redirect`, `/openapi.json` answer `404`), because they need inline
-    script and another origin. (Section 10.1, 10.2, 10.3, 13.4, 13.6, 15, 16)
+    `/redoc`, `/docs/oauth2-redirect`, `/openapi.json` answer `404`). The pages `/docs`, `/redoc`
+    and `/docs/oauth2-redirect` are turned off because they run inline script or load script and
+    styles from another origin; the schema document `/openapi.json` is turned off because nothing
+    but those pages reads it and the application serves it without a sign-in. (Section 10.1,
+    10.2, 10.3, 13.4, 13.6, 15, 16)
 
 ### 17.2 Decisions for the human owner
 
