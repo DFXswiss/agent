@@ -14,6 +14,9 @@ from typing import Iterable, Mapping, Sequence
 from ..keys import KeyRing
 from .checkpoint import Checkpoint, checkpoint_valid
 from .event import (
+    ERROR_CHAIN_BROKEN,
+    ERROR_EVENT_INVALID,
+    ERROR_EVENT_TIME_INVALID,
     Event,
     RecordRefusal,
     check_chain,
@@ -22,19 +25,15 @@ from .event import (
     time_text,
     verify_event_signature,
 )
-from .reducer import check_event_time, check_stored, check_value_forms
+from .failures import CHECKPOINT_INVALID, EVENT_REFUSED, POSITION_GAP, RECORD_HASH_MISMATCH, ROW_MISMATCH
+from .reducer import (
+    ERROR_CERTIFICATE_NOT_SUPPORTED,
+    ERROR_EVENT_ID_TAKEN,
+    check_event_time,
+    check_stored,
+    check_value_forms,
+)
 from .state import EMPTY_STATE, Applied, Head, RecordState, StateBuilder
-
-FILE_INVALID = "file_invalid"
-POSITION_GAP = "position_gap"
-EVENT_INVALID = "event_invalid"
-ROW_MISMATCH = "row_mismatch"
-EVENT_ID_TAKEN = "event_id_taken"
-CHAIN_BROKEN = "chain_broken"
-EVENT_TIME_INVALID = "event_time_invalid"
-RECORD_HASH_MISMATCH = "record_hash_mismatch"
-EVENT_REFUSED = "event_refused"
-CHECKPOINT_INVALID = "checkpoint_invalid"
 
 
 @dataclass(frozen=True)
@@ -104,11 +103,14 @@ def _fold_one(
     try:
         event = parse_event(stored.text)
     except RecordRefusal:
-        raise _Failed(Failure(EVENT_INVALID, position, None)) from None
+        raise _Failed(Failure(ERROR_EVENT_INVALID, position, None)) from None
     try:
         check_value_forms(event)
     except RecordRefusal:
-        raise _Failed(Failure(EVENT_INVALID, position, event)) from None
+        raise _Failed(Failure(ERROR_EVENT_INVALID, position, event)) from None
+    # Until section 10 is built, check 5 of section 6.7 as a row of section 12.1.
+    if event.key_certificate is not None:
+        raise _Failed(Failure(ERROR_CERTIFICATE_NOT_SUPPORTED, position, event))
     copies = stored.copies
     if stored.event_hash != event.event_hash or (
         copies is not None
@@ -124,20 +126,21 @@ def _fold_one(
     except RecordRefusal as refusal:
         raise _Failed(Failure(refusal.error, position, event)) from None
     if event.event_id in view.event_ids:
-        raise _Failed(Failure(EVENT_ID_TAKEN, position, event))
+        raise _Failed(Failure(ERROR_EVENT_ID_TAKEN, position, event))
     key_head = view.chains.get(event.actor_key_id)
     chain = None if key_head is None else key_head.chain
     try:
         check_chain(chain, event)
     except RecordRefusal:
-        raise _Failed(Failure(CHAIN_BROKEN, position, event)) from None
+        raise _Failed(Failure(ERROR_CHAIN_BROKEN, position, event)) from None
+    # A `received_at` without the form of a time of section 2 gives no record hash (section 12.1).
     received_at = stored.received_at
     if time_text(received_at) is None or (head is not None and received_at < head.received_at):
-        raise _Failed(Failure(EVENT_TIME_INVALID, position, event))
+        raise _Failed(Failure(ERROR_EVENT_TIME_INVALID, position, event))
     try:
         check_event_time(chain, event, received_at)
     except RecordRefusal:
-        raise _Failed(Failure(EVENT_TIME_INVALID, position, event)) from None
+        raise _Failed(Failure(ERROR_EVENT_TIME_INVALID, position, event)) from None
     expected = record_hash(position, received_at, event.event_hash, None if head is None else head.record_hash)
     if stored.record_hash != expected or (
         memory_head is not None

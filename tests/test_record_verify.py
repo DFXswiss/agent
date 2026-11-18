@@ -6,7 +6,6 @@ Pure functions over stored events, checkpoints and the keys file: every failure 
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import replace
 
 import pytest
@@ -22,13 +21,15 @@ from agent_core.record.checkpoint import (
 )
 from agent_core.record.event import Change, build_event_text, parse_event, record_hash
 from agent_core.record.state import EMPTY_STATE, Head
+from agent_core.record.export import verify_export, write_export
 from agent_core.record.verify import RowCopies, StoredEvent, fold_events, verify_record
 from tests.test_record_reducer import (
     ALICE,
     BOB,
+    CAROL,
     EVENTS,
+    SEEDS,
     STANDARD,
-    STEP,
     T0,
     World,
     create_work,
@@ -69,21 +70,15 @@ def forged(world: World, key_id: str, text: bytes, position: int, received_at: i
         event_hash=event.event_hash,
         record_hash="0" * 64,
         text=text,
-        signature=private(_seed(key_id)).sign(text),
+        signature=private(SEEDS[key_id]).sign(text),
         copies=RowCopies(event.event_id, event.actor_key_id, event.prev_hash),
     )
 
 
-def _seed(key_id: str) -> int:
-    from tests.test_record_reducer import SEEDS
-
-    return SEEDS[key_id]
-
-
 def text_of(key_id: str, event_id: str, object_type: str, object_id: str, signed_at: int, prev_hash: str,
-            changes: list[Change]) -> bytes:
+            changes: list[Change], certificate: bytes | None = None) -> bytes:
     return build_event_text(event_id=event_id, object_type=object_type, object_id=object_id, actor_key_id=key_id,
-                            signed_at=signed_at, prev_hash=prev_hash, changes=changes, key_certificate=None)
+                            signed_at=signed_at, prev_hash=prev_hash, changes=changes, key_certificate=certificate)
 
 
 def failure_of(events: list[StoredEvent], keys: KeyRing) -> tuple[str, int] | None:
@@ -208,6 +203,56 @@ def test_key_unknown_and_event_signature_invalid() -> None:
     assert failure_of([world.stored[0], resigned, world.stored[2]], world.keys) == ("event_signature_invalid", 2)
 
 
+def certified(world: World, work: str) -> StoredEvent:
+    """Position 4 after the story: an event of the registered `ed25519` key of carol, validly signed
+    and chained (carol's first event), whose `key_certificate` is `=` followed by a value."""
+    text = text_of(CAROL.id, new_id(), "task", work, world.now, world.prev(CAROL.id),
+                   [Change("title", b"Fix it", b"Fix")], b"certificate")
+    assert parse_event(text).key_certificate == b"certificate"
+    return forged(world, CAROL.id, text, 4, world.now)
+
+
+def test_certificate_not_supported_in_every_fold() -> None:
+    world, work = story()
+    events = rehash([*world.stored, certified(world, work)])
+    # The full verification.
+    result = verify_record(events, [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("certificate_not_supported", 4)
+    assert result.failure.event is not None and result.failure.event.object_id == work
+    assert result.state == world.state
+    # The incremental fold, after the state of a running process.
+    incremental = fold_events(world.state, events[3:], world.keys, None)
+    assert incremental.failure is not None
+    assert (incremental.failure.failure, incremental.failure.position) == ("certificate_not_supported", 4)
+    assert incremental.state == world.state
+    # Offline `verify` of an export with the record hashes recomputed.
+    offline = verify_export(write_export(events, [], T0 + 86400), world.keys, {})
+    assert offline.failure is not None
+    assert (offline.failure.failure, offline.failure.position) == ("certificate_not_supported", 4)
+
+
+def test_certificate_not_supported_comes_after_event_invalid_and_before_row_mismatch() -> None:
+    world, work = story()
+    stored = certified(world, work)
+    copies = stored.copies
+    assert copies is not None
+    without_carol = KeyRing({entry_id: entry for entry_id, entry in world.keys.entries.items() if entry_id != CAROL.id})
+    for changed, keys in (
+        (replace(stored, copies=replace(copies, event_id=new_id())), world.keys),  # row_mismatch
+        (replace(stored, event_hash="0" * 64), world.keys),  # row_mismatch
+        (stored, without_carol),  # key_unknown
+        (replace(stored, signature=bytes(64)), world.keys),  # event_signature_invalid
+        (replace(stored, received_at=world.stored[-1].received_at - 1), world.keys),  # event_time_invalid
+    ):
+        assert failure_of(rehash([*world.stored, changed]), keys) == ("certificate_not_supported", 4)
+    # A value outside its form in the same event: `event_invalid` first.
+    malformed = text_of(CAROL.id, new_id(), "task", work, world.now, "-", [Change("title", b"Fix it", b" x")],
+                        b"certificate")
+    events = rehash([*world.stored, forged(world, CAROL.id, malformed, 4, world.now)])
+    assert failure_of(events, world.keys) == ("event_invalid", 4)
+
+
 def test_event_id_taken_for_two_events_of_two_keys() -> None:
     world, work = story()
     used = parse_event(world.stored[0].text).event_id
@@ -243,9 +288,14 @@ def test_event_time_invalid() -> None:
     back = text_of(ALICE.id, new_id(), "task", work, T0, world.prev(ALICE.id), [Change("title", b"Fix it", b"Fix")])
     events = rehash([*world.stored, forged(world, ALICE.id, back, 4, world.now)])
     assert failure_of(events, world.keys) == ("event_time_invalid", 4)
-    # A received_at outside the form of a time cannot enter a record hash.
+    # A received_at outside the form of a time (a year after 9999) cannot enter a record hash: the
+    # row is `event_time_invalid`, decided before `record_hash_mismatch` (the stored record hash of
+    # `third` was computed from another received_at) and after `chain_broken`.
     outside = [*world.stored[:2], replace(third, received_at=10**12)]
     assert failure_of(outside, world.keys) == ("event_time_invalid", 3)
+    fork = text_of(ALICE.id, new_id(), "task", work, world.now, "-", [Change("title", b"Fix it", b"Fix")])
+    broken = [*world.stored, replace(forged(world, ALICE.id, fork, 4, world.now), received_at=10**12)]
+    assert failure_of(broken, world.keys) == ("chain_broken", 4)
 
 
 def test_record_hash_mismatch() -> None:
@@ -308,9 +358,6 @@ def test_a_checkpoint_of_an_empty_record_is_beyond_the_head() -> None:
 def test_the_checkpoint_text() -> None:
     text = checkpoint_text(HUB, 21, "a" * 64, 1795003200)
     assert text == b"agent-record-head-v1\nhub-1\n21\n" + b"a" * 64 + b"\n2026-11-18T12:00:00Z"
-    assert hashlib.sha256(text).hexdigest() == hashlib.sha256(
-        "\n".join(["agent-record-head-v1", "hub-1", "21", "a" * 64, "2026-11-18T12:00:00Z"]).encode()
-    ).hexdigest()
     for arguments in (("H", 1, "a" * 64, 0), (HUB, 0, "a" * 64, 0), (HUB, True, "a" * 64, 0),
                       (HUB, 1, "A" * 64, 0), (HUB, 1, "a" * 64, 10**12)):
         with pytest.raises(ValueError):
@@ -345,4 +392,3 @@ def test_full_hours_and_when_a_checkpoint_is_due() -> None:
     assert not checkpoint_due(21, replace(newest, published_at=hour + 5), hour)
     # After the clock was set back, a full hour reached again writes nothing.
     assert not checkpoint_due(21, replace(newest, published_at=hour + 3600), hour)
-    assert STEP == 60

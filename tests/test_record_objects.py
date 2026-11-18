@@ -8,6 +8,7 @@ from types import MappingProxyType
 import pytest
 
 from agent_core.record.objects import (
+    NO_FORM,
     REFUSED_TASK_FIELDS,
     REQUIRED_TASK_FIELDS,
     Comment,
@@ -81,8 +82,10 @@ INVALID = [
     ("task", "title", b"a\tb"),
     ("task", "title", b"a\x7fb"),
     ("task", "title", "a\u0085b".encode()),
-    ("task", "title", "a b".encode()),
-    ("task", "title", "a b".encode()),
+    ("task", "title", "a\N{LINE SEPARATOR}b".encode()),
+    ("task", "title", "a\N{PARAGRAPH SEPARATOR}b".encode()),
+    ("task", "description", "a\N{LINE SEPARATOR}b".encode()),
+    ("comment", "body", "a\N{PARAGRAPH SEPARATOR}b".encode()),
     ("task", "title", b"\xff"),
     ("task", "title", b""),
     ("task", "description", b"x" * 16385),
@@ -150,10 +153,14 @@ def test_a_value_outside_its_form(object_type: str, name: str, value: bytes) -> 
 
 
 def test_a_field_the_object_type_does_not_have_is_no_form() -> None:
-    with pytest.raises(KeyError):
-        valid_value("comment", "title", b"x")
-    with pytest.raises(KeyError):
-        valid_value("discussion", "title", b"x")
+    # Section 13: the message is fixed and names neither the object type nor the field.
+    for object_type, name in (("comment", "title"), ("discussion", "title"), ("task", "secret-marker")):
+        with pytest.raises(ValueError) as error:
+            valid_value(object_type, name, b"x")
+        assert str(error.value) == NO_FORM
+        assert name not in str(error.value)
+        assert object_type not in str(error.value)
+    assert NO_FORM == "the object type has no such field"
 
 
 def test_text_helpers_at_their_limits() -> None:

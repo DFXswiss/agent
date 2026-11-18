@@ -11,7 +11,8 @@ from typing import Any
 from ..keys import KeyEntry
 from ..signing import b64url_encode
 from .event import Event, time_text
-from .objects import KIND_WORK, Comment, RecordObject, Task, reference_repository
+from .failures import CHECKPOINT_INVALID, FILE_INVALID, POSITION_GAP, RECORD_HASH_MISMATCH
+from .objects import COMMENT, KIND_WORK, Comment, RecordObject, Task, reference_repository, valid_value
 from .state import StateView
 
 SCOPE_READ = "record:read"
@@ -20,8 +21,7 @@ SERVICE = "service"
 
 WITHHELD = "withheld"
 # Section 7.9: failures that concern only record-wide positions, hashes and checkpoints.
-RECORD_WIDE_FAILURES = frozenset({"position_gap", "record_hash_mismatch", "checkpoint_invalid"})
-FILE_INVALID = "file_invalid"
+RECORD_WIDE_FAILURES = frozenset({POSITION_GAP, RECORD_HASH_MISMATCH, CHECKPOINT_INVALID})
 
 
 def task_repositories(task: Task) -> frozenset[str]:
@@ -58,6 +58,19 @@ def sees_object(entry: KeyEntry, state: StateView, object_id: str) -> bool:
     """A key sees a task by section 3 and a comment when it sees the comment's task."""
     task = deciding_task(state, object_id)
     return task is not None and sees_task(entry, task)
+
+
+def sees_named_task(entry: KeyEntry, state: StateView, value: bytes | None) -> bool:
+    """Whether the `task` value of a comment create names a task the key sees.
+
+    The value names a task when it is a UUID (section 5.3) that is the id of a task; the id of a
+    comment, or of nothing, names no task. Check 12 (d) of section 6.7 and the answer of section 7.9
+    use this one test.
+    """
+    if value is None or not valid_value(COMMENT, "task", value):
+        return False
+    task = state.objects.get(value.decode("ascii"))
+    return isinstance(task, Task) and sees_task(entry, task)
 
 
 def readable_object(entry: KeyEntry, state: StateView, object_id: str) -> RecordObject | None:
@@ -101,7 +114,9 @@ def answered_failure(entry: KeyEntry, failure: str, event: Event | None, state: 
 
     `event` is the failing event when its text could be read, `state` the state that the
     verification folded from the events before it. A record-wide failure is named to every key;
-    every other failure only to a key that sees the failing event's object in that state.
+    every other failure only to a key that sees the failing event's object in that state: for an
+    update of a task that task, for an event of an existing comment the comment's task, and for a
+    create of a comment the task that its `task` value names (a comment id names no task).
     """
     if failure == FILE_INVALID:
         raise ValueError("file_invalid never arises in the hub")
@@ -109,16 +124,10 @@ def answered_failure(entry: KeyEntry, failure: str, event: Event | None, state: 
         return failure
     if event is None:
         return WITHHELD
-    existing = state.objects.get(event.object_id)
-    if existing is not None:
+    if event.object_id in state.objects:
         return failure if sees_object(entry, state, event.object_id) else WITHHELD
-    if event.object_type != "comment":
+    if event.object_type != COMMENT:
         return WITHHELD
-    named = [change.new for change in event.changes if change.field == "task"]
-    if len(named) != 1 or named[0] is None:
-        return WITHHELD
-    try:
-        task_id = named[0].decode("ascii")
-    except UnicodeDecodeError:
-        return WITHHELD
-    return failure if sees_object(entry, state, task_id) else WITHHELD
+    # The fields of an event are unique (section 4.2), so there is at most one change of `task`.
+    named = next((change.new for change in event.changes if change.field == "task"), None)
+    return failure if sees_named_task(entry, state, named) else WITHHELD

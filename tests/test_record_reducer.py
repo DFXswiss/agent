@@ -23,10 +23,12 @@ from agent_core.record.event import (
     build_event_text,
     parse_event,
     record_hash,
+    time_text,
 )
-from agent_core.record.objects import Task
+from agent_core.record.objects import TASK_FIELDS, Task
 from agent_core.record.reducer import (
     STATUS_OF_ERROR,
+    Accepted,
     AppendContext,
     check_append,
     check_stored,
@@ -36,6 +38,7 @@ from agent_core.record.reducer import (
 )
 from agent_core.record.state import EMPTY_STATE, RecordState
 from agent_core.record.verify import RowCopies, StoredEvent, fold_events
+from agent_core.record.visibility import sees_object
 from agent_core.signing import parse_time
 
 T0 = parse_time("2026-11-17T10:00:00Z")
@@ -130,6 +133,32 @@ def encode(value: str | bytes | None) -> bytes | None:
 Changes = Sequence[tuple[str, "str | bytes | None", "str | bytes | None"]]
 
 
+def snapshot(state: RecordState) -> tuple[object, ...]:
+    """Every part of a state copied into plain values: the head, every object with every value,
+    every chain head, the sets of event ids and event hashes, and both indexes. A state changed in
+    place after the copy, also in one value of one object, compares unequal to it."""
+    objects = {
+        object_id: (
+            type(item),
+            dict(item.values),
+            getattr(item, "completed_links", None),
+            getattr(item, "comments", None),
+            item.created,
+            getattr(item, "changed", None),
+        )
+        for object_id, item in state.objects.items()
+    }
+    return (
+        state.head,
+        objects,
+        dict(state.chains),
+        frozenset(state.event_ids),
+        frozenset(state.event_hashes),
+        dict(state.short_names),
+        dict(state.linked_tasks),
+    )
+
+
 class World:
     """A record state with a keys file, a clock that moves one minute per accepted event, and the
     stored events that a hub would hold."""
@@ -185,25 +214,55 @@ class World:
         self.submit(key_id, text, signature, endpoint)
 
     def refused(self, key_id: str, object_type: str, object_id: str, changes: Changes, endpoint: str) -> str:
-        before = self.state
+        """The error value of a refused append of a signed event; see `refused_text`."""
+        text, signature = self.sign(key_id, object_type, object_id, changes, new_id())
+        return self.refused_text(key_id, text, signature, endpoint)
+
+    def refused_text(self, key_id: str, text: bytes, signature: bytes, endpoint: str) -> str:
+        """The error value of a refused append; asserts that the refusal changed nothing.
+
+        The reducer is called directly, not through `submit`, so that a refusal that returned a new
+        state, or that changed the state it read in place, is seen: `outcome` stays None only when
+        the reducer raised, and the copy of every part of the state (`snapshot`) taken before is
+        compared with the state after.
+        """
+        before = snapshot(self.state)
+        outcome: Accepted | None = None
         with pytest.raises(RecordRefusal) as refusal:
-            self.write(key_id, object_type, object_id, changes, endpoint)
-        assert self.state is before
+            outcome = reduce_append(self.state, text, signature, self.context(key_id, endpoint))
+        assert outcome is None
+        assert snapshot(self.state) == before
         assert str(refusal.value) == refusal.value.error
         return refusal.value.error
 
     def fold_write(self, key_id: str, object_type: str, object_id: str, changes: Changes) -> None:
-        """Apply an event by the state rules alone, as a fold does (no actor rules, no signature)."""
+        """Apply an event by the state rules alone, as `check_stored` does in a fold.
+
+        What this proves: the state rules of section 6 (sections 6.2 to 6.4 and 6.6) accept the
+        event on this state, which is "in the fold directly" of section 14. What it does not prove:
+        that `fold_events` reaches the reducer with this event, because the rows of section 12.1
+        before `event_refused` are not run; no signature is checked, so an event of the staff
+        passkey, which signs nothing in this step, is applied here although a fold of a stored
+        record stops at `key_unknown`. `stored` is not extended, so after a `fold_write` it no
+        longer holds the events of `state`; a test that verifies `stored` does not use this.
+        """
         text, _ = self.sign(key_id, object_type, object_id, changes, new_id())
         self.state = reduce_stored(self.state, parse_event(text), self.now)
         self.now += STEP
 
     def fold_refused(self, key_id: str, object_type: str, object_id: str, changes: Changes) -> tuple[str, str]:
-        """The reducer's error value in a fold, and the verification failure it maps to."""
+        """The reducer's error value in a fold, and the failure of `fold_events` for the same event.
+
+        The second value is the failure the reducer's value maps to (section 12.1, "Reducer errors in
+        a fold") when the event passes the rows of section 12.1 before `event_refused`; an event of
+        the staff passkey stops earlier, at `key_unknown`. Both refusals leave the state unchanged.
+        """
         text, signature = self.sign(key_id, object_type, object_id, changes, new_id())
         event = parse_event(text)
+        before = snapshot(self.state)
         with pytest.raises(RecordRefusal) as refusal:
             check_stored(self.state, event, self.now)
+        assert snapshot(self.state) == before
         head = self.state.head
         position = 1 if head is None else head.position + 1
         stored = StoredEvent(
@@ -218,7 +277,8 @@ class World:
         result = fold_events(self.state, [stored], self.keys, None)
         assert result.failure is not None
         assert result.failure.position == position
-        assert result.state == self.state
+        assert snapshot(result.state) == before
+        assert snapshot(self.state) == before
         return refusal.value.error, result.failure.failure
 
     def task(self, object_id: str) -> Task:
@@ -463,8 +523,6 @@ def test_signed_at_bounds_of_check_10() -> None:
 
 
 def parse_time_text(seconds: int) -> bytes:
-    from agent_core.record.event import time_text
-
     text = time_text(seconds)
     assert text is not None
     return text.encode("ascii")
@@ -656,12 +714,59 @@ def test_links_frozen_in_merged_and_done() -> None:
     done = started_work(world, [])
     status(world, ALICE.id, done, "in_progress", "done", EVENTS)
     assert world.refused(ALICE.id, "task", done, [("links", None, LINK)], EVENTS) == "links_frozen"
-    # A change of links into `done` in the same event.
+    # A change of links into `done` in the same event. Row 8 matches by its state conditions (links
+    # before the event), so section 6.6 answers. Through the watch endpoint the same event stops at
+    # check 12 (e), because it names `links`.
     linked = started_work(world, [("links", None, LINK)])
+    assert world.refused(ALICE.id, "task", linked, [("links", LINK, LINK_2), ("status", "in_progress", "done")],
+                         EVENTS) == "links_frozen"
     assert world.refused(WATCHER.id, "task", linked, [("links", LINK, LINK_2), ("status", "in_progress", "done")],
-                         WATCH) == "links_frozen"
+                         WATCH) == "change_not_allowed"
     assert refusal_status("links_frozen") == 409
     assert world.fold_refused(ALICE.id, "task", done, [("links", None, LINK)]) == ("links_frozen", "event_refused")
+
+
+def test_conditions_on_links_read_the_state_before_the_event() -> None:
+    """Section 6.4, "Which state a condition reads": the four cases it lists, on tasks of kind `work`,
+    by a writer through the endpoint and in the fold directly. With the state after the event each
+    would give the other value."""
+    world = World(STANDARD)
+    # Under `merged`, a task in `open` without links; the event sets links and `done`: no row.
+    first = create_work(world, ALICE.id, [])
+    case_1 = [("links", None, LINK), ("status", "open", "done")]
+    assert world.refused(ALICE.id, "task", first, case_1, EVENTS) == "transition_invalid"
+    assert world.fold_refused(ALICE.id, "task", first, case_1) == ("transition_invalid", "event_refused")
+    # Under `merged`, a task in `open` with an assignee and links; the event removes the links and
+    # sets `done`: row 8 by its state conditions.
+    second = create_work(world, ALICE.id, [("assignee", None, "alice"), ("links", None, LINK)])
+    case_2 = [("links", LINK, None), ("status", "open", "done")]
+    assert world.refused(ALICE.id, "task", second, case_2, EVENTS) == "links_frozen"
+    assert world.fold_refused(ALICE.id, "task", second, case_2) == ("links_frozen", "event_refused")
+    # Under `merged`, a task in `merged` without links; the event sets links and `done`: row 12.
+    third = started_work(world, [("completion", None, "verified")])
+    status(world, ALICE.id, third, "in_progress", "merged", EVENTS)  # row 10
+    world.write(BOB.id, "task", third, [("completion", "verified", "merged")], EVENTS)
+    case_3 = [("links", None, LINK), ("status", "merged", "done")]
+    assert world.refused(ALICE.id, "task", third, case_3, EVENTS) == "links_frozen"
+    assert world.fold_refused(ALICE.id, "task", third, case_3) == ("links_frozen", "event_refused")
+    # A task in `merged` with links under `verified`; the event switches to `merged`, removes the
+    # links and sets `done`: row 13.
+    fourth = started_work(world, [("links", None, LINK), ("completion", None, "verified")])
+    status(world, WATCHER.id, fourth, "in_progress", "merged", WATCH)
+    case_4 = [("completion", "verified", "merged"), ("links", LINK, None), ("status", "merged", "done")]
+    assert world.refused(BOB.id, "task", fourth, case_4, EVENTS) == "links_frozen"
+    assert world.fold_refused(BOB.id, "task", fourth, case_4) == ("links_frozen", "event_refused")
+
+
+def test_check_14_examines_old_as_well_as_new() -> None:
+    world = World(STANDARD)
+    issue = create_security(world, ALICE.id, "login-bypass", [])
+    # `07` differs from the stored `8`, and is malformed: check 14 answers before check 15.
+    malformed_old = [("urgency", "07", "9")]
+    assert world.refused(ALICE.id, "task", issue, malformed_old, EVENTS) == "value_invalid"
+    assert world.fold_refused(ALICE.id, "task", issue, malformed_old) == ("value_invalid", "event_invalid")
+    # A well-formed stale `old` value reaches check 15.
+    assert world.refused(ALICE.id, "task", issue, [("urgency", "7", "9")], EVENTS) == "state_mismatch"
 
 
 # --- section 6.4: every row accepted ------------------------------------------------------------------
@@ -1123,7 +1228,8 @@ def test_the_watcher_changes_nothing_else() -> None:
                          WATCH) == "change_not_allowed"
     assert world.refused(WATCHER.id, "task", work, [("status", "in_progress", "done"), ("fix", None, LINK)],
                          WATCH) == "field_not_allowed"
-    assert world.refused(WATCHER.id, "task", work, [("kind", "work", "security")], WATCH) == "field_immutable"
+    # Section 14: `kind` gets `change_not_allowed` at check 12 (e), not `field_immutable`.
+    assert world.refused(WATCHER.id, "task", work, [("kind", "work", "security")], WATCH) == "change_not_allowed"
     assert world.refused(WATCHER.id, "task", work, [("title", "Fix login", "x")], WATCH) == "change_not_allowed"
     issue = create_security(world, ALICE.id, "login-bypass", [("assignee", None, "alice"), ("status", None, "in_progress"),
                                                                ("links", None, LINK), ("fix", None, LINK)])
@@ -1162,6 +1268,150 @@ def test_a_writer_through_the_watch_endpoint_and_a_watcher_through_events() -> N
     # actor rules refuse the same events on their own.
     assert world.refused(ALICE.id, "task", work, [("status", "in_progress", "done")], WATCH) == "change_not_allowed"
     assert world.refused(WATCHER.id, "task", work, [("status", "in_progress", "done")], EVENTS) == "change_not_allowed"
+
+
+def hidden_security(short_name: str) -> list[tuple[str, str | None, str | None]]:
+    """A security create whose `repository` is outside the watcher's `subjects`, without links."""
+    return [("repository", None, FOREIGN_REPO) if name == "repository" else (name, old, new)
+            for name, old, new in security_create(short_name, [])]
+
+
+def watched_issue(world: World) -> str:
+    """A security issue in `in_progress` with a link in the watcher's `subjects`."""
+    return create_security(world, ALICE.id, "login-bypass",
+                           [("assignee", None, "alice"), ("status", None, "in_progress"), ("links", None, LINK)])
+
+
+def test_check_12_e_a_watcher_never_learns_a_short_name_it_does_not_see() -> None:
+    world = World(STANDARD)
+    hidden = new_id()
+    world.write(ALICE.id, "task", hidden, hidden_security("hidden-bypass"), EVENTS)
+    assert not sees_object(WATCHER, world.state, hidden)
+    issue = watched_issue(world)
+    assert sees_object(WATCHER, world.state, issue)
+    # The short name of an issue the watcher does not see, and a free short name: the same answer.
+    taken = world.refused(WATCHER.id, "task", issue, [("short_name", "login-bypass", "hidden-bypass")], WATCH)
+    free = world.refused(WATCHER.id, "task", issue, [("short_name", "login-bypass", "free-name")], WATCH)
+    assert taken == free == "change_not_allowed"
+    # Also together with a status change that the watcher may make (row 9).
+    assert world.refused(WATCHER.id, "task", issue, [("short_name", "login-bypass", "hidden-bypass"),
+                         ("status", "in_progress", "merged")], WATCH) == "change_not_allowed"
+    # The same short name is taken: a writer of the team, which sees both issues, is told so.
+    assert world.refused(BOB.id, "task", issue, [("short_name", "login-bypass", "hidden-bypass")],
+                         EVENTS) == "short_name_taken"
+
+
+@pytest.mark.parametrize("name", [*(name for name in TASK_FIELDS if name not in ("status", "fix")), "priority", "body"])
+def test_check_12_e_every_other_field_through_the_watch_endpoint(name: str) -> None:
+    world = World(STANDARD)
+    issue = watched_issue(world)
+    # A stale `old` and a malformed `new` value: check 12 (e) answers before checks 14 to 17.
+    assert world.refused(WATCHER.id, "task", issue, [(name, "stale", " x")], WATCH) == "change_not_allowed"
+    assert world.refused(WATCHER.id, "task", issue, [(name, "stale", " x"), ("status", "in_progress", "merged")],
+                         WATCH) == "change_not_allowed"
+
+
+def test_check_12_e_comes_after_12_a_and_12_d() -> None:
+    world = World(STANDARD)
+    # (a): no task with this id.
+    assert world.refused(WATCHER.id, "task", new_id(), [("short_name", "x", "y")], WATCH) == "object_not_found"
+    # (d): a task the watcher does not see is answered like a missing one.
+    hidden = new_id()
+    world.write(ALICE.id, "task", hidden, hidden_security("hidden-bypass"), EVENTS)
+    assert world.refused(WATCHER.id, "task", hidden, [("short_name", "hidden-bypass", "x")], WATCH) == "object_not_found"
+    assert world.refused(PLAIN_WATCHER.id, "task", watched_issue(world), [("short_name", "login-bypass", "x")],
+                         WATCH) == "object_not_found"
+
+
+def test_the_watch_endpoint_answers_of_section_14() -> None:
+    world = World(STANDARD)
+    issue = create_security(world, ALICE.id, "login-bypass", [("assignee", None, "alice"), ("status", None, "in_progress"),
+                                                               ("links", None, f"{LINK} {LINK_2}")])
+    # An event without a change of `status`: actor rule 3 at check 18.
+    assert world.refused(WATCHER.id, "task", issue, [("fix", None, LINK)], WATCH) == "change_not_allowed"
+    # `fix` to another reference: actor rule 3; to one of the links with row 9: accepted.
+    assert world.refused(WATCHER.id, "task", issue, [("fix", None, "example-org/app#9"),
+                         ("status", "in_progress", "merged")], WATCH) == "change_not_allowed"
+    # A malformed `fix`: check 14 before check 18.
+    assert world.refused(WATCHER.id, "task", issue, [("fix", None, "x"), ("status", "in_progress", "merged")],
+                         WATCH) == "value_invalid"
+    world.write(WATCHER.id, "task", issue, [("fix", None, LINK), ("status", "in_progress", "merged")], WATCH)
+    assert world.task(issue).status == "merged"
+
+
+# --- a refusal changes nothing --------------------------------------------------------------------------
+
+
+def test_a_refusal_after_earlier_checks_passed_changes_nothing() -> None:
+    revoked = key("alice-laptop-2", 9, "agent", "alice", TEAM, FULL, None, None, T0 + 30)
+    world = World((*STANDARD, revoked))
+    work = started_work(world, [("links", None, LINK)])
+    wide = started_work(world, [("links", None, f"{LINK} {FOREIGN_LINK}")])
+    issue = create_security(world, ALICE.id, "login-bypass", [("assignee", None, "alice"), ("status", None, "in_progress")])
+    comment = new_id()
+    world.write(BOB.id, "comment", comment, [("task", None, work), ("body", None, "x")], EVENTS)
+    stored_text, stored_signature = world.stored[-1].text, world.stored[-1].signature
+    used = parse_event(stored_text).event_id
+    world.now = T0 + 3600
+    before = snapshot(world.state)
+
+    def text(key_id: str, event_id: str, prev_hash: str, signed_at: int) -> bytes:
+        return build_event_text(event_id=event_id, object_type="task", object_id=work, actor_key_id=key_id,
+                                signed_at=signed_at, prev_hash=prev_hash,
+                                changes=[Change("title", b"Fix login", b"Fix")], key_certificate=None)
+
+    crafted = [
+        (BOB.id, stored_text, stored_signature, "event_duplicate"),
+        (ALICE.id, text(ALICE.id, used, world.prev(ALICE.id), world.now), None, "event_id_taken"),
+        (ALICE.id, text(ALICE.id, new_id(), "-", world.now), None, "chain_broken"),
+        (ALICE.id, text(ALICE.id, new_id(), world.prev(ALICE.id), world.now + 121), None, "event_time_invalid"),
+        (revoked.id, text(revoked.id, new_id(), "-", world.now), None, "key_not_valid_at_receipt"),
+    ]
+    for key_id, event_text, signature, error in crafted:
+        sent = private(SEEDS[key_id]).sign(event_text) if signature is None else signature
+        assert world.refused_text(key_id, event_text, sent, EVENTS) == error
+    other_team = [("kind", None, "work"), ("team", None, OTHER_TEAM), ("title", None, "x")]
+    cases: list[tuple[str, str, str, Changes, str, str]] = [
+        (WATCHER.id, "task", new_id(), [("status", "open", "done")], WATCH, "object_not_found"),  # 12 (a)
+        (ALICE.id, "task", new_id(), [("team", None, TEAM)], EVENTS, "field_required"),  # 12 (b)
+        (ALICE.id, "task", new_id(), other_team, EVENTS, "change_not_allowed"),  # 12 (c)
+        (DAVE.id, "task", work, [("title", "Fix login", "x")], EVENTS, "object_not_found"),  # 12 (d)
+        (ALICE.id, "comment", new_id(), [("task", None, comment), ("body", None, "x")], EVENTS, "object_not_found"),
+        (WATCHER.id, "task", work, [("title", "Fix login", "x")], WATCH, "change_not_allowed"),  # 12 (e)
+        (CAROL.id, "task", new_id(), security_create("other", []), EVENTS, "scope_missing"),  # 13
+        (ALICE.id, "task", work, [("title", "Fix login", " x")], EVENTS, "value_invalid"),  # 14
+        (ALICE.id, "task", work, [("title", "Stale", "x")], EVENTS, "state_mismatch"),  # 15
+        (ALICE.id, "task", work, [("severity", None, "low")], EVENTS, "field_not_allowed"),  # 16
+        (ALICE.id, "task", work, [("team", TEAM, "x")], EVENTS, "field_immutable"),  # 16
+        (ALICE.id, "task", work, [("status", "in_progress", "merged")], EVENTS, "transition_invalid"),  # 17
+        (ALICE.id, "task", work, [("assignee", "alice", None)], EVENTS, "field_required"),  # 17
+        (BOB.id, "task", new_id(), security_create("login-bypass", []), EVENTS, "short_name_taken"),  # 17
+        (ALICE.id, "task", work, [("links", LINK, LINK_2), ("status", "in_progress", "done")], EVENTS,
+         "links_frozen"),  # 17
+        (BOB.id, "task", work, [("status", "in_progress", "done")], EVENTS, "change_not_allowed"),  # 18, rule 2
+        (BOB.id, "task", issue, [("assignee", "alice", "bob")], EVENTS, "change_not_allowed"),  # 18, rule 4
+        (ALICE.id, "task", work, [("assignee", "alice", "zoe")], EVENTS, "assignee_invalid"),  # 18, rule 5
+        (WATCHER.id, "task", wide, [("status", "in_progress", "done")], WATCH, "subject_not_allowed"),  # 18, rule 6
+    ]
+    for key_id, object_type, object_id, changes, endpoint, error in cases:
+        assert world.refused(key_id, object_type, object_id, changes, endpoint) == error
+    for key_id, object_type, object_id, changes, error in (
+        (ALICE.id, "task", work, [("title", "Stale", "x")], "state_mismatch"),
+        (ALICE.id, "task", work, [("status", "in_progress", "merged")], "transition_invalid"),
+        (ALICE.id, "comment", new_id(), [("task", None, new_id()), ("body", None, "x")], "object_not_found"),
+    ):
+        assert world.fold_refused(key_id, object_type, object_id, changes) == (error, "event_refused")
+    # Every object, every chain head, the head and the indexes are as before.
+    assert snapshot(world.state) == before
+    head = world.state.head
+    assert head is not None
+    world.write(ALICE.id, "task", work, [("title", "Fix login", "Fix")], EVENTS)
+    after = world.state.head
+    assert after is not None
+    assert after.position == head.position + 1
+    assert {key_id: chain for key_id, chain in world.state.chains.items() if key_id != ALICE.id} == {
+        key_id: chain for key_id, chain in before[2].items() if key_id != ALICE.id  # type: ignore[attr-defined]
+    }
 
 
 # --- the order of checks 7 to 18 ---------------------------------------------------------------------

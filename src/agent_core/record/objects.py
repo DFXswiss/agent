@@ -96,8 +96,8 @@ LINK_SEPARATOR = " "
 
 # Section 2: single-line text refuses U+0000 to U+001F, U+007F to U+009F, U+2028 and U+2029;
 # multi-line text allows U+0009 and U+000A of them (U+000D never).
-_SINGLE_LINE_REFUSED = re.compile("[\x00-\x1f\x7f-\x9f  ]")
-_MULTI_LINE_REFUSED = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f  ]")
+_SINGLE_LINE_REFUSED = re.compile("[\x00-\x1f\x7f-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+_MULTI_LINE_REFUSED = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
 _NUMBER_RE = re.compile(r"[1-9][0-9]{0,9}")
 _COMMIT_ID_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _URGENCY_RE = re.compile(rb"[1-9]|10")
@@ -253,15 +253,21 @@ _COMMENT_FORMS: dict[str, Callable[[bytes], bool]] = {
     "body": lambda value: multi_line_text(value, BODY_MAX_BYTES),
 }
 _FORMS = {TASK: _TASK_FORMS, COMMENT: _COMMENT_FORMS}
+NO_FORM = "the object type has no such field"
 
 
 def valid_value(object_type: str, name: str, value: bytes) -> bool:
     """Whether `value` has the form of the field `name` of `object_type` (sections 5.2 and 5.3).
 
-    `KeyError` for an object type or a field that does not exist: the caller checks first that the
-    object type has the field (check 14 of section 6.7 checks only such fields).
+    `ValueError` with a fixed message, which names neither the object type nor the field (section
+    13), for an object type or a field that does not exist: the caller checks first that the object
+    type has the field (check 14 of section 6.7 checks only such fields).
     """
-    return _FORMS[object_type][name](value)
+    forms = _FORMS.get(object_type)
+    form = None if forms is None else forms.get(name)
+    if form is None:
+        raise ValueError(NO_FORM)
+    return form(value)
 
 
 @dataclass(frozen=True)

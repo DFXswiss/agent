@@ -18,7 +18,13 @@ from types import MappingProxyType
 from typing import Mapping
 
 from ..keys import KeyEntry, KeyRing
+from ..signing import ERROR_SCOPE_MISSING
+from ..signing import ERROR_SUBJECT as ERROR_SUBJECT_NOT_ALLOWED
 from .event import (
+    ERROR_CHAIN_BROKEN,
+    ERROR_EVENT_INVALID,
+    ERROR_EVENT_SIGNATURE_INVALID,
+    ERROR_EVENT_TIME_INVALID,
     Change,
     ChainHead,
     Event,
@@ -57,15 +63,18 @@ from .objects import (
     valid_value,
 )
 from .state import Applied, Head, RecordState, StateView, applied_state
-from .visibility import SCOPE_SECURITY, sees_object, sees_task
+from .visibility import SCOPE_READ, SCOPE_SECURITY, SERVICE, sees_named_task, sees_object
 
 ENDPOINT_EVENTS = "events"
 ENDPOINT_WATCH = "watch"
 ENDPOINTS = (ENDPOINT_EVENTS, ENDPOINT_WATCH)
 
-SCOPE_READ = "record:read"
 SCOPE_WRITE = "record:write"
 SCOPE_WATCH = "record:watch"
+
+# Section 6.7, check 12 (e), the field limit of actor rule 3: the only fields an event through
+# `POST /api/key/record/watch` may name.
+WATCH_FIELDS = frozenset({"status", "fix"})
 
 # Section 6.7, check 10: `signed_at` is at most this many seconds after `received_at`.
 SIGNED_AT_AHEAD_SECONDS = 120
@@ -74,12 +83,10 @@ ERROR_ACTOR_MISMATCH = "actor_mismatch"
 ERROR_CERTIFICATE_NOT_SUPPORTED = "certificate_not_supported"
 ERROR_EVENT_DUPLICATE = "event_duplicate"
 ERROR_EVENT_ID_TAKEN = "event_id_taken"
-ERROR_EVENT_TIME_INVALID = "event_time_invalid"
 ERROR_KEY_NOT_VALID_AT_RECEIPT = "key_not_valid_at_receipt"
 ERROR_OBJECT_NOT_FOUND = "object_not_found"
 ERROR_FIELD_REQUIRED = "field_required"
 ERROR_CHANGE_NOT_ALLOWED = "change_not_allowed"
-ERROR_SCOPE_MISSING = "scope_missing"
 ERROR_VALUE_INVALID = "value_invalid"
 ERROR_STATE_MISMATCH = "state_mismatch"
 ERROR_FIELD_NOT_ALLOWED = "field_not_allowed"
@@ -88,19 +95,18 @@ ERROR_TRANSITION_INVALID = "transition_invalid"
 ERROR_SHORT_NAME_TAKEN = "short_name_taken"
 ERROR_LINKS_FROZEN = "links_frozen"
 ERROR_ASSIGNEE_INVALID = "assignee_invalid"
-ERROR_SUBJECT_NOT_ALLOWED = "subject_not_allowed"
 
-# The status of every error value of sections 6.5 to 6.7. Section 6.7 gives check 17 "404 / 409";
-# `transition_invalid` has no status of its own in section 6.4, so it is the 409 of check 17.
+# The status of every error value of sections 6.5 to 6.7. Sections 6.4 and 6.7 (check 17) give
+# `transition_invalid` the status 409.
 STATUS_OF_ERROR: Mapping[str, int] = MappingProxyType(
     {
-        "event_invalid": 400,
+        ERROR_EVENT_INVALID: 400,
         ERROR_ACTOR_MISMATCH: 403,
         ERROR_CERTIFICATE_NOT_SUPPORTED: 400,
-        "event_signature_invalid": 400,
+        ERROR_EVENT_SIGNATURE_INVALID: 400,
         ERROR_EVENT_DUPLICATE: 409,
         ERROR_EVENT_ID_TAKEN: 409,
-        "chain_broken": 409,
+        ERROR_CHAIN_BROKEN: 409,
         ERROR_EVENT_TIME_INVALID: 400,
         ERROR_KEY_NOT_VALID_AT_RECEIPT: 409,
         ERROR_OBJECT_NOT_FOUND: 404,
@@ -295,14 +301,21 @@ def _check_fields(existing: RecordObject | None, event: Event, changes: Mapping[
 def _matching_rows(
     before: Task | None, after: Mapping[str, bytes], changes: Mapping[str, Change]
 ) -> tuple[int, ...]:
-    """The rows of section 6.4 whose state conditions match a status change (create included)."""
+    """The rows of section 6.4 whose state conditions match a status change (create included).
+
+    Section 6.4, "Which state a condition reads": "From" reads the status before the event and "To"
+    the status after it; a condition that says "before", "after", "unchanged by the event" or "the
+    event changes" reads what it says; every other condition, here those on `links` and
+    `completed_links` (rows 8, 9, 10, 12 and 13), reads the state before the event, also when the
+    event changes `links`. Rows 1 and 2 of a create have no condition on `links`.
+    """
     old = None if before is None else before.status
     new_value = after.get("status")
     new = None if new_value is None else new_value.decode("ascii")
     rule_before = None if before is None else before.values["completion"]
     rule_after = after.get("completion")
     rule_kept = "completion" not in changes
-    links = after.get("links")
+    links = None if before is None else before.value("links")
     assignee = after.get("assignee") is not None
     completion = changes.get("completion")
     verification = changes.get("verification")
@@ -396,6 +409,9 @@ def _check_task_invariants(
         holder = state.short_names.get((after["team"], after["short_name"].decode("ascii")))
         if holder is not None and holder != object_id:
             raise _refuse(ERROR_SHORT_NAME_TAKEN)
+    # The event changes `links` when its `new` value differs from `links` before the event (section
+    # 6.6). Check 15 made every `old` equal the value before, and `old` and `new` of a change differ
+    # (section 4.2), so that is exactly an event with a change of `links`.
     if "links" in changes:
         status_before = None if before is None else before.status
         if status_before in _FINISHED or status in _FINISHED:
@@ -423,8 +439,10 @@ def _task_outcome(
             after["completion"] = DEFAULT_COMPLETION[kind].encode("ascii")
     rows = _check_transitions(before, after, changes)
     _check_task_invariants(state, event.object_id, before, after, changes)
-    if 14 in rows:
-        completed = after.get("links")
+    # Row 14 sets `completed_links` to `links` before the event (section 6.4); rows 1 and 2 of a
+    # create never match together with row 14, so `before` is a task there.
+    if before is not None and 14 in rows:
+        completed = before.value("links")
     else:
         completed = None if before is None else before.completed_links
     task = Task(
@@ -498,7 +516,7 @@ def is_writer(entry: KeyEntry) -> bool:
 
 
 def is_watcher(entry: KeyEntry) -> bool:
-    return entry.principal == "service" and SCOPE_WATCH in entry.scopes
+    return entry.principal == SERVICE and SCOPE_WATCH in entry.scopes
 
 
 def can_act_on(entry: KeyEntry, team: bytes, moment: int) -> bool:
@@ -571,10 +589,8 @@ def _check_actor_rules(outcome_task: Task, outcome: _Outcome, context: AppendCon
         if not is_writer(actor):
             raise _refuse(ERROR_CHANGE_NOT_ALLOWED)
     else:
+        # Check 12 (e) already refused every field other than `status` and `fix`.
         if "status" not in changes:
-            raise _refuse(ERROR_CHANGE_NOT_ALLOWED)
-        others = set(changes) - {"status"}
-        if others - {"fix"}:
             raise _refuse(ERROR_CHANGE_NOT_ALLOWED)
         fix = changes.get("fix")
         if fix is not None and not (
@@ -634,7 +650,7 @@ def check_append(state: StateView, text: bytes, signature: bytes, context: Appen
         raise _refuse(ERROR_CERTIFICATE_NOT_SUPPORTED)
     # Check 6.
     if not signature_valid(actor.public_key, event.text, signature):
-        raise _refuse("event_signature_invalid")
+        raise _refuse(ERROR_EVENT_SIGNATURE_INVALID)
     # Check 7.
     if event.event_hash in state.event_hashes:
         raise _refuse(ERROR_EVENT_DUPLICATE)
@@ -664,8 +680,12 @@ def check_append(state: StateView, text: bytes, signature: bytes, context: Appen
         if not sees_object(actor, state, event.object_id):
             raise _refuse(ERROR_OBJECT_NOT_FOUND)  # (d)
     elif event.object_type == COMMENT:
-        if not _sees_named_task(actor, state, changes["task"].new):
+        if not sees_named_task(actor, state, changes["task"].new):
             raise _refuse(ERROR_OBJECT_NOT_FOUND)  # (d)
+    # (e): after (a) and (d), which answer a task the watcher does not see like a missing one, and
+    # before checks 13 to 18, which read further state of the team (such as `short_name_taken`).
+    if context.endpoint == ENDPOINT_WATCH and not changes.keys() <= WATCH_FIELDS:
+        raise _refuse(ERROR_CHANGE_NOT_ALLOWED)
     # Check 13.
     if (
         existing is None
@@ -686,14 +706,6 @@ def check_append(state: StateView, text: bytes, signature: bytes, context: Appen
     elif not is_writer(actor):
         raise _refuse(ERROR_CHANGE_NOT_ALLOWED)
     return Applied(event=event, head=new_head, objects=outcome.objects)
-
-
-def _sees_named_task(actor: KeyEntry, state: StateView, value: bytes | None) -> bool:
-    """Check 12 (d) for a comment create: the `task` value is a UUID of a task the actor sees."""
-    if value is None or not valid_value(COMMENT, "task", value):
-        return False
-    task = state.objects.get(value.decode("ascii"))
-    return isinstance(task, Task) and sees_task(actor, task)
 
 
 def reduce_append(state: RecordState, text: bytes, signature: bytes, context: AppendContext) -> Accepted:

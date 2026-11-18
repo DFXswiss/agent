@@ -17,23 +17,22 @@ from ..keys import KeyRing
 from ..signing import SIGNATURE_BYTES, b64url_decode, b64url_encode, parse_time, valid_key_id
 from .checkpoint import Checkpoint
 from .event import MAX_POSITION, time_text, valid_hash
+from .failures import FILE_INVALID
 from .state import EMPTY_STATE
-from .verify import FILE_INVALID, Failure, FoldResult, StoredEvent, verify_record
+from .verify import Failure, FoldResult, StoredEvent, verify_record
 
 EXPORT_FORMAT = "agent-record-export-v1"
-HEADER_MEMBERS = frozenset({"format", "position", "record_hash", "exported_at"})
-EVENT_MEMBERS = frozenset(
-    {"type", "position", "received_at", "event_hash", "record_hash", "event", "signature"}
-)
-CHECKPOINT_MEMBERS = frozenset(
-    {"type", "position", "record_hash", "published_at", "signed_by", "signature"}
-)
+# The members of each kind of line, in the order of the writer's form (section 12.3).
+HEADER_ORDER = ("format", "position", "record_hash", "exported_at")
+EVENT_ORDER = ("type", "position", "received_at", "event_hash", "record_hash", "event", "signature")
+CHECKPOINT_ORDER = ("type", "position", "record_hash", "published_at", "signed_by", "signature")
+HEADER_MEMBERS = frozenset(HEADER_ORDER)
+EVENT_MEMBERS = frozenset(EVENT_ORDER)
+CHECKPOINT_MEMBERS = frozenset(CHECKPOINT_ORDER)
 TYPE_EVENT = "event"
 TYPE_CHECKPOINT = "checkpoint"
 
 _POSITION_RE = re.compile(r"[1-9][0-9]{0,18}")
-# JSON whitespace; the file is written without whitespace (section 12.3).
-_WHITESPACE = (b" ", b"\t", b"\r")
 
 
 class ExportInvalid(Exception):
@@ -130,35 +129,81 @@ class _Number:
         self.text = text
 
 
-def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for name, value in pairs:
-        if name in out:
-            raise ValueError("a member twice")
-        out[name] = value
-    return out
+class _Members(list):  # type: ignore[type-arg]
+    """The members of one JSON object in the order of the line, a member written twice included."""
+
+
+@dataclass(frozen=True)
+class _Line:
+    """One line of the file read as JSON.
+
+    `members` holds the members of the object when the line is one JSON text (RFC 8259) whose value
+    is an object, whitespace around and between its tokens included; None otherwise. `twice` tells
+    whether an object of the line, at any depth, has a member twice.
+    """
+
+    members: tuple[tuple[str, Any], ...] | None = dataclass_field(repr=False)
+    twice: bool
+
+    @property
+    def valid(self) -> bool:
+        """Item 3 of the list of section 12.3: one JSON object, and no object with a member twice."""
+        return self.members is not None and not self.twice
+
+    @property
+    def counts_as_event_line(self) -> bool:
+        """For counting positions (section 12.3): an object with exactly one member `type`, whose
+        value is the string `event`. Whitespace and the other members of the line do not matter."""
+        if self.members is None:
+            return False
+        types = [value for name, value in self.members if name == "type"]
+        return len(types) == 1 and isinstance(types[0], str) and types[0] == TYPE_EVENT
 
 
 def _refuse_constant(name: str) -> Any:
+    """`NaN`, `Infinity` and `-Infinity` are no JSON (RFC 8259)."""
     raise ValueError("not JSON")
 
 
-def _json_object(line: bytes) -> dict[str, Any] | None:
-    """The object of a line that is exactly one JSON object without whitespace and without a member
-    twice; None otherwise."""
-    if any(space in line for space in _WHITESPACE):
-        return None
+def _read_line(line: bytes) -> _Line:
+    twice = False
+
+    def members(pairs: list[tuple[str, Any]]) -> _Members:
+        nonlocal twice
+        names = [name for name, _ in pairs]
+        if len(set(names)) != len(names):
+            twice = True
+        return _Members(pairs)
+
     try:
         value = json.loads(
             line.decode("utf-8"),
-            object_pairs_hook=_unique_members,
+            object_pairs_hook=members,
             parse_int=_Number,
             parse_float=_Number,
             parse_constant=_refuse_constant,
         )
     except (ValueError, RecursionError):
-        return None
-    return value if isinstance(value, dict) else None
+        return _Line(members=None, twice=False)
+    if not isinstance(value, _Members):
+        return _Line(members=None, twice=False)
+    return _Line(members=tuple(value), twice=twice)
+
+
+def _render(value: object) -> str:
+    """A value of a line in the writer's form. Items 4 and 5 left only `null`, a JSON integer
+    literal in its form, and strings of characters from 0x21 to 0x7E other than `"` and `\\`."""
+    if value is None:
+        return "null"
+    if isinstance(value, _Number):
+        return value.text
+    return '"' + str(value) + '"'
+
+
+def _writer_form(value: Mapping[str, Any], order: Sequence[str]) -> bytes:
+    """The bytes that `export` writes for this object (section 12.3, "writer's form")."""
+    members = ",".join('"' + name + '":' + _render(value[name]) for name in order)
+    return ("{" + members + "}").encode("utf-8")
 
 
 def _position(value: object) -> int | None:
@@ -243,7 +288,7 @@ def parse_export(data: bytes) -> ExportFile:
     `ExportInvalid` with the position of section 12.3: the first item of the list that the file
     breaks decides, and within that item the first faulty line.
     """
-    # Item 1, the faults of the whole file (position 0).
+    # Item 1, a fault of the whole file: position 0.
     try:
         data.decode("utf-8")
     except UnicodeDecodeError:
@@ -251,40 +296,46 @@ def parse_export(data: bytes) -> ExportFile:
     if not data.endswith(b"\n"):
         raise ExportInvalid(0)  # also the empty file
     lines = data[:-1].split(b"\n")
-    parsed = [_json_object(line) for line in lines]
-    # The position of a fault of a line: 0 for the header line, otherwise the number of event lines
-    # before it plus 1. An event line is a later line that is a JSON object with `type` `event`.
+    read = [_read_line(line) for line in lines]
+    # The number of event lines before each line; the first line is never an event line.
     before: list[int] = []
     count = 0
-    for index, value in enumerate(parsed):
+    for index, line in enumerate(read):
         before.append(count)
-        if index > 0 and value is not None and value.get("type") == TYPE_EVENT:
+        if index > 0 and line.counts_as_event_line:
             count += 1
 
     def position_of(index: int) -> int:
+        """Items 2, 3 and 6: 0 for the first line (the header line), otherwise the number of event
+        lines before the faulty line plus 1. Items 5 and 7 never concern the first line."""
         return 0 if index == 0 else before[index] + 1
 
-    # Item 1, an empty line.
-    for index, line in enumerate(lines):
-        if not line:
+    # Item 2, an empty line.
+    for index, raw in enumerate(lines):
+        if not raw:
             raise ExportInvalid(position_of(index))
-    # Item 2.
-    for index, value in enumerate(parsed):
-        if value is None:
+    # Item 3, a line that is not one JSON object, or an object with a member twice.
+    for index, line in enumerate(read):
+        if not line.valid:
             raise ExportInvalid(position_of(index))
-    objects = [value for value in parsed if value is not None]
-    # Item 3.
+    objects = [dict(line.members or ()) for line in read]
+    # Item 4, the header: position 0.
     header = _header(objects[0])
     if header is None:
         raise ExportInvalid(0)
-    # Item 4.
+    # Item 5, the type and the members of every later line.
     items: list[StoredEvent | Checkpoint] = []
     for index in range(1, len(objects)):
         item = _item(objects[index])
         if item is None:
             raise ExportInvalid(position_of(index))
         items.append(item)
-    # Item 5.
+    # Item 6, the writer's form of every line.
+    orders = [HEADER_ORDER] + [EVENT_ORDER if isinstance(item, StoredEvent) else CHECKPOINT_ORDER for item in items]
+    for index, order in enumerate(orders):
+        if lines[index] != _writer_form(objects[index], order):
+            raise ExportInvalid(position_of(index))
+    # Item 7, the order of event and checkpoint lines.
     previous: tuple[bytes, int] | None = None
     for index, item in enumerate(items, start=1):
         if isinstance(item, StoredEvent):
@@ -297,13 +348,13 @@ def parse_export(data: bytes) -> ExportFile:
         previous = key
     events = tuple(item for item in items if isinstance(item, StoredEvent))
     checkpoints = tuple(item for item in items if isinstance(item, Checkpoint))
-    # Item 6.
+    # Item 8, the header agrees with the last event line: position 0.
     if events:
         if (header.position, header.record_hash) != (events[-1].position, events[-1].record_hash):
             raise ExportInvalid(0)
     elif header.position != 0 or header.record_hash is not None:
         raise ExportInvalid(0)
-    # Item 7.
+    # Item 9, a checkpoint line in a file without event lines: position 0.
     if not events and checkpoints:
         raise ExportInvalid(0)
     return ExportFile(header=header, events=events, checkpoints=checkpoints)

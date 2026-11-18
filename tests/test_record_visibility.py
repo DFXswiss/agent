@@ -12,6 +12,7 @@ from agent_core.record.visibility import (
     event_entry,
     readable_object,
     sees_event,
+    sees_named_task,
     sees_object,
     sees_task,
     task_repositories,
@@ -162,6 +163,14 @@ def test_event_failures_are_named_only_to_a_key_that_sees_the_object() -> None:
     assert answered_failure(DAVE, "event_id_taken", named, state) == WITHHELD
     for changes in ([("body", None, "x")], [("task", work, None)], [("task", None, "é")], [("task", None, new_id())]):
         assert answered_failure(BOB, "event_refused", event("comment", new_id(), changes), state) == WITHHELD
+    # A comment id names no task (section 7.9), although BOB sees the comment's task.
+    on_a_comment_id = event("comment", new_id(), [("task", None, comment), ("body", None, "x")])
+    assert sees_object(BOB, state, comment)
+    assert answered_failure(BOB, "event_refused", on_a_comment_id, state) == WITHHELD
+    assert sees_named_task(BOB, state, work.encode("ascii"))
+    assert not sees_named_task(BOB, state, comment.encode("ascii"))
+    assert not sees_named_task(DAVE, state, work.encode("ascii"))
+    assert not sees_named_task(BOB, state, None)
     assert answered_failure(BOB, "event_invalid", None, state) == WITHHELD
 
 
