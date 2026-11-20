@@ -74,6 +74,18 @@ def test_the_short_name_index_follows_a_rename() -> None:
     create_security(world, BOB.id, "login-bypass", [])
 
 
+def test_the_event_index_holds_the_positions_of_each_object_in_order() -> None:
+    world = World(STANDARD)
+    work = create_work(world, ALICE.id, [])
+    comment = new_id()
+    world.write(ALICE.id, "comment", comment, [("task", None, work), ("body", None, "x")], EVENTS)
+    world.write(BOB.id, "task", work, [("title", "Fix login", "Fix it")], EVENTS)
+    # The events of a task do not include the events of its comments (section 7.4).
+    assert world.state.object_events[work] == (1, 3)
+    assert world.state.object_events[comment] == (2,)
+    assert len(EMPTY_STATE.object_events) == 0
+
+
 def test_a_builder_is_frozen_once_and_never_changed_after() -> None:
     world = World(STANDARD)
     text, _ = world.sign(ALICE.id, "task", new_id(), [("kind", None, "work"), ("team", None, TEAM),

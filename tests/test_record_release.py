@@ -100,6 +100,7 @@ def test_a_link_index_that_names_a_comment_fails_loudly() -> None:
         event_hashes=world.state.event_hashes,
         short_names=world.state.short_names,
         linked_tasks=MappingProxyType({LINK: frozenset({comment})}),
+        object_events=world.state.object_events,
     )
     with pytest.raises(ValueError):
         release_answer(broken, REPO, 1)

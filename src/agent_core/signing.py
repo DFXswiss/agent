@@ -196,6 +196,7 @@ class HubSigner:
         public = private_key.public_key().public_bytes(
             serialization.Encoding.Raw, serialization.PublicFormat.Raw
         )
+        self.public_key = public
         self.public_key_text = b64url_encode(public)
 
     @staticmethod
@@ -217,7 +218,8 @@ class HubSigner:
 class KeyRequest:
     """A request that passed checks 1 to 8, with the key entry they established.
 
-    `params` is what the route's query parser returned; None for a route without one.
+    `headers` are the request headers as received, names in lowercase. `params` is what the
+    route's query parser returned; None for a route without one.
     """
 
     entry: "KeyEntry"
@@ -226,13 +228,52 @@ class KeyRequest:
     raw_path: str
     query: str
     body: bytes
+    headers: tuple[tuple[str, bytes], ...]
     params: Any = None
 
+    def header_values(self, name: str) -> list[bytes]:
+        """Every value of the header `name` (lowercase), in the order received."""
+        return [value for key, value in self.headers if key == name]
 
-KeyHandler = Callable[[KeyRequest], Awaitable[tuple[int, dict[str, Any]]]]
+
+@dataclass(frozen=True)
+class KeyAnswer:
+    """An answer of an endpoint with the result its log area writes (RECORD-PROTOCOL.md section 13).
+
+    `result` is None when the area derives it from the status and the body.
+    """
+
+    status: int
+    body: dict[str, Any]
+    result: str | None
+
+
+KeyHandler = Callable[[KeyRequest], Awaitable["tuple[int, dict[str, Any]] | KeyAnswer"]]
 SubjectOf = Callable[[KeyRequest], "str | None"]
 # Parses the raw query (as signed); None means the query is invalid (signed 400).
 QueryParser = Callable[[str], Any]
+# Writes the one request line of a log area: the request, the final status and the result.
+AreaLog = Callable[[KeyRequest, int, str], None]
+
+
+@dataclass(frozen=True)
+class LogArea:
+    """A path prefix under /api/key/ whose requests write their own request line instead of the
+    line of section 5 for a `service` key. An endpoint failure in the area is logged by that line
+    alone, never with its exception (RECORD-PROTOCOL.md section 13)."""
+
+    prefix: str
+    log: AreaLog
+
+    def contains(self, request: KeyRequest) -> bool:
+        return request.raw_path.startswith(self.prefix) or request.path.startswith(self.prefix)
+
+
+def answer_result(status: int, body: dict[str, Any]) -> str:
+    """The result of an answer without its own: `ok` for 200, otherwise the `error` of the body."""
+    if status == 200:
+        return "ok"
+    return str(body["error"])
 
 
 @dataclass(frozen=True)
@@ -250,6 +291,20 @@ class KeyRoutes:
 
     def __init__(self) -> None:
         self._routes: dict[tuple[str, str], KeyRoute] = {}
+        self._areas: list[LogArea] = []
+
+    def add_area(self, prefix: str, log: AreaLog) -> None:
+        if not prefix.startswith(KEY_PREFIX) or not prefix.endswith("/"):
+            raise ValueError(f"a log area is a prefix under {KEY_PREFIX} that ends with /: {prefix}")
+        if any(prefix.startswith(area.prefix) or area.prefix.startswith(prefix) for area in self._areas):
+            raise ValueError(f"log area {prefix} overlaps a registered area")
+        self._areas.append(LogArea(prefix, log))
+
+    def area_of(self, request: KeyRequest) -> LogArea | None:
+        for area in self._areas:
+            if area.contains(request):
+                return area
+        return None
 
     def add(
         self,
@@ -409,7 +464,8 @@ class KeyService:
             await _send(send, outcome.status, body, [])
             return
         request = outcome.request
-        status, payload = await self._answer(request)
+        area = self.routes.area_of(request)
+        status, payload, result = await self._answer(request, area)
         body = b"" if head else payload
         hub_time = format_time(self.clock())
         text = response_text(
@@ -420,7 +476,10 @@ class KeyService:
             (HEADER_HUB_TIME.encode("ascii"), hub_time.encode("ascii")),
             (HEADER_HUB_SIGNATURE.encode("ascii"), self.signer.sign(text).encode("ascii")),
         ]
-        if request.entry.principal == "service":
+        if area is not None:
+            # The request line of the area replaces the line below, for every principal.
+            area.log(request, status, result)
+        elif request.entry.principal == "service":
             LOG.info(
                 "key request %s %s %s %d",
                 request.entry.id,
@@ -515,32 +574,44 @@ class KeyService:
             raw_path=raw_path,
             query=query,
             body=body,
+            headers=tuple((name.decode("latin-1").lower(), value) for name, value in scope["headers"]),
         )
         return _Verified(request=request, agent_time=agent_time, nonce=nonce)
 
-    async def _answer(self, request: KeyRequest) -> tuple[int, bytes]:
-        """Route, check 9, the query, check 10, and the endpoint. Any failure here is a signed 500."""
+    async def _answer(self, request: KeyRequest, area: LogArea | None) -> tuple[int, bytes, str]:
+        """Route, check 9, the query, check 10, and the endpoint, with the result for the request
+        line of a log area. Any failure here is a signed 500."""
         try:
-            route = self.routes.find(request.method, request.path)
-            if route is None:
-                return 404, _json_bytes(_error(ERROR_NOT_FOUND))
-            entry = request.entry
-            if route.scope is not None and route.scope not in entry.scopes:
-                return 403, _json_bytes(_error(ERROR_SCOPE_MISSING))
-            if route.query is not None:
-                params = route.query(request.query)
-                if params is None:
-                    return 400, _json_bytes(_error(ERROR_QUERY_INVALID))
-                request = replace(request, params=params)
-            if route.subject is not None and entry.principal == "service":
-                subject = route.subject(request)
-                if subject is None or entry.subjects is None or subject not in entry.subjects:
-                    return 403, _json_bytes(_error(ERROR_SUBJECT))
-            status, body = await route.handler(request)
-            return status, _json_bytes(body)
+            answer = await self._route(request)
+            return answer.status, _json_bytes(answer.body), (
+                answer.result if answer.result is not None else answer_result(answer.status, answer.body)
+            )
         except Exception:
-            LOG.error("key request: the endpoint failed", exc_info=True)
-            return 500, _json_bytes(_error(ERROR_INTERNAL))
+            if area is None:
+                LOG.error("key request: the endpoint failed", exc_info=True)
+            return 500, _json_bytes(_error(ERROR_INTERNAL)), ERROR_INTERNAL
+
+    async def _route(self, request: KeyRequest) -> KeyAnswer:
+        route = self.routes.find(request.method, request.path)
+        if route is None:
+            return KeyAnswer(404, _error(ERROR_NOT_FOUND), None)
+        entry = request.entry
+        if route.scope is not None and route.scope not in entry.scopes:
+            return KeyAnswer(403, _error(ERROR_SCOPE_MISSING), None)
+        if route.query is not None:
+            params = route.query(request.query)
+            if params is None:
+                return KeyAnswer(400, _error(ERROR_QUERY_INVALID), None)
+            request = replace(request, params=params)
+        if route.subject is not None and entry.principal == "service":
+            subject = route.subject(request)
+            if subject is None or entry.subjects is None or subject not in entry.subjects:
+                return KeyAnswer(403, _error(ERROR_SUBJECT), None)
+        answer = await route.handler(request)
+        if isinstance(answer, KeyAnswer):
+            return answer
+        status, body = answer
+        return KeyAnswer(status, body, None)
 
 
 class KeyGate:

@@ -633,6 +633,89 @@ def test_every_principal_may_read_the_record(tmp_path: Path, roster: Roster) -> 
     assert len(ring.entries) == 3
 
 
+# RECORD-PROTOCOL.md section 3: the scopes `record:security` and `record:watch` and their loader rules.
+
+
+def test_the_record_scopes_and_who_may_hold_them(tmp_path: Path, roster: Roster) -> None:
+    ring = load(
+        tmp_path,
+        roster,
+        [
+            staff(scopes=["record:read", "record:write", "record:security"]),
+            agent(scopes=["record:read", "record:write", "record:security", "device:controller"]),
+            service(scopes=["record:read", "record:watch", "record:security"]),
+        ],
+    )
+    assert ring.entries["example-guard-1"].scopes == ("record:read", "record:watch", "record:security")
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        agent(scopes=["record:write", "device:controller"]),
+        agent(scopes=["record:security", "device:controller"]),
+        staff(scopes=["record:write"]),
+        staff(scopes=["record:security"]),
+        service(scopes=["record:watch"]),
+        service(scopes=["record:security", "release:query"]),
+    ],
+)
+def test_a_record_scope_without_record_read_is_refused(tmp_path: Path, roster: Roster, entry: dict[str, Any]) -> None:
+    refused(tmp_path, roster, [entry], "needs record:read")
+
+
+@pytest.mark.parametrize(
+    ("entry", "match"),
+    [
+        (agent(scopes=["record:read", "record:watch", "device:controller"]), "'record:watch' is not allowed for principal agent"),
+        (staff(scopes=["record:read", "record:watch"]), "'record:watch' is not allowed for principal staff"),
+        (service(scopes=["record:read", "record:write"]), "'record:write' is not allowed for principal service"),
+    ],
+)
+def test_record_watch_only_on_a_service_entry_and_record_write_never_on_one(
+    tmp_path: Path, roster: Roster, entry: dict[str, Any], match: str
+) -> None:
+    refused(tmp_path, roster, [entry], match)
+
+
+def _team_roster(tmp_path: Path, team: str) -> Roster:
+    path = tmp_path / "long-teams.yaml"
+    path.write_text(yaml.safe_dump({"teams": {team: {"members": ["staff-a"]}}}), encoding="utf-8")
+    return load_roster(path)
+
+
+@pytest.mark.parametrize("builder", [staff, agent, service])
+def test_a_team_of_101_bytes_is_refused_also_when_it_is_in_the_teams_file(tmp_path: Path, builder: Any) -> None:
+    team = "t" * 99 + "é"  # 101 bytes in UTF-8
+    roster = _team_roster(tmp_path, team)
+    refused(tmp_path, roster, [builder(team=team)], "team is longer than 100 bytes")
+
+
+@pytest.mark.parametrize("builder", [staff, agent, service])
+def test_a_team_of_100_bytes_loads(tmp_path: Path, builder: Any) -> None:
+    team = "t" * 98 + "é"  # 100 bytes in UTF-8
+    roster = _team_roster(tmp_path, team)
+    entry = builder(team=team)
+    assert load(tmp_path, roster, [entry]).entries[entry["id"]].team == team
+
+
+def test_two_watcher_keys_of_one_handle_on_one_device_need_distinct_programs(tmp_path: Path, roster: Roster) -> None:
+    # RECORD-PROTOCOL.md section 8: a watcher serving two teams has one key per team.
+    first = service(
+        id="example-watcher-1", handle="example-watcher", scopes=["record:read", "record:watch"], public_key=ed_key(5)
+    )
+    second = service(
+        id="example-watcher-2",
+        handle="example-watcher",
+        team="other",
+        scopes=["record:read", "record:watch"],
+        public_key=ed_key(6),
+    )
+    refused(tmp_path, roster, [first, second], "each needs a program")
+    ring = load(tmp_path, roster, [dict(first, program="watch-example"), dict(second, program="watch-other")])
+    assert len(ring.entries) == 2
+
+
 def _second_staff(**changes: Any) -> dict[str, Any]:
     return staff(
         id="staff-b-pass-1",

@@ -629,17 +629,10 @@ def _check_actor_rules(outcome_task: Task, outcome: _Outcome, context: AppendCon
 # --- the append ----------------------------------------------------------------------------------
 
 
-def check_append(state: StateView, text: bytes, signature: bytes, context: AppendContext) -> Applied:
-    """Checks 3 to 18 of section 6.7, in this order, for an event at an append endpoint.
-
-    Checks 1 and 2 (query, `Content-Type` and body) and the `503` of section 7.1 belong to the
-    endpoint, which runs them before. `ValueError` when `context.received_at` is earlier than the
-    `received_at` of the head, which step 2 of section 11.5 never gives.
-    """
-    head = state.head
-    if head is not None and context.received_at < head.received_at:
-        raise ValueError("received_at is never earlier than at the previous position")
-    actor = context.actor
+def check_signed_event(text: bytes, signature: bytes, actor: KeyEntry) -> Event:
+    """Checks 3 to 6 of section 6.7, in this order: the form of the event text, the actor, the
+    certificate and the signature. They read no state, so the append runs them before its
+    transaction and before any fold (section 11.5)."""
     # Check 3.
     event = parse_event(text)
     # Check 4.
@@ -651,6 +644,22 @@ def check_append(state: StateView, text: bytes, signature: bytes, context: Appen
     # Check 6.
     if not signature_valid(actor.public_key, event.text, signature):
         raise _refuse(ERROR_EVENT_SIGNATURE_INVALID)
+    return event
+
+
+def check_append(state: StateView, text: bytes, signature: bytes, context: AppendContext) -> Applied:
+    """Checks 3 to 18 of section 6.7, in this order, for an event at an append endpoint.
+
+    Checks 1 and 2 (query, `Content-Type` and body) and the `503` of section 7.1 belong to the
+    endpoint, which runs them before. `ValueError` when `context.received_at` is earlier than the
+    `received_at` of the head, which step 2 of section 11.5 never gives.
+    """
+    head = state.head
+    if head is not None and context.received_at < head.received_at:
+        raise ValueError("received_at is never earlier than at the previous position")
+    actor = context.actor
+    # Checks 3 to 6.
+    event = check_signed_event(text, signature, actor)
     # Check 7.
     if event.event_hash in state.event_hashes:
         raise _refuse(ERROR_EVENT_DUPLICATE)

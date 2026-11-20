@@ -35,7 +35,7 @@ from agent_core.db import Store
 from agent_core.github import FakeGitHub
 from agent_core.signing import LOG as KEY_LOG
 from agent_core.signing import KeyRequest
-from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX
+from tests.conftest import HUB_KEY_ID, HUB_SEED_HEX, idle_record
 
 NOW = int(datetime(2027, 1, 15, 8, 0, 0, tzinfo=timezone.utc).timestamp())
 HOST = "testserver"
@@ -225,7 +225,9 @@ def make_app(cfg: Config, tmp_path: Path, clock: FixedClock) -> Iterator[Callabl
         )
         store = Store(app_cfg.database)
         stores.append(store)
-        app = create_app(app_cfg, github=FakeGitHub({"code-staff-a": "staff-a"}), store=store, clock=clock)
+        app = create_app(
+            app_cfg, github=FakeGitHub({"code-staff-a": "staff-a"}), store=store, clock=clock, record=idle_record
+        )
         add_test_routes(app)
         return app
 
@@ -536,13 +538,23 @@ def test_signed_whoami_through_the_http_test_client(app: FastAPI) -> None:
             assert_signed(wire, answer, status, NOW)
 
 
-def test_production_app_ships_only_whoami_and_release(cfg: Config) -> None:
+def test_production_app_ships_whoami_release_and_the_record_endpoints(cfg: Config) -> None:
+    # KEY-PROTOCOL.md sections 7 and 8 and the endpoint table of RECORD-PROTOCOL.md section 7.1.
     store = Store(cfg.database)
     try:
-        app = create_app(cfg, github=FakeGitHub({"code-alice": "alice"}), store=store)
+        app = create_app(cfg, github=FakeGitHub({"code-alice": "alice"}), store=store, record=idle_record)
         assert app.state.key_service.routes.registered() == [
+            ("GET", "/api/key/record/checkpoints"),
+            ("GET", "/api/key/record/comments"),
+            ("GET", "/api/key/record/events"),
+            ("GET", "/api/key/record/head"),
+            ("GET", "/api/key/record/object"),
+            ("GET", "/api/key/record/tasks"),
+            ("GET", "/api/key/record/verify"),
             ("GET", "/api/key/release"),
             ("GET", WHOAMI),
+            ("POST", "/api/key/record/events"),
+            ("POST", "/api/key/record/watch"),
         ]
     finally:
         store.close()
@@ -1127,6 +1139,72 @@ def test_one_log_line_per_service_request_past_check_8_and_no_secret(
         assert_no_secret(answer.body.decode("latin-1"))
         for name, value in answer.headers:
             assert_no_secret(f"{name}: {value}")
+
+
+# Log areas: a prefix whose requests write their own request line (RECORD-PROTOCOL.md section 13)
+
+
+def test_a_log_area_writes_its_line_instead_of_the_service_line_and_never_a_traceback(
+    app: FastAPI, log_lines: list[str]
+) -> None:
+    written: list[tuple[str, str, str, int, str]] = []
+
+    def area_line(request: KeyRequest, status: int, result: str) -> None:
+        written.append((request.entry.id, request.method, request.raw_path, status, result))
+
+    routes = app.state.key_service.routes
+    routes.add_area("/api/key/test-area/", area_line)
+    routes.add("GET", "/api/key/test-area/fail", failing, scope=None, subject=None)
+    routes.add("GET", "/api/key/test-area/echo", echo, scope=None, subject=None)
+    routes.add("GET", "/api/key/test-area/scoped", echo, scope="record:write", subject=None)
+    for target in (
+        "/api/key/test-area/fail",
+        "/api/key/test-area/echo",
+        "/api/key/test-area/scoped",
+        "/api/key/test-area/none",
+        "/api/key/test%2Darea/echo",
+    ):
+        send(app, build_wire("guard-one", target=target))
+    assert written == [
+        ("guard-one", "GET", "/api/key/test-area/fail", 500, "internal"),
+        ("guard-one", "GET", "/api/key/test-area/echo", 200, "ok"),
+        ("guard-one", "GET", "/api/key/test-area/scoped", 403, "scope_missing"),
+        ("guard-one", "GET", "/api/key/test-area/none", 404, "not_found"),
+        ("guard-one", "GET", "/api/key/test%2Darea/echo", 200, "ok"),
+    ]
+    assert [line for line in log_lines if " key request" in line] == []
+    assert [line for line in log_lines if "Traceback" in line or "failed" in line] == []
+
+
+@pytest.mark.parametrize(
+    ("prefix", "message"),
+    [
+        ("/api/other/", "a log area is a prefix under /api/key/ that ends with /: /api/other/"),
+        ("/api/key/area", "a log area is a prefix under /api/key/ that ends with /: /api/key/area"),
+        ("/api/key/area/inner/", "log area /api/key/area/inner/ overlaps a registered area"),
+        ("/api/key/", "log area /api/key/ overlaps a registered area"),
+    ],
+)
+def test_a_log_area_is_one_prefix_under_api_key_that_overlaps_no_other(prefix: str, message: str) -> None:
+    from agent_core.signing import KeyRoutes
+
+    routes = KeyRoutes()
+    routes.add_area("/api/key/area/", lambda request, status, result: None)
+    with pytest.raises(ValueError) as caught:
+        routes.add_area(prefix, lambda request, status, result: None)
+    assert str(caught.value) == message
+
+
+def test_a_request_carries_its_headers_by_lowercase_name(app: FastAPI) -> None:
+    seen: list[list[bytes]] = []
+
+    async def headers(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        seen.append(request.header_values("x-test"))
+        return 200, {}
+
+    app.state.key_service.routes.add("GET", "/api/key/test-headers", headers, scope=None, subject=None)
+    send(app, build_wire(target="/api/key/test-headers", extra_headers=((b"X-Test", b"a"), (b"x-test", b"b"))))
+    assert seen == [[b"a", b"b"]]
 
 
 def test_hub_signer_repr_has_no_seed(app: FastAPI) -> None:

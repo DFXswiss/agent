@@ -6,8 +6,11 @@ import copy
 import logging
 import re
 from typing import Any
+from urllib.parse import unquote
 
 from uvicorn.config import LOGGING_CONFIG
+
+from .signing import KEY_PREFIX
 
 REDACTED = "<redacted>"
 
@@ -62,14 +65,58 @@ class RedactTokenFilter(logging.Filter):
         return True
 
 
+# The WebSocket lines of uvicorn on `uvicorn.error`: `<client> - "WebSocket <path and query>" ...`,
+# as a format with arguments or already formatted.
+_WEBSOCKET_FORMAT = '"WebSocket %s"'
+_WEBSOCKET_LINE = re.compile(r' - "WebSocket (\S+)"')
+
+
+def _under_key_prefix(target: str) -> bool:
+    path = target.split("?", 1)[0]
+    return path.startswith(KEY_PREFIX) or unquote(path).startswith(KEY_PREFIX)
+
+
+class DropKeyPathFilter(logging.Filter):
+    """Drop uvicorn's own HTTP access and WebSocket lines for a path under `/api/key/`.
+
+    uvicorn's own line for a request contains its path and its full query. Under `/api/key/` both
+    can carry text a client chose, such as an object id or a handle (RECORD-PROTOCOL.md section 13).
+    This filter drops uvicorn's own line for every such request; it adds no line in its place.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "uvicorn.access":
+            # `%s - "%s %s HTTP/%s" %d` with the client, method, path and query, version, status.
+            return not _any_under_key_prefix(record.args)
+        if record.name == "uvicorn.error" and isinstance(record.msg, str):
+            if _WEBSOCKET_FORMAT in record.msg:
+                return not _any_under_key_prefix(record.args)
+            match = _WEBSOCKET_LINE.search(record.msg)
+            return match is None or not _under_key_prefix(match.group(1))
+        return True
+
+
+def _any_under_key_prefix(args: Any) -> bool:
+    if isinstance(args, dict):
+        values = list(args.values())
+    elif isinstance(args, tuple):
+        values = list(args)
+    else:
+        return False
+    return any(isinstance(value, str) and _under_key_prefix(value) for value in values)
+
+
 def log_config() -> dict[str, Any]:
-    """uvicorn's logging config with the filter on every handler.
+    """uvicorn's logging config with the filters on every handler.
 
     HTTP access lines go through `uvicorn.access`, WebSocket lines through
     `uvicorn.error`; filtering at the handlers covers both.
     """
     config = copy.deepcopy(LOGGING_CONFIG)
-    config["filters"] = {"redact_token": {"()": RedactTokenFilter}}
+    config["filters"] = {
+        "redact_token": {"()": RedactTokenFilter},
+        "drop_key_path": {"()": DropKeyPathFilter},
+    }
     for handler in config["handlers"].values():
-        handler["filters"] = ["redact_token"]
+        handler["filters"] = ["redact_token", "drop_key_path"]
     return config

@@ -5,7 +5,7 @@ task and security issue, the rules that compute their state, the endpoints under
 `/api/key/record/`, the release rule over the record, the storage in PostgreSQL, verification,
 backup, and the tests the step must carry.
 
-**Status:** specified, not built. The rules behind it are in
+**Status:** built. Everything section 1 lists as built in this step is implemented in this repository by changes 1 and 3 of section 16 (change 2 is the deployment of each environment); nothing section 1 lists as not built is implemented. The rules behind it are in
 [DESIGN.md §24 and §25](https://github.com/DFXswiss/agent/blob/develop/DESIGN.md) of the client
 repository; if this document and DESIGN.md disagree, DESIGN.md wins and this document is fixed.
 Signed requests, signed answers, the keys file and the release query are specified in

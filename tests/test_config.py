@@ -4,8 +4,10 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agent_core.config import Config, ConfigError, public_url_host
+from agent_core.record.connection import migrate_config, parse_connection_string
 
 
 REQUIRED = (
@@ -217,3 +219,99 @@ def test_public_url_with_an_invalid_host_name_is_refused(url: str) -> None:
     with pytest.raises(ConfigError) as caught:
         public_url_host(url)
     assert str(caught.value) == "AGENT_CORE_PUBLIC_URL has an invalid host name"
+
+
+# RECORD-PROTOCOL.md sections 14 and 15: the compose file of this repository.
+
+COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.yaml"
+COMPOSE_PASSWORD = "0" * 64
+
+
+def _compose() -> dict:
+    return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+
+
+def _resolved(value: str) -> str:
+    """A connection string of the compose file with its password variable filled in."""
+    for name in ("AGENT_CORE_RECORD_OWNER_PASSWORD", "AGENT_CORE_RECORD_WRITER_PASSWORD"):
+        value = value.replace("${" + name + "}", COMPOSE_PASSWORD)
+    return value
+
+
+def test_the_hub_service_never_holds_the_owner_connection_string() -> None:
+    hub = _compose()["services"]["hub"]
+    assert "AGENT_CORE_RECORD_OWNER_DATABASE" not in hub["environment"]
+    assert "AGENT_CORE_RECORD_DATABASE" in hub["environment"]
+
+
+def test_the_hub_service_starts_only_after_the_migration_completed() -> None:
+    services = _compose()["services"]
+    assert services["hub"]["depends_on"] == {"migrate": {"condition": "service_completed_successfully"}}
+    assert services["migrate"]["command"] == ["python", "-m", "agent_core.record", "migrate"]
+    assert set(services["migrate"]["environment"]) == {
+        "AGENT_CORE_RECORD_OWNER_DATABASE",
+        "AGENT_CORE_RECORD_DATABASE",
+    }
+
+
+def test_every_connection_string_of_the_compose_file_uses_tls_and_has_the_form_of_section_15() -> None:
+    services = _compose()["services"]
+    strings = [
+        services["hub"]["environment"]["AGENT_CORE_RECORD_DATABASE"],
+        services["migrate"]["environment"]["AGENT_CORE_RECORD_DATABASE"],
+        services["migrate"]["environment"]["AGENT_CORE_RECORD_OWNER_DATABASE"],
+    ]
+    for value in strings:
+        assert value.endswith("?sslmode=require") or value.endswith("?sslmode=verify-full")
+        parse_connection_string(_resolved(value))
+    owner, writer = migrate_config(
+        {
+            "AGENT_CORE_RECORD_OWNER_DATABASE": _resolved(strings[2]),
+            "AGENT_CORE_RECORD_DATABASE": _resolved(strings[1]),
+        }
+    )
+    assert (owner.role, writer.role) == ("record_owner", "record_writer")
+    assert strings[0] == strings[1]
+
+
+def test_the_record_database_service_is_postgres_16_with_a_volume_and_tls() -> None:
+    database = _compose()["services"]["record-db"]
+    assert database["image"] == "postgres:16"
+    assert "ssl=on" in database["command"]
+    assert any(volume.endswith(":/var/lib/postgresql/data") for volume in database["volumes"])
+    init = Path(__file__).resolve().parent.parent / "deploy" / "record-init.sh"
+    text = init.read_text(encoding="utf-8")
+    assert "CREATE DATABASE record OWNER record_owner;" in text
+    for role in ("record_owner", "record_writer"):
+        assert f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" in text
+
+
+def test_the_record_init_script_passes_no_password_as_a_process_argument() -> None:
+    """Every argument of a process shows in the process list of the database container, so psql
+    reads each secret file itself inside its SQL input, and the shell never expands a secret."""
+    init = Path(__file__).resolve().parent.parent / "deploy" / "record-init.sh"
+    lines = init.read_text(encoding="utf-8").splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("psql "))
+    psql = lines[start]
+    # One command line, no continuation that could add an argument, and a quoted here-document, so
+    # the shell expands nothing inside the SQL input.
+    assert psql.endswith("<<'SQL'")
+    assert "\\" not in psql
+    assert "-v ON_ERROR_STOP=1" in psql
+    assert psql.count(" -v ") == 1
+    for option in ("--set", "--variable", "password", "$(", "`", "/run/secrets"):
+        assert option not in psql
+    end = lines.index("SQL", start + 1)
+    assert end == len(lines) - 1
+    shell = [line for line in lines[:start] if not line.lstrip().startswith("#")]
+    for line in shell:
+        assert "$(" not in line
+        assert "`" not in line
+        assert "cat " not in line
+        assert "psql" not in line
+    sql = lines[start + 1 : end]
+    for name in ("owner", "writer"):
+        assert sql.count(f"\\set {name}_password `cat /run/secrets/record_{name}_password`") == 1
+        assert sql.index(f"\\set {name}_password `cat /run/secrets/record_{name}_password`") < sql.index(
+            f"  PASSWORD :'{name}_password';"
+        )

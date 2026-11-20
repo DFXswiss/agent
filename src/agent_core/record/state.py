@@ -2,7 +2,8 @@
 
 The state holds every object, the head of every key's chain, the `event_id` and the event hash of
 every folded event, the index of `short_name` per team, the index from pull-request references to
-tasks, and the record head with its `received_at` (section 11.6).
+tasks, and the record head with its `received_at` (section 11.6). It also holds, per object, the
+positions of its events, which `GET /api/key/record/events?object=` reads (section 7.4).
 
 `RecordState` is never changed. A new state comes from `StateBuilder`, which copies a state once,
 applies events and is then frozen; a fold of many events therefore copies the state once, not once
@@ -88,6 +89,8 @@ class RecordState:
     short_names: Mapping[tuple[bytes, str], str] = dataclass_field(repr=False)
     # Pull-request reference to the ids of the tasks whose `links` contain it.
     linked_tasks: Mapping[str, frozenset[str]] = dataclass_field(repr=False)
+    # Object id to the positions of its events, ascending (section 7.4 with `object`).
+    object_events: Mapping[str, tuple[int, ...]] = dataclass_field(repr=False)
 
     def task(self, object_id: str) -> Task | None:
         """The task with this id; None when no object or another type has it."""
@@ -103,6 +106,7 @@ EMPTY_STATE = RecordState(
     event_hashes=frozenset(),
     short_names=MappingProxyType({}),
     linked_tasks=MappingProxyType({}),
+    object_events=MappingProxyType({}),
 )
 
 
@@ -124,6 +128,7 @@ class StateBuilder:
         self.event_hashes: set[str] = set(state.event_hashes)
         self.short_names: dict[tuple[bytes, str], str] = dict(state.short_names)
         self.linked_tasks: dict[str, frozenset[str]] = dict(state.linked_tasks)
+        self.object_events: dict[str, tuple[int, ...]] = dict(state.object_events)
         self._frozen = False
 
     def apply(self, applied: Applied) -> None:
@@ -138,6 +143,9 @@ class StateBuilder:
         self.event_ids.add(event.event_id)
         self.event_hashes.add(event.event_hash)
         self.chains[event.actor_key_id] = KeyHead(chain_head(event), applied.head.position)
+        earlier = self.object_events.get(event.object_id)
+        position = (applied.head.position,)
+        self.object_events[event.object_id] = position if earlier is None else earlier + position
         self.head = applied.head
 
     def _reindex(self, previous: Task | None, task: Task) -> None:
@@ -173,6 +181,7 @@ class StateBuilder:
             event_hashes=frozenset(self.event_hashes),
             short_names=MappingProxyType(self.short_names),
             linked_tasks=MappingProxyType(self.linked_tasks),
+            object_events=MappingProxyType(self.object_events),
         )
 
 

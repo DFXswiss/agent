@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -32,7 +32,10 @@ from .github import (
     RealGitHub,
     valid_repository_name,
 )
-from .keys import KeyEntry, load_keys, valid_subject
+from .keys import KeyEntry, KeyRing, load_keys, valid_subject
+from .record.endpoints import register_record, release_refusal
+from .record.release import release_answer
+from .record.runtime import Read, RecordRuntime
 from .signing import (
     LOG as KEY_LOG,
     Clock,
@@ -292,15 +295,6 @@ def parse_release_query(raw_query: str) -> ReleaseQuery | None:
     return ReleaseQuery(repository=repository, pull_request=pull_request)
 
 
-def release_answer(repository: str, pull_request: int) -> tuple[bool, str | None]:
-    """Whether the pull request may leave draft, and the first failed condition.
-
-    The task record is not built yet, so no condition can fail. A later build step replaces only
-    this function.
-    """
-    return True, None
-
-
 def release_body(
     query: ReleaseQuery, released: bool, failed: str | None, hub_key_id: str
 ) -> dict[str, Any]:
@@ -321,16 +315,24 @@ def release_body(
     }
 
 
+RecordStarter = Callable[[KeyRing, HubSigner, Clock], RecordRuntime]
+
+
 def create_app(
     cfg: Config,
     github: GitHub | None = None,
     store: Store | None = None,
     clock: Clock = system_clock,
+    *,
+    record: RecordStarter,
 ) -> FastAPI:
+    """The hub. `record` starts the record part of the process with the keys file, the hub key and
+    the clock (RECORD-PROTOCOL.md section 11.4); the hub does not start when that start fails."""
     roster = load_roster(cfg.teams_path)
     keys = load_keys(cfg.keys_path, roster, clock())
     signer = HubSigner.from_seed_hex(cfg.hub_key_id, cfg.signing_key)
     key_host = public_url_host(cfg.public_url)
+    runtime = record(keys, signer, clock)
     app_store = store if store is not None else Store(cfg.database)
     try:
         hub = Hub(cfg, github or RealGitHub(cfg), app_store, roster)
@@ -342,9 +344,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         KEY_LOG.info("hub key %s %s", signer.key_id, signer.public_key_text)
+        runtime.start_background()
         try:
             yield
         finally:
+            runtime.stop()
             if store is None:
                 app_store.close()
 
@@ -364,8 +368,16 @@ def create_app(
     key_routes.add("GET", "/api/key/whoami", key_whoami, scope=None, subject=None)
 
     async def key_release(request: KeyRequest) -> tuple[int, dict[str, Any]]:
+        # RECORD-PROTOCOL.md section 9: the answer is computed from the record, after the `503`
+        # of section 7.1 and the incremental fold of section 11.6.
         query: ReleaseQuery = request.params
-        released, failed = release_answer(query.repository, query.pull_request)
+        outcome = await asyncio.to_thread(
+            runtime.read,
+            lambda state, _connection: release_answer(state, query.repository, query.pull_request),
+        )
+        if not isinstance(outcome, Read):
+            return release_refusal(outcome)
+        released, failed = outcome.value
         return 200, release_body(query, released, failed, signer.key_id)
 
     def release_subject(request: KeyRequest) -> str | None:
@@ -379,6 +391,7 @@ def create_app(
         subject=release_subject,
         query=parse_release_query,
     )
+    register_record(key_routes, runtime, signer.key_id)
 
     # No generated docs pages or schema: /docs and /redoc load script from third-party hosts.
     app = FastAPI(
@@ -400,6 +413,7 @@ def create_app(
     app.add_middleware(KeyGate, service=key_service)
     app.state.hub = hub
     app.state.key_service = key_service
+    app.state.record = runtime
 
     @app.exception_handler(HTTPException)
     async def http_exception_response(request: Request, exc: HTTPException) -> JSONResponse:

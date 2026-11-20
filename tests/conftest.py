@@ -18,6 +18,11 @@ from agent_core.app import create_app
 from agent_core.config import Config
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
+from agent_core.keys import KeyRing
+from agent_core.record.connection import parse_connection_string
+from agent_core.record.runtime import NO_HOOKS, RecordRuntime
+from agent_core.record.storage import MemoryState
+from agent_core.signing import Clock, HubSigner
 
 # The hub signing key of the test configuration. Never used outside the test suite.
 HUB_SEED_HEX = "5e" * 32
@@ -33,6 +38,31 @@ DATABASES_LOCK = 742180004
 # Section 14: held while the roles and the database of the identifier test, whose names are fixed
 # SQL keywords, exist.
 IDENTIFIER_LOCK = 742180003
+
+
+# A writer connection string that no database server serves: port 9 (discard) of the loopback
+# address, on which no PostgreSQL listens, so every connection to it fails.
+IDLE_RECORD_URL = "postgresql://idle_writer:" + "0" * 64 + "@127.0.0.1:9/idle_record?sslmode=disable"
+
+
+def idle_record(keys: KeyRing, signer: HubSigner, clock: Clock) -> RecordRuntime:
+    """The record part of a hub for the tests of the session store, pairing, sync and signed
+    requests, which never reach the record: an empty state, no start of RECORD-PROTOCOL.md section
+    11.4 and no background thread. No database server serves it, so a test that reached the record by
+    mistake would get `500` instead of an answer. The hub itself always starts the record through
+    `start_record` (agent_core.__main__); the record tests do so against PostgreSQL."""
+    return RecordRuntime(
+        writer=parse_connection_string(IDLE_RECORD_URL),
+        keys=keys,
+        signer=signer,
+        clock=clock,
+        monotonic=lambda: 0.0,
+        memory=MemoryState(),
+        pool_size=1,
+        poll_seconds=None,
+        hooks=NO_HOOKS,
+        last_verification=0.0,
+    )
 
 
 @contextmanager
@@ -280,7 +310,7 @@ def github() -> FakeGitHub:
 def hub(cfg: Config, github: FakeGitHub) -> TestClient:
     store = Store(cfg.database)
     try:
-        app = create_app(cfg, github=github, store=store)
+        app = create_app(cfg, github=github, store=store, record=idle_record)
         with TestClient(app) as client:
             yield client
     finally:
@@ -310,7 +340,7 @@ def agent_hub(cfg: Config, tmp_path: Path) -> TestClient:
     )
     store = Store(agent_cfg.database)
     try:
-        app = create_app(agent_cfg, github=github, store=store)
+        app = create_app(agent_cfg, github=github, store=store, record=idle_record)
         with TestClient(app) as client:
             yield client
     finally:
@@ -344,7 +374,7 @@ def two_agent_hub(cfg: Config, tmp_path: Path) -> TestClient:
     github = FakeGitHub({"code-alice": "alice"})
     store = Store(agent_cfg.database)
     try:
-        app = create_app(agent_cfg, github=github, store=store)
+        app = create_app(agent_cfg, github=github, store=store, record=idle_record)
         with TestClient(app) as client:
             yield client
     finally:
@@ -374,7 +404,7 @@ def mixed_owner_hub(cfg: Config, tmp_path: Path) -> TestClient:
     github = FakeGitHub({"code-alice": "alice", "code-bob": "bob"})
     store = Store(agent_cfg.database)
     try:
-        app = create_app(agent_cfg, github=github, store=store)
+        app = create_app(agent_cfg, github=github, store=store, record=idle_record)
         with TestClient(app) as client:
             yield client
     finally:

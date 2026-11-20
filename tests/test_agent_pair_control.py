@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from agent_core.app import create_app
 from agent_core.db import Store
 from agent_core.github import FakeGitHub
-from tests.conftest import pair_device, sign_in
+from tests.conftest import idle_record, pair_device, sign_in
 from tests.test_control import _recv_until, _wait_control_connected, session_event
 
 
@@ -92,6 +92,7 @@ def test_auth_me_sorts_owned_agents_declared_out_of_order(cfg, tmp_path: Path) -
             app_cfg,
             github=FakeGitHub({"code-alice": "alice"}),
             store=store,
+            record=idle_record,
         )
         with TestClient(app) as client:
             sign_in(client, "code-alice")
@@ -124,6 +125,7 @@ def test_auth_me_sorts_team_names_declared_out_of_order(cfg, tmp_path: Path) -> 
             app_cfg,
             github=FakeGitHub({"code-alice": "alice"}),
             store=store,
+            record=idle_record,
         )
         with TestClient(app) as client:
             sign_in(client, "code-alice")

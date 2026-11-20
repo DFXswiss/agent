@@ -4,8 +4,9 @@ This document fixes the wire format for key identity: the keys file, how a reque
 how the hub signs its answer, every refusal, and the release query. It is the technical
 specification for the first two build steps of the team record.
 
-**Status:** the hub side of the first build step and of the release query (the second build
-step) is implemented in this repository; the client commands of the first build step are in the
+**Status:** the hub side of the first build step, of the release query (the second build step)
+and of the team record (the third build step) is implemented in this repository; the client
+commands of the first build step are in the
 client repository. The client command for the release query is specified in the client
 repository's next change. Everything listed under "Not built yet" is not implemented. The rules
 behind it are in
@@ -17,8 +18,8 @@ Passkey invites, sign-in and signed requests by a certified session key are spec
 adds to section 3 the loader rule that fixes the device key of a device (the unrevoked `agent`
 entry of that device without `program`, if there is one), adds endpoints under `/api/key/`, and refuses a
 public URL whose host is an IP address or ends with a dot.
-The third build step, the team record and the security-issue object, is specified in
-[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md).
+The third build step, the team record with tasks and security issues, is specified in
+[RECORD-PROTOCOL.md](RECORD-PROTOCOL.md) and built (section 1).
 
 ## 1. Scope of what is built now
 
@@ -32,20 +33,29 @@ Built in the first build step:
 
 Built in the second build step:
 
-- the release query `GET /api/key/release` on the hub (section 8), with its final wire format.
-  Until the team record exists its answer is yes for every pull request.
+- the release query `GET /api/key/release` on the hub (section 8); the format of the `200` answer
+  is final; a later build step may add refusals. From the third build step on, its answer is
+  computed from the team record (RECORD-PROTOCOL.md section 9).
+
+Built in the third build step, as specified in [RECORD-PROTOCOL.md](RECORD-PROTOCOL.md): the team
+record with tasks and security issues, its endpoints under `/api/key/record/`, and the scopes
+`record:security` and `record:watch` (section 3).
 
 Not built yet:
 
 - passkey sign-in and session keys (the keys file already has a place for passkeys)
 - device keys in secure hardware (kind `p256`)
-- the allow list on a device, grants, the team record (tasks, orders, questions)
+- the allow list on a device, grants, and the orders and questions of the team record
 - the client command for the release query
 
-No existing endpoint changes its behaviour: GitHub sign-in, device pairing and device tokens
-work as before. The hub additionally requires three new environment variables at start
+No endpoint that existed before the first build step changes its behaviour: GitHub sign-in,
+device pairing and device tokens work as before. The third build step changes only the answer of
+`GET /api/key/release`, which it computes from the team record and which can be the signed `503`
+`record_unverified` (RECORD-PROTOCOL.md sections 1 and 7.1). The hub additionally requires three new environment variables at start
 (section 11); section 12 gives the order in which they are rolled out. The release query needs
-no new environment variable and no change to the keys file.
+no environment variable of its own and no change to the keys file; from the third build step on
+it reads the team record, whose database the hub reaches through `AGENT_CORE_RECORD_DATABASE`
+(RECORD-PROTOCOL.md section 15).
 
 ## 2. Encodings
 
@@ -116,7 +126,7 @@ keys:
 | `kind` | `ed25519` or `webauthn`. |
 | `principal` | `staff`, `agent` or `service`. |
 | `handle` | The person or program the key belongs to; for an `agent` key the staff member who owns the device. Lowercase letters, digits and `-`, 1 to 39 characters, starts and ends with a letter or digit, no `--`. A handle, never a legal name or mail address. |
-| `team` | A team in `teams.yaml`. |
+| `team` | A team in `teams.yaml`, at most 100 bytes (RECORD-PROTOCOL.md section 5.2). |
 | `public_key` | As in section 2. Unique in the file. |
 | `credential_id` | The credential id of the passkey, 16 to 1023 bytes, unique across `keys`. |
 | `device` | Label of the machine, same form as an `id`. |
@@ -158,7 +168,9 @@ Further rules:
 | Scope | Allows | May be held by |
 |---|---|---|
 | `record:read` | Read the team record | every principal |
-| `record:write` | Write events to the team record | `staff`, `agent` |
+| `record:write` | Write events to the team record through `POST /api/key/record/events` | `staff`, `agent` |
+| `record:security` | Read tasks of kind `security` and their comments; with `record:write`, also write such tasks and comments on them; with `record:watch`, also write the watcher events of RECORD-PROTOCOL.md section 8 on such tasks (a watcher never writes a comment) | `staff`, `agent`, `service` |
+| `record:watch` | Write status events as a watcher through `POST /api/key/record/watch` (RECORD-PROTOCOL.md section 8) | `service` |
 | `release:query` | Ask the release query | `service` |
 | `keys:invite` | Create invite links for passkeys | `staff` |
 | `device:executor` | The device runs work it was given | `agent` |
@@ -168,6 +180,9 @@ Further rules:
   the level of the device (DESIGN.md §25.4).
 - Among the entries that are not revoked, at most one handle holds `keys:invite`. That handle is
   the administrator (DESIGN.md §24.2).
+- An entry that holds `record:write`, `record:watch` or `record:security` also holds
+  `record:read`.
+- An entry that holds `record:watch` holds `subjects` (every `service` entry already does).
 
 ### Loader
 
@@ -178,9 +193,13 @@ closed. The process does not start when:
 - a field is unknown, missing, of the wrong type, refused for that principal or not in the form
   given above
 - an `id`, a `public_key` or a `credential_id` appears twice, or a public key is not a valid point
+- a `team` is longer than 100 bytes, whatever the scopes of the entry, also when it is in
+  `teams.yaml`
 - a `team` is not in `teams.yaml`, or a `staff` or `agent` handle breaks the handle rule
 - a scope is unknown or not allowed for the principal, an `agent` entry does not hold exactly
   one device scope, or among the entries that are not revoked at start more than one handle holds `keys:invite`
+- an entry holds `record:write`, `record:watch` or `record:security` without `record:read`, or
+  holds `record:watch` without `subjects`
 - the pair of `device` and `program` is not unique as required
 
 An empty `keys` list is valid and is the starting state. The file holds no key of the hub
@@ -286,14 +305,20 @@ failure:
 - Check 10 applies only to an endpoint that names a subject, and then only to `service` keys.
   `GET /api/key/whoami` names none; `GET /api/key/release` names one (section 8).
 - An endpoint that takes a query validates it after check 9 and before check 10. An invalid
-  query gets the status 400 with the body `{"error":"query_invalid"}`. Today only
-  `GET /api/key/release` takes a query; every other endpoint ignores its query.
+  query gets the status 400 with the body `{"error":"query_invalid"}`. `GET /api/key/release` and
+  the endpoints of RECORD-PROTOCOL.md section 7 take and validate their own queries; every other
+  endpoint ignores its query.
 - A refusal has the JSON body `{"error":"<value>"}` and nothing else, written without
   whitespace. It carries no data of the
   hub. The keys file is public, so the values of checks 2 to 5 tell a caller nothing it could
   not read there.
-- Every request of a `service` key that passed check 8 writes exactly one log line with the key
-  id, method, raw path without the query and final status, also when the status is 403, 404 or 500.
+- Every request of a `service` key that passed check 8 writes exactly one request log line with
+  the key id, method, raw path without the query and final status, also when the status is 403,
+  404 or 500; under `/api/key/record/` that line has the form of RECORD-PROTOCOL.md section 13,
+  which writes `-` instead of a method or a raw path that no endpoint of RECORD-PROTOCOL.md
+  section 7 has, and is written for every key, not only a `service` key, and a request to
+  `GET /api/key/release` may write in addition one record line of RECORD-PROTOCOL.md section 13
+  (`record verify failed` or `record database error`).
 
 ## 6. A signed answer
 
@@ -392,8 +417,11 @@ GET /api/key/release?repository=example-org%2Fexample-repo&pull_request=42
    `{"error":"query_invalid"}`.
 3. Check 10: the subject is the `repository` value, with `/`. For a `service` key it must be one
    of the key's `subjects`, compared exactly; otherwise `subject_not_allowed`.
+4. While the answering hub process is in the state `record_unverified`, the signed `503` with
+   `{"error":"record_unverified"}` of RECORD-PROTOCOL.md section 7.1, before the release rule of
+   RECORD-PROTOCOL.md section 9 reads the record.
 
-Every answer after check 8, including the 400 and the 403, is signed (section 6). Another
+Every answer after check 8, including the 400, the 403 and the 503, is signed (section 6). Another
 method on the path, the path with a trailing slash and `HEAD` get the signed `404` of section 5.
 The log line of section 5 for a `service` key is written unchanged: it holds the raw path
 without the query.
@@ -423,9 +451,10 @@ The release rule has three conditions, checked in this order. When one fails, `r
 | `task_not_ready` | Every linked task has an assignee and the status `in progress` or `ready for review`. |
 | `question_unanswered` | No question of an order for a linked task is unanswered. |
 
-The team record that holds tasks, orders and questions is not built yet. Until it is, no
-condition can fail, and the hub answers `"released":true,"failed":null` for every valid query.
-The wire format is final: a later build step changes only how the answer is computed.
+The answer is computed from the team record by the release rule of RECORD-PROTOCOL.md section 9,
+and the request can be answered with the signed `503` `record_unverified` of RECORD-PROTOCOL.md
+section 7.1. Orders and questions are not built yet, so `question_unanswered` never fails. The
+format of the `200` answer is final; a later build step may add refusals.
 
 The answer is one input for a guard. It replaces no review rule. The hub does not call the code
 host and does not check that the pull request or the repository exists.
@@ -494,8 +523,13 @@ The hub, first build step:
 - a failure of the nonce insert other than the unique constraint gives an unsigned `500` with
   `{"error":"internal"}`; a `500` after check 8 is signed
 - a corrupt `gzip` body and two content codings (refused at check 1)
-- exactly one log line per request of a `service` key that passed check 8, and no secret in any
-  log line or body
+- exactly one request log line with the key id, method, raw path without the query and final
+  status per request of a `service` key that passed check 8; under `/api/key/record/` that line
+  has the form of RECORD-PROTOCOL.md section 13, which writes `-` instead of a method or a raw path
+  that no endpoint of RECORD-PROTOCOL.md section 7 has, and is written for every key, not only a
+  `service` key, and a request to `GET /api/key/release` may write in addition one record line of
+  RECORD-PROTOCOL.md section 13 (`record verify failed` or `record database error`); and no secret
+  in any log line or body
 
 The hub, release query (section 8), through the application with a fixed clock; every case
 asserts the exact status, the exact body and the hub signature:
@@ -536,7 +570,8 @@ The client:
   implementation of a primitive.
 - New required environment variables of the hub: `AGENT_CORE_KEYS`, `AGENT_CORE_SIGNING_KEY` and
   `AGENT_CORE_HUB_KEY_ID`.
-  Like every `AGENT_CORE_*` variable, a missing or empty value stops the process. The list of
+  Like every `AGENT_CORE_*` variable, a missing or empty value stops a program that requires it.
+  The list of
   required variables in the README, the compose file and the configuration test is updated in
   the same change, and the image contains the keys file next to `teams.yaml`.
 - Whatever stands in front of the hub must forward path and query unchanged, without

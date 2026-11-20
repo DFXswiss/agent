@@ -14,7 +14,7 @@ import pytest
 from agent_core.app import create_app
 from agent_core.db import Store
 from agent_core.github import FakeGitHub, GitHubError, RealGitHub, _pr_from_search_item
-from tests.conftest import sign_in
+from tests.conftest import idle_record, sign_in
 
 
 def test_pr_from_search_item() -> None:
@@ -140,7 +140,7 @@ def test_prs_survive_new_hub(cfg, github: FakeGitHub) -> None:
     ]
     first_store = Store(cfg.database)
     try:
-        with TestClient(create_app(cfg, github=github, store=first_store)) as first:
+        with TestClient(create_app(cfg, github=github, store=first_store, record=idle_record)) as first:
             sign_in(first, "code-alice")
             assert first.get("/api/prs").json()["source"] == "github"
             cookies = dict(first.cookies)
@@ -149,7 +149,7 @@ def test_prs_survive_new_hub(cfg, github: FakeGitHub) -> None:
 
     second_store = Store(cfg.database)
     try:
-        with TestClient(create_app(cfg, github=github, store=second_store)) as second:
+        with TestClient(create_app(cfg, github=github, store=second_store, record=idle_record)) as second:
             second.cookies.update(cookies)
             body = second.get("/api/prs").json()
             assert body["source"] == "github"
