@@ -454,6 +454,7 @@ def append_event(
     memory: MemoryState,
     keys: KeyRing,
     actor: KeyEntry,
+    agent_key: str,
     endpoint: str,
     text: bytes,
     signature: bytes,
@@ -465,7 +466,9 @@ def append_event(
     """The append transaction of section 11.5 for one event, after checks 1 and 2 of section 6.7.
 
     Checks 3 to 6 run first, without a transaction and without a fold (`Refused` when one fails),
-    so that an append refused there folds nothing (section 11.6). Then:
+    so that an append refused there folds nothing (section 11.6). `actor` is the entry the request
+    checks established and `agent_key` the request's `Agent-Key`, which check 4 compares (see
+    `AppendContext`). Then:
 
     1. BEGIN at READ COMMITTED and the advisory lock 742180001.
     2. Under the state lock: `EnteredUnverified` and ROLLBACK, with nothing read, when
@@ -489,7 +492,7 @@ def append_event(
     changes the rows, and section 11.5 answers every such failure with `500` `internal`.
     """
     try:
-        check_signed_event(text, signature, actor)
+        check_signed_event(text, signature, actor, agent_key)
     except RecordRefusal as refusal:
         return Refused(refusal.error)
     try:
@@ -506,7 +509,7 @@ def append_event(
                 received_at = next_received_at(clock(), None if head is None else head.received_at)
                 try:
                     applied = check_append(
-                        state, text, signature, AppendContext(keys, actor, endpoint, received_at)
+                        state, text, signature, AppendContext(keys, actor, endpoint, received_at, agent_key)
                     )
                 except RecordRefusal as refusal:
                     raise _Rollback(Refused(refusal.error)) from None

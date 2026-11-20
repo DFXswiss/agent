@@ -219,7 +219,7 @@ class PureRecord:
     def write(self, key_id: str, object_type: str, object_id: str, changes: Changes) -> None:
         text, signature = sign_event(self.state, key_id, object_type, object_id, changes, self.now)
         accepted = reduce_append(
-            self.state, text, signature, AppendContext(self.keys, self.keys.entries[key_id], "events", self.now)
+            self.state, text, signature, AppendContext(self.keys, self.keys.entries[key_id], "events", self.now, key_id)
         )
         head = accepted.applied.head
         self.events.append(stored_event(head.position, head.received_at, text, signature, None if not self.events else self.events[-1].record_hash))
@@ -314,6 +314,7 @@ class Process:
             self.memory,
             self.keys,
             self.keys.entries[key_id],
+            key_id,
             "events",
             text,
             signature,

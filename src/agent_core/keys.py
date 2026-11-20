@@ -337,6 +337,13 @@ def _check_invite(entries: list[KeyEntry], now: int) -> None:
 
 
 def _check_devices(entries: list[KeyEntry], now: int) -> None:
+    """The pairs of `device` and `program` among the entries not revoked at start.
+
+    PASSKEY-PROTOCOL.md section 7.4: of the unrevoked `agent` entries of one handle on one device,
+    at most one lacks `program` (the device key of that device); every other one carries it. A
+    group that holds a `service` entry still needs `program` on every entry, and a pair of
+    `device` and `program` stays unique.
+    """
     groups: dict[tuple[str, str], list[KeyEntry]] = {}
     for entry in entries:
         if entry.principal not in ("agent", "service") or entry.revoked_at(now):
@@ -348,11 +355,23 @@ def _check_devices(entries: list[KeyEntry], now: int) -> None:
         if len(group) < 2:
             continue
         programs = [entry.program for entry in group]
-        if None in programs:
+        with_service = any(entry.principal == "service" for entry in group)
+        if programs.count(None) > 1 or (with_service and None in programs):
             raise KeysError(
                 f"handle {handle!r} has several keys on device {device!r}; each needs a program"
             )
-        if len(set(programs)) != len(programs):
+        named = [program for program in programs if program is not None]
+        if len(set(named)) != len(named):
             raise KeysError(
                 f"handle {handle!r} has the pair of device {device!r} and one program twice"
             )
+
+
+def device_key(keys: KeyRing, key_id: str, now: int) -> KeyEntry | None:
+    """The entry `key_id` when it is the device key of a device (PASSKEY-PROTOCOL.md section 7.4):
+    an `agent` entry without `program` that is not revoked at `now`. The loader keeps at most one
+    such entry per handle and device, so every other key of that device is a program key."""
+    entry = keys.get(key_id)
+    if entry is None or entry.principal != "agent" or entry.program is not None or entry.revoked_at(now):
+        return None
+    return entry

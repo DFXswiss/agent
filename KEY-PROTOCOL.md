@@ -41,9 +41,12 @@ Built in the third build step, as specified in [RECORD-PROTOCOL.md](RECORD-PROTO
 record with tasks and security issues, its endpoints under `/api/key/record/`, and the scopes
 `record:security` and `record:watch` (section 3).
 
+Built on the hub, as specified in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md): passkey invites,
+passkey sign-in, signed requests by a certified session key and the `noop` command.
+
 Not built yet:
 
-- passkey sign-in and session keys (the keys file already has a place for passkeys)
+- the website pages of passkey sign-in and invites (PASSKEY-PROTOCOL.md section 10)
 - device keys in secure hardware (kind `p256`)
 - the allow list on a device, grants, and the orders and questions of the team record
 - the client command for the release query
@@ -154,8 +157,10 @@ Further rules:
   and is not a login in the `agents` map of that file. The `handle` of a `service` entry need not
   be in `teams.yaml`.
 - Several entries may name the same `device`. Among the `agent` and `service` entries of one
-  handle that are not revoked at start, the pair of `device` and `program` is unique; `program` is required when two such
-  entries share a `device`.
+  handle that are not revoked at start, the pair of `device` and `program` is unique, and when two
+  or more of them share a `device`, each of those carries `program`, except that one `agent` entry
+  among them may lack it when none of them is a `service` entry: that entry is the device key of
+  the device (PASSKEY-PROTOCOL.md section 7.4).
 - An entry is revoked when its `revoked` time is at or before now, and expired when its `expires`
   time is at or before now. A time in the future has no effect yet.
 - The hub reads the keys file once, at start. A change, also a revocation, takes effect with the
@@ -297,7 +302,9 @@ failure:
 | 10 | If the endpoint names a subject: it is in the key's `subjects` | 403 | `subject_not_allowed` |
 
 - A `webauthn` key never signs a request directly (check 5). A staff member's requests are
-  signed by a session key in a later build step.
+  signed by a session key that the passkey certified: for such a request `Agent-Key` is a session
+  key id, and PASSKEY-PROTOCOL.md section 7.1 changes checks 1 to 5, 7 and 9 (the scopes of a
+  session key), names the key id that check 8 stores for it, and adds check 9a.
 - Check 8 is one atomic insert of key id and nonce under a unique constraint. Only a violation
   of that constraint gives `nonce_replayed`; any other failure of the insert gives an unsigned
   `500`. A nonce is stored only after check 7 passed and is kept for 10
@@ -379,7 +386,8 @@ Needs a signed request, no scope, and names no subject. The answer is signed.
 ```
 
 The answer has exactly these fields, plus `program`, `subjects` and `expires` when the entry has
-them. It shows nothing about any other key.
+them. It shows nothing about any other key. The answer for a session key is that of
+PASSKEY-PROTOCOL.md section 7.2.
 
 ## 8. `GET /api/key/release`
 
@@ -387,7 +395,7 @@ Asks whether one pull request may leave draft. Needs a signed request (section 5
 `release:query`, and names a subject. The answer is signed (section 6). By the scope table of
 section 3 only a `service` key can hold `release:query`. An `agent` key, and a `service` key
 without the scope, gets `scope_missing`; a `staff` key is a passkey and is already refused at
-check 5.
+check 5, and a session key, which has the scopes of its `staff` entry, gets `scope_missing`.
 
 ### Query
 

@@ -260,9 +260,10 @@ class RecordRuntime:
             return _database_failed(error)
 
     def append(
-        self, actor: KeyEntry, endpoint: str, text: bytes, signature: bytes
+        self, actor: KeyEntry, agent_key: str, endpoint: str, text: bytes, signature: bytes
     ) -> Appended | Refused | AlreadyUnverified | Unverified | DatabaseFailed:
-        """An append endpoint after checks 1 and 2 of section 6.7.
+        """An append endpoint after checks 1 and 2 of section 6.7, for the request's `Agent-Key`
+        `agent_key` and the entry `actor` its request checks established (see `AppendContext`).
 
         The `503` of a process already in the state `record_unverified` comes before check 3;
         checks 3 to 6 need no connection; then the append transaction of section 11.5. Its step 2
@@ -273,7 +274,7 @@ class RecordRuntime:
         if self.unverified:
             return ALREADY_UNVERIFIED
         try:
-            check_signed_event(text, signature, actor)
+            check_signed_event(text, signature, actor, agent_key)
         except RecordRefusal as refusal:
             return Refused(refusal.error)
         try:
@@ -283,6 +284,7 @@ class RecordRuntime:
                     self.memory,
                     self.keys,
                     actor,
+                    agent_key,
                     endpoint,
                     text,
                     signature,
@@ -423,6 +425,29 @@ def _fail(step: str) -> RecordStartFailed:
     return RecordStartFailed(step)
 
 
+class RecordConfigError(ValueError):
+    """Step `config` of the start failed. The message names the rule, never a value."""
+
+
+def record_config(environ: Mapping[str, str]) -> ConnectionString:
+    """Step `config` of the start (section 11.4): the writer's connection string of
+    AGENT_CORE_RECORD_DATABASE in the form of section 15, the owner's variable not set (also not
+    empty), and libpq version 16 or later, checked in this order. Never connects.
+
+    `start_record` runs it as its first step; the operator commands of PASSKEY-PROTOCOL.md section
+    5.3 run it so that they refuse whatever stops the hub at this step. Raises `RecordConfigError`.
+    """
+    try:
+        writer = read_connection_string(environ, WRITER_VARIABLE)
+    except ConnectionStringError as error:
+        raise RecordConfigError(str(error)) from None
+    if OWNER_VARIABLE in environ:
+        raise RecordConfigError(f"{OWNER_VARIABLE} must not be set in the hub's environment")
+    if not libpq_supported():
+        raise RecordConfigError("the libpq that psycopg uses is older than version 16")
+    return writer
+
+
 def start_record(
     environ: Mapping[str, str],
     keys: KeyRing,
@@ -447,11 +472,9 @@ def start_record(
        state in memory is the state of that fold. This run is the first periodic verification.
     """
     try:
-        writer = read_connection_string(environ, WRITER_VARIABLE)
-    except ConnectionStringError:
+        writer = record_config(environ)
+    except RecordConfigError:
         raise _fail(START_CONFIG) from None
-    if OWNER_VARIABLE in environ or not libpq_supported():
-        raise _fail(START_CONFIG)
     try:
         with writer_connection(writer) as connection:
             if check_schema(connection) is not None:

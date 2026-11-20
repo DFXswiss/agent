@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from agent_core.keys import KeyRing, KeysError, load_keys
+from agent_core.keys import KeyRing, KeysError, device_key, load_keys
 from agent_core.signing import (
     ED25519_FIELD_PRIME,
     ED25519_ORDER8_Y,
@@ -765,7 +765,6 @@ def _second_agent(**changes: Any) -> dict[str, Any]:
     ("first", "second", "match"),
     [
         (agent(), _second_agent(), "each needs a program"),
-        (agent(program="agent-cli"), _second_agent(), "each needs a program"),
         (agent(program="agent-cli"), _second_agent(program="agent-cli"), "one program twice"),
         (
             agent(),
@@ -790,6 +789,8 @@ def test_device_and_program_pair_must_be_unique(
     [
         (agent(), _second_agent(device="laptop-2")),
         (agent(program="agent-cli"), _second_agent(program="other-cli")),
+        # PASSKEY-PROTOCOL.md section 7.4: a device key without `program` next to a program key.
+        (agent(program="agent-cli"), _second_agent()),
         (agent(), _second_agent(revoked=PAST)),
         (agent(), _second_agent(revoked=AT_NOW)),
         (agent(), agent(id="staff-b-laptop-1", handle="staff-b", public_key=ed_key(3))),
@@ -799,3 +800,78 @@ def test_device_and_program_pairs_that_are_allowed(
     tmp_path: Path, roster: Roster, first: dict[str, Any], second: dict[str, Any]
 ) -> None:
     assert len(load(tmp_path, roster, [first, second]).entries) == 2
+
+
+# PASSKEY-PROTOCOL.md section 7.4: the device key of a device
+
+
+def _program_key(**changes: Any) -> dict[str, Any]:
+    return agent(id="staff-a-laptop-cli", public_key=ed_key(4), program="agent-cli", **changes)
+
+
+def test_a_device_key_and_a_program_key_on_one_device_load_and_only_the_first_is_the_device_key(
+    tmp_path: Path, roster: Roster
+) -> None:
+    ring = load(tmp_path, roster, [agent(), _program_key()])
+    assert device_key(ring, "staff-a-laptop-1", NOW) is ring.get("staff-a-laptop-1")
+    assert device_key(ring, "staff-a-laptop-cli", NOW) is None
+
+
+def test_a_device_key_with_several_program_keys_loads(tmp_path: Path, roster: Roster) -> None:
+    third = agent(id="staff-a-laptop-ui", public_key=ed_key(5), program="agent-ui")
+    assert len(load(tmp_path, roster, [agent(), _program_key(), third]).entries) == 3
+
+
+def test_a_revoked_device_key_next_to_its_unrevoked_replacement_loads(tmp_path: Path, roster: Roster) -> None:
+    ring = load(tmp_path, roster, [agent(revoked=PAST), _second_agent()])
+    assert device_key(ring, "staff-a-laptop-1", NOW) is None
+    assert device_key(ring, "staff-a-laptop-2", NOW) is ring.get("staff-a-laptop-2")
+
+
+def test_a_device_whose_only_agent_entry_carries_program_has_no_device_key(
+    tmp_path: Path, roster: Roster
+) -> None:
+    ring = load(tmp_path, roster, [_program_key()])
+    assert device_key(ring, "staff-a-laptop-cli", NOW) is None
+
+
+def test_two_device_keys_on_one_device_are_refused_also_next_to_a_program_key(
+    tmp_path: Path, roster: Roster
+) -> None:
+    refused(tmp_path, roster, [agent(), _second_agent(), _program_key()], "each needs a program")
+
+
+def test_a_program_key_next_to_a_service_entry_without_program_is_refused(
+    tmp_path: Path, roster: Roster
+) -> None:
+    entries = [_program_key(), service(handle="staff-a", device="laptop-1")]
+    refused(tmp_path, roster, entries, "each needs a program")
+
+
+def test_a_device_key_next_to_a_service_entry_with_program_is_refused(tmp_path: Path, roster: Roster) -> None:
+    entries = [agent(), service(handle="staff-a", device="laptop-1", program="guard-cli")]
+    refused(tmp_path, roster, entries, "each needs a program")
+
+
+@pytest.mark.parametrize(
+    ("key_id", "is_device_key"),
+    [
+        ("staff-a-pass-1", False),
+        ("example-guard-1", False),
+        ("staff-a-laptop-1", True),
+        ("unknown-key", False),
+    ],
+)
+def test_only_an_agent_entry_without_program_is_a_device_key(
+    tmp_path: Path, roster: Roster, key_id: str, is_device_key: bool
+) -> None:
+    ring = load(tmp_path, roster, [staff(), agent(), service()])
+    assert (device_key(ring, key_id, NOW) is not None) == is_device_key
+
+
+def test_a_device_key_revoked_later_stops_being_one_when_the_revocation_takes_effect(
+    tmp_path: Path, roster: Roster
+) -> None:
+    ring = load(tmp_path, roster, [agent(revoked=FUTURE)])
+    assert device_key(ring, "staff-a-laptop-1", NOW) is not None
+    assert device_key(ring, "staff-a-laptop-1", NOW + 1) is None

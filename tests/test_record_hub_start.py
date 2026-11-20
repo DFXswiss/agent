@@ -523,7 +523,8 @@ def test_main_starts_the_record_before_uvicorn_runs(
 ) -> None:
     migrated(record_db)
     environment = {
-        "AGENT_CORE_PUBLIC_URL": "http://127.0.0.1:8787",
+        # PASSKEY-PROTOCOL.md section 3: the host of the public URL is a name, not an IP address.
+        "AGENT_CORE_PUBLIC_URL": "http://localhost:8787",
         "AGENT_CORE_SESSION_SECRET": "x" * 32,
         "AGENT_CORE_GITHUB_CLIENT_ID": "id",
         "AGENT_CORE_GITHUB_CLIENT_SECRET": "secret",
@@ -546,7 +547,8 @@ def test_main_starts_the_record_before_uvicorn_runs(
     ran: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(logging.config, "dictConfig", configured.append)
     monkeypatch.setattr(hub_main.uvicorn, "run", lambda app, **options: ran.append((app, options)))
-    hub_main.main()
+    # Without an argument (PASSKEY-PROTOCOL.md section 5.3); pytest's own arguments are in sys.argv.
+    hub_main.main([])
     assert len(configured) == 1
     ((app, options),) = ran
     assert options["host"] == "127.0.0.1" and options["port"] == 8787
@@ -563,7 +565,7 @@ def test_main_does_not_run_the_hub_when_the_record_start_fails(
     cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, log_lines: list[str]  # noqa: F811
 ) -> None:
     for name, value in {
-        "AGENT_CORE_PUBLIC_URL": "http://127.0.0.1:8787",
+        "AGENT_CORE_PUBLIC_URL": "http://localhost:8787",
         "AGENT_CORE_SESSION_SECRET": "x" * 32,
         "AGENT_CORE_GITHUB_CLIENT_ID": "id",
         "AGENT_CORE_GITHUB_CLIENT_SECRET": "secret",
@@ -584,7 +586,7 @@ def test_main_does_not_run_the_hub_when_the_record_start_fails(
     ran: list[Any] = []
     monkeypatch.setattr(hub_main.uvicorn, "run", lambda app, **options: ran.append(app))
     with pytest.raises(SystemExit) as exited:
-        hub_main.main()
+        hub_main.main([])
     assert exited.value.code == 1
     assert ran == []
     assert record_lines(log_lines) == ["ERROR record start failed config"]

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -10,6 +12,9 @@ from urllib.parse import urlsplit
 from .signing import SEED_RE, valid_key_id
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
+# PASSKEY-PROTOCOL.md section 3: the last label of a host name that a browser reads as an IPv4
+# address, such as `127.1` or `0x7f000001`.
+_NUMERIC_LABEL_RE = re.compile(r"[0-9]+|0x.*")
 
 
 class ConfigError(SystemExit):
@@ -63,6 +68,29 @@ def public_url_host(url: str) -> str:
     return host
 
 
+def _is_ip_address(host_name: str) -> bool:
+    try:
+        ipaddress.ip_address(host_name)
+    except ValueError:
+        return False
+    return True
+
+
+def refuse_relying_party_host(public_url: str) -> None:
+    """PASSKEY-PROTOCOL.md section 3: the host name of the public URL is the relying-party id, so
+    it neither ends with a dot nor is an IP address. Tests the host name without port, brackets
+    and case (`urlsplit(...).hostname`), never the host line; runs after `public_url_host`."""
+    host_name = str(urlsplit(public_url).hostname)
+    if host_name.endswith("."):
+        raise ConfigError("AGENT_CORE_PUBLIC_URL must not have a host name ending in a dot")
+    if (
+        ":" in host_name
+        or _is_ip_address(host_name)
+        or _NUMERIC_LABEL_RE.fullmatch(host_name.rsplit(".", 1)[-1]) is not None
+    ):
+        raise ConfigError("AGENT_CORE_PUBLIC_URL must have a host name, not an IP address")
+
+
 @dataclass(frozen=True)
 class Config:
     public_url: str
@@ -105,6 +133,7 @@ class Config:
             )
         public_url = require("AGENT_CORE_PUBLIC_URL")
         public_url_host(public_url)
+        refuse_relying_party_host(public_url)
         if public_url.endswith("/"):
             public_url = public_url[:-1]
         return Config(
