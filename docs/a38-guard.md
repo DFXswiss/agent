@@ -528,7 +528,29 @@ The issue timeline for the Ready actor is walked newest-first and stops at the n
 
 HTTP is restricted to `https://api.github.com`, redirects are refused, and safe GET retries are bounded. Comment/review pagination is complete up to its explicit 2000-item limit, with cycle/page limits; exceeding a bound fails instead of accepting partial evidence.
 
+## Sweep skip for unchanged pull requests
+
+A scheduled or dispatched `--all-open` sweep normally re-assesses every open pull request. With `--sweep-state PATH`, the sweep first builds a cheap fingerprint per pull request and skips the full `reconcile_pull` when the fingerprint equals the one stored after the last successful full evaluation and that evaluation is younger than 24 hours. The option is valid only with `--all-open`; every other mode, and an all-open run without the flag, behaves exactly as before. `--dry-run` and `--no-publish` accept the flag but neither read nor write the file. The composite action restores and saves the file through the GitHub Actions cache for all-open publishing runs only.
+
+The fingerprint is the SHA-256 of a canonical JSON object built from all of these inputs. Any input that cannot be read completely makes the pull request ineligible for a skip, so it runs the full reconcile and stores nothing for it in that sweep:
+
+1. The open-pull list item already fetched by the sweep: number, head SHA/ref/repository, base ref/SHA, base repository visibility and default branch, author id/login/type, draft, SHA-256 of title and body, sorted label names, and `merge_commit_sha`.
+2. The tip commit of each pull's base branch and of the default branch, read once per sweep per distinct branch through `GET /repos/{repo}/branches/{branch}`.
+3. The guard runtime revision, so a pin bump re-evaluates everything.
+4. The full pull: `mergeable` (a null `mergeable` makes the pull ineligible), base SHA, `merge_commit_sha`, draft and head SHA; a head or base that differs from the list item is ineligible.
+5. Every issue comment, including the guard's own, as sorted `(id, author id, updated_at)`. A created, edited or deleted comment changes the key.
+6. Every review as sorted `(id, author id, state, submitted_at, commit_id)`.
+7. Every review thread through the guard's existing GraphQL query, as sorted `(thread id, isResolved, SHA-256 of the concatenated comment bodies in order)`. A truncated connection is ineligible.
+8. CI on the head and, when the merge commit differs, on the merge commit: check runs as sorted `(name, app id, status, conclusion)`; the newest commit status per context, excluding statuses created by the guard itself, as sorted `(context, state, creator id)`; and Actions runs for the head as sorted `(id, status, conclusion, run_attempt)`.
+9. Permission roles: the distinct logins of the pull author, every `User` comment and review author, and the newest human `ready_for_review` timeline actor. Each role is read once per sweep through the same permission endpoint the write-ready waiver uses, and the sorted `(login, role name)` pairs enter the key. Scheduled reconciliation therefore still recovers permission changes: a role change moves the key and triggers a full assessment.
+
+An entry is used only when `0 <= now - evaluated_at < 86400`, with `now` the runner's clock; a future timestamp is never used. The age bound is the maximum residual staleness for any input the fingerprint does not cover: at most the entry's age plus the gap to the next sweep. A skip performs no GitHub write at all: it writes no status, comment, review approval or Ready transition. The state file records only the key, the evaluation epoch and the stored exit code of the last full evaluation; the sweep reports the skip as `skipped_unchanged`, contributes the stored exit code, and leaves the stored entry (and its `evaluated_at`) unchanged.
+
+The cache is written only by all-open runs. Any workflow on the default branch, including a `pull_request_target` run, can write that cache scope, so the CLI treats the file as untrusted: it bounds the file size and every field, ignores the whole file with one stderr line when it is missing, unreadable, oversized, not valid JSON, of another version or repository, or has any malformed entry, and falls back to a full sweep. Every other fingerprint failure also fails open to the full sweep; only a rate limit stops the sweep as it does today. A reconcile that raises or is rate limited stores nothing for that pull request and drops its old entry. The held-run drain still runs after every sweep, including one where every pull request was skipped. The per-pull-request cost of a skipped entry is about 9–11 requests instead of about 80.
+
 ## API cost and rate limits
+
+An all-open run with `--sweep-state` pays about 9–11 requests per unchanged pull request instead of about 80; see [Sweep skip for unchanged pull requests](#sweep-skip-for-unchanged-pull-requests).
 
 Every invocation prints one stderr line when it finishes, including `--help`, an argparse error, a run that ends with `GuardError` or a rate limit, a single pull request, an event, and an `--all-open` sweep. An invocation that made no measured requests reports zero:
 
@@ -555,6 +577,7 @@ agent pr-guard --repo OWNER/NAME --pr N --dry-run
 agent pr-guard --repo OWNER/NAME --pr N
 python -m agent_cli.a38_guard reconcile --event-file PATH --event-name NAME
 python -m agent_cli.a38_guard reconcile --repo OWNER/NAME --all-open
+python -m agent_cli.a38_guard reconcile --repo OWNER/NAME --all-open --sweep-state PATH
 python -m agent_cli.a38_guard publish --repo OWNER/NAME --pr N --assessment-file FILE
 ```
 

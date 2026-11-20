@@ -19,10 +19,18 @@ GUARD_ACTION_SHA = "63bd283dc9a3b6eb29827af9f690d2ba79ed1f14"
 GUARD_ACTION_USES = f"DFXswiss/agent/.github/actions/a38-guard@{GUARD_ACTION_SHA}"
 
 
-@pytest.mark.parametrize("step_index", [1, 2], ids=["installer", "guard"])
-def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: int) -> None:
+@pytest.mark.parametrize(
+    "step_name",
+    ["Install trusted guard dependencies", "Run dfx pr guard"],
+    ids=["installer", "guard"],
+)
+def test_composite_cannot_import_consumer_modules(
+    tmp_path: Path, step_name: str
+) -> None:
     action = yaml.safe_load((ROOT / ".github/actions/a38-guard/action.yml").read_text())
-    step = action["runs"]["steps"][step_index]
+    step = next(
+        step for step in action["runs"]["steps"] if step.get("name") == step_name
+    )
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     action_path = tmp_path / "trusted/.github/actions/a38-guard"
@@ -65,6 +73,16 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
         value = value.replace("${{ github.action_ref }}", "a" * 40)
         for name, replacement in inputs.items():
             value = value.replace("${{ inputs." + name + " }}", replacement)
+        if "${{" in value and "a38-sweep-state.json" in value:
+            # The sweep-state path is the empty string unless this run publishes
+            # an all-open sweep.
+            all_open = inputs.get("all_open") == "true"
+            dry_run = inputs.get("dry_run") == "true"
+            value = (
+                f"{tmp_path}/a38-sweep-state.json"
+                if all_open and not dry_run
+                else ""
+            )
         assert "${{" not in value
         env[key] = value
     cwd = str(step.get("working-directory", consumer)).replace("${{ github.action_path }}", str(action_path))
@@ -73,14 +91,22 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
         capture_output=True, text=True, timeout=30, check=False,
     )
     assert result.returncode == 0, result.stderr
-    expected = "trusted installer" if step_index == 1 else "trusted guard"
+    expected = (
+        "trusted installer"
+        if step_name == "Install trusted guard dependencies"
+        else "trusted guard"
+    )
     assert expected in result.stdout
     assert not marker.exists(), "the composite executed consumer-controlled Python"
 
 
 def test_composite_passes_immutable_action_revision_via_environment() -> None:
     action = yaml.safe_load((ROOT / ".github/actions/a38-guard/action.yml").read_text())
-    guard_step = action["runs"]["steps"][2]
+    guard_step = next(
+        step
+        for step in action["runs"]["steps"]
+        if step.get("name") == "Run dfx pr guard"
+    )
     assert guard_step["env"]["A38_RUNTIME_REVISION"] == "${{ github.action_ref }}"
     assert "github.sha" not in str(guard_step)
 

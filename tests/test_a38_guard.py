@@ -12,12 +12,16 @@ import json
 import os
 import runpy
 import sys
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 import unittest
 from typing import Any
 from unittest import mock
+
+import yaml
 
 try:
     import pytest
@@ -33,6 +37,7 @@ from agent_cli import (  # noqa: E402
     a38_review,
     held_run_drain,
     readme_only,
+    sweep_state,
 )
 from agent_cli.a38 import (  # noqa: E402
     inventory_omit_reason,
@@ -53,6 +58,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     LOCAL_CI_END,
     assess_pull,
     check_workflows_against_policy,
+    collect_comments,
     event_should_ignore,
     fetch_pull,
     find_tool_attribution,
@@ -269,9 +275,13 @@ class FakeAPI:
         self._status_seq = 50
         self.mutate_head_on_publish: str | None = None
         self.open_pulls: list[int] = [1]
+        # When set, returned verbatim by the open-pull list endpoint. Tests for
+        # the sweep fingerprint need full pull objects, not just numbers.
+        self.pull_list_items: list[dict[str, Any]] | None = None
         self.commit_pulls: list = []
         self.head_pulls: list = []
         self.reviews: list[dict[str, Any]] = []
+        self.check_runs: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
         self.pull_files: list[dict[str, Any]] = []
         # Logins that return HTTP 404 from the collaborator permission endpoint.
@@ -314,8 +324,15 @@ class FakeAPI:
             "draft": draft,
             "title": title,
             "body": body,
+            "labels": [],
+            "merge_commit_sha": None,
+            "mergeable": True,
             "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
-            "head": {"sha": head, "repo": {"full_name": REPO, "default_branch": "feature"}},
+            "head": {
+                "sha": head,
+                "ref": "feature",
+                "repo": {"full_name": REPO, "default_branch": "feature"},
+            },
             "base": {
                 "sha": base,
                 "ref": "develop",
@@ -427,6 +444,21 @@ class FakeAPI:
                 headers["link"] = ", ".join(rels)
             return 200, chunk, headers
 
+        if method_u == "GET" and path_only.startswith(f"/repos/{REPO}/branches/"):
+            from urllib.parse import unquote
+
+            branch = unquote(path_only[len(f"/repos/{REPO}/branches/") :])
+            return 200, {
+                "name": branch,
+                "commit": {"sha": self.ref_commits.get(branch, DEFAULT_TIP)},
+            }, {}
+
+        if method_u == "GET" and path_only.endswith("/check-runs"):
+            return 200, {
+                "total_count": len(self.check_runs),
+                "check_runs": list(self.check_runs),
+            }, {}
+
         if (
             method_u == "GET"
             and path_only.startswith(f"/repos/{REPO}/commits/")
@@ -457,6 +489,8 @@ class FakeAPI:
             return 200, list(self.head_pulls), {}
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls":
+            if self.pull_list_items is not None:
+                return 200, list(self.pull_list_items), {}
             items = [{"number": n} for n in self.open_pulls]
             return 200, items, {}
 
@@ -1055,6 +1089,207 @@ class A38GuardUnitTests(unittest.TestCase):
             url for url in gets if urlparse(url).path == timeline_path
         ]
         self.assertEqual(len(timeline_gets), 2)
+
+    def test_collect_comments_skips_non_object_items_by_default(self) -> None:
+        fake = FakeAPI()
+        fake.comments = [
+            {"id": 5001},
+            "not an object",  # type: ignore[list-item]
+            {"id": 5002},
+        ]
+        comments = collect_comments(fake.api(), REPO, 1)
+        self.assertTrue(all(isinstance(comment, dict) for comment in comments))
+        ids = [
+            comment["id"]
+            for comment in comments
+            if comment.get("id") in (5001, 5002)
+        ]
+        self.assertEqual(ids, [5001, 5002])
+
+    def test_collect_comments_strict_rejects_non_object_items(self) -> None:
+        fake = FakeAPI()
+        fake.comments = [{"id": 5001}, "not an object"]  # type: ignore[list-item]
+        with self.assertRaises(GuardError):
+            collect_comments(fake.api(), REPO, 1, strict=True)
+
+    def test_load_ready_timeline_skips_malformed_events_by_default(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [{
+            "event": "ready_for_review",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "actor": {"id": 3003, "type": "User"},
+        }]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_reports_a_ready_actor_without_login(
+        self,
+    ) -> None:
+        fake = FakeAPI()
+        fake.timeline = [{
+            "event": "ready_for_review",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "actor": {"id": 3003, "type": "User"},
+        }]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_reports_a_non_object_event(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = ["not an object"]  # type: ignore[list-item]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_reports_an_event_without_kind(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            {
+                "event": "ready_for_review",
+                "id": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+            {
+                "id": 2,
+                "created_at": "2026-02-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+        ]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_reports_a_non_string_kind(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            {
+                "event": "ready_for_review",
+                "id": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+            {
+                "event": 7,
+                "id": 2,
+                "created_at": "2026-02-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+        ]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_skips_a_non_ready_event(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            {
+                "event": "ready_for_review",
+                "id": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+            {
+                "event": "labeled",
+                "id": 2,
+                "created_at": "2026-02-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+        ]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (4004, "reviewer"))
+
+    def test_load_ready_timeline_skips_an_event_without_kind_by_default(
+        self,
+    ) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            {
+                "event": "ready_for_review",
+                "id": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+            {
+                "id": 2,
+                "created_at": "2026-02-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+        ]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (4004, "reviewer"))
+
+    def test_load_ready_timeline_strict_reports_a_ready_actor_without_type(
+        self,
+    ) -> None:
+        fake = FakeAPI()
+        fake.timeline = [{
+            "event": "ready_for_review",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer"},
+        }]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_reports_a_non_string_actor_type(
+        self,
+    ) -> None:
+        fake = FakeAPI()
+        fake.timeline = [{
+            "event": "ready_for_review",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": 123},
+        }]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "unavailable")
+        self.assertIsNone(actor)
+
+    def test_load_ready_timeline_strict_skips_a_bot_ready_actor(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            {
+                "event": "ready_for_review",
+                "id": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+            },
+            {
+                "event": "ready_for_review",
+                "id": 2,
+                "created_at": "2026-02-01T00:00:00Z",
+                "actor": {
+                    "id": BOT_ID,
+                    "login": "github-actions[bot]",
+                    "type": "Bot",
+                },
+            },
+        ]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1, strict=True)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (4004, "reviewer"))
+
+    def test_load_ready_timeline_skips_a_ready_actor_without_type_by_default(
+        self,
+    ) -> None:
+        fake = FakeAPI()
+        fake.timeline = [{
+            "event": "ready_for_review",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer"},
+        }]
+        status, actor = load_ready_timeline(fake.api(), REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertIsNone(actor)
 
     def test_load_ready_timeline_reuses_cached_page_1_via_prev(self) -> None:
         """Walking rel=prev back to discovery page 1 reuses the cached GET."""
@@ -4122,6 +4357,584 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             msg=result.reasons,
         )
         self.assertEqual(result.write_ready_reason, "markdown-only change set")
+
+
+class A38CollaboratorPermissionTests(unittest.TestCase):
+    """The write waiver tests ``permission``; the fingerprint may use role names."""
+
+    def _fake(self, permission: str, role_name: str | None) -> FakeAPI:
+        fake = FakeAPI()
+        record: dict[str, Any] = {
+            "permission": permission,
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+        }
+        if role_name is not None:
+            record["role_name"] = role_name
+        fake.permissions["author"] = record
+        return fake
+
+    def test_write_permission_with_custom_role_keeps_the_waiver(self) -> None:
+        fake = self._fake("write", "deployer")
+        self.assertTrue(
+            a38_guard.collaborator_has_write(fake.api(), REPO, "author", AUTHOR_ID)
+        )
+
+    def test_role_name_alone_does_not_grant_the_waiver(self) -> None:
+        fake = self._fake("read", "write")
+        self.assertFalse(
+            a38_guard.collaborator_has_write(fake.api(), REPO, "author", AUTHOR_ID)
+        )
+
+    def test_fingerprint_role_uses_the_role_name(self) -> None:
+        fake = self._fake("write", "deployer")
+        self.assertEqual(
+            a38_guard.collaborator_role(fake.api(), REPO, "author", AUTHOR_ID),
+            "deployer",
+        )
+        fake.permissions["author"]["role_name"] = "reviewer"
+        self.assertEqual(
+            a38_guard.collaborator_role(fake.api(), REPO, "author", AUTHOR_ID),
+            "reviewer",
+        )
+
+    def test_fingerprint_role_falls_back_to_permission_without_role_name(self) -> None:
+        fake = self._fake("write", None)
+        self.assertEqual(
+            a38_guard.collaborator_role(fake.api(), REPO, "author", AUTHOR_ID),
+            "write",
+        )
+
+    def test_fingerprint_role_reports_none_for_a_non_collaborator(self) -> None:
+        fake = FakeAPI()
+        fake.permission_404.add("author")
+        self.assertEqual(
+            a38_guard.collaborator_role(fake.api(), REPO, "author", AUTHOR_ID),
+            "none",
+        )
+
+
+class A38SweepStateTests(unittest.TestCase):
+    """The --all-open loop with a sweep-state file."""
+
+    RUNTIME = "e" * 40
+
+    def _fake(self) -> FakeAPI:
+        fake = FakeAPI()
+        fake.pull_list_items = [fake.pull]
+        fake.permissions["author"] = {
+            "permission": "write",
+            "role_name": "write",
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+        }
+        return fake
+
+    def _env(self) -> dict[str, str]:
+        return {"GH_TOKEN": "fake", "A38_RUNTIME_REVISION": self.RUNTIME}
+
+    def _argv(self, state_path: str, *extra: str) -> list[str]:
+        return [
+            "reconcile",
+            "--repo",
+            REPO,
+            "--all-open",
+            "--sweep-state",
+            state_path,
+            "--json",
+            *extra,
+        ]
+
+    def _passing(self, api: Any, repo: str, number: int, **kwargs: Any) -> Assessment:
+        return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+    def _state_entries(self, path: str) -> dict[str, Any]:
+        return json.loads(Path(path).read_text(encoding="utf-8"))["entries"]
+
+    def _load_after_one_sweep(self, tmp: str) -> tuple[FakeAPI, str]:
+        fake = self._fake()
+        state_path = os.path.join(tmp, "a38-sweep-state.json")
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=self._passing
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", return_value={"enabled": False}
+        ):
+            code, _, _ = _run_guard(
+                self._argv(state_path), fake.api(), env=self._env()
+            )
+        self.assertEqual(code, 0)
+        return fake, state_path
+
+    def _rewrite_evaluated_at(self, path: str, evaluated_at: int) -> None:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        payload["entries"]["1"]["evaluated_at"] = evaluated_at
+        Path(path).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_expired_entry_runs_full_reconcile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake, state_path = self._load_after_one_sweep(tmp)
+            self._rewrite_evaluated_at(
+                state_path, int(time.time()) - sweep_state.ENTRY_TTL_S
+            )
+            calls: list[int] = []
+
+            def fake_reconcile(
+                api: Any, repo: str, number: int, **kwargs: Any
+            ) -> Assessment:
+                calls.append(number)
+                return self._passing(api, repo, number)
+
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=fake_reconcile
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, out, _ = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1])
+        self.assertEqual(json.loads(out)["results"][0]["status"], "pass")
+
+    def test_future_entry_runs_full_reconcile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake, state_path = self._load_after_one_sweep(tmp)
+            self._rewrite_evaluated_at(state_path, int(time.time()) + 60)
+            calls: list[int] = []
+
+            def fake_reconcile(
+                api: Any, repo: str, number: int, **kwargs: Any
+            ) -> Assessment:
+                calls.append(number)
+                return self._passing(api, repo, number)
+
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=fake_reconcile
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, out, _ = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1])
+        self.assertEqual(json.loads(out)["results"][0]["status"], "pass")
+
+    def test_second_sweep_skips_unchanged_pull_and_writes_nothing(self) -> None:
+        fake = self._fake()
+        calls: list[int] = []
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return self._passing(api, repo, number)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=fake_reconcile
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                first_code, first_out, _ = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+                writes_after_first = list(fake.writes)
+                second_code, second_out, second_err = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+        self.assertEqual(calls, [1])
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 0)
+        self.assertEqual(
+            json.loads(first_out)["results"][0]["status"],
+            "pass",
+        )
+        second_result = json.loads(second_out)["results"][0]
+        self.assertEqual(second_result["status"], "skipped_unchanged")
+        self.assertEqual(second_result["pr"], 1)
+        self.assertEqual(fake.writes, writes_after_first)
+        self.assertIn("unchanged since", second_err)
+        self.assertIn("; skipped", second_err)
+
+    def test_changed_input_within_24_hours_runs_full_reconcile(self) -> None:
+        fake = self._fake()
+        calls: list[int] = []
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return self._passing(api, repo, number)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            self._first_sweep(fake, state_path)
+            stored = self._state_entries(state_path)["1"]
+            # The stored entry is fresh; only one fingerprint input changes.
+            fake.pull["title"] = "a changed title"
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=fake_reconcile
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, out, err = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+        self.assertLess(
+            int(time.time()) - stored["evaluated_at"], sweep_state.ENTRY_TTL_S
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1])
+        self.assertEqual(json.loads(out)["results"][0]["status"], "pass")
+        self.assertNotIn("unchanged since", err)
+
+    def _second_sweep_reconciles(
+        self, fake: FakeAPI, state_path: str
+    ) -> list[int]:
+        calls: list[int] = []
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return self._passing(api, repo, number)
+
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", return_value={"enabled": False}
+        ):
+            code, out, _ = _run_guard(
+                self._argv(state_path), fake.api(), env=self._env()
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["results"][0]["status"], "pass")
+        return calls
+
+    def _first_sweep(self, fake: FakeAPI, state_path: str) -> None:
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=self._passing
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", return_value={"enabled": False}
+        ):
+            code, _, _ = _run_guard(
+                self._argv(state_path), fake.api(), env=self._env()
+            )
+        self.assertEqual(code, 0)
+
+    def test_edited_guard_comment_runs_full_reconcile(self) -> None:
+        fake = self._fake()
+        fake.comments.append({
+            "id": 7001,
+            "user": {"id": BOT_ID, "login": "github-actions[bot]", "type": "Bot"},
+            "updated_at": "2024-01-01T00:00:00Z",
+            "body": f"{GUARD_MARKER}\nA38 report for the head",
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            self._first_sweep(fake, state_path)
+            fake.comments[0]["body"] = (
+                f"{GUARD_MARKER}\nA38 report for the head, edited"
+            )
+            fake.comments[0]["updated_at"] = "2024-01-02T00:00:00Z"
+            calls = self._second_sweep_reconciles(fake, state_path)
+        self.assertEqual(calls, [1])
+
+    def test_deleted_comment_runs_full_reconcile(self) -> None:
+        fake = self._fake()
+        fake.comments.append({
+            "id": 7002,
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+            "updated_at": "2024-01-01T00:00:00Z",
+            "body": "a comment",
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            self._first_sweep(fake, state_path)
+            fake.comments.clear()
+            calls = self._second_sweep_reconciles(fake, state_path)
+        self.assertEqual(calls, [1])
+
+    def test_skip_contributes_stored_exit_code(self) -> None:
+        fake = self._fake()
+
+        def failing(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            return Assessment(
+                ok=False, status="fail", repo=repo, pr=number, draft=False
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=failing
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                first_code, _, _ = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+                stored = self._state_entries(state_path)["1"]
+                with mock.patch.object(
+                    a38_guard,
+                    "reconcile_pull",
+                    side_effect=AssertionError("a skipped pull must not reconcile"),
+                ):
+                    second_code, second_out, _ = _run_guard(
+                        self._argv(state_path), fake.api(), env=self._env()
+                    )
+
+        self.assertEqual(first_code, 1)
+        self.assertEqual(stored["exit_code"], 1)
+        self.assertEqual(second_code, 1)
+        result = json.loads(second_out)["results"][0]
+        self.assertEqual(result["status"], "skipped_unchanged")
+        self.assertEqual(result["evaluated_at"], stored["evaluated_at"])
+
+    def test_reconcile_error_drops_previous_entry(self) -> None:
+        fake = self._fake()
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=self._passing
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                _run_guard(self._argv(state_path), fake.api(), env=self._env())
+            self.assertIn("1", self._state_entries(state_path))
+            fake.pull["title"] = "changed"
+            with mock.patch.object(
+                a38_guard,
+                "reconcile_pull",
+                side_effect=GuardError("assessment failed"),
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, out, _ = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(out)["results"][0]["status"], "error")
+            self.assertEqual(self._state_entries(state_path), {})
+
+    def test_reconcile_rate_limit_drops_previous_entry(self) -> None:
+        fake = self._fake()
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=self._passing
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                _run_guard(self._argv(state_path), fake.api(), env=self._env())
+            self.assertIn("1", self._state_entries(state_path))
+            fake.pull["title"] = "changed again"
+            with mock.patch.object(
+                a38_guard,
+                "reconcile_pull",
+                side_effect=RateLimitError("rate limited", retry_at=None),
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, _, err = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+            self.assertEqual(code, 0)
+            self.assertIn("rate limited", err)
+            self.assertEqual(self._state_entries(state_path), {})
+
+    def test_budget_check_runs_before_fingerprint_reads(self) -> None:
+        fake = self._fake()
+        api = fake.api()
+        api.pool_last = {
+            "x-ratelimit-remaining": "1",
+            "x-ratelimit-limit": "5000",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard,
+                "list_open_pull_items",
+                return_value=[fake.pull],
+            ), mock.patch.object(
+                sweep_state,
+                "compute_sweep_key",
+                side_effect=AssertionError("fingerprint must not be read"),
+            ), mock.patch.object(
+                a38_guard,
+                "reconcile_pull",
+                side_effect=AssertionError("pull must not be reconciled"),
+            ), mock.patch.object(
+                held_run_drain,
+                "drain_held_runs",
+                side_effect=AssertionError("drain must not start"),
+            ):
+                code, out, err = _run_guard(
+                    self._argv(state_path), api, env=self._env()
+                )
+
+        payload = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["budget_stop"]["skipped"], [1])
+        self.assertEqual(payload["held_run_drain"], {"skipped": "budget"})
+        self.assertIn("budget stop before 1/1 PR 1", err)
+
+    def test_drain_runs_when_every_pull_is_skipped(self) -> None:
+        fake = self._fake()
+        drains: list[str] = []
+
+        def fake_drain(api: Any, repo: str, *, dry_run: bool) -> dict[str, Any]:
+            drains.append("drain")
+            return {"enabled": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=self._passing
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", side_effect=fake_drain
+            ):
+                _run_guard(self._argv(state_path), fake.api(), env=self._env())
+                drains.clear()
+                with mock.patch.object(
+                    a38_guard,
+                    "reconcile_pull",
+                    side_effect=AssertionError("a skipped pull must not reconcile"),
+                ):
+                    code, out, _ = _run_guard(
+                        self._argv(state_path), fake.api(), env=self._env()
+                    )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(drains, ["drain"])
+        self.assertEqual(
+            json.loads(out)["results"][0]["status"], "skipped_unchanged"
+        )
+
+    def test_dry_run_neither_reads_nor_writes_state(self) -> None:
+        fake = self._fake()
+        original = b'{"version":1,"repository":"other/repo","entries":{}}'
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            Path(state_path).write_bytes(original)
+            with mock.patch.object(
+                sweep_state,
+                "load_sweep_state",
+                side_effect=AssertionError("dry-run must not read state"),
+            ), mock.patch.object(
+                sweep_state,
+                "save_sweep_state",
+                side_effect=AssertionError("dry-run must not write state"),
+            ), mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=self._passing
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, _, _ = _run_guard(
+                    self._argv(state_path, "--dry-run"),
+                    fake.api(),
+                    env=self._env(),
+                )
+            self.assertEqual(Path(state_path).read_bytes(), original)
+        self.assertEqual(code, 0)
+
+    def test_sweep_state_requires_all_open(self) -> None:
+        fake = self._fake()
+        code, _, err = _run_guard(
+            [
+                "reconcile",
+                "--repo",
+                REPO,
+                "--pr",
+                "1",
+                "--sweep-state",
+                "state.json",
+            ],
+            fake.api(),
+            env=self._env(),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--sweep-state requires --all-open", err)
+
+    def test_malformed_state_file_falls_back_to_full_sweep(self) -> None:
+        fake = self._fake()
+        calls: list[int] = []
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return self._passing(api, repo, number)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "a38-sweep-state.json")
+            Path(state_path).write_text(
+                json.dumps({
+                    "version": 1,
+                    "repository": "other/repo",
+                    "entries": {},
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                a38_guard, "reconcile_pull", side_effect=fake_reconcile
+            ), mock.patch.object(
+                held_run_drain, "drain_held_runs", return_value={"enabled": False}
+            ):
+                code, out, err = _run_guard(
+                    self._argv(state_path), fake.api(), env=self._env()
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [1])
+        self.assertEqual(json.loads(out)["results"][0]["status"], "pass")
+        self.assertIn("a38-guard: sweep state ignored: repository mismatch", err)
+
+    def test_action_contains_pinned_sweep_cache_steps(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "actions"
+            / "a38-guard"
+            / "action.yml"
+        )
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        steps = {step.get("name"): step for step in data["runs"]["steps"]}
+        sha = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+        restore = steps["Restore sweep state"]
+        save = steps["Save sweep state"]
+        for step, action in (
+            (restore, f"actions/cache/restore@{sha}"),
+            (save, f"actions/cache/save@{sha}"),
+        ):
+            self.assertEqual(step["uses"], action)
+            self.assertIn("inputs.all_open == 'true'", step["if"])
+            self.assertIn("inputs.dry_run != 'true'", step["if"])
+            self.assertEqual(step["with"]["path"], "${{ runner.temp }}/a38-sweep-state.json")
+            self.assertEqual(
+                step["with"]["key"],
+                "a38-sweep-v1-${{ github.repository }}-"
+                "${{ github.run_id }}-${{ github.run_attempt }}",
+            )
+        self.assertIn("always()", save["if"])
+        self.assertEqual(restore["continue-on-error"], True)
+        self.assertEqual(save["continue-on-error"], True)
+        self.assertEqual(
+            restore["with"]["restore-keys"],
+            "a38-sweep-v1-${{ github.repository }}-",
+        )
+        self.assertIn("A38_SWEEP_STATE", steps["Run dfx pr guard"]["env"])
+        check = steps["Check sweep state"]
+        self.assertEqual(check["id"], "sweep-state")
+        # The existence-check shell step must not fail the guard.
+        self.assertEqual(check["continue-on-error"], True)
 
 
 def _api_path(url: str) -> str:

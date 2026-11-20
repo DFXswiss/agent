@@ -1841,6 +1841,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       reviewThreads(first: 50, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
+          id
           isResolved
           comments(first: 100) {
             pageInfo { hasNextPage endCursor }
@@ -1854,12 +1855,15 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
 """.strip()
 
 
-def _load_threads(api: Any, repo: str, number: int) -> list[str]:
-    # A thread whose first comment page is truncated fails closed. Paging
-    # every thread's comments would be a second query shape; 100 comments
-    # is the cap this gate will read.
+def _query_thread_nodes(api: Any, repo: str, number: int) -> list[Any] | None:
+    """Raw review-thread nodes, or None when the connection cannot be read.
+
+    A thread whose first comment page is truncated is not readable. Paging
+    every thread's comments would be a second query shape; 100 comments
+    is the cap this gate will read.
+    """
     if repo.count("/") != 1:
-        return ["review thread query failed"]
+        return None
     owner, name = repo.split("/", 1)
     nodes: list[Any] = []
     cursor: str | None = None
@@ -1881,39 +1885,55 @@ def _load_threads(api: Any, repo: str, number: int) -> list[str]:
             )
         except Exception as exc:
             _reraise_rate_limit(exc)
-            return ["review thread query failed"]
+            return None
         if status != 200 or not isinstance(data, Mapping) or data.get("errors"):
-            return ["review thread query failed"]
+            return None
         repository = (data.get("data") or {}) if isinstance(data.get("data"), Mapping) else None
         if not isinstance(repository, Mapping):
-            return ["review thread query failed"]
+            return None
         pull = (repository.get("repository") or {}) if isinstance(repository.get("repository"), Mapping) else None
         if not isinstance(pull, Mapping):
-            return ["review thread query failed"]
+            return None
         pull_request = pull.get("pullRequest")
         connection = pull_request.get("reviewThreads") if isinstance(pull_request, Mapping) else None
         if not isinstance(connection, Mapping):
-            return ["review thread query failed"]
+            return None
         page = connection.get("nodes")
         info = connection.get("pageInfo")
         if not isinstance(page, list) or not isinstance(info, Mapping):
-            return ["review thread query failed"]
+            return None
         for node in page:
             comments = node.get("comments") if isinstance(node, Mapping) else None
             page_info = comments.get("pageInfo") if isinstance(comments, Mapping) else None
             # A missing page, a non-boolean flag, or another page all fail closed.
             if not isinstance(page_info, Mapping) or page_info.get("hasNextPage") is not False:
-                return ["review thread query failed"]
+                return None
         nodes.extend(page)
         if info.get("hasNextPage") is True:
             cursor = info.get("endCursor")
             if not isinstance(cursor, str) or not cursor:
-                return ["review thread query failed"]
+                return None
             continue
         if info.get("hasNextPage") is not False:
-            return ["review thread query failed"]
-        return unresolved_thread_reasons(nodes)
-    return ["review thread query failed"]
+            return None
+        return nodes
+    return None
+
+
+def load_thread_nodes(api: Any, repo: str, number: int) -> list[Any] | None:
+    """Raw review threads for the all-open sweep fingerprint.
+
+    Shares the query and pagination of ``_load_threads``. None means the
+    connection was truncated or could not be read completely.
+    """
+    return _query_thread_nodes(api, repo, number)
+
+
+def _load_threads(api: Any, repo: str, number: int) -> list[str]:
+    nodes = _query_thread_nodes(api, repo, number)
+    if nodes is None:
+        return ["review thread query failed"]
+    return unresolved_thread_reasons(nodes)
 
 
 def _head_committed_at(api: Any, repo: str, head: str) -> str | None:

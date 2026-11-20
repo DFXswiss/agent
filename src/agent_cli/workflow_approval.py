@@ -67,6 +67,7 @@ def _list_runs(
     *,
     allow_truncated: bool = False,
     single_page: bool = False,
+    exact: bool = False,
 ) -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
 
@@ -156,6 +157,12 @@ def _list_runs(
             break
         _retry_pause(api, INVENTORY_RETRY_DELAY_S * attempt)
         listed, shift_cause, observed_total = once()
+    # A short final page ends the list by design above. Callers that need the
+    # whole inventory opt into an exact row count instead.
+    if exact and (observed_total is None or len(listed) != observed_total):
+        raise fail(
+            "workflow run inventory incomplete", observed_total, len(listed)
+        )
     if shift_cause is not None:
         if allow_truncated and shift_cause in {"count", "duplicate"}:
             # A persistent shift may return the last attempt's prefix.

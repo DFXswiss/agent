@@ -2676,12 +2676,22 @@ def load_base_policy(
     return policy, None
 
 
-def collect_comments(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
+def collect_comments(
+    api: GitHubApi, repo: str, number: int, *, strict: bool = False
+) -> list[dict[str, Any]]:
+    """Comment objects, skipping any non-object list item by default.
+
+    ``strict`` is for callers that fingerprint the result: an item that is not
+    an object then raises instead of being silently dropped, so an incomplete
+    read cannot become a key.
+    """
     raw = api.paginate(f"/repos/{repo}/issues/{number}/comments")
     out: list[dict[str, Any]] = []
     for item in raw:
         if isinstance(item, dict):
             out.append(item)
+        elif strict:
+            raise GuardError("issue comment list item is not an object")
     return out
 
 
@@ -2690,6 +2700,50 @@ def _report_fingerprint(comment: Mapping[str, Any] | None) -> str:
         return ""
     payload = [comment.get("id"), comment.get("updated_at"), comment.get("body")]
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _collaborator_permission(
+    api: GitHubApi, repo: str, login: str, expected_id: int
+) -> tuple[bool, str | None, str | None]:
+    """Read one effective repository permission through its endpoint.
+
+    Returns ``(readable, permission, role_name)``. ``(True, None, None)`` is
+    GitHub's 404 for a login that is not a collaborator. ``readable`` is False
+    for a malformed request or identity, a non-2xx response other than 404, or
+    a payload that cannot be validated; callers decide whether that fails open
+    or closed. ``role_name`` is passed through only when GitHub reports it as
+    a string; it is never a substitute for ``permission`` in the waiver.
+    """
+    if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+        return False, None, None
+    if type(expected_id) is not int:
+        return False, None, None
+    status, data, _ = api.request(
+        "GET",
+        f"/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission",
+    )
+    if status == 404:
+        return True, None, None
+    if not 200 <= status < 300:
+        return False, None, None
+    if not isinstance(data, Mapping):
+        return False, None, None
+    permission = data.get("permission")
+    if not isinstance(permission, str):
+        return False, None, None
+    user = data.get("user")
+    if not isinstance(user, Mapping):
+        return False, None, None
+    payload_id = user.get("id")
+    if type(payload_id) is not int or payload_id != expected_id:
+        return False, None, None
+    if user.get("type") != "User":
+        return False, None, None
+    payload_login = user.get("login")
+    if not isinstance(payload_login, str) or payload_login != login:
+        return False, None, None
+    role_name = data.get("role_name")
+    return True, permission, role_name if isinstance(role_name, str) else None
 
 
 def collaborator_has_write(
@@ -2701,33 +2755,36 @@ def collaborator_has_write(
     non-2xx responses, missing/non-User type, identity mismatch or non-write
     roles return False without raising so assessment can continue without the
     waiver. Bots and Apps never qualify even with admin and an alphanumeric login.
+    The decision is made on the built-in ``permission`` field only; a custom
+    ``role_name`` never grants the waiver by itself.
     """
-    if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-        return False
-    if type(expected_id) is not int:
-        return False
-    status, data, _ = api.request(
-        "GET",
-        f"/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission",
+    readable, permission, _role_name = _collaborator_permission(
+        api, repo, login, expected_id
     )
-    if status == 404 or not 200 <= status < 300:
-        return False
-    if not isinstance(data, Mapping):
-        return False
-    if data.get("permission") not in {"write", "maintain", "admin"}:
-        return False
-    user = data.get("user")
-    if not isinstance(user, Mapping):
-        return False
-    payload_id = user.get("id")
-    if type(payload_id) is not int or payload_id != expected_id:
-        return False
-    if user.get("type") != "User":
-        return False
-    payload_login = user.get("login")
-    if not isinstance(payload_login, str) or payload_login != login:
-        return False
-    return True
+    return readable and permission in {"write", "maintain", "admin"}
+
+
+def collaborator_role(
+    api: GitHubApi, repo: str, login: str, expected_id: int
+) -> str | None:
+    """Effective role name for the sweep fingerprint, or None when unreadable.
+
+    Shares the request and validation of :func:`collaborator_has_write`. Uses
+    the reported ``role_name`` when it is a string, otherwise the built-in
+    ``permission``; a 404 is the readable answer ``none`` (not a collaborator),
+    and any other unreadable response returns None so the sweep fails open to
+    a full reconciliation.
+    """
+    readable, permission, role_name = _collaborator_permission(
+        api, repo, login, expected_id
+    )
+    if not readable:
+        return None
+    if role_name is not None:
+        return role_name
+    if permission is not None:
+        return permission
+    return "none"
 
 
 class _TimelineUnavailable(Exception):
@@ -2761,31 +2818,56 @@ def _iter_timeline_events(
 
 
 def load_ready_timeline(
-    api: GitHubApi, repo: str, number: int
+    api: GitHubApi, repo: str, number: int, *, strict: bool = False
 ) -> tuple[str, tuple[int, str] | None]:
     """Return ``("ok", actor_or_none)`` or ``("unavailable", None)``.
 
     HTTP 404 of the timeline is unavailable while paginating. 401/403 are
     unavailable. Other pagination errors still raise.
+
+    By default malformed events are skipped. ``strict`` is for callers that
+    fingerprint the result: an event examined before the newest qualifying
+    Ready event that is malformed (not an object, or missing/wrongly typed
+    ``event``, ``created_at``, ``id``, ``actor``, ``actor.login``, ``actor.id``
+    or ``actor.type``) reports unavailable instead of being dropped. Events
+    after that return are never examined.
     """
     try:
         for event in _iter_timeline_events(api, repo, number):
             if not isinstance(event, Mapping):
+                if strict:
+                    return "unavailable", None
                 continue
-            if event.get("event") != "ready_for_review":
+            kind = event.get("event")
+            if not isinstance(kind, str):
+                if strict:
+                    return "unavailable", None
+                continue
+            if kind != "ready_for_review":
                 continue
             created_at = event.get("created_at")
             event_id = event.get("id")
             if not isinstance(created_at, str) or type(event_id) is not int:
+                if strict:
+                    return "unavailable", None
                 continue
             actor = event.get("actor")
             if not isinstance(actor, Mapping):
-                continue
-            if actor.get("type") != "User":
+                if strict:
+                    return "unavailable", None
                 continue
             login = actor.get("login")
             actor_id = actor.get("id")
             if not isinstance(login, str) or type(actor_id) is not int:
+                if strict:
+                    return "unavailable", None
+                continue
+            actor_type = actor.get("type")
+            if not isinstance(actor_type, str):
+                if strict:
+                    return "unavailable", None
+                continue
+            if actor_type != "User":
                 continue
             return "ok", (actor_id, login)
     except _TimelineUnavailable:
@@ -3883,15 +3965,20 @@ def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
         print("a38-guard: could not invalidate prior status (API denied or unavailable)", file=sys.stderr)
 
 
-def list_open_pulls(api: GitHubApi, repo: str) -> list[int]:
+def list_open_pull_items(api: GitHubApi, repo: str) -> list[dict[str, Any]]:
+    """Open pull objects, most recently updated first, for the sweep skip."""
     items = api.paginate(
         f"/repos/{repo}/pulls?state=open&sort=updated&direction=desc"
     )
-    numbers: list[int] = []
-    for item in items:
-        if isinstance(item, dict) and isinstance(item.get("number"), int):
-            numbers.append(item["number"])
-    return numbers
+    return [
+        item
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("number"), int)
+    ]
+
+
+def list_open_pulls(api: GitHubApi, repo: str) -> list[int]:
+    return [item["number"] for item in list_open_pull_items(api, repo)]
 
 
 def event_should_ignore(
@@ -4247,6 +4334,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reconcile every open PR in --repo (standalone / scheduled host)",
     )
     rec.add_argument(
+        "--sweep-state",
+        default=None,
+        metavar="PATH",
+        help="Skip unchanged PRs in --all-open using this state file",
+    )
+    rec.add_argument(
         "--dry-run",
         action="store_true",
         help="Prospective JSON only; no comment/status writes",
@@ -4444,13 +4537,32 @@ def _run(
         if args.command == "reconcile":
             dry = bool(args.dry_run or args.no_publish)
             publish = not dry
+            sweep_state_path = getattr(args, "sweep_state", None)
+            if sweep_state_path and not args.all_open:
+                raise GuardError("--sweep-state requires --all-open")
             if args.all_open:
                 if not args.repo:
                     raise GuardError("--all-open requires --repo")
+                repo = _validate_repo(args.repo)
+                # A dry run or --no-publish accepts the flag but neither reads
+                # nor writes the state file.
+                state_active = bool(sweep_state_path) and publish and not dry
+                sweep_ctx = None
+                state_entries: dict[int, Any] = {}
+                if state_active:
+                    from . import sweep_state as sweep
+
+                    state_entries = sweep.load_sweep_state(sweep_state_path, repo)
+                    sweep_ctx = sweep.SweepContext(runtime_env=environ)
                 results = []
                 exit_codes = []
+                pull_items: list[dict[str, Any]] | None = None
                 try:
-                    numbers = list_open_pulls(client, _validate_repo(args.repo))
+                    if state_active:
+                        pull_items = list_open_pull_items(client, repo)
+                        numbers = [item["number"] for item in pull_items]
+                    else:
+                        numbers = list_open_pulls(client, repo)
                 except RuntimeError as exc:
                     if not is_rate_limit_error(exc):
                         raise
@@ -4458,102 +4570,169 @@ def _run(
                     raise
                 n = len(numbers)
                 budget_stop = None
-                for i, number in enumerate(numbers, start=1):
-                    budget = _sweep_budget_low(client)
-                    if budget is not None:
-                        remaining, limit = budget
-                        skipped = numbers[i - 1 :]
-                        print(
-                            "a38-guard: all-open budget stop before "
-                            f"{i}/{n} PR {number}: remaining={remaining} limit={limit}",
-                            file=sys.stderr,
-                            flush=True,
+
+                def _save_sweep_state() -> None:
+                    if state_active:
+                        sweep.save_sweep_state(
+                            sweep_state_path, repo, numbers, state_entries
                         )
-                        budget_stop = {
-                            "remaining": remaining,
-                            "limit": limit,
-                            "skipped": skipped,
-                        }
-                        break
-                    print(
-                        f"a38-guard: all-open {i}/{n} PR {number}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    try:
-                        assessment = reconcile_pull(
-                            client,
-                            args.repo,
-                            number,
-                            dry_run=dry,
-                            publish=publish,
-                            runtime_env=environ,
-                        )
-                    except Exception as exc:  # noqa: BLE001 — per-PR isolation
-                        if is_rate_limit_error(exc):
-                            _note_sweep_rate_limit(
-                                exc,
-                                results,
-                                repo=args.repo,
-                                pr=number,
-                                failed_before=any(exit_codes),
+
+                try:
+                    for i, number in enumerate(numbers, start=1):
+                        budget = _sweep_budget_low(client)
+                        if budget is not None:
+                            remaining, limit = budget
+                            skipped = numbers[i - 1 :]
+                            print(
+                                "a38-guard: all-open budget stop before "
+                                f"{i}/{n} PR {number}: remaining={remaining} limit={limit}",
+                                file=sys.stderr,
+                                flush=True,
                             )
-                            raise
-                        results.append({
-                            "ok": False, "status": "error", "repo": args.repo,
-                            "pr": number, "reasons": [str(exc)],
-                        })
-                        exit_codes.append(1)
+                            budget_stop = {
+                                "remaining": remaining,
+                                "limit": limit,
+                                "skipped": skipped,
+                            }
+                            break
                         print(
-                            f"a38-guard: PR {number}: {exc}",
+                            f"a38-guard: all-open {i}/{n} PR {number}",
                             file=sys.stderr,
                             flush=True,
                         )
-                        continue
-                    results.append(assessment.to_json())
-                    exit_codes.append(_assessment_exit_code(assessment))
-                if budget_stop is None:
-                    budget = _sweep_budget_low(client)
-                    if budget is not None:
-                        remaining, limit = budget
-                        print(
-                            "a38-guard: all-open budget stop before held run "
-                            f"drain: remaining={remaining} limit={limit}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                        budget_stop = {
-                            "remaining": remaining,
-                            "limit": limit,
-                            "skipped": [],
-                        }
-                if budget_stop is not None:
-                    drain = {"skipped": "budget"}
-                else:
-                    from .held_run_drain import drain_held_runs
-                    # A maintenance pass that cannot delete must not turn the guard
-                    # red for every pull request in the sweep.
-                    try:
-                        drain = drain_held_runs(
-                            client, _validate_repo(args.repo), dry_run=dry
-                        )
-                    except RuntimeError as exc:
-                        if is_rate_limit_error(exc):
-                            setattr(exc, "results", results)
-                            setattr(
-                                exc,
-                                "failed_before",
-                                getattr(exc, "failed_before", False) or any(exit_codes),
+                        key: str | None = None
+                        if state_active and sweep_ctx is not None:
+                            item = pull_items[i - 1] if pull_items is not None else None
+                            try:
+                                key = sweep.compute_sweep_key(
+                                    client, repo, item, sweep_ctx
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                if is_rate_limit_error(exc):
+                                    state_entries.pop(number, None)
+                                    _note_sweep_rate_limit(
+                                        exc,
+                                        results,
+                                        repo=args.repo,
+                                        pr=number,
+                                        failed_before=any(exit_codes),
+                                    )
+                                    raise
+                                key = None
+                            stored = state_entries.get(number)
+                            if (
+                                key is not None
+                                and stored is not None
+                                and stored.key == key
+                                and sweep.entry_usable(stored, int(time.time()))
+                            ):
+                                results.append({
+                                    "ok": True,
+                                    "status": "skipped_unchanged",
+                                    "repo": repo,
+                                    "pr": number,
+                                    "evaluated_at": stored.evaluated_at,
+                                })
+                                exit_codes.append(stored.exit_code)
+                                print(
+                                    f"a38-guard: all-open {i}/{n} PR {number} "
+                                    f"unchanged since "
+                                    f"{sweep.iso_utc(stored.evaluated_at)}; skipped",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                                continue
+                        start = int(time.time())
+                        try:
+                            assessment = reconcile_pull(
+                                client,
+                                args.repo,
+                                number,
+                                dry_run=dry,
+                                publish=publish,
+                                runtime_env=environ,
                             )
-                            raise
-                        if not _is_guard_error(exc):
-                            raise
-                        print(
-                            f"a38-guard: held run drain: {exc}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                        drain = {"error": str(exc)}
+                        except Exception as exc:  # noqa: BLE001 — per-PR isolation
+                            if state_active:
+                                state_entries.pop(number, None)
+                            if is_rate_limit_error(exc):
+                                _note_sweep_rate_limit(
+                                    exc,
+                                    results,
+                                    repo=args.repo,
+                                    pr=number,
+                                    failed_before=any(exit_codes),
+                                )
+                                raise
+                            results.append({
+                                "ok": False, "status": "error", "repo": args.repo,
+                                "pr": number, "reasons": [str(exc)],
+                            })
+                            exit_codes.append(1)
+                            print(
+                                f"a38-guard: PR {number}: {exc}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            continue
+                        results.append(assessment.to_json())
+                        exit_codes.append(_assessment_exit_code(assessment))
+                        if state_active:
+                            if key is not None:
+                                state_entries[number] = sweep.StateEntry(
+                                    key=key,
+                                    evaluated_at=start,
+                                    exit_code=_assessment_exit_code(assessment),
+                                )
+                            else:
+                                state_entries.pop(number, None)
+                    if budget_stop is None:
+                        budget = _sweep_budget_low(client)
+                        if budget is not None:
+                            remaining, limit = budget
+                            print(
+                                "a38-guard: all-open budget stop before held run "
+                                f"drain: remaining={remaining} limit={limit}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            budget_stop = {
+                                "remaining": remaining,
+                                "limit": limit,
+                                "skipped": [],
+                            }
+                    if budget_stop is not None:
+                        drain = {"skipped": "budget"}
+                    else:
+                        from .held_run_drain import drain_held_runs
+                        # A maintenance pass that cannot delete must not turn the guard
+                        # red for every pull request in the sweep.
+                        try:
+                            drain = drain_held_runs(
+                                client, _validate_repo(args.repo), dry_run=dry
+                            )
+                        except RuntimeError as exc:
+                            if is_rate_limit_error(exc):
+                                setattr(exc, "results", results)
+                                setattr(
+                                    exc,
+                                    "failed_before",
+                                    getattr(exc, "failed_before", False) or any(exit_codes),
+                                )
+                                raise
+                            if not _is_guard_error(exc):
+                                raise
+                            print(
+                                f"a38-guard: held run drain: {exc}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            drain = {"error": str(exc)}
+                finally:
+                    # Save after the loop and the drain, including a budget stop
+                    # or a rate limit. Unreached pull requests keep an old entry
+                    # while it is still usable.
+                    _save_sweep_state()
                 output = {"results": results, "held_run_drain": drain}
                 if budget_stop is not None:
                     output["budget_stop"] = budget_stop

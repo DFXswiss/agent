@@ -60,6 +60,20 @@ runs:
         python -P -m pip install --disable-pip-version-check PyYAML==6.0.2
         # No pip install of the consumer checkout; only PYTHONPATH to trusted sources.
 
+    # The sweep state cache is written only by all-open runs. Any workflow on
+    # the default branch, including a pull_request_target run, can write that
+    # cache scope, so the CLI treats the file as untrusted input: it bounds every
+    # entry to 24 hours and never writes a status, comment, approval or Ready
+    # from it. A full reconcile runs whenever a fingerprint cannot be built.
+    - name: Restore sweep state
+      if: ${{ inputs.all_open == 'true' && inputs.dry_run != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/a38-sweep-state.json
+        key: a38-sweep-v1-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: a38-sweep-v1-${{ github.repository }}-
+
     - name: Run dfx pr guard
       shell: bash
       working-directory: ${{ github.action_path }}
@@ -73,6 +87,8 @@ runs:
         A38_EVENT_FILE: ${{ inputs.event_file }}
         A38_EVENT_NAME: ${{ inputs.event_name }}
         A38_ACTOR_APP_SLUG: ${{ inputs.actor_app_slug }}
+        # Empty unless this is a publishing all-open run.
+        A38_SWEEP_STATE: ${{ inputs.all_open == 'true' && inputs.dry_run != 'true' && format('{0}/a38-sweep-state.json', runner.temp) || '' }}
         # Composite actions must pass action_ref through env; it identifies the
         # trusted action revision, while github.sha belongs to the consumer.
         A38_RUNTIME_REVISION: ${{ github.action_ref }}
@@ -92,6 +108,9 @@ runs:
         fi
         if [ "${A38_ALL_OPEN}" = "true" ]; then
           args+=(--all-open)
+          if [ -n "${A38_SWEEP_STATE:-}" ]; then
+            args+=(--sweep-state "${A38_SWEEP_STATE}")
+          fi
         elif [ -n "${A38_PR}" ]; then
           args+=(--pr "${A38_PR}")
         fi
@@ -101,3 +120,26 @@ runs:
         # Token stays in the environment for the guard module only.
         # No subprocess is started against pull-request code.
         PYTHONUNBUFFERED=1 python -uP -c 'from agent_cli.a38_guard import main; raise SystemExit(main())' "${args[@]}"
+
+    # hashFiles cannot see files outside the workspace, so a shell step supplies
+    # the existence check the save step needs.
+    - name: Check sweep state
+      id: sweep-state
+      if: ${{ always() && inputs.all_open == 'true' && inputs.dry_run != 'true' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -f "${RUNNER_TEMP}/a38-sweep-state.json" ]; then
+          echo "present=true" >> "${GITHUB_OUTPUT}"
+        else
+          echo "present=false" >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Save sweep state
+      if: ${{ always() && inputs.all_open == 'true' && inputs.dry_run != 'true' && steps.sweep-state.outputs.present == 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/a38-sweep-state.json
+        key: a38-sweep-v1-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
