@@ -189,7 +189,9 @@ class World:
         return text, private(SEEDS[key_id]).sign(text)
 
     def context(self, key_id: str, endpoint: str) -> AppendContext:
-        return AppendContext(keys=self.keys, actor=self.keys.entries[key_id], endpoint=endpoint, received_at=self.now)
+        return AppendContext(
+            keys=self.keys, actor=self.keys.entries[key_id], endpoint=endpoint, received_at=self.now, agent_key=key_id
+        )
 
     def submit(self, key_id: str, text: bytes, signature: bytes, endpoint: str) -> None:
         accepted = reduce_append(self.state, text, signature, self.context(key_id, endpoint))
@@ -392,14 +394,14 @@ def test_refusal_status_of_every_error_value() -> None:
 
 def test_the_context_names_one_of_the_two_append_endpoints() -> None:
     with pytest.raises(ValueError):
-        AppendContext(keys=KeyRing({}), actor=ALICE, endpoint="records", received_at=T0)
+        AppendContext(keys=KeyRing({}), actor=ALICE, endpoint="records", received_at=T0, agent_key=ALICE.id)
 
 
 def test_received_at_never_earlier_than_the_head() -> None:
     world = World(STANDARD)
     create_work(world, ALICE.id, [])
     text, signature = world.sign(ALICE.id, "task", new_id(), [("kind", None, "work")], new_id())
-    context = AppendContext(keys=world.keys, actor=ALICE, endpoint=EVENTS, received_at=T0 - 1)
+    context = AppendContext(keys=world.keys, actor=ALICE, endpoint=EVENTS, received_at=T0 - 1, agent_key=ALICE.id)
     with pytest.raises(ValueError):
         check_append(world.state, text, signature, context)
 
@@ -456,6 +458,19 @@ def test_actor_mismatch_certificate_and_signature() -> None:
 def test_a_staff_passkey_never_signs_an_event() -> None:
     world = World(STANDARD)
     assert world.refused(ERIN.id, "task", new_id(), [("kind", None, "work")], EVENTS) == "event_signature_invalid"
+
+
+def test_check_4_compares_the_actor_with_the_agent_key_not_with_the_id_of_the_entry() -> None:
+    # A session key (PASSKEY-PROTOCOL.md section 7.1) reaches the append with its passkey entry as
+    # the actor and its own id as `Agent-Key`: an event in the passkey's name is `actor_mismatch`
+    # at check 4, before the signature of check 6 is looked at.
+    world = World(STANDARD)
+    session_key = "session." + "0" * 32
+    text, signature = world.sign(ERIN.id, "task", new_id(), [("kind", None, "work")], new_id())
+    context = AppendContext(keys=world.keys, actor=ERIN, endpoint=EVENTS, received_at=world.now, agent_key=session_key)
+    with pytest.raises(RecordRefusal) as refusal:
+        check_append(world.state, text, signature, context)
+    assert refusal.value.error == "actor_mismatch"
 
 
 def test_event_duplicate_and_event_id_taken() -> None:
