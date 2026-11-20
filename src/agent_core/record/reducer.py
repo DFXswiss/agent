@@ -180,9 +180,11 @@ def _refuse(error: str) -> RecordRefusal:
 class AppendContext:
     """What the checks of one append may read beyond the state and the event (sections 2 and 6.1).
 
-    `actor` is the keys-file entry of the request's `Agent-Key`, which the request checks of
-    KEY-PROTOCOL.md section 5 established; `endpoint` is `events` or `watch`; `received_at` is the
-    one clock reading of step 2 of the append transaction (section 4.6), already the later of that
+    `actor` is the keys-file entry that the request checks of KEY-PROTOCOL.md section 5
+    established: the entry of the request's `Agent-Key`, or for a session key the passkey entry
+    that certified it (PASSKEY-PROTOCOL.md section 7.1). `agent_key` is the request's `Agent-Key`
+    itself, which check 4 compares. `endpoint` is `events` or `watch`; `received_at` is the one
+    clock reading of step 2 of the append transaction (section 4.6), already the later of that
     reading and the `received_at` of the head.
     """
 
@@ -190,6 +192,7 @@ class AppendContext:
     actor: KeyEntry = dataclass_field(repr=False)
     endpoint: str
     received_at: int = dataclass_field(repr=False)
+    agent_key: str
 
     def __post_init__(self) -> None:
         if self.endpoint not in ENDPOINTS:
@@ -629,14 +632,20 @@ def _check_actor_rules(outcome_task: Task, outcome: _Outcome, context: AppendCon
 # --- the append ----------------------------------------------------------------------------------
 
 
-def check_signed_event(text: bytes, signature: bytes, actor: KeyEntry) -> Event:
+def check_signed_event(text: bytes, signature: bytes, actor: KeyEntry, agent_key: str) -> Event:
     """Checks 3 to 6 of section 6.7, in this order: the form of the event text, the actor, the
     certificate and the signature. They read no state, so the append runs them before its
-    transaction and before any fold (section 11.5)."""
+    transaction and before any fold (section 11.5).
+
+    Check 4 compares `actor_key_id` with the request's `Agent-Key` (`agent_key`), not with the id
+    of `actor`. The two differ only for a session key, whose `actor` is its passkey entry and whose
+    `Agent-Key` has the session key id form (PASSKEY-PROTOCOL.md sections 2 and 6.2). No `actor_key_id`
+    that passes check 3 has that form, so every event sent with a session key is refused at check
+    3 or 4 and never reaches check 6 (section 10 is not built)."""
     # Check 3.
     event = parse_event(text)
     # Check 4.
-    if event.actor_key_id != actor.id:
+    if event.actor_key_id != agent_key:
         raise _refuse(ERROR_ACTOR_MISMATCH)
     # Check 5.
     if event.key_certificate is not None:
@@ -659,7 +668,7 @@ def check_append(state: StateView, text: bytes, signature: bytes, context: Appen
         raise ValueError("received_at is never earlier than at the previous position")
     actor = context.actor
     # Checks 3 to 6.
-    event = check_signed_event(text, signature, actor)
+    event = check_signed_event(text, signature, actor, context.agent_key)
     # Check 7.
     if event.event_hash in state.event_hashes:
         raise _refuse(ERROR_EVENT_DUPLICATE)

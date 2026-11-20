@@ -35,7 +35,7 @@ def _full_env(tmp_path: Path) -> dict[str, str]:
     keys = tmp_path / "keys.yaml"
     keys.write_text("keys: []\n", encoding="utf-8")
     return {
-        "AGENT_CORE_PUBLIC_URL": "http://127.0.0.1:8787",
+        "AGENT_CORE_PUBLIC_URL": "http://localhost:8787",
         "AGENT_CORE_SESSION_SECRET": "x" * 32,
         "AGENT_CORE_GITHUB_CLIENT_ID": "id",
         "AGENT_CORE_GITHUB_CLIENT_SECRET": "secret",
@@ -198,6 +198,89 @@ def test_public_url_single_trailing_slash_is_not_a_path(
     ],
 )
 def test_host_line_of_the_public_url(url: str, host: str) -> None:
+    assert public_url_host(url) == host
+
+
+IP_ADDRESS_MESSAGE = "AGENT_CORE_PUBLIC_URL must have a host name, not an IP address"
+TRAILING_DOT_MESSAGE = "AGENT_CORE_PUBLIC_URL must not have a host name ending in a dot"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8787",
+        "http://[::1]:8787",
+        "http://127.1:8787",
+        "http://0x7f000001:8787",
+        "https://10.0.0.1",
+        "https://[2001:db8::1]",
+        "https://hub.0x10",
+    ],
+)
+def test_public_url_whose_host_is_an_ip_address_stops_the_start(
+    full_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    # PASSKEY-PROTOCOL.md section 3, rule 2: WebAuthn allows no IP address as rp id.
+    monkeypatch.setenv("AGENT_CORE_PUBLIC_URL", url)
+    with pytest.raises(ConfigError) as caught:
+        Config.from_env()
+    assert str(caught.value) == IP_ADDRESS_MESSAGE
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1.:8787", "https://hub.example.", "https://hub.example./"])
+def test_public_url_whose_host_name_ends_with_a_dot_stops_the_start(
+    full_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    # Section 3, rule 1, checked before rule 2: `127.0.0.1.` gets the trailing-dot message.
+    monkeypatch.setenv("AGENT_CORE_PUBLIC_URL", url)
+    with pytest.raises(ConfigError) as caught:
+        Config.from_env()
+    assert str(caught.value) == TRAILING_DOT_MESSAGE
+
+
+@pytest.mark.parametrize(
+    ("url", "public_url"),
+    [
+        ("http://localhost:8787", "http://localhost:8787"),
+        ("https://hub.example", "https://hub.example"),
+        ("https://hub-1.example/", "https://hub-1.example"),
+        ("https://1.example", "https://1.example"),
+    ],
+)
+def test_public_url_with_a_host_name_starts(
+    full_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, url: str, public_url: str
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_PUBLIC_URL", url)
+    assert Config.from_env().public_url == public_url
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://127.0.0.1:8787/hub", "path"),
+        ("http://user@127.0.0.1:8787", "user information"),
+        ("http://127.0.0.1:8787?a=1", "query"),
+        ("http://127.0.0.1:8787#top", "fragment"),
+        ("ftp://127.0.0.1", "http or https"),
+        ("http://127.0.0.1:notaport", "not a valid URL"),
+    ],
+)
+def test_url_form_refusals_run_before_the_host_refusals(
+    full_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, url: str, message: str
+) -> None:
+    # Section 3: every existing refusal of the URL form runs first and keeps its message.
+    monkeypatch.setenv("AGENT_CORE_PUBLIC_URL", url)
+    with pytest.raises(ConfigError) as caught:
+        Config.from_env()
+    assert message in str(caught.value)
+    assert str(caught.value) != IP_ADDRESS_MESSAGE
+
+
+@pytest.mark.parametrize(
+    ("url", "host"), [("http://[::1]:8787", "[::1]:8787"), ("https://[2001:db8::1]", "[2001:db8::1]")]
+)
+def test_public_url_host_still_returns_the_host_line_of_an_ip_address(url: str, host: str) -> None:
+    # Section 3: the refusals run outside `public_url_host`.
     assert public_url_host(url) == host
 
 

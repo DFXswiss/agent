@@ -495,7 +495,7 @@ def test_an_append_reads_the_clock_once_and_stores_that_reading(record_db: Recor
             hub.clock.now -= 5
 
         outcome = append_event(
-            hub.connection, hub.memory, ring, ring.entries[ALICE], "events", text, signature, hub.clock, before_insert=set_back
+            hub.connection, hub.memory, ring, ring.entries[ALICE], ALICE, "events", text, signature, hub.clock, before_insert=set_back
         )
         assert isinstance(outcome, Appended)
         assert hub.clock.reads - reads == 1

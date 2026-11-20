@@ -4,6 +4,12 @@ Every request whose raw path or percent-decoded path starts with `/api/key/` goe
 `KeyGate`. Checks 1 to 8 run before routing; only a request that passed them reaches a key
 route, and only key routes answer under `/api/key/`. A route that takes a query validates it
 after check 9 and before check 10.
+
+A request may also be signed by a session key that a passkey certified (PASSKEY-PROTOCOL.md
+section 7.1): `Agent-Key` is then a session key id, checks 2 to 5 read the stored session and its
+passkey entry, and check 7 verifies the 64-byte `r ‖ s` signature with the session public key. The
+session store and the P-256 verification come in through `SessionKeys`, so that this module stays
+free of the passkey package. Check 9a runs on a route marked controller-only.
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ import logging
 import re
 import time
 import zlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -62,7 +68,10 @@ ERROR_TIME_SKEW = "time_skew"
 ERROR_SIGNATURE_INVALID = "signature_invalid"
 ERROR_NONCE_REPLAYED = "nonce_replayed"
 ERROR_SCOPE_MISSING = "scope_missing"
+ERROR_CERTIFICATE_INVALID = "certificate_invalid"
+ERROR_CONTROLLER_DEVICE_REQUIRED = "controller_device_required"
 ERROR_SUBJECT = "subject_not_allowed"
+CONTROLLER_SCOPE = "device:controller"
 ERROR_QUERY_INVALID = "query_invalid"
 ERROR_NOT_FOUND = "not_found"
 ERROR_INTERNAL = "internal"
@@ -215,11 +224,41 @@ class HubSigner:
 
 
 @dataclass(frozen=True)
+class SessionKey:
+    """A stored session that was not ended (PASSKEY-PROTOCOL.md section 12, `passkey_session`):
+    what checks 2 to 5 and 7 of section 7.1 read. The binary values are the raw bytes."""
+
+    id: str
+    passkey_id: str
+    handle: str
+    credential_id: bytes = field(repr=False)
+    passkey_public_key: bytes = field(repr=False)
+    session_public_key: bytes = field(repr=False)
+    expires: int
+
+
+@dataclass(frozen=True)
+class SessionKeys:
+    """What the key service needs to check a request signed by a session key.
+
+    `valid_id` is the session key id form of check 1; `find` reads the session of an id once, the
+    read of check 2, and returns None for an unknown or ended session; `verify` is check 7 with the
+    session public key, the 64-byte signature and the request text.
+    """
+
+    valid_id: Callable[[str], bool]
+    find: Callable[[str], "SessionKey | None"]
+    verify: Callable[[bytes, bytes, bytes], bool]
+
+
+@dataclass(frozen=True)
 class KeyRequest:
     """A request that passed checks 1 to 8, with the key entry they established.
 
     `headers` are the request headers as received, names in lowercase. `params` is what the
-    route's query parser returned; None for a route without one.
+    route's query parser returned; None for a route without one. For a request signed by a session
+    key, `session` is its stored session and `entry` the passkey entry that certified it, whose
+    scopes the session key has (PASSKEY-PROTOCOL.md section 7.1, check 9).
     """
 
     entry: "KeyEntry"
@@ -230,6 +269,12 @@ class KeyRequest:
     body: bytes
     headers: tuple[tuple[str, bytes], ...]
     params: Any = None
+    session: SessionKey | None = None
+
+    @property
+    def key_id(self) -> str:
+        """The `Agent-Key` of the request: the session key id or the keys-file id."""
+        return self.entry.id if self.session is None else self.session.id
 
     def header_values(self, name: str) -> list[bytes]:
         """Every value of the header `name` (lowercase), in the order received."""
@@ -270,7 +315,11 @@ class LogArea:
 
 
 def answer_result(status: int, body: dict[str, Any]) -> str:
-    """The result of an answer without its own: `ok` for 200, otherwise the `error` of the body."""
+    """The result of an answer in a log area without its own (RECORD-PROTOCOL.md section 13): `ok`
+    for 200, otherwise the `error` of the body. A success of an area with another status, such as
+    the `201` of an append, carries its own result. Only the request line of a log area has a
+    result; the log lines of KEY-PROTOCOL.md section 5 and PASSKEY-PROTOCOL.md section 7.1 carry
+    the status alone, so the key service never derives a result outside an area."""
     if status == 200:
         return "ok"
     return str(body["error"])
@@ -284,6 +333,21 @@ class KeyRoute:
     scope: str | None
     subject: SubjectOf | None
     query: QueryParser | None = None
+    controller_only: bool = False
+
+
+def controller_device_key(request: KeyRequest) -> bool:
+    """Check 9a of PASSKEY-PROTOCOL.md section 7.1: the key is the device key of a device (an
+    `agent` entry without `program`, section 7.4) and holds `device:controller`. A session key, a
+    program key, an executor and a `service` key are not. Check 3 already refused a key revoked at
+    now, and the loader keeps at most one unrevoked `agent` entry without `program` per device."""
+    entry = request.entry
+    return (
+        request.session is None
+        and entry.principal == "agent"
+        and entry.program is None
+        and CONTROLLER_SCOPE in entry.scopes
+    )
 
 
 class KeyRoutes:
@@ -315,6 +379,7 @@ class KeyRoutes:
         scope: str | None,
         subject: SubjectOf | None,
         query: QueryParser | None = None,
+        controller_only: bool = False,
     ) -> None:
         if not path.startswith(KEY_PREFIX):
             raise ValueError(f"a key route must start with {KEY_PREFIX}: {path}")
@@ -322,7 +387,9 @@ class KeyRoutes:
             raise ValueError(f"a key route needs an uppercase method other than HEAD: {method}")
         if (method, path) in self._routes:
             raise ValueError(f"key route {method} {path} is already registered")
-        self._routes[(method, path)] = KeyRoute(method, path, handler, scope, subject, query)
+        self._routes[(method, path)] = KeyRoute(
+            method, path, handler, scope, subject, query, controller_only
+        )
 
     def find(self, method: str, path: str) -> KeyRoute | None:
         return self._routes.get((method, path))
@@ -342,6 +409,26 @@ class _Verified:
     request: KeyRequest
     agent_time: str
     nonce: str
+
+
+def _session_refusal(session: SessionKey, entry: "KeyEntry", now: int) -> _Refusal | None:
+    """Checks 3 to 5 of PASSKEY-PROTOCOL.md section 7.1 for a session key, after check 2 found the
+    session and its passkey entry: the passkey entry is not revoked, the session's expiry is later
+    than now, and the entry is still the `webauthn` entry whose credential id, public key and
+    handle were stored with the session at sign-in. These values are public; no secret is
+    compared."""
+    if entry.revoked_at(now):
+        return _Refusal(401, ERROR_KEY_REVOKED)
+    if session.expires <= now:
+        return _Refusal(401, ERROR_KEY_EXPIRED)
+    if (
+        entry.kind != "webauthn"
+        or entry.credential_id != session.credential_id
+        or entry.public_key != session.passkey_public_key
+        or entry.handle != session.handle
+    ):
+        return _Refusal(401, ERROR_CERTIFICATE_INVALID)
+    return None
 
 
 def under_key_prefix(scope: Scope) -> bool:
@@ -444,6 +531,7 @@ class KeyService:
         host: str,
         clock: Clock,
         routes: KeyRoutes,
+        sessions: SessionKeys,
     ) -> None:
         self.keys = keys
         self.store = store
@@ -451,6 +539,7 @@ class KeyService:
         self.host = host
         self.clock = clock
         self.routes = routes
+        self.sessions = sessions
 
     async def handle(self, scope: Scope, receive: Receive, send: Send) -> None:
         head = scope["method"] == "HEAD"
@@ -469,19 +558,33 @@ class KeyService:
         body = b"" if head else payload
         hub_time = format_time(self.clock())
         text = response_text(
-            request.entry.id, outcome.nonce, outcome.agent_time, status, hub_time, sha256_hex(body)
+            request.key_id, outcome.nonce, outcome.agent_time, status, hub_time, sha256_hex(body)
         )
         headers = [
             (HEADER_HUB_KEY.encode("ascii"), self.signer.key_id.encode("ascii")),
             (HEADER_HUB_TIME.encode("ascii"), hub_time.encode("ascii")),
             (HEADER_HUB_SIGNATURE.encode("ascii"), self.signer.sign(text).encode("ascii")),
         ]
-        if area is not None:
-            # The request line of the area replaces the line below, for every principal.
+        if area is not None and result is not None:
+            # The request line of the area replaces the `service` line of the next branch
+            # (RECORD-PROTOCOL.md section 13), for every principal; `_answer` derives a result for
+            # every request in an area. It does not replace the session line below, which carries
+            # the passkey id that the request line has no field for.
             area.log(request, status, result)
         elif request.entry.principal == "service":
             LOG.info(
                 "key request %s %s %s %d",
+                request.entry.id,
+                request.method,
+                request.raw_path,
+                status,
+            )
+        if request.session is not None:
+            # PASSKEY-PROTOCOL.md section 7.1: one line for every request of a session key that
+            # passed check 8, also in a log area; no body, certificate or signature.
+            LOG.info(
+                "key request %s %s %s %s %d",
+                request.session.id,
                 request.entry.id,
                 request.method,
                 request.raw_path,
@@ -513,7 +616,8 @@ class KeyService:
         signature_text = _single_ascii(headers, HEADER_SIGNATURE)
         if key_id is None or agent_time is None or nonce is None or signature_text is None:
             return missing
-        if not valid_key_id(key_id):
+        keys_file_id = valid_key_id(key_id)
+        if not keys_file_id and not self.sessions.valid_id(key_id):
             return missing
         sent_at = parse_time(agent_time)
         if sent_at is None:
@@ -537,16 +641,26 @@ class KeyService:
         if body is None:
             return missing
         now = self.clock()
-        # Checks 2 to 5: the key entry.
-        entry = self.keys.get(key_id)
-        if entry is None:
-            return _Refusal(401, ERROR_KEY_UNKNOWN)
-        if entry.revoked_at(now):
-            return _Refusal(401, ERROR_KEY_REVOKED)
-        if entry.expired_at(now):
-            return _Refusal(401, ERROR_KEY_EXPIRED)
-        if entry.kind != "ed25519":
-            return _Refusal(401, ERROR_KEY_KIND)
+        # Checks 2 to 5: the key entry, or the session and its passkey entry.
+        session: SessionKey | None = None
+        if keys_file_id:
+            entry = self.keys.get(key_id)
+            if entry is None:
+                return _Refusal(401, ERROR_KEY_UNKNOWN)
+            if entry.revoked_at(now):
+                return _Refusal(401, ERROR_KEY_REVOKED)
+            if entry.expired_at(now):
+                return _Refusal(401, ERROR_KEY_EXPIRED)
+            if entry.kind != "ed25519":
+                return _Refusal(401, ERROR_KEY_KIND)
+        else:
+            session = await asyncio.to_thread(self.sessions.find, key_id)
+            entry = None if session is None else self.keys.get(session.passkey_id)
+            if session is None or entry is None:
+                return _Refusal(401, ERROR_KEY_UNKNOWN)
+            refusal = _session_refusal(session, entry, now)
+            if refusal is not None:
+                return refusal
         # Check 6: the caller's clock.
         if abs(sent_at - now) > TIME_WINDOW_SECONDS:
             return _Refusal(401, ERROR_TIME_SKEW)
@@ -555,10 +669,14 @@ class KeyService:
         query = query_bytes.decode("ascii")
         target = raw_path + ("?" + query if query else "")
         text = request_text(key_id, method, self.host, target, agent_time, nonce, sha256_hex(body))
-        try:
-            Ed25519PublicKey.from_public_bytes(entry.public_key).verify(signature, text)
-        except InvalidSignature:
-            return _Refusal(401, ERROR_SIGNATURE_INVALID)
+        if session is not None:
+            if not self.sessions.verify(session.session_public_key, signature, text):
+                return _Refusal(401, ERROR_SIGNATURE_INVALID)
+        else:
+            try:
+                Ed25519PublicKey.from_public_bytes(entry.public_key).verify(signature, text)
+            except InvalidSignature:
+                return _Refusal(401, ERROR_SIGNATURE_INVALID)
         # Check 8: one atomic insert under the unique constraint.
         try:
             fresh = await asyncio.to_thread(self.store.insert_nonce, key_id, nonce, now)
@@ -575,17 +693,23 @@ class KeyService:
             query=query,
             body=body,
             headers=tuple((name.decode("latin-1").lower(), value) for name, value in scope["headers"]),
+            session=session,
         )
         return _Verified(request=request, agent_time=agent_time, nonce=nonce)
 
-    async def _answer(self, request: KeyRequest, area: LogArea | None) -> tuple[int, bytes, str]:
+    async def _answer(self, request: KeyRequest, area: LogArea | None) -> tuple[int, bytes, str | None]:
         """Route, check 9, the query, check 10, and the endpoint, with the result for the request
-        line of a log area. Any failure here is a signed 500."""
+        line of a log area. Any failure here is a signed 500.
+
+        The result is derived only for a request in a log area: outside an area no line carries
+        one, so a success with a status other than 200 there, such as the `201` of
+        `POST /api/key/invites`, is answered as the endpoint returned it."""
         try:
             answer = await self._route(request)
-            return answer.status, _json_bytes(answer.body), (
-                answer.result if answer.result is not None else answer_result(answer.status, answer.body)
-            )
+            result = answer.result
+            if result is None and area is not None:
+                result = answer_result(answer.status, answer.body)
+            return answer.status, _json_bytes(answer.body), result
         except Exception:
             if area is None:
                 LOG.error("key request: the endpoint failed", exc_info=True)
@@ -598,6 +722,9 @@ class KeyService:
         entry = request.entry
         if route.scope is not None and route.scope not in entry.scopes:
             return KeyAnswer(403, _error(ERROR_SCOPE_MISSING), None)
+        # Check 9a (PASSKEY-PROTOCOL.md section 7.1), before the query and check 10.
+        if route.controller_only and not controller_device_key(request):
+            return KeyAnswer(403, _error(ERROR_CONTROLLER_DEVICE_REQUIRED), None)
         if route.query is not None:
             params = route.query(request.query)
             if params is None:

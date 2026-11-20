@@ -12,13 +12,13 @@ Image builds on `develop` / `main` push `dfxswiss/agent-core:beta` / `:latest` a
 
 ## Run locally
 
-Create a GitHub OAuth App whose callback is `http://127.0.0.1:8787/auth/github/callback`. The hub requests scope `read:user repo` so people can sign in, the website can list open pull requests, and owners can create and answer agent assignment issues with their own token. After sign-in the website leads with open PRs from GitHub (`GET /api/prs`); usage, sessions, tasks, agents, pings, and devices come from the local hub replica. Then:
+Create a GitHub OAuth App whose callback is `http://localhost:8787/auth/github/callback`. The hub requests scope `read:user repo` so people can sign in, the website can list open pull requests, and owners can create and answer agent assignment issues with their own token. After sign-in the website leads with open PRs from GitHub (`GET /api/prs`); usage, sessions, tasks, agents, pings, and devices come from the local hub replica. Then:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[test]"
-export AGENT_CORE_PUBLIC_URL=http://127.0.0.1:8787
+export AGENT_CORE_PUBLIC_URL=http://localhost:8787
 export AGENT_CORE_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 export AGENT_CORE_GITHUB_CLIENT_ID=...
 export AGENT_CORE_GITHUB_CLIENT_SECRET=...
@@ -41,11 +41,11 @@ Before the first start, create the record database and its two roles on a Postgr
 `AGENT_CORE_RECORD_OWNER_DATABASE` and `AGENT_CORE_RECORD_DATABASE` (see below). Unset
 `AGENT_CORE_RECORD_OWNER_DATABASE` again before you start the hub.
 
-Open http://127.0.0.1:8787 and sign in.
+Open http://localhost:8787 and sign in.
 
 Every variable above is required. The process exits if one is missing.
 
-- `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed. An international host name is written in its ASCII form (`xn--…`); otherwise the process exits.
+- `AGENT_CORE_PUBLIC_URL` has no user information, path, query or fragment; a single trailing `/` is allowed. An international host name is written in its ASCII form (`xn--…`). Its host is a name, not an IP address, and does not end with a dot, because it is the relying-party id of the passkeys (PASSKEY-PROTOCOL.md section 3). Otherwise the process exits. `AGENT_CORE_HOST` is the address the process listens on, not the public URL, and may stay `127.0.0.1`.
 - `AGENT_CORE_KEYS` is the path of the keys file (`keys.yaml` next to `teams.yaml`).
 - `AGENT_CORE_SIGNING_KEY` is the 32-byte seed of the hub's Ed25519 signing key as 64 lowercase hex characters. It is a secret: every environment has its own seed, and the hub never logs or returns it.
 - `AGENT_CORE_HUB_KEY_ID` is the id of the hub's signing key (lowercase letters, digits and `-`, 3 to 63 characters, starting and ending with a letter or digit). It is not a secret.
@@ -91,7 +91,16 @@ See [PROTOCOL.md](PROTOCOL.md).
 
 The wire format of key identity is in [KEY-PROTOCOL.md](KEY-PROTOCOL.md). The hub side of its first build step is built: the keys file `keys.yaml` (changed only by pull request), signed requests under `/api/key/`, the hub's signed answers, and `GET /api/key/whoami`.
 
-Sign-in with passkeys, invites and the certified session key are specified, not yet built, in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md).
+Sign-in with passkeys, invites and the certified session key are specified in [PASSKEY-PROTOCOL.md](PASSKEY-PROTOCOL.md). The hub side of that step is built in `agent_core.passkey`: the verification library (encodings, passkey responses, registrations, the statement, `verify_certificate` and the command text, with the shared test vectors in `tests/vectors/passkey.json`), the passkey tables in the hub database, the JSON routes `POST /auth/invite/open`, `POST /auth/invite/finish`, `POST /auth/passkey/begin` and `POST /auth/passkey/finish`, signed requests by a session key, `GET` and `POST /api/key/invites`, `POST /api/key/session/end` and `POST /api/key/commands`. The website pages `/passkey` and `/invite` are not built yet.
+
+The operator commands of the passkey step run on the hub host with the same environment variables and database as the hub; they never start it:
+
+| Command | Does |
+|---|---|
+| `python -m agent_core invite-bootstrap --handle HANDLE --team TEAM --seconds N` | Creates the bootstrap invite for the administrator's first passkey, only while no keys-file entry holds `keys:invite` and no other bootstrap invite is open. Prints only the link to stdout and `invite bootstrap created <invite id> <handle> <team> <expires>` to stderr (exit 0); a refusal prints its reason to stderr and writes nothing (exit 1). |
+| `python -m agent_core invite-list` | Prints every invite as JSON, one per line, newest first, with the received key and the keys-file text; it is the binding source of a keys-file pull request (exit 0, exit 1 when the configuration or the keys file stops the hub). |
+
+Any other argument, and an unknown or repeated option, prints a usage line to stderr and exits 2.
 
 The release query `GET /api/key/release?repository=owner/name&pull_request=N` (KEY-PROTOCOL.md section 8) lets a `service` key with the scope `release:query` ask whether a pull request in one of its `subjects` may leave draft; the answer is signed. The hub computes it from the team record (RECORD-PROTOCOL.md section 9): a pull request that no task links gets `released: false` with `task_missing`, and a hub process that found the record broken answers the signed `503` `record_unverified`. The answer is one input for a guard and replaces no review rule.
 
