@@ -5410,6 +5410,136 @@ def test_agent_start_allows_a_record_only_driver_only_for_the_pinned_implementer
         )
 
 
+def test_agent_run_refuses_a_record_only_driver_for_a_review_step(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_drivers(tmp_path)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    review_tid = _spine_session_task(tmp_path, capsys, workflow="review")
+    store = Store(tmp_path)
+    try:
+        task = store.row("task", review_tid)
+        assert task is not None
+        task_row = {
+            key: value for key, value in task.items() if not key.startswith("_")
+        }
+        task_row["models"] = {"first": "driver-e", "second": "driver-b"}
+        store.write("task", "update", review_tid, task_row)
+        for item in store.rows("checklist_item"):
+            if (
+                item.get("task_id") != review_tid
+                or item.get("key") != "session_registered"
+            ):
+                continue
+            row = {key: value for key, value in item.items() if not key.startswith("_")}
+            row["status"] = "ja"
+            row["source"] = "script"
+            row["evidence"] = "fixture"
+            store.write("checklist_item", "update", str(row["id"]), row)
+        for item in store.rows("checklist_item"):
+            if (
+                item.get("task_id") != review_tid
+                or item.get("key") != "contributing_read"
+            ):
+                continue
+            row = {key: value for key, value in item.items() if not key.startswith("_")}
+            row["status"] = "ja"
+            row["source"] = "human"
+            row["evidence"] = "fixture"
+            store.write("checklist_item", "update", str(row["id"]), row)
+    finally:
+        store.close()
+
+    def no_launch(**_kwargs: object) -> None:
+        raise AssertionError("a record-only review driver never starts a lane")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as refused:
+        run(
+            tmp_path,
+            [
+                "run", "--task", review_tid, "--spec-file", str(spec),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+    assert str(refused.value) == (
+        "agent: vendor must be driver-a|driver-b|driver-c|driver-d "
+        "(see drivers.json, docs/ai-accounts.md#drivers)"
+    )
+    store = Store(tmp_path)
+    try:
+        assert not any(
+            row.get("role") == "pr-reviewer-quality" for row in store.rows("agent")
+        )
+    finally:
+        store.close()
+    captured = capsys.readouterr()
+    assert "Only this step. Nothing else." not in captured.out
+    assert "agent step" not in captured.err
+
+
+def test_agent_run_still_hands_off_a_record_only_implementer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_drivers(tmp_path)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "driver-a", "second": "driver-b"},
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    implement_tid = _spine_session_task(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for item in store.rows("checklist_item"):
+            if (
+                item.get("task_id") != implement_tid
+                or item.get("key") not in ("session_registered", "spec_written")
+            ):
+                continue
+            row = {key: value for key, value in item.items() if not key.startswith("_")}
+            row["status"] = "ja"
+            row["source"] = (
+                "script" if row["key"] == "session_registered" else "human"
+            )
+            row["evidence"] = "fixture"
+            store.write("checklist_item", "update", str(row["id"]), row)
+    finally:
+        store.close()
+    run(
+        tmp_path,
+        [
+            "task", "models", "--id", implement_tid, "--slot", "implementer",
+            "--vendor", "driver-e", "--reason", "external implementer",
+        ],
+    )
+    capsys.readouterr()
+
+    def no_launch(**_kwargs: object) -> None:
+        raise AssertionError("a record-only implementer never starts a lane")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as handoff:
+        run(tmp_path, ["run", "--task", implement_tid, "--spec-file", str(spec)])
+    assert handoff.value.code == 2
+    assert "agent step" in capsys.readouterr().err
+
+
 def test_agent_start_uses_task_pins_after_device_models_are_removed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -356,7 +356,7 @@ def windows_usage() -> dict[str, Any]:
             "renew": "login-tool",
             "multiplier": {
                 "plan": "max",
-                "pattern": r"(?:^|_)max_(\d+x)$",
+                "pattern": r"(?i)(?:^|_)max_(\d+x)$",
                 "field": "rateLimitTier",
             },
             "keychain": {

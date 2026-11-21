@@ -4956,7 +4956,9 @@ def cmd_run(args: list[str]) -> None:
                         die("model slot second is external; no agent lane can be started")
                     die(f"{step.key} has no model provider")
                 session_id = str(snap.get("session_id") or "")
-                if _require_vendor(vendor, store.home, implementer=True).lane is None:
+                if _require_vendor(
+                    vendor, store.home, implementer=(role == "implementer")
+                ).lane is None:
                     # A record-only driver runs outside this launcher.
                     _agent_handoff_exit(step, tid, session_id, models, snap)
                 current_round = int(task.get("current_round") or 0)

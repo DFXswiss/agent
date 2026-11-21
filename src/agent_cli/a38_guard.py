@@ -508,6 +508,15 @@ def _invalid_attribution_patterns(detail: str) -> AttributionPatternsError:
     return AttributionPatternsError(f"{_ATTRIBUTION_PATTERNS_REASON}invalid: {detail}")
 
 
+def _attribution_pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise _invalid_attribution_patterns(f"duplicate key {key[:40]!r}")
+        out[key] = value
+    return out
+
+
 def _attribution_entries(raw: Mapping[str, Any], key: str) -> list[str]:
     values = raw[key]
     if not isinstance(values, list) or not values:
@@ -546,7 +555,9 @@ def parse_attribution_patterns(raw: str | None) -> AttributionPatterns:
     if raw is None or not raw.strip():
         raise AttributionPatternsError(ATTRIBUTION_PATTERNS_MISSING)
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, object_pairs_hook=_attribution_pairs_no_duplicates)
+    except AttributionPatternsError:
+        raise
     except (ValueError, RecursionError) as exc:
         raise _invalid_attribution_patterns("not valid JSON") from exc
     if not isinstance(data, dict):
