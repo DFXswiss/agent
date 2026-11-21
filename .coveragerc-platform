@@ -1,0 +1,23 @@
+# Coverage of the platform packages (docs/platform/spec/07-testing.md section 3). The legacy configuration
+# [tool.coverage] in pyproject.toml (source agent_cli) is separate and unchanged.
+[run]
+source =
+    agent_runner
+    agent_guest
+    agent_doubles
+branch = true
+parallel = true
+patch = subprocess
+
+[paths]
+source =
+    src/
+    /opt/agent-guest/src/
+    */agent/src/
+
+[report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+exclude_also =
+    if __name__ == "__main__":
