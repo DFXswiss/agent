@@ -20,15 +20,39 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.3.0", "coverage>=7.10.7"]
+# Platform runner stack (src/agent_runner, docs/platform/spec/00-overview.md section 4); agent_guest and
+# agent_doubles use the standard library only.
+platform = [
+  "httpx>=0.27.0",
+  "websockets>=13",
+  "psycopg[binary]>=3.2.0",
+  "psycopg-pool>=3.2",
+  "cryptography>=50",
+]
+# Gates of the platform packages (docs/platform/spec/07-testing.md section 3).
+platform-test = [
+  "pytest>=8.3.0",
+  "coverage>=7.10.7",
+  "jsonschema>=4.23",
+  "ruff==0.17.6",
+  "mypy==2.4.1",
+  "types-jsonschema",
+  "types-PyYAML",
+]
+# Mailbox and login automation of the runner (docs/platform/spec/05-runner.md section 11).
+login = ["playwright>=1.65"]
 
 [project.scripts]
 agent = "agent_cli.main:main"
+agent-runner = "agent_runner.__main__:main"
+agent-guest = "agent_guest.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 agent_cli = ["static/*", "skills/**"]
+agent_doubles = ["**/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -52,3 +76,21 @@ fail_under = 86.6
 precision = 2
 show_missing = true
 skip_covered = true
+
+# Lint and types apply to the platform packages only; the Makefile names the paths. The platform coverage
+# configuration is .coveragerc-platform; [tool.coverage] above belongs to the legacy suite.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "C4", "PT"]
+ignore = ["PLR2004", "PLR0913"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+warn_unreachable = true
+files = ["src/agent_runner", "src/agent_guest", "src/agent_doubles", "tests/platform"]
