@@ -204,15 +204,41 @@ def message(link: str | None, sent: float, *, html: bool = True) -> bytes:
     return bytes(mail)
 
 
+INBOX_LINE = b'(\\HasNoChildren) "/" "INBOX"'
+JUNK_LINE = b'(\\HasNoChildren \\Junk) "/" "Werbung"'
+
+
 class FakeImap:
-    def __init__(self, messages: list[bytes], *, fail_login: bool = False) -> None:
+    def __init__(
+        self,
+        messages: list[bytes],
+        *,
+        fail_login: bool = False,
+        junk: list[bytes] | None = None,
+        folders: list[Any] | None = None,
+        list_status: str = "OK",
+        junk_select_status: str = "OK",
+    ) -> None:
         self.messages = messages
         self.fail_login = fail_login
+        self.junk = junk or []
+        # Without a spam folder in the LIST answer only INBOX exists.
+        self.folders = [INBOX_LINE] if folders is None else folders
+        self.list_status = list_status
+        self.junk_select_status = junk_select_status
+        self.selected = "INBOX"
         self.calls: list[tuple[Any, ...]] = []
         self.connected: list[tuple[Any, ...]] = []
         self.fetched: list[bytes] = []
         self.fetch_parts: list[str] = []
         self.logged_out = 0
+
+    def _current(self) -> list[bytes]:
+        return self.messages if self.selected == "INBOX" else self.junk
+
+    def list(self) -> tuple[str, list[Any]]:
+        self.calls.append(("list",))
+        return self.list_status, self.folders
 
     def __call__(self, host: str, port: int, *, ssl_context: Any, timeout: float) -> FakeImap:
         self.connected.append((host, port, ssl_context, timeout))
@@ -228,17 +254,20 @@ class FakeImap:
 
     def select(self, mailbox: str, readonly: bool = False) -> tuple[str, list[bytes]]:
         self.calls.append(("select", mailbox, readonly))
-        return "OK", [str(len(self.messages)).encode()]
+        if mailbox != "INBOX" and self.junk_select_status != "OK":
+            return self.junk_select_status, [b"no such folder"]
+        self.selected = mailbox
+        return "OK", [str(len(self._current())).encode()]
 
     def search(self, charset: Any, *criteria: str) -> tuple[str, list[bytes]]:
         self.calls.append(("search", charset, *criteria))
-        ids = " ".join(str(index + 1) for index in range(len(self.messages)))
+        ids = " ".join(str(index + 1) for index in range(len(self._current())))
         return "OK", [ids.encode()]
 
     def fetch(self, message_id: bytes, parts: str) -> tuple[str, list[Any]]:
         self.fetched.append(message_id)
         self.fetch_parts.append(parts)
-        raw = self.messages[int(message_id) - 1]
+        raw = self._current()[int(message_id) - 1]
         # What a server does with a partial fetch: send at most that many bytes.
         partial = re.fullmatch(r"\(BODY\.PEEK\[\]<0\.(\d+)>\)", parts)
         if partial is not None:
@@ -355,6 +384,109 @@ def test_newest_magic_link_counts_only_https_matches() -> None:
     both = f"{plain} {LINK}"
     imap = FakeImap([message(both, NOW + 10, html=False)])
     assert newest(imap, pattern=loose) == "https://sign-in.example.test/magic-link#c2lnbi1pbi1zZWNyZXQ:seat"
+
+
+def test_newest_magic_link_reads_the_junk_flagged_folder() -> None:
+    imap = FakeImap([], junk=[message(LINK, NOW + 10)], folders=[INBOX_LINE, JUNK_LINE])
+    assert newest(imap) == LINK
+    # The folder is sent as the server listed it and opened read-only.
+    assert ("select", '"Werbung"', True) in imap.calls
+    assert not any(call[0] in ("store", "copy", "move", "expunge") for call in imap.calls)
+    assert imap.logged_out == 1
+
+
+def test_newest_magic_link_finds_the_spam_folder_by_name() -> None:
+    folders = [
+        INBOX_LINE,
+        b'(\\HasNoChildren) "." "INBOX.Archive"',
+        b'(\\HasNoChildren) "." "INBOX.Spam"',
+        b'(\\HasNoChildren) "." Junk',
+    ]
+    imap = FakeImap([], junk=[message(LINK, NOW + 10)], folders=folders)
+    assert newest(imap) == LINK
+    # The first matching name in LIST order wins.
+    assert ("select", '"INBOX.Spam"', True) in imap.calls
+    for line, sent in (
+        (b'(\\HasNoChildren) "/" "Junk E-Mail"', '"Junk E-Mail"'),
+        (b'(\\HasNoChildren) NIL junk', "junk"),
+        (b'(\\HasNoChildren) "/" "INBOX/SPAM"', '"INBOX/SPAM"'),
+    ):
+        imap = FakeImap([], junk=[message(LINK, NOW + 10)], folders=[INBOX_LINE, line])
+        assert newest(imap) == LINK
+        assert ("select", sent, True) in imap.calls
+
+
+def test_newest_magic_link_prefers_the_junk_flag_over_a_name() -> None:
+    folders = [INBOX_LINE, b'(\\HasNoChildren) "/" "Spam"', JUNK_LINE]
+    imap = FakeImap([], junk=[message(LINK, NOW + 10)], folders=folders)
+    assert newest(imap) == LINK
+    assert ("select", '"Werbung"', True) in imap.calls
+    assert ("select", '"Spam"', True) not in imap.calls
+
+
+@pytest.mark.parametrize(
+    "folders",
+    [
+        [INBOX_LINE],
+        [INBOX_LINE, b'(\\HasNoChildren) "/" "Archive"', b'(\\HasNoChildren) "/" "INBOX/Archive"'],
+        # A flagged INBOX, a literal name and an unparsable line are never chosen.
+        [b'(\\Junk) "/" "INBOX"', (b'(\\Junk) "/" {4}', b"Spam"), b"garbage", 7],
+        "not a list",
+    ],
+)
+def test_newest_magic_link_without_a_spam_folder_reads_only_inbox(folders: Any) -> None:
+    imap = FakeImap([message(LINK, NOW + 10)], junk=[message(OLD_LINK, NOW + 20)], folders=folders)
+    assert newest(imap) == LINK
+    assert [call for call in imap.calls if call[0] == "select"] == [("select", "INBOX", True)]
+    assert imap.logged_out == 1
+
+
+def test_newest_magic_link_failed_list_reads_only_inbox() -> None:
+    imap = FakeImap(
+        [message(LINK, NOW + 10)],
+        junk=[message(OLD_LINK, NOW + 20)],
+        folders=[INBOX_LINE, JUNK_LINE],
+        list_status="NO",
+    )
+    assert newest(imap) == LINK
+    assert [call for call in imap.calls if call[0] == "select"] == [("select", "INBOX", True)]
+
+
+def test_newest_magic_link_spam_folder_that_cannot_be_opened_is_left_out() -> None:
+    imap = FakeImap(
+        [message(LINK, NOW + 10)],
+        junk=[message(OLD_LINK, NOW + 20)],
+        folders=[INBOX_LINE, JUNK_LINE],
+        junk_select_status="NO",
+    )
+    assert newest(imap) == LINK
+    assert imap.fetched == [b"1"]
+    imap = FakeImap([], junk=[message(LINK, NOW + 20)], folders=[INBOX_LINE, JUNK_LINE], junk_select_status="NO")
+    assert newest(imap) is None
+    assert imap.logged_out == 1
+
+
+def test_newest_magic_link_uses_the_later_message_of_both_folders() -> None:
+    both = [INBOX_LINE, JUNK_LINE]
+    imap = FakeImap([message(OLD_LINK, NOW + 10)], junk=[message(LINK, NOW + 20)], folders=both)
+    assert newest(imap) == LINK
+    imap = FakeImap([message(LINK, NOW + 20)], junk=[message(OLD_LINK, NOW + 10)], folders=both)
+    assert newest(imap) == LINK
+    # Equal dates: INBOX wins.
+    imap = FakeImap([message(LINK, NOW + 20)], junk=[message(OLD_LINK, NOW + 20)], folders=both)
+    assert newest(imap) == LINK
+    # A spam message older than ``since`` does not count.
+    imap = FakeImap([], junk=[message(OLD_LINK, NOW - 3600)], folders=both)
+    assert newest(imap) is None
+
+
+def test_newest_magic_link_missing_date_keeps_the_inbox_link() -> None:
+    both = [INBOX_LINE, JUNK_LINE]
+    undated = message(LINK, NOW + 10).replace(b"Date:", b"X-Date:", 1)
+    imap = FakeImap([undated], junk=[message(OLD_LINK, NOW + 20)], folders=both)
+    assert newest(imap) == LINK
+    imap = FakeImap([message(LINK, NOW + 10)], junk=[message(OLD_LINK, NOW + 20).replace(b"Date:", b"X-Date:", 1)], folders=both)
+    assert newest(imap) == LINK
 
 
 # --- login ---------------------------------------------------------------------
