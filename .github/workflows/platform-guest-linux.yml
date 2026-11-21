@@ -1,0 +1,37 @@
+# Linux-only guest tests (docs/platform/spec/07-testing.md sections 1 and 8): Landlock, systemd, nftables and
+# cgroup v2 need a real Linux kernel and root. Called by platform-runner.yml, whose combine job merges the
+# uploaded .coverage.linux.* files; also runs on its own.
+name: platform-guest-linux
+
+on:
+  workflow_call:
+  pull_request:
+    branches: [ad5f2026-agent-platform]
+  push:
+    branches: [ad5f2026-agent-platform]
+
+jobs:
+  guest-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[platform-test]"
+      - name: Linux-only guest tests (root)
+        run: |
+          if ls tests/platform/guest_linux/test_*.py >/dev/null 2>&1; then
+            sudo -E env "PATH=$PATH" COVERAGE_FILE=.coverage.linux \
+              coverage run --rcfile=.coveragerc-platform -m pytest -c tests/platform/pytest.ini \
+              --confcutdir=tests/platform --import-mode=importlib -m linux tests/platform/guest_linux
+            sudo chown "$(id -u):$(id -g)" .coverage.linux.*
+          else
+            echo "No Linux-only guest tests yet (SBX-02 adds them)."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-guest-linux
+          path: .coverage.linux.*
+          include-hidden-files: true
+          if-no-files-found: ignore
