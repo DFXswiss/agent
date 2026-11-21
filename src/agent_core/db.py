@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
+from .passkey.storage import PASSKEY_SCHEMA
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -97,6 +99,8 @@ class Store:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.executescript(SCHEMA)
+            # PASSKEY-PROTOCOL.md section 12: the passkey tables, created at start like the others.
+            self._conn.executescript(PASSKEY_SCHEMA)
             self._migrate()
             self._conn.commit()
         except BaseException:
@@ -141,6 +145,22 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """One write transaction (`BEGIN IMMEDIATE`) on the store's connection, under its lock.
+
+        Committed when the block ends, rolled back and raised again when the block raises. A block
+        that returns early commits what it wrote.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except BaseException:
+                self._conn.rollback()
+                raise
+            self._conn.commit()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:

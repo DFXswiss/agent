@@ -515,14 +515,16 @@ def comments_answer(
     return KeyAnswer(200, body, None)
 
 
-def head_answer(state: RecordState, entry: KeyEntry, hub_key: str) -> KeyAnswer:
-    """Section 7.8: the head of the record and of the caller's own chain."""
+def head_answer(state: RecordState, key_id: str, hub_key: str) -> KeyAnswer:
+    """Section 7.8: the head of the record and of the caller's own chain. `key_id` is the request's
+    `Agent-Key`: for a session key its own id, whose chain is its own (section 10), not the id of
+    its passkey entry."""
     head = state.head
-    own = state.chains.get(entry.id)
+    own = state.chains.get(key_id)
     body = {
         "position": _head_position(state),
         "record_hash": None if head is None else head.record_hash,
-        "key": entry.id,
+        "key": key_id,
         "key_position": None if own is None else own.position,
         "key_event_hash": None if own is None else own.chain.event_hash,
         "key_signed_at": None if own is None else _time(own.chain.signed_at),
@@ -600,7 +602,7 @@ def request_line(request: KeyRequest, status: int, result: str) -> None:
     `GET`, `POST` and `HEAD`, and for a raw path that is not byte for byte a path of section 7.1."""
     method = request.method if request.method in LOGGED_METHODS else "-"
     path = request.raw_path if request.raw_path in RECORD_PATHS else "-"
-    LOG.info("record request %s %s %s %d %s", request.entry.id, method, path, status, result)
+    LOG.info("record request %s %s %s %d %s", request.key_id, method, path, status, result)
 
 
 # --- the release query (section 9) ----------------------------------------------------------------
@@ -638,7 +640,7 @@ def register_record(routes: KeyRoutes, runtime: RecordRuntime, hub_key: str) -> 
         if parsed is None:
             return KeyAnswer(400, _error(ERROR_BODY_INVALID), None)
         text, signature = parsed
-        outcome = await asyncio.to_thread(runtime.append, request.entry, endpoint, text, signature)
+        outcome = await asyncio.to_thread(runtime.append, request.entry, request.key_id, endpoint, text, signature)
         if isinstance(outcome, Appended):
             return appended_answer(outcome, hub_key)
         if isinstance(outcome, Refused):
@@ -664,7 +666,7 @@ def register_record(routes: KeyRoutes, runtime: RecordRuntime, hub_key: str) -> 
         return await read(lambda state, _connection: comments_answer(state, keys, request.entry, request.params, hub_key))
 
     async def get_head(request: KeyRequest) -> KeyAnswer:
-        return await read(lambda state, _connection: head_answer(state, request.entry, hub_key))
+        return await read(lambda state, _connection: head_answer(state, request.key_id, hub_key))
 
     async def get_checkpoints(request: KeyRequest) -> KeyAnswer:
         return await read(lambda _state, connection: checkpoints_answer(connection, request.params, hub_key))
