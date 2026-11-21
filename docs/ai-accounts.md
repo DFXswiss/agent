@@ -838,8 +838,9 @@ it. The steps:
 4. **Human:** paste the e-mail address if the field is empty and choose
    "continue with e-mail".
 5. With a mailbox file, the command reads the sign-in e-mail over IMAP every 5
-   seconds for up to 10 minutes and opens its sign-in link once. Without one,
-   **human:** open the sign-in link from the e-mail.
+   seconds for up to 10 minutes, in `INBOX` and in the spam folder, and opens
+   its sign-in link once. Without one, **human:** open the sign-in link from
+   the e-mail.
 6. **Human:** choose "Authorize".
 7. The command waits up to 10 minutes for the login command to finish, then
    runs `login.status_argv` for the profile. It succeeds only when that prints
@@ -866,9 +867,15 @@ The optional mailbox file is
 group or other permission) and must never be committed to a repository; a
 file with other keys, empty values or a wider mode is refused. The connection
 uses IMAPS with certificate verification and a 30 second socket timeout (a
-timeout is a failed check that is retried), opens `INBOX` read-only and reads
-at most the newest 10 messages whose sender matches `login.mail_from` and that
-were sent after the authorize page was opened. Each message is fetched only up
+timeout is a failed check that is retried), opens `INBOX` and then the spam
+folder read-only and reads in each at most the newest 10 messages whose sender
+matches `login.mail_from` and that were sent after the authorize page was
+opened. The spam folder is the folder that the server's `LIST` answer marks
+`\Junk` (RFC 6154); without such a folder it is the first folder named `Spam`,
+`Junk` or `Junk E-Mail` (any case, also below `INBOX`). Without a spam folder,
+or when it cannot be opened, only `INBOX` is read. No message is moved, copied
+or flagged. When both folders hold a sign-in e-mail, the link of the later
+dated one is used; on equal or missing dates the one in `INBOX`. Each message is fetched only up
 to 1 MiB plus one byte; a message larger than 1 MiB is skipped without being
 parsed. In each message the first
 `https://` match of `login.magic_link_pattern` is the sign-in link. A missing

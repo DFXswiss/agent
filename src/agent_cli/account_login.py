@@ -58,6 +58,15 @@ OUTPUT_PREFIX = "account.login"
 _EMAIL = re.compile(r"[^@\s/\\]+@[^@\s/\\]+")
 _MAILBOX_KEYS = frozenset({"imap_host", "imap_user", "imap_password"})
 _MAILBOX_OPTIONAL = frozenset({"imap_port"})
+# Names of a spam folder on servers that do not flag it ``\Junk`` (RFC 6154),
+# compared without case after an ``INBOX`` parent is removed.
+JUNK_NAMES = frozenset({"spam", "junk", "junk e-mail"})
+# One untagged LIST answer: ``(flags) delimiter name``.
+_LIST_LINE = re.compile(
+    r'\((?P<flags>[^)]*)\)\s+(?P<delimiter>NIL|"(?:[^"\\]|\\.)*")\s+'
+    r'(?P<name>"(?:[^"\\]|\\.)*"|[^\s"]+)',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -175,6 +184,83 @@ def _link_in(message: Message, pattern: re.Pattern[str]) -> str | None:
     return None
 
 
+def _list_entry(line: Any) -> tuple[frozenset[str], str | None, str, str] | None:
+    """Flags, delimiter, folder name and the name as sent, from one LIST line.
+
+    Lines that are not plain bytes (a name sent as a literal) or that do not
+    parse are ``None``; such a folder is never chosen.
+    """
+    if not isinstance(line, bytes):
+        return None
+    parsed = _LIST_LINE.fullmatch(line.decode("latin-1").strip())
+    if parsed is None:
+        return None
+    flags = frozenset(flag.casefold() for flag in parsed.group("flags").split())
+    raw_delimiter = parsed.group("delimiter")
+    delimiter = None if raw_delimiter.upper() == "NIL" else _unquote(raw_delimiter)
+    sent = parsed.group("name")
+    return flags, delimiter, _unquote(sent), sent
+
+
+def _unquote(token: str) -> str:
+    if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+        return re.sub(r"\\(.)", r"\1", token[1:-1])
+    return token
+
+
+def _junk_folder(conn: Any) -> str | None:
+    """The spam folder of the account as it is to be sent to SELECT, or ``None``.
+
+    The folder with the RFC 6154 ``\\Junk`` flag wins; without one, the first
+    folder whose name, after an ``INBOX`` parent, is one of ``JUNK_NAMES``.
+    A failed LIST means no spam folder.
+    """
+    status, lines = conn.list()
+    if status != "OK" or not isinstance(lines, list):
+        return None
+    entries = [entry for entry in map(_list_entry, lines) if entry is not None]
+    for flags, _, name, sent in entries:
+        if "\\junk" in flags and name.upper() != "INBOX":
+            return sent
+    for _, delimiter, name, sent in entries:
+        leaf = name
+        if delimiter and leaf.upper().startswith("INBOX" + delimiter.upper()):
+            leaf = leaf[len("INBOX") + len(delimiter) :]
+        if leaf.casefold() in JUNK_NAMES:
+            return sent
+    return None
+
+
+def _newest_in_folder(
+    conn: Any,
+    since: float,
+    *,
+    pattern: re.Pattern[str],
+    mail_from: str,
+) -> tuple[float | None, str] | None:
+    """Date and sign-in link of the newest matching message in the selected folder."""
+    status, found = conn.search(None, "FROM", f'"{mail_from}"')
+    if status != "OK":
+        raise StoreError("mailbox search failed")
+    ids = found[0].split() if found and isinstance(found[0], bytes) else []
+    for message_id in reversed(ids[-MAX_MESSAGES:]):
+        # A partial fetch bounds what any sender can make this loop read.
+        status, fetched = conn.fetch(message_id, f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)")
+        if status != "OK":
+            raise StoreError("mailbox fetch failed")
+        raw = _message_bytes(fetched)
+        if raw is None or len(raw) > MAX_MESSAGE_BYTES:
+            continue
+        message = message_from_bytes(raw, policy=email_policy.compat32)
+        sent = _message_time(message)
+        if sent is not None and sent < since - DATE_SLACK_SECONDS:
+            return None
+        link = _link_in(message, pattern)
+        if link is not None:
+            return sent, link
+    return None
+
+
 def newest_magic_link(
     mailbox: Mailbox,
     since: float,
@@ -186,12 +272,16 @@ def newest_magic_link(
     """The sign-in link of the newest matching e-mail sent after ``since``.
 
     IMAPS with certificate verification and a socket timeout of
-    ``IMAP_TIMEOUT_SECONDS``; INBOX is selected read-only. At most the newest
-    ``MAX_MESSAGES`` messages whose sender matches ``mail_from`` are read,
-    newest first, stopping at the first one dated before ``since`` minus a few
-    seconds. Each fetch is limited to one byte more than ``MAX_MESSAGE_BYTES``;
-    a message that reaches that size is skipped unparsed. Only an ``https://``
-    match of ``pattern`` counts. The connection is always logged out.
+    ``IMAP_TIMEOUT_SECONDS``. INBOX and then the spam folder (see
+    ``_junk_folder``) are selected read-only; a spam folder that cannot be
+    selected is left out. In each folder at most the newest ``MAX_MESSAGES``
+    messages whose sender matches ``mail_from`` are read, newest first,
+    stopping at the first one dated before ``since`` minus a few seconds. Each
+    fetch is limited to one byte more than ``MAX_MESSAGE_BYTES``; a message
+    that reaches that size is skipped unparsed. Only an ``https://`` match of
+    ``pattern`` counts. Of the two folders' links, the one of the later dated
+    message wins; on a tie or a missing date, INBOX wins. The connection is
+    always logged out.
     """
     conn = imap_factory(
         mailbox.host,
@@ -204,28 +294,18 @@ def newest_magic_link(
         status, _ = conn.select("INBOX", readonly=True)
         if status != "OK":
             raise StoreError("cannot open INBOX")
-        status, found = conn.search(None, "FROM", f'"{mail_from}"')
-        if status != "OK":
-            raise StoreError("mailbox search failed")
-        ids = found[0].split() if found and isinstance(found[0], bytes) else []
-        for message_id in reversed(ids[-MAX_MESSAGES:]):
-            # A partial fetch bounds what any sender can make this loop read.
-            status, fetched = conn.fetch(
-                message_id, f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)"
-            )
-            if status != "OK":
-                raise StoreError("mailbox fetch failed")
-            raw = _message_bytes(fetched)
-            if raw is None or len(raw) > MAX_MESSAGE_BYTES:
-                continue
-            message = message_from_bytes(raw, policy=email_policy.compat32)
-            sent = _message_time(message)
-            if sent is not None and sent < since - DATE_SLACK_SECONDS:
-                return None
-            link = _link_in(message, pattern)
-            if link is not None:
-                return link
-        return None
+        best = _newest_in_folder(conn, since, pattern=pattern, mail_from=mail_from)
+        junk = _junk_folder(conn)
+        if junk is not None:
+            status, _ = conn.select(junk, readonly=True)
+            if status == "OK":
+                found = _newest_in_folder(conn, since, pattern=pattern, mail_from=mail_from)
+                if found is not None and (
+                    best is None
+                    or (found[0] is not None and best[0] is not None and found[0] > best[0])
+                ):
+                    best = found
+        return None if best is None else best[1]
     finally:
         conn.logout()
 
