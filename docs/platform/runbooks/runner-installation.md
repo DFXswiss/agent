@@ -49,7 +49,9 @@ All settings are environment variables `AGENT_RUNNER_*` ([05 §1.3](../spec/05-r
 an unknown name or an invalid value stops the process with `config_invalid <NAME>` (the value is never echoed).
 Required for the daemon: `AGENT_RUNNER_HUB_URL` (`https://`), `AGENT_RUNNER_PLATFORM_ROOT_KEY`; GitHub features need
 `AGENT_RUNNER_GITHUB_CLIENT_ID`. Platform devices may set `AGENT_RUNNER_OPENROUTER_KEY_FILE` (file 0600; refused on
-org devices). `AGENT_RUNNER_TEST_MODE` MUST be `0` in production. Home: `~/.local/share/agent-runner` (0700).
+org devices) and the operator's subscriptions, `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR` together with
+`AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS` ([operator-subscriptions.md](operator-subscriptions.md); refused on org
+devices). `AGENT_RUNNER_TEST_MODE` MUST be `0` in production. Home: `~/.local/share/agent-runner` (0700).
 
 ## 3. Install
 
@@ -105,6 +107,7 @@ One line per check, in fixed order, result `ok`, `warn` or `fail` with a closed 
 | `hub` | signed device state verifies with the pinned hub key | `hub_unreachable`, `response_unsigned`, `key_revoked`, `platform_root_mismatch`; warn `not_enrolled` |
 | `clock` | skew to the hub < 5 s | `skew_seconds` – fix NTP |
 | `textfile` | textfile directory writable or sink off | `textfile_unwritable` |
+| `operator_subscriptions` | off, or every token file of the operator's subscriptions usable (value: the count) | warn `files_ignored`, `none_usable`, `dir_unusable` – [operator-subscriptions.md](operator-subscriptions.md) §3 |
 | `test_mode` | `TEST_MODE=0` | warn `test_mode_on` – never in production |
 | `sync` | no operator marker | `device_revoked`, `sync_fatal`, `platform_stopped`, `org_stopped` (below) |
 

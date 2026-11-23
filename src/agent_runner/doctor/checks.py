@@ -25,6 +25,12 @@ and an optional value (versions, counts, seconds; never a secret). The order is 
   otherwise (`hub_unreachable`, `response_unsigned`, `key_revoked`, ...).
 - `clock`: ok for a skew against the hub's `hub_time` below 5 s; warn `no_hub_time`; fail `skew_seconds`.
 - `textfile`: ok when the textfile directory is writable or the sink is off; fail `textfile_unwritable`.
+- `operator_subscriptions` (KOR-23, ADR-052): ok `off` when `OPERATOR_SUBSCRIPTION_DIR` is not set; otherwise the
+  directory is scanned like the daemon does (`model.operator.Pool`): ok `usable` with the number of usable token files
+  when every `*.token` file is usable; warn `files_ignored` (value: the number of usable files) when some are
+  ignored (rights, owner, symbolic link, format), warn `none_usable` (value: the number of ignored files) when none
+  is usable and warn `dir_unusable` (value: the reason) when the directory cannot be used. No token, file name or
+  organization is shown.
 - `test_mode`: ok for `AGENT_RUNNER_TEST_MODE=0`; warn `test_mode_on` (production MUST run with 0).
 - `sync`: ok when nothing waits for an operator; one fail per marker: `device_revoked`, `sync_fatal`
   (`origin_seq_conflict`, ...), `platform_stopped`, `org_stopped`.
@@ -62,6 +68,7 @@ from agent_runner.enroll.platform import fetch_hub_config
 from agent_runner.errors import RunnerError
 from agent_runner.identity import Identity
 from agent_runner.login.relay import LoginFailed, login_env, resolve
+from agent_runner.model.operator import IGNORED, USABLE, Pool, configured
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError
 from agent_runner.vm import golden as golden_module
 from agent_runner.vm import lima as lima_module
@@ -76,6 +83,7 @@ OPERATOR_KEYS = ("sync_fatal", "platform_stopped")
 ORG_STOPPED = "org_stopped_"
 REVOKED = "device_revoked"
 LOGIN_CLI = "login_cli"
+OPERATOR_SUBSCRIPTIONS = "operator_subscriptions"
 LOGIN_VERSION_TIMEOUT_S = 10.0
 _CLI_VERSION_RE = re.compile(r"(?<![\w.])(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)(?![\w.-])")
 """The first `X.Y.Z[-pre]` of `claude --version` (`2.1.330 (Claude Code)`)."""
@@ -316,6 +324,22 @@ def check_textfile(directory: Path | None) -> Check:
     except OSError:
         return Check("textfile", FAIL, "textfile_unwritable")
     return Check("textfile", OK, "writable")
+
+
+def check_operator_subscriptions(config: Config) -> Check:
+    settings = configured(config)
+    if settings is None:
+        return Check(OPERATOR_SUBSCRIPTIONS, OK, "off")
+    pool = Pool(directory=settings[0], orgs=settings[1])
+    pool.scan()
+    if pool.problem is not None:
+        return Check(OPERATOR_SUBSCRIPTIONS, WARN, "dir_unusable", pool.problem)
+    states = pool.summary().states
+    if states[USABLE] == 0:
+        return Check(OPERATOR_SUBSCRIPTIONS, WARN, "none_usable", states[IGNORED])
+    if states[IGNORED]:
+        return Check(OPERATOR_SUBSCRIPTIONS, WARN, "files_ignored", states[USABLE])
+    return Check(OPERATOR_SUBSCRIPTIONS, OK, "usable", states[USABLE])
 
 
 def check_test_mode(test_mode: bool) -> Check:

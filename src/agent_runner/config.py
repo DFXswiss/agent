@@ -12,6 +12,7 @@ import json
 import os
 import re
 import stat
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,8 @@ NAMES = (
     "GOLDEN_TEMPLATE",
     "TEST_MODE",
     "VM_PREFIX",
+    "OPERATOR_SUBSCRIPTION_DIR",
+    "OPERATOR_SUBSCRIPTION_ORGS",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -115,6 +118,10 @@ class Config:
     golden_template: Path | None
     test_mode: bool
     vm_prefix: str
+    operator_subscription_dir: Path | None = None
+    """Directory of the operator's subscription token files (platform devices only; KOR-23, ADR-052)."""
+    operator_subscription_orgs: frozenset[str] = frozenset()
+    """Organizations whose sessions may use the operator's subscriptions; only together with the directory."""
 
     @property
     def pg_dir(self) -> Path:
@@ -166,6 +173,7 @@ def load_config(
     openrouter = _optional(raw("OPENROUTER_KEY_FILE"), "OPENROUTER_KEY_FILE", require, _key_file)
     if openrouter is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
+    operator_dir, operator_orgs = _operator(raw, require, device_kind)
     automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
     if automation_raw not in ("on", "off"):
         raise RunnerError("config_invalid", "LOGIN_AUTOMATION")
@@ -197,6 +205,8 @@ def load_config(
         ),
         test_mode=test_mode,
         vm_prefix=_vm_prefix(raw("VM_PREFIX")),
+        operator_subscription_dir=operator_dir,
+        operator_subscription_orgs=operator_orgs,
     )
 
 
@@ -216,6 +226,8 @@ def environment(config: Config) -> dict[str, str]:
         "GITHUB_CLIENT_ID": config.github_client_id,
         "GOLDEN_TEMPLATE": config.golden_template,
         "VM_PREFIX": config.vm_prefix or None,
+        "OPERATOR_SUBSCRIPTION_DIR": config.operator_subscription_dir,
+        "OPERATOR_SUBSCRIPTION_ORGS": ",".join(sorted(config.operator_subscription_orgs)) or None,
     }
     for name, value in optional_text.items():
         if value is not None:
@@ -344,6 +356,47 @@ def _key_file(value: str) -> Path:
     if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
         raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
     return path
+
+
+def _operator(
+    raw: Callable[[str], str], require: frozenset[str], device_kind: DeviceKind | None
+) -> tuple[Path | None, frozenset[str]]:
+    """`OPERATOR_SUBSCRIPTION_DIR` and `OPERATOR_SUBSCRIPTION_ORGS` (KOR-23): both or neither, platform devices only."""
+    directory = _optional(raw("OPERATOR_SUBSCRIPTION_DIR"), "OPERATOR_SUBSCRIPTION_DIR", require, _operator_dir)
+    orgs = _org_ids(raw("OPERATOR_SUBSCRIPTION_ORGS"))
+    if directory is not None and device_kind == "org":
+        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR")
+    if directory is not None and not orgs:
+        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_ORGS")
+    if orgs and directory is None:
+        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR")
+    return directory, orgs
+
+
+def _operator_dir(value: str) -> Path:
+    """A directory (not a symlink) with no rights for group and others (0700); its owner is checked at each scan."""
+    path = _absolute(value, "OPERATOR_SUBSCRIPTION_DIR")
+    try:
+        info = path.lstat()
+    except OSError:
+        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR") from None
+    if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR")
+    return path
+
+
+def _org_ids(value: str) -> frozenset[str]:
+    """Comma-separated organization IDs (UUIDs, normalized to lower case); empty = nobody."""
+    if not value.strip():
+        return frozenset()
+    found: set[str] = set()
+    for part in value.split(","):
+        try:
+            parsed = uuid.UUID(part.strip())
+        except ValueError:
+            raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_ORGS") from None
+        found.add(str(parsed))
+    return frozenset(found)
 
 
 def _client_id(value: str) -> str:

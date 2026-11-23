@@ -371,3 +371,18 @@ def test_vm_uptime_falls_back_to_the_guest() -> None:
     sampler = Sampler(SimpleNamespace(), tools(FakeRun({})))
     entry = sampler._vm_entry(row=row, instance=None, host=None, guest=guest, clock=1.0, states={})
     assert (entry.uptime_seconds, entry.cpu_ratio, entry.probe_ok) == (1234, None, True)
+
+
+def test_the_sampler_scans_the_operator_subscriptions_when_they_are_configured(tmp_path: Path) -> None:
+    from agent_runner.model.operator import TOKEN_PREFIX  # noqa: PLC0415
+
+    assert Sampler(SimpleNamespace(config=SimpleNamespace()), tools(FakeRun({}))).operator() is None
+    directory = tmp_path / "operator"
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+    (directory / "a.token").write_text(TOKEN_PREFIX + "01-" + "x" * 30)
+    (directory / "a.token").chmod(0o600)
+    config = SimpleNamespace(operator_subscription_dir=directory, operator_subscription_orgs=frozenset({ORG}))
+    summary = Sampler(SimpleNamespace(config=config, log=io.StringIO()), tools(FakeRun({}))).operator()
+    assert summary is not None
+    assert (summary.problem, summary.states["usable"], summary.sessions) == (None, 1, {"a": 0})

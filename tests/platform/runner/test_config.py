@@ -82,7 +82,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 24
+    assert len(NAMES) == len(set(NAMES)) == 26
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -495,3 +495,76 @@ def test_home_that_cannot_be_inspected_is_refused(base: dict[str, str], tmp_path
         refused(base, "HOME")
     finally:
         os.chmod(locked, 0o700)
+
+
+# -- operator subscriptions (KOR-23, ADR-052) ----------------------------------------------------------------------
+
+ORG_A = "0b9c6a52-4a35-4c1e-9d8e-8f3a0e8d5b11"
+ORG_B = "7f1d2c3b-0000-4000-8000-00000000000b"
+
+
+@pytest.fixture
+def operator_dir(tmp_path: Path) -> Path:
+    directory = tmp_path / "operator"
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+    return directory
+
+
+@pytest.mark.parametrize("kind", [None, "platform"])
+def test_operator_subscriptions_take_a_directory_and_organizations(
+    kind: str | None, base: dict[str, str], operator_dir: Path
+) -> None:
+    assert (load(base).operator_subscription_dir, load(base).operator_subscription_orgs) == (None, frozenset())
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = f" {ORG_A.upper()} ,{ORG_B},{ORG_A}"
+    cfg = load(base, device_kind=kind)
+    assert cfg.operator_subscription_dir == operator_dir
+    assert cfg.operator_subscription_orgs == frozenset({ORG_A, ORG_B})
+    env = environment(cfg)
+    assert env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] == str(operator_dir)
+    assert env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] == ",".join(sorted({ORG_A, ORG_B}))
+    assert load(env, device_kind=kind) == cfg
+
+
+def test_operator_subscriptions_need_both_settings(base: dict[str, str], operator_dir: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    refused(base, "OPERATOR_SUBSCRIPTION_ORGS")
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = "  "  # empty is nobody, and the directory alone is not valid
+    refused(base, "OPERATOR_SUBSCRIPTION_ORGS")
+    del base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"]
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ORG_A
+    refused(base, "OPERATOR_SUBSCRIPTION_DIR")
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ""
+    assert load(base).operator_subscription_orgs == frozenset()
+
+
+def test_operator_subscriptions_are_refused_on_org_devices(base: dict[str, str], operator_dir: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ORG_A
+    refused(base, "OPERATOR_SUBSCRIPTION_DIR", device_kind="org")
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", f"{ORG_A},", f"{ORG_A},,{ORG_B}", "1234"])
+def test_operator_organizations_must_be_ids(value: str, base: dict[str, str], operator_dir: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = value
+    refused(base, "OPERATOR_SUBSCRIPTION_ORGS")
+
+
+def test_operator_directory_checks(base: dict[str, str], operator_dir: Path, tmp_path: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ORG_A
+    for value in ("relative/dir", str(tmp_path / "missing")):
+        base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = value
+        refused(base, "OPERATOR_SUBSCRIPTION_DIR")
+    link = tmp_path / "link"
+    link.symlink_to(operator_dir, target_is_directory=True)
+    plain = tmp_path / "plain"
+    plain.write_text("x")
+    plain.chmod(0o600)
+    for path in (link, plain):
+        base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(path)
+        refused(base, "OPERATOR_SUBSCRIPTION_DIR")
+    operator_dir.chmod(0o750)
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    refused(base, "OPERATOR_SUBSCRIPTION_DIR")

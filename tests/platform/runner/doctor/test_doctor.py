@@ -173,8 +173,8 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert (code, err) == (0, "")
     found = check_map(out)
     assert list(found) == [
-        "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile", "test_mode",
-        "sync",
+        "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile",
+        "operator_subscriptions", "test_mode", "sync",
     ]  # fmt: skip
     assert found["os"] == [("ok", "supported", "darwin")]
     assert found["lima"] == [("ok", "version", "2.3.1")]
@@ -186,6 +186,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert found["hub"] == [("ok", "pinned_key", "active")]
     assert found["clock"] == [("ok", "skew_seconds", "0")]
     assert found["textfile"] == [("ok", "writable", None)]
+    assert found["operator_subscriptions"] == [("ok", "off", None)]
     assert found["test_mode"] == [("warn", "test_mode_on", None)]
     assert found["sync"] == [("ok", "clear", None)]
     assert out.splitlines()[-1] == "runner.doctor result=warn"
@@ -621,3 +622,36 @@ def test_config_loading_needs_no_hub(case: Case) -> None:
     assert load_config(case.env, platform="darwin", require=frozenset()).hub_url is None
     assert case.cli("status")[0] == 0
     assert utc_ms(0) == "1970-01-01T00:00:00.000Z"
+
+
+def test_the_operator_subscriptions_are_counted_without_names(tmp_path: Path) -> None:
+    """KOR-23 (ADR-052): ok/warn with counts; no token, file name or organization."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from agent_runner.model.operator import TOKEN_PREFIX  # noqa: PLC0415
+
+    org = "0b9c6a52-4a35-4c1e-9d8e-8f3a0e8d5b11"
+    assert checks.check_operator_subscriptions(SimpleNamespace()) == checks.Check(  # type: ignore[arg-type]
+        "operator_subscriptions", "ok", "off"
+    )
+    directory = tmp_path / "operator"
+    config = SimpleNamespace(operator_subscription_dir=directory, operator_subscription_orgs=frozenset({org}))
+
+    def found() -> checks.Check:
+        return checks.check_operator_subscriptions(config)  # type: ignore[arg-type]
+
+    assert found() == checks.Check("operator_subscriptions", "warn", "dir_unusable", "missing")
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+    assert found() == checks.Check("operator_subscriptions", "warn", "none_usable", 0)
+    bad = directory / "wide.token"
+    bad.write_text(TOKEN_PREFIX + "01-" + "w" * 30)
+    bad.chmod(0o644)
+    assert found() == checks.Check("operator_subscriptions", "warn", "none_usable", 1)
+    for name in ("a", "b"):
+        (directory / f"{name}.token").write_text(TOKEN_PREFIX + "01-" + name * 30 + "\n")
+        (directory / f"{name}.token").chmod(0o600)
+    assert found() == checks.Check("operator_subscriptions", "warn", "files_ignored", 2)
+    bad.unlink()
+    assert found() == checks.Check("operator_subscriptions", "ok", "usable", 2)
+    assert org not in repr(found())

@@ -150,6 +150,8 @@ TABLES = {
         "created_at",
         "held_at",
     ],
+    # 0011 (KOR-23, ADR-052): the operator's token file a session is bound to
+    "operator_binding": ["session_id", "file_name", "bound_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

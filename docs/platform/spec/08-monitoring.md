@@ -64,6 +64,9 @@ than 48 h are dropped before push, counted in `agent_runner_device_metrics_dropp
 | `agent_runner_device_capacity_low` | gauge (1 when free slots < 10 %) | – |
 | `agent_runner_device_verify_failures_total`, `agent_runner_device_metrics_dropped_total`, `agent_runner_vm_start_failures_total` | counter | – |
 | `agent_runner_device_model_spend_usd` (platform key, daily) | gauge | `window` |
+| `agent_runner_operator_subscription_files` (token files of the operator's subscriptions by state `usable`, `blocked`, `deferred`, `ignored`; only while `OPERATOR_SUBSCRIPTION_DIR` is set; ADR-052) | gauge | `state` |
+| `agent_runner_operator_subscription_sessions` (sessions bound to a token file) | gauge | `file` (file name without `.token`, chosen by the operator) |
+| `agent_runner_operator_subscription_newest_change_age_seconds` (since the newest change of a token file) | gauge | – |
 | `agent_runner_vm_probe_ok` | gauge | `vm`, `wg` |
 | `agent_runner_vm_state` | gauge (1 for the current state) | `vm`, `wg`, `state` |
 | `agent_runner_vm_cpu_ratio`, `agent_runner_vm_memory_bytes`, `agent_runner_vm_memory_limit_bytes`, `agent_runner_vm_disk_used_bytes`, `agent_runner_vm_disk_limit_bytes`, `agent_runner_vm_uptime_seconds` | gauge | `vm`, `wg` |

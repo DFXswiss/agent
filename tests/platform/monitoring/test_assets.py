@@ -16,6 +16,7 @@ import yaml
 from agent_monitoring import assets, sample
 
 from agent_runner.metrics import textfile
+from agent_runner.model.operator import STATES, Summary
 
 from .conftest import MONITORING, REPO
 
@@ -193,8 +194,10 @@ def spec_metrics() -> set[str]:
 
 
 def runner_metrics() -> set[str]:
-    """What the runner's renderer writes for a snapshot with every entity and the daily spend."""
-    return {metric.name for metric in textfile.metrics_of(sample.snapshot(1.0), spend=sample.SPEND)}
+    """What the runner's renderer writes for a snapshot with every entity, the daily spend and the operator's
+    subscriptions (KOR-23)."""
+    operator = Summary(problem=None, states=dict.fromkeys(STATES, 1), sessions={"a": 1}, newest_age_s=1.0)
+    return {metric.name for metric in textfile.metrics_of(sample.snapshot(1.0), spend=sample.SPEND, operator=operator)}
 
 
 def asset_queries() -> list[str]:

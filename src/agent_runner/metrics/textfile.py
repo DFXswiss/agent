@@ -17,6 +17,12 @@ it (decisions/RUN-15.md).
 `agent_runner_device_model_spend_usd{window}` (platform key, daily) comes from the spend query of RUN-12
 (`quota.openrouter.spend_metrics`, passed by the sampler as `spend`); without fresh spend data the metric is left out
 (decisions/RUN-15.md, decisions/RUN-12.md).
+
+The operator's subscriptions (KOR-23, ADR-052; only while `OPERATOR_SUBSCRIPTION_DIR` is set, passed by the sampler as
+`operator`): `agent_runner_operator_subscription_files{state}` (usable, blocked, deferred, ignored),
+`agent_runner_operator_subscription_sessions{file}` (the label is the file name without `.token`, chosen by the
+operator; never a token or an organization) and `agent_runner_operator_subscription_newest_change_age_seconds`
+(left out when no file was seen).
 """
 
 from __future__ import annotations
@@ -30,6 +36,8 @@ from typing import Literal
 
 from agent_runner.metrics.counters import DEVICE_COUNTERS, SESSION_COUNTERS
 from agent_runner.metrics.snapshot import SESSION_STATES, VM_STATES, Snapshot
+from agent_runner.model.operator import STATES as OPERATOR_STATES
+from agent_runner.model.operator import Summary
 
 FILE_NAME = "agent_runner.prom"
 TEMP_PREFIX = ".agent_runner.prom."
@@ -202,6 +210,27 @@ def _sessions(snapshot: Snapshot) -> list[Metric]:
     return [*gauges.values(), *counters]
 
 
-def metrics_of(snapshot: Snapshot, spend: Mapping[str, float] | None = None) -> list[Metric]:
-    """Every metric of 08-monitoring.md section 3 for `snapshot` (device, VMs, sessions in that order)."""
-    return [*_device(snapshot, spend), *_vms(snapshot), *_sessions(snapshot)]
+def _operator(summary: Summary) -> list[Metric]:
+    files = _gauge("agent_runner_operator_subscription_files", "Token files of the operator's subscriptions by state.")
+    for state in OPERATOR_STATES:
+        files.add((("state", state),), summary.states[state])
+    sessions = _gauge(
+        "agent_runner_operator_subscription_sessions", "Sessions bound to a token file of the operator's subscriptions."
+    )
+    for name, count in sorted(summary.sessions.items()):
+        sessions.add((("file", name),), count)
+    age = _gauge(
+        "agent_runner_operator_subscription_newest_change_age_seconds",
+        "Seconds since the newest change of a token file of the operator's subscriptions.",
+    )
+    age.add((), None if summary.newest_age_s is None else round(summary.newest_age_s, 3))
+    return [files, sessions, age]
+
+
+def metrics_of(
+    snapshot: Snapshot, spend: Mapping[str, float] | None = None, operator: Summary | None = None
+) -> list[Metric]:
+    """Every metric of 08-monitoring.md section 3 for `snapshot` (device, VMs, sessions in that order), then the
+    operator's subscriptions when they are configured."""
+    found = [*_device(snapshot, spend), *_vms(snapshot), *_sessions(snapshot)]
+    return found if operator is None else [*found, *_operator(operator)]

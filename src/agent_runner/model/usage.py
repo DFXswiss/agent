@@ -20,6 +20,9 @@ handler writes one outbox item `usage` in the journal page's transaction:
   that the replayed page writes again).
 - `last_provider`: the record's `provider` (OpenRouter only).
 
+For a session bound to a token file of the operator's subscriptions the record's `status` is handed to the pool
+(`model.operator.observed`: `401`/`403` block the file the session was provisioned from, `429` defers it; KOR-23).
+
 A `provider` outside the catalog allow-list (the gateway flags `provider_outside_allowlist`) also writes the audit
 `model.provider_outside_allowlist` (metadata: provider and model), a fact line and counts it in the daemon counter
 `provider_outside_allowlist` (`counters`; 08-monitoring.md names no metric for it, so it is not exported); the request
@@ -40,6 +43,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from agent_runner.guestlink.client import JournalRecord
+from agent_runner.model import access, operator
 from agent_runner.sessions.journal import MAX_COUNT, JournalRecordInvalid
 from agent_runner.sessions.records import LocalSession
 
@@ -136,6 +140,11 @@ async def handle(journal: Any, conn: AsyncConnection[Any], record: JournalRecord
     item = usage_item(session, body, journal.env.catalog, remembered.last.get(session.id))
     await journal.env.outbox.enqueue(conn, "usage", item)
     remembered.last[session.id] = (item["context_used_tokens"], item["context_window_tokens"])
+    if session.model_access == "subscription":
+        context = journal.env.context
+        stamp = access.provisions(context).stamps.get(session.id) if context is not None else None
+        provisioned = stamp.operator[1] if stamp is not None and stamp.operator is not None else None
+        await operator.observed(context, session.id, body.get("status"), provisioned)
     provider = item["last_provider"]
     if body.get("provider_outside_allowlist") is True and provider is not None:
         audit = {

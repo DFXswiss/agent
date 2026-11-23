@@ -28,6 +28,7 @@ from agent_runner.metrics.parsers import GuestMetrics
 from agent_runner.metrics.probes import Tools
 from agent_runner.metrics.session import SessionEntry, SessionTracker, session_rows
 from agent_runner.metrics.snapshot import PROBED_STATES, DeviceEntry, Snapshot, VmEntry
+from agent_runner.model.operator import Summary, pool_for
 from agent_runner.quota.openrouter import spend_metrics
 from agent_runner.sync import outbox as sync_outbox
 from agent_runner.sync.runtime import runtime
@@ -167,6 +168,14 @@ class Sampler:
         self.final_sent = {entry.session_id for entry in entries if entry.ended}
         return chosen
 
+    def operator(self) -> Summary | None:
+        """The operator's subscriptions (KOR-23) when they are configured: scanned now."""
+        pool = pool_for(self.context)
+        if pool is None:
+            return None
+        pool.scan()
+        return pool.summary()
+
     async def tick(self) -> Snapshot:
         snap = await self.snapshot()
         directory = self.context.config.textfile_dir
@@ -175,7 +184,9 @@ class Sampler:
                 await self.tools.blocking(
                     textfile.write_atomic,
                     directory,
-                    textfile.render(textfile.metrics_of(snap, spend=spend_metrics(self.context))),
+                    textfile.render(
+                        textfile.metrics_of(snap, spend=spend_metrics(self.context), operator=self.operator())
+                    ),
                 )
             except OSError as exc:
                 self.line(f"textfile_failed error={type(exc).__name__}")

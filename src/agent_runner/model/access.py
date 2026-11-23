@@ -9,6 +9,11 @@ its own kind) and takes the first kind this device can serve:
   (`credentials.cache.opened`: cached record, else fetched on demand; verified, decrypted for this call only). A
   missing record, a record this device cannot open (no `CK`), a malformed body or a hub/transport failure while
   fetching makes the kind unavailable;
+- operator subscription (`model.operator`, KOR-23, ADR-052): after the owner's own subscription and API key and
+  before `platform` (with `auto`; after the own subscription with the explicit `subscription`), a session of an
+  organization approved in `OPERATOR_SUBSCRIPTION_ORGS` takes a usable token file of the operator's pool. It is
+  reported as `subscription` like the owner's own; the session is bound to the file (`operator.bind`) and the stamp
+  carries the file's name and identity, so the renewal follows the file;
 - `platform`: a platform device with a usable `OPENROUTER_KEY_FILE`. When the organization has spent its daily
   platform budget (`platform_budget` of `GET /v1/device/state`) the start is refused with `budget_exceeded` (the
   gateway refuses further requests of running sessions itself with `429 budget_exceeded`).
@@ -30,7 +35,7 @@ from typing import Any
 
 from agent_runner.credentials import cache
 from agent_runner.errors import RunnerError
-from agent_runner.model import provision, selection, uncounted
+from agent_runner.model import operator, provision, selection, uncounted
 from agent_runner.model.selection import Choice
 from agent_runner.orgs.db import session as store_session
 from agent_runner.sessions.desired import Desired
@@ -41,6 +46,8 @@ UNKNOWN_VERSION = -1
 BUDGET = "budget_exceeded"
 DEFAULT_UPSTREAM_ANTHROPIC = "https://api.anthropic.com"
 ATTRIBUTE = "model_provisions"
+OPERATOR = "operator"
+"""The step of the operator's pool in the order of `resolve` (reported as `subscription`)."""
 
 
 class AccessRefused(Exception):
@@ -60,6 +67,8 @@ class Stamp:
     version: int | None = None
     key_digest: str | None = None
     budget: tuple[float, float] | None = None
+    operator: tuple[str, operator.Identity] | None = None
+    """Name and identity of the operator's token file the provisioning was built from (KOR-23)."""
 
 
 @dataclass
@@ -163,6 +172,34 @@ async def platform_body(
     return body, budget
 
 
+def plan(kinds: tuple[str, ...]) -> list[str]:
+    """The steps of `resolve`: the access kinds of the preference plus the operator's pool after the subscription
+    (and the API key), before `platform`."""
+    steps = list(kinds)
+    if "subscription" in steps:
+        steps.insert(steps.index("platform") if "platform" in steps else len(steps), OPERATOR)
+    return steps
+
+
+async def _operator(env: Any, desired: Desired, base: selection.Request) -> Resolved | None:
+    """The operator's pool for a session of an approved organization (`model.operator`), else None."""
+    picked = await operator.pick(env.context, desired.org_id)
+    if picked is None:
+        return None
+    name, token, identity = picked
+    choice = _select(env, replace(base, preference="subscription", credentials=frozenset({"subscription"})))
+    assert choice is not None  # the owner's subscription strategy always serves a credential it is given
+    body = provision.owner_credential(
+        kind="subscription", secret=token, upstream=upstream_anthropic(env.context), catalog=env.catalog
+    )
+    pool = operator.pool_for(env.context)
+    assert pool is not None
+    await operator.bind(env.context, pool, desired.session_id, name)
+    _line(env, f"operator_subscription session_id={desired.session_id} file={name}")
+    stamp = Stamp(access="subscription", owner_id=desired.owner_id, operator=(name, identity))
+    return Resolved(choice=choice, credential=body, stamp=stamp)
+
+
 async def resolve(env: Any, desired: Desired) -> Resolved:
     """The model access of a session start (module docstring); `AccessRefused` when there is none."""
     try:
@@ -175,7 +212,13 @@ async def resolve(env: Any, desired: Desired) -> Resolved:
         device_kind=env.device_kind,
         owner_id=desired.owner_id,
     )
-    for kind in kinds:
+    for kind in plan(kinds):
+        if kind == OPERATOR:
+            found_operator = await _operator(env, desired, base)
+            if found_operator is None:
+                continue
+            provisions(env.context).stamps[desired.session_id] = found_operator.stamp
+            return found_operator
         if kind == "platform":
             key = env.platform_key() if env.device_kind == "platform" else None
             if key is None:
@@ -202,5 +245,6 @@ async def resolve(env: Any, desired: Desired) -> Resolved:
             stamp = Stamp(access=kind, owner_id=desired.owner_id, version=version)
         if env.context is not None:
             provisions(env.context).stamps[desired.session_id] = stamp
+            await operator.unbind(env.context, desired.session_id)
         return Resolved(choice=choice, credential=body, stamp=stamp)
     raise AccessRefused(UNAVAILABLE)

@@ -22,6 +22,7 @@ from agent_runner.metrics import counters, outbox, textfile
 from agent_runner.metrics.device import DeviceValues
 from agent_runner.metrics.session import SessionEntry
 from agent_runner.metrics.snapshot import DeviceEntry, Snapshot, VmEntry
+from agent_runner.model.operator import Summary
 from agent_runner.orgs import audit
 from agent_runner.store.pool import open_pool
 from agent_runner.sync import outbox as sync_outbox
@@ -350,3 +351,39 @@ def test_device_counters_read_their_sources() -> None:
     assert (
         Counter(counter.name for counter in counters.SESSION_COUNTERS)["agent_runner_session_model_tokens_total"] == 2
     )
+
+
+def test_the_operator_subscriptions_are_listed_by_state_and_file_without_tokens() -> None:
+    """KOR-23 (ADR-052): only while the operator's pool is configured; the label `file` is the file name."""
+    summary = Summary(
+        problem=None,
+        states={"usable": 2, "blocked": 1, "deferred": 0, "ignored": 1},
+        sessions={"b": 2, "a": 0},
+        newest_age_s=12.34567,
+    )
+    text = textfile.render(textfile.metrics_of(snapshot(), operator=summary))
+    assert text.startswith(textfile.render(textfile.metrics_of(snapshot())))
+    tail = text[len(textfile.render(textfile.metrics_of(snapshot()))) :]
+    assert tail.splitlines() == [
+        "# HELP agent_runner_operator_subscription_files Token files of the operator's subscriptions by state.",
+        "# TYPE agent_runner_operator_subscription_files gauge",
+        'agent_runner_operator_subscription_files{state="usable"} 2',
+        'agent_runner_operator_subscription_files{state="blocked"} 1',
+        'agent_runner_operator_subscription_files{state="deferred"} 0',
+        'agent_runner_operator_subscription_files{state="ignored"} 1',
+        "# HELP agent_runner_operator_subscription_sessions Sessions bound to a token file of the operator's "
+        "subscriptions.",
+        "# TYPE agent_runner_operator_subscription_sessions gauge",
+        'agent_runner_operator_subscription_sessions{file="a"} 0',
+        'agent_runner_operator_subscription_sessions{file="b"} 2',
+        "# HELP agent_runner_operator_subscription_newest_change_age_seconds Seconds since the newest change of a "
+        "token file of the operator's subscriptions.",
+        "# TYPE agent_runner_operator_subscription_newest_change_age_seconds gauge",
+        "agent_runner_operator_subscription_newest_change_age_seconds 12.346",
+    ]
+    empty = Summary(problem="mode", states=dict.fromkeys(("usable", "blocked", "deferred", "ignored"), 0), sessions={},
+                    newest_age_s=None)  # fmt: skip
+    text = textfile.render(textfile.metrics_of(snapshot(), operator=empty))
+    assert "agent_runner_operator_subscription_files" in text
+    assert "agent_runner_operator_subscription_sessions{" not in text
+    assert "agent_runner_operator_subscription_newest_change_age_seconds " not in text

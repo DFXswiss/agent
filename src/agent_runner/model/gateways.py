@@ -28,6 +28,14 @@ A session's gateway holds the credential it was provisioned with at the start (`
   session's lock); a deleted credential withdraws the session (`model_access_unavailable`). A credential that cannot be
   used right now, or a guest that does not take it, is tried again by the next renewal, which sees no stamp. Records
   within `COOLDOWN_S` of a provisioning are stale and ignored.
+- **Operator subscriptions** (`model.operator`, KOR-23, ADR-052): a session bound to a token file of the operator's
+  pool is renewed from the file, not from an owner record: its stamp carries the file's name and identity, so a
+  replaced file (a renewed short-lived token) is provisioned again at the next renewal (the task
+  `operator_subscriptions` runs it every few seconds for bound sessions). A bound file that is blocked (`401`/`403`
+  for the content the session holds), gone or no longer usable moves the session to another usable file; when none is
+  usable the gateway keeps what it holds. A file deferred by a `429` keeps its sessions. When the organization is no
+  longer approved the access is withdrawn. The owner's record does not matter for a bound session (a purge of it does
+  not withdraw it).
 - **Budget refusal of new work** (`platform_budget_spent`): the organization's daily platform budget is spent; used by
   the pre-check of `subagent.request` (operation code `budget_exceeded`); new platform sessions are refused by
   `model.access` (session reason `budget_exceeded`).
@@ -46,7 +54,7 @@ from typing import Any
 from agent_runner.credentials import cache
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
-from agent_runner.model import access, provision
+from agent_runner.model import access, operator, provision
 from agent_runner.model.access import Stamp, provisions
 from agent_runner.orgs.db import session as store_session
 from agent_runner.sessions import records
@@ -86,6 +94,15 @@ async def target(env: SessionEnv, session: LocalSession) -> tuple[Stamp, dict[st
             access=kind, owner_id=owner, key_digest=access.key_digest(key), budget=access.budget_stamp(budget)
         )
         return stamp, body
+    name = await operator.bound(env.context, session.id) if kind == "subscription" else None
+    if name is not None:
+        return await operator_target(env, session, name)
+    return await owner_target(env, session)
+
+
+async def owner_target(env: SessionEnv, session: LocalSession) -> tuple[Stamp, dict[str, Any] | None] | str | None:
+    """`target` of a session on the owner's own `subscription` or `api_key` credential."""
+    kind, owner = session.model_access, session.owner_id or ""
     credential_kind = provision.CREDENTIAL_KINDS[str(kind)]
     async with store_session(env.db) as conn:
         found = await cache.cached(conn, owner, credential_kind)
@@ -101,6 +118,36 @@ async def target(env: SessionEnv, session: LocalSession) -> tuple[Stamp, dict[st
     upstream = access.upstream_anthropic(env.context)
     body = provision.owner_credential(kind=str(kind), secret=secret, upstream=upstream, catalog=env.catalog)
     return Stamp(access=str(kind), owner_id=owner, version=version), body
+
+
+async def operator_target(
+    env: SessionEnv, session: LocalSession, name: str
+) -> tuple[Stamp, dict[str, Any] | None] | str | None:
+    """`target` of a session bound to the operator's token file `name` (module docstring)."""
+    pool = operator.pool_for(env.context)
+    assert pool is not None  # `operator.bound` found a binding
+    if not pool.allows(session.org_id):
+        _line(env, f"operator_access_revoked session_id={session.id}")
+        return None
+    pool.scan()
+    current = pool.current(name)
+    if current is None:
+        other = pool.choose(exclude=(name,))
+        if other is None:
+            pool.note(f"exhausted:{session.id}", name, f"operator_pool_exhausted session_id={session.id} file={name}")
+            return KEEP
+        await operator.bind(env.context, pool, session.id, other)
+        _line(env, f"operator_file_switched session_id={session.id} from={name} to={other}")
+        name, current = other, pool.current(other)
+        assert current is not None
+    pool.reported.pop(f"exhausted:{session.id}", None)
+    token, identity = current
+    stamp = Stamp(access="subscription", owner_id=session.owner_id or "", operator=(name, identity))
+    known = provisions(env.context).stamps.get(session.id)
+    if known == stamp:
+        return known, None
+    upstream = access.upstream_anthropic(env.context)
+    return stamp, provision.owner_credential(kind="subscription", secret=token, upstream=upstream, catalog=env.catalog)
 
 
 async def put(env: SessionEnv, session: LocalSession, body: Mapping[str, Any]) -> bool:
@@ -169,6 +216,8 @@ async def _renew(env: SessionEnv, session: LocalSession, stamp: Stamp, body: dic
     assert body is not None  # `target` builds the body whenever the stamp changed
     if await put(env, session, body):
         stamps[session.id] = stamp
+        if stamp.operator is not None:
+            operator.delivered(env.context, session.id)
         _line(env, f"credential_renewed session_id={session.id} access={stamp.access}")
 
 
@@ -199,6 +248,7 @@ async def refresh_all(env: SessionEnv, busy: set[str]) -> None:
     for stale in [sid for sid in found.locks if sid not in keep and not found.locks[sid].locked()]:
         del found.locks[stale]
     found.withdrawn &= keep
+    await operator.prune(env.context, keep)
     for session in live:
         try:
             await refresh(env, session)
@@ -213,7 +263,9 @@ async def on_purge(context: Any, owner: str, credential_kind: str) -> None:
     if kind is None or service is None:
         return
     for session in await live_sessions(service.env, set(service.tasks)):
-        if session.owner_id == owner and session.model_access == kind:
+        if session.owner_id != owner or session.model_access != kind:
+            continue
+        if await operator.bound(context, session.id) is None:
             await withdraw(service.env, session, "credential_deleted")
 
 
@@ -313,5 +365,7 @@ async def reprovision(env: SessionEnv, session_id: str) -> None:
         assert body is not None  # no stamp: the body is built
         if await put(env, session, body):
             found.stamps[session_id] = stamp
+            if stamp.operator is not None:
+                operator.delivered(env.context, session_id)
             reprovisions(env.context).done_at[session_id] = env.clock()
             _line(env, f"credential_reprovisioned session_id={session_id} access={stamp.access}")
