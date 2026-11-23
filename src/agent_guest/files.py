@@ -28,6 +28,9 @@ Import (``import_tar``), body ``application/x-tar`` of at most ``MAX_IMPORT_BYTE
   existing ``dir`` (whatever it is, a link included) is first moved into the staging directory and removed there;
   with ``replace=false`` ``dir`` must not exist or be an empty directory (``state_conflict`` otherwise)
 * answer ``{files, bytes}``: regular files and their bytes
+* ``guard(dir, tree_fd)`` (optional) is called with the extracted staging tree before it is moved and returns the
+  context the move runs in: the workspace scanner surveys the tree and makes it its baseline (``scanner.py``
+  ``materializing``, HOT-06), so an import is never reported as file changes of the session
 
 Export (``export_tar``), ``{dir, paths?}`` with ``paths`` relative to ``dir``:
 
@@ -58,7 +61,8 @@ import stat
 import tarfile
 import tempfile
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import IO, Any, Protocol, cast
 
@@ -352,7 +356,12 @@ def _install(session: Session, parts: Sequence[str], stage: int, owner: Owner, *
         os.close(parent)
 
 
-def import_tar(session: Session, directory: str, stream: Readable, *, replace: bool) -> dict[str, int]:
+Guard = Callable[[str, int], AbstractContextManager[object]]
+
+
+def import_tar(
+    session: Session, directory: str, stream: Readable, *, replace: bool, guard: Guard | None = None
+) -> dict[str, int]:
     """Import the tar ``stream`` into ``directory`` of the session's workspace (see the module docstring)."""
     parts = segments(directory)
     owner = owner_of(session)
@@ -365,9 +374,11 @@ def import_tar(session: Session, directory: str, stream: Readable, *, replace: b
             try:
                 _own(tree, owner, DIR_MODE)
                 done = _extract(stream, tree, owner)
+                moving = contextlib.nullcontext() if guard is None else guard("/".join(parts), tree)
             finally:
                 os.close(tree)
-            _install(session, parts, stage, owner, replace=replace)
+            with moving:
+                _install(session, parts, stage, owner, replace=replace)
         finally:
             os.close(stage)
     finally:

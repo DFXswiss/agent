@@ -15,6 +15,11 @@ reports one written file at once: ``path`` absolute or relative to the workspace
 ``write`` or ``edit`` -> ``{"reported": bool}``. Unknown or inactive sessions answer ``not_found``, malformed
 arguments ``request_invalid``.
 
+``import_guard(session)`` is the ``guard`` of ``files.import_tar`` (``files/import``: ``github.checkout`` and every
+other platform import): the imported tree becomes the baseline of the session's scanner (``scanner.py``
+``materializing``) - the running one, or for a session without capture (suspended, stopping) one that loads and
+writes the index file under the capture lock, so a later start does not report the import either.
+
 A restart of ``agent-guest-control`` loses the threads; the capture of a session that is still running is attached
 again at once by the start-up hook ``STARTUP`` of the restarted process (KOR-02), and by every later event or op
 (``Capture.attach_running``): the recorder continues its cast file with a marker, the
@@ -29,17 +34,18 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
-from agent_guest import sessions, tmux
+from agent_guest import files, sessions, tmux
 from agent_guest.control import ControlContext
 from agent_guest.control_routes.hooks import FILE_HINTS
 from agent_guest.policy import JS_WHITESPACE, lexical
 from agent_guest.recorder import FIFO_DIR, TerminalRecorder
-from agent_guest.scanner import SCAN_SECONDS, WorkspaceScanner
+from agent_guest.scanner import SCAN_SECONDS, Survey, WorkspaceScanner
 from agent_guest.state import Session, StateError
 from agent_guest.transcript import POLL_SECONDS, TranscriptFollower, tui_up
 
@@ -119,6 +125,32 @@ class Capture:
             self.sessions[session_id] = capture
             thread.start()
             return capture
+
+    def import_guard(self, session: Session) -> files.Guard:
+        """The ``guard`` of ``files.import_tar`` for ``session`` (module docstring); it surveys the staged tree at
+        once, before the tree is moved."""
+
+        def guard(directory: str, tree: int) -> AbstractContextManager[object]:
+            try:
+                running = self.ensure_scanner(session.id).scanner
+            except StateError:
+                transient = WorkspaceScanner(self.context.journal, session.id, self.base(session), session.uid)
+                return self._transient(transient, directory, transient.survey(tree, directory))
+            return running.materializing(directory, running.survey(tree, directory))
+
+        return guard
+
+    @contextmanager
+    def _transient(self, scanner: WorkspaceScanner, directory: str, survey: Survey) -> Iterator[None]:
+        with self._lock:
+            # A capture attached meanwhile (the session started) owns the index: its scanner adopts the import.
+            running = self.sessions.get(scanner.session_id)
+            if running is None:
+                scanner.start()
+            else:
+                scanner = running.scanner
+            with scanner.materializing(directory, survey):
+                yield
 
     def sandbox_ready(self, session_id: str) -> None:
         self.ensure_scanner(session_id)

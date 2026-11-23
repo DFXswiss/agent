@@ -518,7 +518,11 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
   text blocks → `session.output` (one record per message), `tool_use`/`tool_result` pairs → `session.tool`.
   The transcript is display content only; usage comes from the gateway (§10.4).
 - Files: `PostToolUse` + a workspace scan every 5 s (mtime/size, sha256 for changed files ≤ 10 MiB) → `session.file`
-  for changes not already reported.
+  for changes not already reported. A tree the platform imports (`files/import`: `github.checkout`, results of a
+  work VM) becomes the scanner's baseline and is never reported file by file (pending changes are reported before
+  the move, under the scanner lock). Dependency, virtual-environment, build and cache directories (`node_modules`,
+  `.venv`, `dist`, `target`, …) are not scanned. A pass with more than 100 changed files, and the part beyond 1 000
+  records or 8 MiB of patches per session in 10 minutes, becomes one `op: "summary"` record (HOT-06, ADR-057).
 - Runner: journal → events (`session.*` kinds), encrypted with the current WK, signed by the device, outbox.
 
 ### 6.5 Task title

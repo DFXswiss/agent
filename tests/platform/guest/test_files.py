@@ -17,8 +17,10 @@ from typing import Any
 
 import pytest
 
-from agent_guest import files
+from agent_guest import files, tmux
 from agent_guest.control import ControlContext
+from agent_guest.control_routes import capture as capture_routes
+from agent_guest.control_routes.capture import Capture
 from agent_guest.state import Session
 
 from .conftest import ControlClient, make_session
@@ -47,6 +49,17 @@ def f(name: str, data: bytes = b"x") -> tuple[str, bytes, bytes]:
 
 def d(name: str) -> tuple[str, bytes, None]:
     return (name, tarfile.DIRTYPE, None)
+
+
+@pytest.fixture(autouse=True)
+def quiet_capture(context: ControlContext, short_tmp: Path) -> Iterator[Capture]:
+    """The capture an import attaches (``Capture.import_guard``) without a scan loop of its own; ended afterwards."""
+    created = capture_routes.install(
+        context, Capture(context, tmux.Tmux(scope=False), fifo_dir=str(short_tmp), scan_seconds=3600)
+    )
+    yield created
+    for session_id in list(created.sessions):
+        created.agent_ended(session_id)
 
 
 @pytest.fixture

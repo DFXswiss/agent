@@ -131,7 +131,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/tasks` | wg:write | `{task_id,wg_id,events:[task.meta,prompt]}` → `{task,session:{session_id,state,device_id,estimate_ms},events:[…]}`; `409 no_device` with `detail.candidates_available` when the workgroup has no active assigned device |
-| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=` → tasks newest first `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
+| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=&order=` → tasks newest first (`order=created`, default) or by latest activity (`order=activity`, KOR-32) `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
 | `GET /v1/tasks/{task}` | task:read | → task + sessions (tree) + usage per session + latest transitions |
 | `POST /v1/tasks/{task}/prompts` | task:write | `{event}` (kind `prompt`) → `{scope_seq,session_id}` (resumes or restarts the main session, §4.6.3) |
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
@@ -362,7 +362,7 @@ JSON bodies except tar streams.
 | `session.output` | `{message_id,role:"assistant",text,turn,stop_reason?}` (from the transcript) |
 | `session.tool` | `{tool_use_id,name,input_summary,input,result_summary,is_error,duration_ms}` (input/result truncated to 64 KiB each) |
 | `session.hook` | `{event,tool?,decision:"allow"|"deny"|"block"|"none",reason?,path?}` |
-| `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB) |
+| `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB); or a summary of many files `{path,op:"summary",files,deleted,bytes,paths,reason:"bulk"|"limit"}` (no patches, `paths` ≤ 20; HOT-06, 05-runner.md §6.4) |
 | `session.terminal` | `{offset_ms_start,frames:[[t_ms,"o",data]],cols,rows}` (asciicast v2 output events, ≤ 16 KiB per record, flushed every 100 ms) |
 | `usage` | `{request_id,model,provider?,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost_usd?,context_window_tokens,request_bytes,response_bytes,status}` |
 | `operation.request` | `{pending_id,operation_id,type,params,idempotency_key?,requested_at}` |

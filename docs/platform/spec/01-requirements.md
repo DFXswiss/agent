@@ -104,7 +104,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 |---|---|---|---|---|---|---|
 | R-6.1 | §6 b1 | All relevant events are stored immediately locally on the execution device in its database. | Guest journal (SQLite) and runner outbox (PostgreSQL) before any network send. | GST, RUN | 02 §4, §5 | E2E-14 |
 | R-6.2 | §6 b1 | … and synchronised encrypted to the hub with minimal delay. | Outbox push on every new item; hints over WebSocket. | RUN, HUB | 03 §6 | E2E-14, PERF-03 |
-| R-6.3 | §6 b2 | Covered: prompts, answers, tool events, results, status, errors, file changes. | Event kinds `prompt`, `session.output/tool/hook/file/status`, `operation.*`. | GST, RUN, HUB | 03 §7.2, §10 | E2E-13, E2E-21 |
+| R-6.3 | §6 b2 | Covered: prompts, answers, tool events, results, status, errors, file changes. | Event kinds `prompt`, `session.output/tool/hook/file/status`, `operation.*`. | GST, RUN, HUB | 03 §7.2, §10 | E2E-13, E2E-21, E2E-40 |
 | R-6.4 | §6 b2 | Covered: token usage, costs, context-window utilisation. | Gateway usage records; OpenRouter cost from the stream; context % from model catalog. ADR-025. | GST, RUN, HUB, WEB | 02 §2.8, 03 §6.1 | E2E-16 |
 | R-6.5 | §6 b2 | Covered: Claude subscriptions and available quotas, as far as technically readable. | Usage endpoint polled per subscription credential (≥ 900 s); `quota_snapshot`. | RUN, HUB, WEB | 02 §2.8 | E2E-16, LIVE-03 |
 | R-6.6 | §6 b3 | `agent.dfx.swiss` shows current state and time-precise events also on smartphones. | Responsive UI, mobile emulation tests; event times shown as absolute local `HH:MM:SS.mmm` (relative only as secondary label, 06 §12.4). | WEB | 06 | E2E-29 |
@@ -241,7 +241,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-P.2 | New packages in the existing repos, consistent with the code base, reuse of proven building blocks, legacy code untouched. | all | 00 §5, §7 | CON-04, U-HUB-legacy-untouched, U-RUN-legacy-untouched |
 | R-P.3 | 100 % line and branch coverage for all new code, technically enforced. | all | 07 §3 | coverage gates in `make platform-ci` and CI |
 | R-P.4 | Every requirement has at least one E2E test. | E2E | 01 §coverage check | traceability test `e2e/platform/test_traceability.py` |
-| R-P.5 | Hermetic main suite: real Claude Code against the model double, GitHub and mail doubles, passkey via virtual authenticator, real Lima VMs. | E2E, DBL | 07 §5 | E2E-01..E2E-39 (network egress check) |
+| R-P.5 | Hermetic main suite: real Claude Code against the model double, GitHub and mail doubles, passkey via virtual authenticator, real Lima VMs. | E2E, DBL | 07 §5 | E2E-01..E2E-40 (network egress check) |
 | R-P.6 | A few live tests (OpenRouter/DeepSeek, GitHub test repository, subscription read-only). | E2E | 07 §6 | LIVE-01..LIVE-04 |
 | R-P.7 | Topologies T1 (single device) and T2 (hub on second device, runner on runner device). | E2E | 07 §5 | E2E-32, all E2E marked "both" |
 | R-P.8 | Everything built and tested on localhost / work devices; no production deployment, no tunnel changes. | E2E | 07 §7 | E2E-32 (asserts no non-LAN egress) |

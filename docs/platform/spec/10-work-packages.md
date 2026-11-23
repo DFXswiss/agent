@@ -271,7 +271,7 @@ least one E2E test or gate; ACC-FINAL re-checks the matrix with `e2e/platform/te
 | R-5.6 | CRY-01, WCR-01, HUB-03, HUB-05 | E2E-30, E2E-31, CON-02 | SCN-03, CRY-01/CRY-02/CRY-03/WCR-01/WCR-02 |
 | R-6.1 | GST-01, RUN-02 | E2E-14 | SCN-02 |
 | R-6.2 | RUN-02, HUB-10 | E2E-14, PERF-03 | SCN-02, SCN-08/PFM-01 |
-| R-6.3 | GST-05, RUN-04, HUB-06 | E2E-13, E2E-21 | SCN-02, SCN-04 |
+| R-6.3 | GST-05, RUN-04, HUB-06 | E2E-13, E2E-21, E2E-40 | SCN-02, SCN-04 |
 | R-6.4 | GST-04, RUN-12, HUB-10, HUB-14, WEB-10 | E2E-16 | SCN-05 |
 | R-6.5 | RUN-12, HUB-14, WEB-10 | E2E-16, LIVE-03 | SCN-05, PRB-01/SCN-05/LVT-01 |
 | R-6.6 | WEB-13, WEB-05 | E2E-29 | SCN-08 |
@@ -358,7 +358,7 @@ least one E2E test or gate; ACC-FINAL re-checks the matrix with `e2e/platform/te
 | R-P.2 | FND-00 | CON-04, U-HUB-legacy-untouched, U-RUN-legacy-untouched | CTR-01/SCN-00 |
 | R-P.3 | FND-00 | coverage gates in `make platform-ci` and CI | FND-00 gates / ACC-FINAL |
 | R-P.4 | SCN-00 | traceability test `e2e/platform/test_traceability.py` | FND-00 gates / ACC-FINAL |
-| R-P.5 | SCN-00, DBL-01, DBL-02, DBL-03 | E2E-01..E2E-39 (network egress check) | SCN-01, SCN-03 |
+| R-P.5 | SCN-00, DBL-01, DBL-02, DBL-03 | E2E-01..E2E-40 (network egress check) | SCN-01, SCN-03 |
 | R-P.6 | LVT-01 | LIVE-01..LIVE-04 | SCN-05/LVT-01 |
 | R-P.7 | SCN-00 | E2E-32, all E2E marked "both" | SCN-09 |
 | R-P.8 | SCN-00, SCN-09 | E2E-32 (asserts no non-LAN egress) | SCN-09 |
