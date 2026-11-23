@@ -35,6 +35,7 @@ from typing import Any
 
 import psycopg
 
+from agent_runner import service
 from agent_runner.config import Config
 from agent_runner.doctor import checks
 from agent_runner.errors import RunnerError
@@ -200,6 +201,14 @@ def _report(ctx: Any, found: list[checks.Check]) -> int:
     return EXIT_FAILURE if overall == checks.FAIL else EXIT_OK
 
 
+def daemon_path(config: Config, ctx: Any) -> str:
+    """The `PATH` the daemon (and so the login) searches: the one of the installed plist, else the caller's."""
+    plist = service.read_plist(service.plist_path(config, ctx.host))
+    env = plist.get("EnvironmentVariables") if plist is not None else None
+    found = env.get("PATH") if isinstance(env, dict) else None
+    return found if isinstance(found, str) else str(ctx.host.env.get("PATH", ""))
+
+
 def cmd_doctor(args: argparse.Namespace, ctx: Any) -> int:
     system = checks.check_os(ctx.host.platform)
     if system.result == checks.FAIL:
@@ -221,6 +230,7 @@ def cmd_doctor(args: argparse.Namespace, ctx: Any) -> int:
         checks.check_store(facts),
         checks.check_golden(facts),
         checks.check_landlock(facts, config.home / "golden"),
+        checks.check_login_cli(config, daemon_path(config, ctx), options.login_timeout),
         *checks.check_hub(config, identity, options),
         checks.check_textfile(config.textfile_dir),
         checks.check_test_mode(config.test_mode),

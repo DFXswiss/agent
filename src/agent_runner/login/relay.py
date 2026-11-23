@@ -81,9 +81,10 @@ def options(context: Any) -> LoginOptions:
 
 
 def resolve(argv: tuple[str, ...], path: str) -> list[str]:
-    """`argv` with an absolute program (looked up in the runner's `PATH`); `LoginFailed` when it does not exist."""
+    """`argv` with an absolute program (looked up in the runner's `PATH`); `LoginFailed` when it does not exist or is
+    no executable file. `agent-runner doctor` (check `login_cli`) resolves with this function, too."""
     program = argv[0] if os.path.isabs(argv[0]) else shutil.which(argv[0], path=path)
-    if program is None or not os.access(program, os.X_OK):
+    if program is None or not os.path.isfile(program) or not os.access(program, os.X_OK):
         raise LoginFailed("login_cli_failed")
     return [program, *argv[1:]]
 

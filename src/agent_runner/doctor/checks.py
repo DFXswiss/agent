@@ -10,6 +10,16 @@ and an optional value (versions, counts, seconds; never a secret). The order is 
   before the first `run`/`enroll`; fail `store_unavailable`.
 - `golden`: ok with a `ready` golden image; fail `no_golden`.
 - `landlock`: ok for Landlock ABI >= 4 in the golden's build record; warn `record_missing`; fail for ABI < 4.
+- `login_cli`: the host program of the subscription login (`LOGIN_ARGV`, default `claude setup-token`, 05 section
+  11.2), looked up with the login's own `relay.resolve` in the daemon's `PATH` (the `PATH` of the installed
+  LaunchDaemon plist; without a plist the caller's); fail `login_cli_missing` when it is missing or cannot be
+  executed. For the default command `claude --version` runs with a time limit in a temporary directory with the
+  login's allow-list environment (`relay.login_env`; no profile of an account is read): fail `login_cli_missing` when
+  it cannot start or exits with a failure; ok with the version when it equals the Claude Code pin of the golden build
+  (`images/versions.json` through `golden.load_source`); warn `version_mismatch` (value: the version found),
+  `version_unknown` (no answer within the limit, or no version in the output) or `pin_missing` (the pin cannot be
+  read; value: the version found). A different `LOGIN_ARGV` (a test double) is only checked for being executable: ok
+  `executable`.
 - `hub`: ok when a signed `GET /v1/device/state` verifies with the pinned hub key (value `active` or
   `pending_certification`); not enrolled: warn `not_enrolled` when `GET /v1/config` answers; fail with the closed code
   otherwise (`hub_unreachable`, `response_unsigned`, `key_revoked`, ...).
@@ -27,10 +37,14 @@ keeps its in-memory state, so it takes effect at the next daemon start.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
 import secrets
+import signal
+import subprocess
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -42,12 +56,14 @@ from typing import Any
 import httpx
 import psycopg
 
-from agent_runner.config import Config
+from agent_runner.config import DEFAULT_LOGIN_ARGV, Config
 from agent_runner.encoding import b64u_decode
 from agent_runner.enroll.platform import fetch_hub_config
 from agent_runner.errors import RunnerError
 from agent_runner.identity import Identity
+from agent_runner.login.relay import LoginFailed, login_env, resolve
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError
+from agent_runner.vm import golden as golden_module
 from agent_runner.vm import lima as lima_module
 
 OK = "ok"
@@ -59,6 +75,12 @@ STATE_TARGET = "/v1/device/state"
 OPERATOR_KEYS = ("sync_fatal", "platform_stopped")
 ORG_STOPPED = "org_stopped_"
 REVOKED = "device_revoked"
+LOGIN_CLI = "login_cli"
+LOGIN_VERSION_TIMEOUT_S = 10.0
+_CLI_VERSION_RE = re.compile(r"(?<![\w.])(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)(?![\w.-])")
+"""The first `X.Y.Z[-pre]` of `claude --version` (`2.1.330 (Claude Code)`)."""
+FAILED_EXIT = "failed"
+"""`login_cli_version`: the command ended with a failure exit."""
 _MS_TIME_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z")
 
 
@@ -72,11 +94,13 @@ class Check:
 
 @dataclass
 class DoctorOptions:
-    """Injectable parts (tests): hub transport, wall clock, `limactl` runner (default: the one on `PATH`)."""
+    """Injectable parts (tests): hub transport, wall clock, `limactl` runner (default: the one on `PATH`), time limit
+    of the login command's version query."""
 
     transport: httpx.AsyncBaseTransport | None = None
     wall: Callable[[], float] = time.time
     limactl: lima_module.LimactlRun | None = None
+    login_timeout: float = LOGIN_VERSION_TIMEOUT_S
 
 
 @dataclass
@@ -160,6 +184,68 @@ def check_landlock(facts: StoreFacts, records: Path) -> Check:
     if not isinstance(abi, int) or isinstance(abi, bool):
         return Check("landlock", WARN, "record_missing")
     return Check("landlock", OK if abi >= MIN_LANDLOCK_ABI else FAIL, "abi", abi)
+
+
+def login_cli_version(program: str, timeout: float) -> str | None:
+    """The version `program --version` reports, run like the login: in a new temporary directory (0700, removed
+    afterwards) with `relay.login_env` as the complete environment and its own process group. `FAILED_EXIT` for a
+    failure exit; None when it does not end within `timeout` seconds (the group is killed; a descendant that left the
+    group and keeps the output open is waited for once more as long, then left) or prints no version; `OSError` when
+    it cannot be started."""
+    with tempfile.TemporaryDirectory(prefix="agent-runner-doctor-") as temporary:
+        workdir = Path(temporary)
+        for sub in ("home", "config", "tmp"):
+            (workdir / sub).mkdir(mode=0o700)
+        with subprocess.Popen(
+            [program, "--version"],
+            cwd=workdir,
+            env=login_env(workdir, program),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        ) as process:
+            try:
+                output, _ = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.communicate(timeout=timeout)
+                return None
+    if process.returncode != 0:
+        return FAILED_EXIT
+    match = _CLI_VERSION_RE.search(output.decode("utf-8", "replace"))
+    return None if match is None else match.group(1)
+
+
+def golden_pin(template: Path | None) -> str | None:
+    """The Claude Code version the golden build pins (the same source as `image build`); None when unreadable."""
+    try:
+        return golden_module.load_source(template).claude_version
+    except RunnerError:
+        return None
+
+
+def check_login_cli(config: Config, search_path: str, timeout: float) -> Check:
+    try:
+        program = resolve(config.login_argv, search_path)[0]
+    except LoginFailed:
+        return Check(LOGIN_CLI, FAIL, "login_cli_missing")
+    if config.login_argv != DEFAULT_LOGIN_ARGV:
+        return Check(LOGIN_CLI, OK, "executable")
+    try:
+        found = login_cli_version(program, timeout)
+    except OSError:
+        found = FAILED_EXIT
+    if found == FAILED_EXIT:
+        return Check(LOGIN_CLI, FAIL, "login_cli_missing")
+    if found is None:
+        return Check(LOGIN_CLI, WARN, "version_unknown")
+    pin = golden_pin(config.golden_template)
+    if pin is None:
+        return Check(LOGIN_CLI, WARN, "pin_missing", found)
+    return Check(LOGIN_CLI, OK, "version", found) if found == pin else Check(LOGIN_CLI, WARN, "version_mismatch", found)
 
 
 def _ms_time(text: object) -> float | None:

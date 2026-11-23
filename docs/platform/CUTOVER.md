@@ -92,8 +92,10 @@ replicas, no second worker.
 ### 3.2 Runner device: `agent-runner` as LaunchDaemon
 
 As in [runbooks/runner-installation.md](runbooks/runner-installation.md): a dedicated unprivileged runner account,
-Lima ≥ 2.3 with `vz`, PostgreSQL binaries, Python 3.12, the agent checkout at the release commit with
-`pip install -e ".[platform]"`, `agent-runner service install --profile platform` writing
+Lima ≥ 2.3 with `vz`, PostgreSQL binaries, Python 3.12, **Claude Code on the host at the golden's pin**
+(`claude_code` in `images/versions.json`; the subscription login runs `claude setup-token` on the host, not in a VM),
+the agent checkout at the release commit with `pip install -e ".[platform]"` in a virtual environment with pip,
+`agent-runner service install --profile platform --user <runner account>` from an administrator account writing
 `/Library/LaunchDaemons/swiss.dfx.agent-runner.plist` (`UserName` = runner account). The runner only connects
 **outbound** to `https://agent.dfx.swiss` (signed requests and the device WebSocket); it needs no inbound port, no
 tunnel hostname of its own and no address on the hub device's network.
@@ -310,14 +312,16 @@ filled from the operators' private notes.
 - **Before:** P4 (runner role), P8, P9; S7.
 - **Do:** following [runbooks/runner-installation.md](runbooks/runner-installation.md) and
   [runbooks/device-certification.md](runbooks/device-certification.md#1-platform-device):
-  1. install the agent release commit (`.[platform]`), configure §3.2;
+  1. install the agent release commit (`.[platform]`) and Claude Code at the golden's pin on the host
+     ([runner-installation.md §1](runbooks/runner-installation.md#1-prerequisites)), configure §3.2;
   2. `agent-runner image build` (production golden, never a TEST_MODE golden; [runbooks/golden-image-release.md](runbooks/golden-image-release.md));
   3. operator: `agent-hub platform invite-device …`; runner account: `agent-runner enroll --platform --hub
      https://agent.dfx.swiss --code <code>` (state `pending_certification`, reports the `device_id`);
-  4. `sudo -E <venv>/bin/agent-runner service install --profile platform`;
+  4. from an administrator account: `sudo env -i PATH=… AGENT_RUNNER_…=… <venv>/bin/agent-runner service install
+     --profile platform --user <runner account>` ([runner-installation.md §3](runbooks/runner-installation.md#3-install));
   5. operator compares the `device_id` and runs `agent-hub platform certify-pending --device <id>`.
-- **Check:** `agent-runner doctor` all `ok` (`os`, `lima`, `vz`, `postgresql`, `golden`, `landlock`, `hub`, `clock`,
-  `textfile`, `test_mode`, `sync`); the `hub` line reads `active`; `agent-runner status` shows the hub connection and a filled pool.
+- **Check:** `agent-runner doctor` all `ok` (`os`, `lima`, `vz`, `postgresql`, `golden`, `landlock`, `login_cli`,
+  `hub`, `clock`, `textfile`, `test_mode`, `sync`); the `hub` line reads `active`; `agent-runner status` shows the hub connection and a filled pool.
 - **Rollback:** `agent-hub platform decertify --device <id>`, then `agent-runner uninstall` on the device (removes the
   service, its VMs, the store and the identity). The legacy runner on that device is not affected.
 
